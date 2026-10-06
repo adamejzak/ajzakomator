@@ -1,9 +1,9 @@
-// npm run release [patch|minor|major|x.y.z|--current]
+// npm run release [patch|minor|major|x.y.z|--current]   (optional: NOTES="co nowego" for release notes)
 // Bumps the version, runs tests, builds locally and publishes the installers to the public
 // releases repo (adamejzak/ajzakomator-releases) with the logged-in `gh` CLI. One `gh` call creates
 // the release with every asset (avoids electron-builder's parallel publishers racing to create it).
 import { execSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 
 const REPO = 'adamejzak/ajzakomator-releases';
 const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
@@ -34,7 +34,14 @@ try {
   exists = false;
 }
 if (exists) run(`gh release upload ${tag} ${files} -R ${REPO} --clobber`);
-else run(`gh release create ${tag} ${files} -R ${REPO} --title "ajzakomator ${version}" --notes "ajzakomator ${version}" --latest`);
+else {
+  const notes = process.env.NOTES ? `${process.env.NOTES}
+
+` : '';
+  const body = `${notes}Pobierz \`ajzakomator-Setup-${version}.exe\`. Zainstalowana aplikacja aktualizuje się sama.`;
+  writeFileSync('release/notes.md', body);
+  run(`gh release create ${tag} ${files} -R ${REPO} --title "ajzakomator ${version}" --notes-file release/notes.md --latest`);
+}
 
 run('git add package.json package-lock.json');
 run(`git commit -m "release ${tag}" --allow-empty`);
