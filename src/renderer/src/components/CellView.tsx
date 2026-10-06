@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { getProfile } from '../../../shared/state';
+import { getProfile, PROJECT_COLORS } from '../../../shared/state';
 import type { Cell } from '../../../shared/types';
 import {
-  changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, toggleMaximize,
+  changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, setCellColor, toggleMaximize,
 } from '../actions';
 import { setUi, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
@@ -56,6 +56,9 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
     openMenu(e.clientX, e.clientY, [
       { label: 'Zmień nazwę', onClick: () => setEditing(true) },
       ...(cell.name ? [{ label: 'Przywróć nazwę automatyczną', onClick: () => renameCell(cell.id, '') }] : []),
+      { header: 'Kolor' },
+      { colors: PROJECT_COLORS, onPick: (c: string) => setCellColor(cell.id, c) },
+      ...(cell.color ? [{ label: 'Usuń kolor', onClick: () => setCellColor(cell.id, undefined) }] : []),
       { sep: true },
       ...restartItems(),
       { label: maximized ? 'Przywróć siatkę' : 'Maksymalizuj', onClick: () => toggleMaximize(cell.id), hint: 'Ctrl+Shift+M' },
@@ -68,8 +71,8 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
 
   return (
     <div
-      className={`cell ${focused ? 'focused' : ''} ${drop ? 'drop' : ''}`}
-      style={style}
+      className={`cell ${focused ? 'focused' : ''} ${drop ? 'drop' : ''} ${cell.color ? 'colored' : ''}`}
+      style={cell.color ? { ...style, ['--cc' as string]: cell.color } : style}
       onMouseDownCapture={markFocused}
       onFocusCapture={markFocused}
       onDragOver={(e) => {

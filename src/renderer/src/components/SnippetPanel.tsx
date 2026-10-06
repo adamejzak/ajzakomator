@@ -81,6 +81,7 @@ export function SnippetPanel() {
               {sn.icon && <span className="s-icon">{sn.icon}</span>}
               <span className="s-name">{sn.name}</span>
               {sn.projectId && <span className="tag">projekt</span>}
+              <span style={{ flex: 1 }} />
               <button
                 className="btn ghost icon small s-edit"
                 onClick={(e) => {

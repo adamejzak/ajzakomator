@@ -473,3 +473,27 @@ select option { background: #171717; color: var(--text); }
 }
 .help:hover .help-pop { opacity: 1; transform: none; }
 .help-pop .kbd { justify-self: start; color: var(--text); background: var(--bg-2); padding: 1px 6px; }
+
+/* ── toolbar buttons ────────────────────────────────────────────────────── */
+.tb-btn {
+  height: 30px; min-width: 30px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent; color: #9a9a9a; cursor: pointer; font-size: 12.5px;
+  -webkit-app-region: no-drag; transition: background .12s, color .12s;
+}
+.tb-btn:hover { background: #1f1f1f; color: #f2f2f2; }
+.tb-btn.on { color: #e6e6e6; }
+.tb-btn.wide { padding: 0 10px 0 7px; }
+.tb-btn svg { flex: none; }
+
+/* snippet name hugs its tag */
+.snippet .s-name { flex: 0 1 auto; }
+
+/* ── colored cells ──────────────────────────────────────────────────────── */
+.cell.colored { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc) 35%, transparent); }
+.cell.colored .cell-head {
+  background: color-mix(in srgb, var(--cc) 14%, #101010);
+  border-bottom-color: color-mix(in srgb, var(--cc) 35%, #1a1a1a);
+  box-shadow: inset 0 2px 0 var(--cc);
+}
+.cell.colored .cell-head .cell-name { color: color-mix(in srgb, var(--cc) 55%, #ffffff); }
+.cell.colored.focused { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc) 75%, transparent); }

@@ -5,7 +5,7 @@ import { aggregate } from '../../../shared/status';
 import { addAgent, closeTab, selectTab } from '../actions';
 import { setUi, update, useStore } from '../store';
 import { openMenu, openMenuAt } from './ContextMenu';
-import { IGrid, IHistory, IPlus, ISettings, ISidebar, ISnippet, IX, Logo } from './icons';
+import { IX, Logo, TGrid, THistory, TPlus, TSettings, TSidebar, TSnippet } from './icons';
 import { StatusBadges } from './StatusBadges';
 
 // Each "moment" the white wordmark briefly takes one of these looks, then fades back to white.
@@ -108,17 +108,17 @@ export function TitleBar() {
               </div>
             );
           })}
-          <button className="btn ghost icon" title="Nowy grid (Ctrl+Shift+G)" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><IGrid /></button>
-          <button className="btn ghost small" title="Dodaj agenta do siatki" onClick={(e) => agentMenu(e.currentTarget)}><IPlus /> agent</button>
+          <button className="tb-btn" title="Nowy grid (Ctrl+Shift+G)" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
+          <button className="tb-btn wide" title="Dodaj agenta do siatki" onClick={(e) => agentMenu(e.currentTarget)}><TPlus /> agent</button>
         </div>
       )}
       <div className="spacer" />
       {project && <span className="project-path" title={project.path}>{project.path}</span>}
       <div className="row no-drag" style={{ gap: 2 }}>
-        {project && <button className="btn ghost icon" title="Historia (Ctrl+Shift+H)" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><IHistory /></button>}
-        <button className="btn ghost icon" title="Snippety (Ctrl+Shift+B)" onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><ISnippet /></button>
-        <button className="btn ghost icon" title="Panel projektów (Ctrl+Shift+E)" onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><ISidebar /></button>
-        <button className="btn ghost icon" title="Ustawienia" onClick={() => setUi({ modal: { kind: 'settings' } })}><ISettings /></button>
+        {project && <button className="tb-btn" title="Historia czatów i gridów (Ctrl+Shift+H)" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
+        <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title="Snippety (Ctrl+Shift+B)" onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
+        <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title="Panel projektów (Ctrl+Shift+E)" onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
+        <button className="tb-btn" title="Ustawienia" onClick={() => setUi({ modal: { kind: 'settings' } })}><TSettings /></button>
       </div>
     </div>
   );

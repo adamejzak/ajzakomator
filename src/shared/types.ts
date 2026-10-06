@@ -26,6 +26,8 @@ export interface Cell {
   profileId: string;
   /** User-given label; without it the header shows the conversation title. */
   name?: string;
+  /** Accent color of the cell (header tint + border). */
+  color?: string;
   /** Sent to the agent as its first prompt on the next new-conversation start, then cleared. */
   startupPrompt?: string;
   worktree?: Worktree;

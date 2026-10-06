@@ -147,6 +147,10 @@ function killAndDispose(cellId: string): void {
   });
 }
 
+export function setCellColor(cellId: string, color: string | undefined): void {
+  update((s) => updateCell(s, cellId, { color }));
+}
+
 export function renameCell(cellId: string, name: string): void {
   update((s) => updateCell(s, cellId, { name: name.trim() || undefined }));
 }
