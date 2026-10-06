@@ -1,5 +1,5 @@
 import type { HookEvent } from '../shared/status';
-import type { AppState, CellSession, Profile, SessionInfo, Worktree } from '../shared/types';
+import type { AppState, CellSession, Profile, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
 export type { SessionInfo };
 
@@ -36,12 +36,16 @@ export interface McApi {
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): void;
   windowsBuild: number;
+  getUpdate(): Promise<UpdateState & { currentVersion: string }>;
+  installUpdate(): void;
+  openReleases(): void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;
   on(channel: 'cell:spawnError', cb: (cellId: string, message: string) => void): () => void;
   on(channel: 'focus-cell', cb: (cellId: string) => void): () => void;
   on(channel: 'ptyhost:crashed', cb: () => void): () => void;
   on(channel: 'app:before-quit', cb: () => void): () => void;
+  on(channel: 'update:state', cb: (s: UpdateState) => void): () => void;
 }
 
 declare global {

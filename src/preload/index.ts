@@ -26,6 +26,9 @@ const api: McApi = {
   clipboardRead: () => ipcRenderer.invoke('clipboard:read'),
   clipboardWrite: (text) => ipcRenderer.send('clipboard:write', text),
   windowsBuild: Number(release().split('.')[2]) || 0,
+  getUpdate: () => ipcRenderer.invoke('update:get'),
+  installUpdate: () => ipcRenderer.send('update:install'),
+  openReleases: () => ipcRenderer.send('update:open'),
   on: (channel: string, cb: (...args: any[]) => void) => {
     const listener = (_e: unknown, ...args: any[]) => cb(...args);
     ipcRenderer.on(channel, listener);

@@ -113,3 +113,12 @@ export interface SessionInfo {
   startedAt: number;
   updatedAt: number;
 }
+
+export interface UpdateState {
+  status: 'idle' | 'available' | 'downloading' | 'ready';
+  version?: string;
+  percent?: number;
+  /** Portable builds can't self-update: they only link to the download page. */
+  portable?: boolean;
+  url?: string;
+}

@@ -7,6 +7,7 @@ import { setUi, update, useStore } from '../store';
 import { openMenu, openMenuAt } from './ContextMenu';
 import { IX, Logo, TGrid, THistory, TPlus, TSettings, TSidebar, TSnippet } from './icons';
 import { StatusBadges } from './StatusBadges';
+import { UpdateBadge } from './UpdateBadge';
 
 // Each "moment" the white wordmark briefly takes one of these looks, then fades back to white.
 const BRAND_THEMES = ['blue', 'red', 'green', 'amber', 'violet', 'sunset', 'ocean', 'aurora', 'rainbow', 'blue', 'green', 'red'];
@@ -114,6 +115,7 @@ export function TitleBar() {
       )}
       <div className="spacer" />
       {project && <span className="project-path" title={project.path}>{project.path}</span>}
+      <UpdateBadge />
       <div className="row no-drag" style={{ gap: 2 }}>
         {project && <button className="tb-btn" title="Historia czatów i gridów (Ctrl+Shift+H)" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
         <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title="Snippety (Ctrl+Shift+B)" onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>

@@ -12,6 +12,7 @@ import { HookServer } from './hooks';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
+import { getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 
 const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
@@ -184,6 +185,9 @@ ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) =>
 ipcMain.handle('clipboard:read', () => clipboard.readText());
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text));
 ipcMain.on('shell:openPath', (_e, p: string) => shell.openPath(p));
+ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
+ipcMain.on('update:install', () => installNow());
+ipcMain.on('update:open', () => shell.openExternal(RELEASES_URL));
 ipcMain.on('shell:openInEditor', (_e, p: string) => {
   // `cursor` / `code` are .cmd launchers → need a shell; they get our clean env.
   const editor = ['cursor', 'code'].find((cmd) => spawnSync('where', [cmd], { windowsHide: true }).status === 0);
@@ -205,6 +209,7 @@ app.whenReady().then(async () => {
   await hooks.start();
   ptyHost.start();
   createWindow();
+  initUpdater((s) => send('update:state', s));
 });
 
 let quitting = false;
@@ -222,6 +227,7 @@ app.on('before-quit', (e) => {
     }
     await ptyHost.shutdown();
     hooks.stop();
+    installOnQuit();
     app.exit(0);
   }, 150);
 });
