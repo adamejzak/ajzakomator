@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLayout, growLayout, layoutForCount, mergeRect, removeArea, unmergeAll } from '../src/shared/layout';
+import { createLayout, describeLayout, growLayout, layoutForCount, layoutFromRows, mergeRect, removeArea, rowCountsOf, unmergeAll } from '../src/shared/layout';
 
 describe('layout', () => {
   it('createLayout makes one area per field, row-major', () => {
@@ -42,6 +42,27 @@ describe('layout', () => {
   it('growLayout adds one area, null at max', () => {
     expect(growLayout(layoutForCount(4))!.areas).toHaveLength(5);
     expect(growLayout(layoutForCount(20))).toBeNull();
+  });
+
+  it('layoutFromRows builds 3 on top and 2 below', () => {
+    const l = layoutFromRows([3, 2]);
+    expect(l).toMatchObject({ cols: 6, rows: 2, rowCounts: [3, 2] });
+    expect(l.areas).toHaveLength(5);
+    expect(l.areas[0]).toEqual({ col: 0, row: 0, colSpan: 2, rowSpan: 1 });
+    expect(l.areas[4]).toEqual({ col: 3, row: 1, colSpan: 3, rowSpan: 1 });
+    expect(describeLayout(l)).toBe('3+2');
+  });
+
+  it('layoutFromRows with equal rows is a plain grid', () => {
+    expect(layoutFromRows([2, 2])).toEqual(createLayout(2, 2));
+    expect(rowCountsOf(createLayout(4, 3))).toEqual([4, 4, 4]);
+  });
+
+  it('unmergeAll on a row layout restores its rows', () => {
+    const l = layoutFromRows([3, 2]);
+    const merged = mergeRect(l, { col: 0, row: 0, colSpan: 4, rowSpan: 1 });
+    expect(merged.areas).toHaveLength(4);
+    expect(unmergeAll(merged)).toEqual(l);
   });
 
   it('removeArea shrinks to n-1 but never below 1', () => {

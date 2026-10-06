@@ -77,6 +77,8 @@ export interface Snippet {
   name: string;
   text: string;
   autoSend: boolean;
+  icon?: string;
+  color?: string;
   projectId?: string;
 }
 

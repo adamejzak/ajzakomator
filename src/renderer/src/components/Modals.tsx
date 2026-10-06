@@ -101,7 +101,7 @@ function HistoryModal({ projectId }: { projectId: string }) {
   const s = useStore((st) => st.s);
   const focused = useStore((st) => st.ui.focusedCellId);
   const project = s.projects.find((p) => p.id === projectId);
-  const [view, setView] = useState<'archive' | 'sessions'>(project?.archive.length ? 'archive' : 'sessions');
+  const [view, setView] = useState<'archive' | 'sessions'>('sessions');
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [q, setQ] = useState('');
 
@@ -125,8 +125,8 @@ function HistoryModal({ projectId }: { projectId: string }) {
       <div className="modal-head">
         <h3>Historia · {project.name}</h3>
         <div className="tabs-switch">
+          <button className={`btn small ${view === 'sessions' ? 'primary' : ''}`} onClick={() => setView('sessions')}>Czaty Claude / Codex {sessions ? `(${sessions.length})` : ''}</button>
           <button className={`btn small ${view === 'archive' ? 'primary' : ''}`} onClick={() => setView('archive')}>Zamknięte gridy ({project.archive.length})</button>
-          <button className={`btn small ${view === 'sessions' ? 'primary' : ''}`} onClick={() => setView('sessions')}>Rozmowy Claude / Codex {sessions ? `(${sessions.length})` : ''}</button>
         </div>
         <button className="btn ghost icon" onClick={closeModal}><IX /></button>
       </div>
@@ -236,6 +236,8 @@ function SettingsModal() {
   );
 }
 
+const SNIPPET_EMOJIS = ['🔍', '🧪', '🐛', '✨', '📝', '🚀', '♻️', '🔒', '📦', '🎨', '⚡', '🧹', '💬', '📊', '🛠️', '✅', '🔥', '🧠', '📋'];
+
 // ── snippet editor ──────────────────────────────────────────────────────────
 
 function SnippetEditor({ snippetId }: { snippetId: string | null }) {
@@ -263,6 +265,24 @@ function SnippetEditor({ snippetId }: { snippetId: string | null }) {
           <label>Treść promptu</label>
           <textarea className="textarea" value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })}
             onKeyDown={(e) => e.key === 'Enter' && e.ctrlKey && save()} />
+        </div>
+        <div className="field">
+          <label>Kolor</label>
+          <div className="color-row">
+            <button className={!draft.color ? 'on' : ''} style={{ background: '#2a2a2a' }} title="Bez koloru" onClick={() => setDraft({ ...draft, color: undefined })} />
+            {PROJECT_COLORS.map((c) => (
+              <button key={c} className={draft.color === c ? 'on' : ''} style={{ background: c }} onClick={() => setDraft({ ...draft, color: c })} />
+            ))}
+          </div>
+        </div>
+        <div className="field">
+          <label>Ikona</label>
+          <div className="emoji-grid">
+            <button className={!draft.icon ? 'on' : ''} title="Bez ikony" onClick={() => setDraft({ ...draft, icon: undefined })}><IX /></button>
+            {SNIPPET_EMOJIS.map((e) => (
+              <button key={e} className={draft.icon === e ? 'on' : ''} onClick={() => setDraft({ ...draft, icon: e })}>{e}</button>
+            ))}
+          </div>
         </div>
         <label className="check"><input type="checkbox" checked={draft.autoSend} onChange={(e) => setDraft({ ...draft, autoSend: e.target.checked })} /> Od razu wyślij (Enter po wklejeniu)</label>
         {project && (

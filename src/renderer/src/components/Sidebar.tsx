@@ -1,18 +1,62 @@
 import { useState } from 'react';
 import { moveProject, PROJECT_COLORS, updateProject } from '../../../shared/state';
-import { aggregate } from '../../../shared/status';
+import { aggregate, type CellStatus } from '../../../shared/status';
+import { describeLayout } from '../../../shared/layout';
 import type { Project } from '../../../shared/types';
-import { createProject, relocateProject, removeProject, switchProject } from '../actions';
+import { createProject, relocateProject, removeProject, selectTab, switchProject } from '../actions';
 import { askText, setUi, update, useStore } from '../store';
 import { openMenu } from './ContextMenu';
-import { IFolder, IHistory, IPlus, ISearch } from './icons';
+import { IFolder, IGrid, IHistory, IPlus, ISearch } from './icons';
 import { StatusBadges } from './StatusBadges';
 
-export function ProjectIconView({ project }: { project: Project }) {
+export function ProjectIconView({ project, size = 'md' }: { project: Project; size?: 'md' | 'xl' }) {
   const icon = project.icon;
-  if (icon?.kind === 'image') return <span className="picon"><img src={icon.dataUrl} alt="" /></span>;
-  if (icon?.kind === 'emoji') return <span className="picon" style={{ background: project.color + '33' }}>{icon.value}</span>;
-  return <span className="picon swatch-only" style={{ background: project.color }} />;
+  const cls = `picon ${size}`;
+  if (icon?.kind === 'image') return <span className={cls}><img src={icon.dataUrl} alt="" /></span>;
+  if (icon?.kind === 'emoji') return <span className={cls} style={{ background: project.color + '2e' }}>{icon.value}</span>;
+  // No icon: the project's initial on its color.
+  return (
+    <span className={`${cls} letter`} style={{ background: project.color + '2e', color: project.color }}>
+      {project.name.trim().charAt(0).toUpperCase() || '?'}
+    </span>
+  );
+}
+
+const INACTIVE_TABS = 3;
+
+/** Open grids of a project: all for the active one, the last few for the others. */
+function TabList({ project, active, statuses }: { project: Project; active: boolean; statuses: Record<string, CellStatus> }) {
+  const tabs = active ? project.tabs : project.tabs.slice(-INACTIVE_TABS);
+  const hidden = project.tabs.length - tabs.length;
+  if (!project.tabs.length) return null;
+  return (
+    <>
+      {tabs.map((t) => {
+        const counts = aggregate(t.cells.map((c) => statuses[c.id] ?? 'idle'));
+        const dot = counts.waiting ? 'waiting' : counts.working ? 'working' : counts.exited ? 'exited' : '';
+        const on = active && project.activeTabId === t.id;
+        return (
+          <div
+            key={t.id}
+            className={`sub-item tab-item ${on ? 'on' : ''}`}
+            title={`${t.name} · ${describeLayout(t.layout)}`}
+            onClick={() => {
+              if (!active) switchProject(project.id);
+              selectTab(project.id, t);
+            }}
+          >
+            {dot ? <span className={`dot ${dot}`} /> : <IGrid />}
+            <span className="tname">{t.name}</span>
+            <StatusBadges counts={counts} compact />
+            <span className="tsize">{describeLayout(t.layout)}</span>
+          </div>
+        );
+      })}
+      {hidden > 0 && (
+        <div className="sub-item more" onClick={() => switchProject(project.id)}>+{hidden} więcej</div>
+      )}
+    </>
+  );
 }
 
 export function Sidebar() {
@@ -76,16 +120,16 @@ export function Sidebar() {
                 {!collapsed && <span className="name">{p.name}</span>}
                 {!collapsed && <StatusBadges counts={counts} />}
               </div>
+              {!collapsed && <TabList project={p} active={active} statuses={statuses} />}
               {active && !collapsed && (
                 <>
                   {missing[p.id] && (
                     <div className="sub-item" onClick={() => void relocateProject(p.id)} style={{ color: '#f87171' }}>
-                      <IFolder /> Folder nie istnieje — wskaż
+                      <IFolder /> Folder nie istnieje, wskaż nowy
                     </div>
                   )}
                   <div className="sub-item" onClick={() => setUi({ modal: { kind: 'history', projectId: p.id } })}>
-                    <IHistory /> Historia
-                    {p.archive.length > 0 && <span className="muted">({p.archive.length})</span>}
+                    <IHistory /> Historia czatów i gridów
                   </div>
                 </>
               )}

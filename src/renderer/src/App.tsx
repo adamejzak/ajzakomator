@@ -40,7 +40,7 @@ async function boot(): Promise<void> {
   window.mc.on('cell:spawnError', (cellId, message) => setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: message } })));
   window.mc.on('focus-cell', (cellId) => focusCell(cellId));
   window.mc.on('ptyhost:crashed', () => {
-    toast('Proces terminali się zrestartował — wznawiam rozmowy', 'error');
+    toast('Proces terminali się zrestartował, wznawiam rozmowy', 'error');
     resetStarted();
   });
   window.mc.on('app:before-quit', () => window.mc.saveState(getS()));

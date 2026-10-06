@@ -1,7 +1,13 @@
 // Grid layouts: a cols×rows grid split into rectangular areas; each area hosts one cell.
 
 export type Area = { col: number; row: number; colSpan: number; rowSpan: number };
-export type GridLayout = { cols: number; rows: number; areas: Area[] };
+export type GridLayout = {
+  cols: number;
+  rows: number;
+  areas: Area[];
+  /** Set for row-based layouts (e.g. [3, 2] = three on top, two below); `cols` is then their LCM. */
+  rowCounts?: number[];
+};
 
 export const MAX_COLS = 5;
 export const MAX_ROWS = 4;
@@ -34,7 +40,27 @@ export function mergeRect(layout: GridLayout, rect: Area): GridLayout {
 }
 
 export function unmergeAll(layout: GridLayout): GridLayout {
-  return createLayout(layout.cols, layout.rows);
+  return layout.rowCounts ? layoutFromRows(layout.rowCounts) : createLayout(layout.cols, layout.rows);
+}
+
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+const lcm = (a: number, b: number) => (a * b) / gcd(a, b);
+
+/** Each row gets its own number of equally wide cells, e.g. [3, 2]. */
+export function layoutFromRows(counts: number[]): GridLayout {
+  const rows = counts.map((n) => Math.max(1, Math.min(MAX_COLS, Math.floor(n)))).slice(0, MAX_ROWS);
+  if (!rows.length) return createLayout(1, 1);
+  if (rows.every((n) => n === rows[0])) return createLayout(rows[0], rows.length);
+  const cols = rows.reduce(lcm, 1);
+  const areas = rows.flatMap((n, row) =>
+    Array.from({ length: n }, (_, i) => ({ col: i * (cols / n), row, colSpan: cols / n, rowSpan: 1 })),
+  );
+  return { cols, rows: rows.length, areas, rowCounts: rows };
+}
+
+/** Cells per row for the row editor (merged layouts report their base rows). */
+export function rowCountsOf(layout: GridLayout): number[] {
+  return layout.rowCounts ?? Array.from({ length: layout.rows }, () => layout.cols);
 }
 
 /** Layout with exactly `n` areas (clamped to 1..MAX_CELLS); the last area stretches over empty fields. */
@@ -60,6 +86,7 @@ export function removeArea(layout: GridLayout): GridLayout {
 
 export function describeLayout(layout: GridLayout): string {
   const n = layout.areas.length;
+  if (layout.rowCounts && n === layout.rowCounts.reduce((a, b) => a + b, 0)) return layout.rowCounts.join('+');
   if (n === 1) return '1';
   if (n === layout.cols * layout.rows) return `${layout.cols}×${layout.rows}`;
   return `${n}`;

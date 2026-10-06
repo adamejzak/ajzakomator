@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 const Svg = ({ children, size = 14 }: { children: ReactNode; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -22,26 +22,13 @@ export const IEdit = () => <Svg size={12}><path d="M10.5 2.5l3 3L6 13H3v-3z" /><
 export const IBranch = () => <Svg size={11}><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="5.5" r="1.5" /><path d="M4.5 5v6M11.5 7c0 3-7 2-7 4" /></Svg>;
 export const IChevron = () => <Svg size={10}><path d="M4 6l4 4 4-4" /></Svg>;
 
-/** App mark: gradient tile with a terminal prompt. */
+/** App mark: flat white tile with a terminal prompt. */
 export function Logo({ size = 18 }: { size?: number }) {
-  const id = useId().replace(/:/g, '');
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" style={{ flex: 'none', display: 'block' }}>
-      <defs>
-        <linearGradient id={`lg${id}`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#6366f1" />
-          <stop offset="0.55" stopColor="#8b5cf6" />
-          <stop offset="1" stopColor="#d946ef" />
-        </linearGradient>
-        <linearGradient id={`ls${id}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#fff" stopOpacity="0.28" />
-          <stop offset="0.5" stopColor="#fff" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="30" height="30" rx="8" fill={`url(#lg${id})`} />
-      <rect x="1" y="1" width="30" height="30" rx="8" fill={`url(#ls${id})`} />
-      <path d="M9.5 11.5l4.5 4.5-4.5 4.5" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M16.5 21h6.5" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
+      <rect x="1" y="1" width="30" height="30" rx="8" fill="#f4f4f5" />
+      <path d="M9.5 11.5l4.5 4.5-4.5 4.5" fill="none" stroke="#0b0b0c" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M16.5 21h6.5" stroke="#0b0b0c" strokeWidth="2.6" strokeLinecap="round" />
     </svg>
   );
 }

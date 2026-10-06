@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
-import { createLayout, describeLayout, layoutForCount, MAX_COLS, MAX_ROWS, mergeRect, unmergeAll, type GridLayout } from '../../../shared/layout';
+import {
+  createLayout, describeLayout, layoutForCount, layoutFromRows, MAX_COLS, MAX_ROWS, mergeRect, rowCountsOf, unmergeAll, type GridLayout,
+} from '../../../shared/layout';
 import { getProfile, removePreset, uid, upsertPreset } from '../../../shared/state';
 import type { PresetCell } from '../../../shared/types';
 import { openTab } from '../actions';
 import { askChoice, askText, closeModal, update, useStore } from '../store';
-import { IX } from './icons';
+import { openMenuAt } from './ContextMenu';
+import { IChevron, ISnippet, IX } from './icons';
 
 const QUICK = [1, 2, 4, 6, 9, 12];
+const ROW_TEMPLATES = [[2, 1], [1, 2], [3, 2], [2, 3], [3, 1], [1, 3], [4, 2], [2, 2, 1]];
 
 export function GridDialog({ projectId }: { projectId: string }) {
   const s = useStore((st) => st.s);
@@ -72,8 +76,13 @@ export function GridDialog({ projectId }: { projectId: string }) {
     setSelected(new Set());
   };
 
-  const hc = hover?.c ?? layout.cols;
-  const hr = hover?.r ?? layout.rows;
+  const hc = hover?.c ?? (layout.rowCounts ? 0 : layout.cols);
+  const hr = hover?.r ?? (layout.rowCounts ? 0 : layout.rows);
+  const rows = rowCountsOf(layout);
+  const setRows = (next: number[]) => {
+    setLayout(layoutFromRows(next));
+    setSelected(new Set());
+  };
 
   return (
     <div className="modal wide" onMouseDown={(e) => e.stopPropagation()}>
@@ -86,6 +95,12 @@ export function GridDialog({ projectId }: { projectId: string }) {
           {QUICK.map((q) => (
             <button key={q} className="btn small" onClick={() => { setLayout(layoutForCount(q)); setSelected(new Set()); }}>
               {describeLayout(layoutForCount(q))}
+            </button>
+          ))}
+          <span className="muted" style={{ alignSelf: 'center', margin: '0 4px' }}>·</span>
+          {ROW_TEMPLATES.map((t) => (
+            <button key={t.join('+')} className={`btn small ${describeLayout(layout) === t.join('+') ? 'primary' : ''}`} onClick={() => setRows(t)} title="Rzędy o różnej liczbie komórek">
+              {t.join('+')}
             </button>
           ))}
           {presets.length > 0 && <span className="muted" style={{ alignSelf: 'center', margin: '0 4px' }}>·</span>}
@@ -116,6 +131,23 @@ export function GridDialog({ projectId }: { projectId: string }) {
               <button className="btn small" onClick={() => setSelected(new Set())}>Wyczyść</button>
             </div>
             <div className="muted" style={{ fontSize: 11, textAlign: 'center' }}>Kliknij komórki w podglądzie, żeby zaznaczyć je do scalenia.</div>
+            <div className="row-editor">
+              <div className="section-title" style={{ margin: 0 }}>Rzędy</div>
+              {rows.map((count, r) => (
+                <div key={r} className="re-row">
+                  <span className="muted">Rząd {r + 1}</span>
+                  <span className="stepper">
+                    <button onClick={() => setRows(rows.map((x, j) => (j === r ? Math.max(1, x - 1) : x)))} disabled={count <= 1}>−</button>
+                    <b>{count}</b>
+                    <button onClick={() => setRows(rows.map((x, j) => (j === r ? Math.min(MAX_COLS, x + 1) : x)))} disabled={count >= MAX_COLS}>+</button>
+                  </span>
+                  <button className="re-del" title="Usuń rząd" disabled={rows.length <= 1} onClick={() => setRows(rows.filter((_, j) => j !== r))}><IX /></button>
+                </div>
+              ))}
+              {rows.length < MAX_ROWS && (
+                <button className="btn small ghost" onClick={() => setRows([...rows, rows[rows.length - 1] ?? 1])}>+ dodaj rząd</button>
+              )}
+            </div>
           </div>
 
           <div className="preview" style={{ gridTemplateColumns: `repeat(${layout.cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${layout.rows}, minmax(0,1fr))` }}>
@@ -132,10 +164,22 @@ export function GridDialog({ projectId }: { projectId: string }) {
                     return next;
                   })}
                 >
-                  <span className="n">{i + 1}</span>
-                  <span className="pname">{cells[i].name || <span className="muted">bez nazwy</span>}</span>
-                  <span className="pprof"><i style={{ background: prof.color }} />{prof.name}{cells[i].worktree ? ' · worktree' : ''}</span>
-                  {cells[i].prompt && <span className="pprof">↳ prompt startowy</span>}
+                  <div className="pc-head">
+                    <span className="n">{i + 1}</span>
+                    <span className="nm">{cells[i].name || `Komórka ${i + 1}`}</span>
+                    <span className="pill" style={{ color: prof.color, background: prof.color + '1f' }}>{prof.name}</span>
+                  </div>
+                  <div className="pc-body">
+                    {cells[i].prompt && prof.cli !== 'shell' ? (
+                      <span className="pc-prompt">› {cells[i].prompt}</span>
+                    ) : (
+                      <>
+                        <span className="ln" style={{ width: '62%' }} />
+                        <span className="ln" style={{ width: '40%' }} />
+                      </>
+                    )}
+                    {cells[i].worktree && <span className="pc-wt">⎇ worktree</span>}
+                  </div>
                 </div>
               );
             })}
@@ -149,13 +193,14 @@ export function GridDialog({ projectId }: { projectId: string }) {
             {s.profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           {snippets.length > 0 && (
-            <select className="select" value="" onChange={(e) => {
-              const sn = snippets.find((x) => x.id === e.target.value);
-              if (sn) setAll({ prompt: sn.text });
-            }}>
-              <option value="">prompt dla wszystkich…</option>
-              {snippets.map((sn) => <option key={sn.id} value={sn.id}>{sn.name}</option>)}
-            </select>
+            <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, [
+              { header: 'Prompt startowy dla wszystkich' },
+              ...snippets.map((sn) => ({ label: sn.name, onClick: () => setAll({ prompt: sn.text }) })),
+              { sep: true as const },
+              { label: 'Wyczyść prompty', onClick: () => setAll({ prompt: undefined }) },
+            ])}>
+              <ISnippet /> Prompt dla wszystkich <IChevron />
+            </button>
           )}
           {isRepo && <label className="check"><input type="checkbox" onChange={(e) => setAll({ worktree: e.target.checked })} /> worktree dla wszystkich</label>}
         </div>
@@ -212,22 +257,21 @@ function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
         <input
           className="input"
           disabled={isShell}
-          placeholder={isShell ? '—' : 'pierwsza wiadomość dla agenta (opcjonalnie)'}
+          placeholder={isShell ? 'nie dotyczy PowerShella' : 'pierwsza wiadomość dla agenta (opcjonalnie)'}
           value={isShell ? '' : (cell.prompt ?? '')}
           title={cell.prompt}
           onChange={(e) => onChange({ prompt: e.target.value })}
         />
         {!isShell && snippets.length > 0 && (
-          <select className="select" value="" title="Wstaw snippet" onChange={(e) => {
-            const sn = snippets.find((x) => x.id === e.target.value);
-            if (sn) onChange({ prompt: sn.text });
-          }}>
-            <option value="">⋯</option>
-            {snippets.map((sn) => <option key={sn.id} value={sn.id}>{sn.name}</option>)}
-          </select>
+          <button className="btn snip-btn" title="Wstaw snippet" onClick={(e) => openMenuAt(e.currentTarget, [
+            { header: 'Wstaw snippet' },
+            ...snippets.map((sn) => ({ label: sn.name, onClick: () => onChange({ prompt: sn.text }) })),
+          ])}>
+            <ISnippet /> Snippet <IChevron />
+          </button>
         )}
       </span>
-      <span>{isRepo && <input type="checkbox" checked={cell.worktree} onChange={(e) => onChange({ worktree: e.target.checked })} />}</span>
+      <span className="wt">{isRepo && <input type="checkbox" checked={cell.worktree} onChange={(e) => onChange({ worktree: e.target.checked })} />}</span>
     </>
   );
 }

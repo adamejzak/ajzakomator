@@ -25,7 +25,17 @@ export function SnippetPanel() {
   return (
     <div className="rpanel">
       <div className="side-title">
-        <span>Snippety</span>
+        <span className="row" style={{ gap: 6 }}>
+          Snippety
+          <span className="help">
+            ?
+            <span className="help-pop">
+              <span className="kbd">Klik</span><span>wklej do aktywnej komórki</span>
+              <span className="kbd">Shift + klik</span><span>wklej do wszystkich</span>
+              <span className="kbd">Przeciągnij</span><span>na komórkę albo zmień kolejność</span>
+            </span>
+          </span>
+        </span>
         <button className="sq" title="Nowy snippet" onClick={() => setUi({ modal: { kind: 'snippet', snippetId: null } })}><IPlus /></button>
       </div>
       {!snippets.length ? (
@@ -43,6 +53,8 @@ export function SnippetPanel() {
           <div
             key={sn.id}
             className={`snippet ${dragId === sn.id ? 'dragging' : ''} ${overId === sn.id && dragId !== sn.id ? 'drag-over' : ''}`}
+            style={sn.color ? ({ '--sc': sn.color } as React.CSSProperties) : undefined}
+            data-colored={sn.color ? '' : undefined}
             draggable
             onDragStart={(e) => {
               e.dataTransfer.setData(SNIPPET_MIME, JSON.stringify(sn));
@@ -62,13 +74,12 @@ export function SnippetPanel() {
               setDragId(null);
               setOverId(null);
             }}
-            onMouseDown={(e) => e.preventDefault() /* keep focus in the terminal */}
             onClick={(e) => use(sn, e.shiftKey)}
             title={'Klik: wklej do aktywnej komórki · Shift+klik: do wszystkich · przeciągnij na komórkę'}
           >
             <div className="s-head">
+              {sn.icon && <span className="s-icon">{sn.icon}</span>}
               <span className="s-name">{sn.name}</span>
-              {sn.autoSend && <span className="tag green">↵ wyślij</span>}
               {sn.projectId && <span className="tag">projekt</span>}
               <button
                 className="btn ghost icon small s-edit"
@@ -84,11 +95,6 @@ export function SnippetPanel() {
           </div>
         ))}
         {!visible.length && <div className="muted" style={{ padding: '8px 2px' }}>Nic nie pasuje do „{q}”.</div>}
-      </div>
-      <div className="legend">
-        <span className="kbd">Klik</span><span>wklej do aktywnej komórki</span>
-        <span className="kbd">Shift + klik</span><span>wklej do wszystkich</span>
-        <span className="kbd">Przeciągnij</span><span>na komórkę · zmień kolejność</span>
       </div>
       </>
       )}

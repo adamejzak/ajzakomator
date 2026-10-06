@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { describeLayout } from '../../../shared/layout';
 import { activeProject, renameTab } from '../../../shared/state';
 import { aggregate } from '../../../shared/status';
@@ -7,6 +7,42 @@ import { setUi, update, useStore } from '../store';
 import { openMenu, openMenuAt } from './ContextMenu';
 import { IGrid, IHistory, IPlus, ISettings, ISidebar, ISnippet, IX, Logo } from './icons';
 import { StatusBadges } from './StatusBadges';
+
+// Each "moment" the white wordmark briefly takes one of these looks, then fades back to white.
+const BRAND_THEMES = ['blue', 'red', 'green', 'amber', 'violet', 'sunset', 'ocean', 'aurora', 'rainbow', 'blue', 'green', 'red'];
+
+function Brand({ collapsed }: { collapsed: boolean }) {
+  const [fx, setFx] = useState<{ theme: string; on: boolean }>({ theme: 'blue', on: false });
+  useEffect(() => {
+    let timer: number;
+    let last = '';
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        let theme = last;
+        while (theme === last) theme = BRAND_THEMES[Math.floor(Math.random() * BRAND_THEMES.length)];
+        last = theme;
+        setFx({ theme, on: true });
+        timer = window.setTimeout(() => {
+          setFx((f) => ({ ...f, on: false }));
+          schedule();
+        }, 2200 + Math.random() * 1600);
+      }, 5000 + Math.random() * 7000);
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, []);
+  return (
+    <div className={`brand ${collapsed ? 'collapsed' : ''} ${fx.on ? 'fx' : ''} t-${fx.theme}`}>
+      <span className="brand-mark"><Logo size={20} /></span>
+      {!collapsed && (
+        <span className="brand-name">
+          <span className="bn-base">ajzakomator</span>
+          <span className="bn-fx" aria-hidden>ajzakomator</span>
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function TitleBar() {
   const s = useStore((st) => st.s);
@@ -25,10 +61,7 @@ export function TitleBar() {
 
   return (
     <div className="titlebar">
-      <div className={`brand ${s.sidebarCollapsed ? 'collapsed' : ''}`}>
-        <span className="brand-mark"><Logo size={20} /></span>
-        {!s.sidebarCollapsed && <span className="brand-name" data-text="ajzakomator">ajzakomator</span>}
-      </div>
+      <Brand collapsed={s.sidebarCollapsed} />
       {project && (
         <div className="tabs no-drag">
           {project.tabs.map((t) => {

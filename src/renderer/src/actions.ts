@@ -386,7 +386,7 @@ export function sendSnippet(snippet: Snippet, target: 'focused' | 'all' | { cell
   // before the launch command): start them, but don't paste.
   const ready = ids.filter((id) => started.has(id));
   ids.filter((id) => !started.has(id)).forEach(ensureStarted);
-  if (ready.length < ids.length) toast(`Komórki w trakcie startu: ${ids.length - ready.length} — wklej do nich ponownie za chwilę`);
+  if (ready.length < ids.length) toast(`Komórki w trakcie startu: ${ids.length - ready.length}. Wklej do nich ponownie za chwilę.`);
   for (const id of ready) terminals.paste(id, snippet.text, snippet.autoSend);
   if (ids.length === 1) focusCell(ids[0]);
 }

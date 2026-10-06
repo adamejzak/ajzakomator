@@ -2,7 +2,8 @@ import { activeProject, activeTab } from '../../../shared/state';
 import { createProject, quickTab } from '../actions';
 import { setUi, useStore } from '../store';
 import { CellView } from './CellView';
-import { IGrid, IPlus, Logo } from './icons';
+import { IHistory, IPlus, Logo } from './icons';
+import { ProjectIconView } from './Sidebar';
 
 export function GridView() {
   const s = useStore((st) => st.s);
@@ -32,9 +33,7 @@ export function GridView() {
     return (
       <div className="empty">
         <div className="welcome">
-          <div className="es-icon" style={{ width: 52, height: 52, borderRadius: 14, display: 'grid', placeItems: 'center', background: 'var(--bg-2)', border: '1px solid var(--border-2)', color: 'var(--text-2)' }}>
-            <IGrid />
-          </div>
+          <ProjectIconView project={project} size="xl" />
           <h2>{project.name}</h2>
           <div className="sub">Otwórz grid terminali albo pojedynczy terminal z wybranym agentem.</div>
           <button className="btn white lg" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><IPlus /> Nowy grid</button>
@@ -45,11 +44,9 @@ export function GridView() {
               </button>
             ))}
           </div>
-          {project.archive.length > 0 && (
-            <button className="btn ghost" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}>
-              Historia — {project.archive.length} zamkniętych gridów
-            </button>
-          )}
+          <button className="btn ghost" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}>
+            <IHistory /> Historia czatów i gridów
+          </button>
           <div className="keys">
             <span><span className="kbd">Ctrl+K</span> szukaj</span>
             <span><span className="kbd">Ctrl+Shift+T</span> terminal</span>

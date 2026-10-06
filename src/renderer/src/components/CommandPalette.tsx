@@ -74,7 +74,7 @@ function PaletteInner() {
         out.push({ kind: 'terminal', title: pf.name, desc: 'nowa zakładka z jednym terminalem', run: () => quickTab(pf.id) });
       }
       for (const a of project.archive)
-        out.push({ kind: 'historia', title: a.name, desc: `zamknięty grid ${describeLayout(a.layout)} — przywróć`, run: () => restoreArchived(project.id, a.id) });
+        out.push({ kind: 'historia', title: a.name, desc: `zamknięty grid ${describeLayout(a.layout)}, przywróć`, run: () => restoreArchived(project.id, a.id) });
       for (const x of sessions)
         out.push({ kind: x.cli, title: x.title, desc: 'wznów w nowej zakładce · Shift: w nowej komórce', run: (shift) => resumeSession(x, shift ? 'newCell' : 'newTab') });
     }
