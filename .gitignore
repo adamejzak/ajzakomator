@@ -6,3 +6,5 @@ spike/
 *.log
 .vite/
 *.stackdump
+*.tsbuildinfo
+release-next/

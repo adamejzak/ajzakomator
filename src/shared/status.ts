@@ -6,15 +6,20 @@ export type CellStatus = 'idle' | 'working' | 'waiting' | 'exited';
 export type HookEvent = 'prompt' | 'stop' | 'notify';
 
 export const ECHO_MS = 250;
+/** Output separated by more than this starts a new activity run. */
+export const GAP_MS = 1500;
+/** An uninterrupted output run this long means the agent is busy (e.g. its "Working (12s)" timer). */
+export const SUSTAIN_MS = 3000;
 
 export class StatusTracker {
   status: CellStatus = 'idle';
   private lastInput = -Infinity;
   private lastOutput = -Infinity;
+  private activityStart = -Infinity;
   private armed = false;
   private hooked = false;
 
-  constructor(private readonly quietMs = 1500) {}
+  constructor(private readonly quietMs = 2000) {}
 
   input(now: number, submitted: boolean): void {
     if (this.status === 'exited') return;
@@ -26,8 +31,18 @@ export class StatusTracker {
   output(now: number): void {
     if (this.status === 'exited' || this.hooked) return;
     if (now - this.lastInput < ECHO_MS) return; // keystroke echo / prompt redraw
+    if (now - this.lastOutput > GAP_MS) this.activityStart = now;
     this.lastOutput = now;
-    if (this.armed) this.status = 'working';
+    if (this.armed) {
+      this.status = 'working';
+      return;
+    }
+    // Recover from a premature "waiting" (pause or notification mid-turn): an agent that keeps
+    // redrawing for SUSTAIN_MS is clearly still working.
+    if (now - this.activityStart >= SUSTAIN_MS) {
+      this.status = 'working';
+      this.armed = true;
+    }
   }
 
   hook(event: HookEvent): void {
@@ -57,7 +72,7 @@ export class StatusTracker {
     this.status = 'idle';
     this.armed = false;
     this.hooked = false;
-    this.lastInput = this.lastOutput = -Infinity;
+    this.lastInput = this.lastOutput = this.activityStart = -Infinity;
   }
 
   tick(now: number): CellStatus {
