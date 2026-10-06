@@ -1,6 +1,6 @@
 // Pure state transitions. Every function returns a new AppState and never mutates its input.
 import { growLayout, removeArea, type GridLayout } from './layout';
-import { DEFAULT_PROFILES } from './profiles';
+import { DEFAULT_PROFILES, RETIRED_PROFILES } from './profiles';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
@@ -32,9 +32,13 @@ const mapProject = (s: AppState, projectId: string, fn: (p: Project) => Project)
 const mapTab = (s: AppState, projectId: string, tabId: string, fn: (t: Tab) => Tab): AppState =>
   mapProject(s, projectId, (p) => ({ ...p, tabs: p.tabs.map((t) => (t.id === tabId ? fn(t) : t)) }));
 
-const newCell = (c: { profileId: string; worktree?: Worktree; session?: Cell['session'] }): Cell => ({
+type CellInput = { profileId: string; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session'] };
+
+const newCell = (c: CellInput): Cell => ({
   id: uid(),
   profileId: c.profileId,
+  ...(c.name?.trim() ? { name: c.name.trim() } : {}),
+  ...(c.startupPrompt?.trim() ? { startupPrompt: c.startupPrompt } : {}),
   ...(c.worktree ? { worktree: c.worktree } : {}),
   ...(c.session ? { session: c.session } : {}),
 });
@@ -54,8 +58,12 @@ export function addProject(s: AppState, input: { name: string; path: string }): 
   return { ...s, projects: [...s.projects, project], activeProjectId: project.id };
 }
 
-export function updateProject(s: AppState, id: string, patch: Partial<Pick<Project, 'name' | 'path' | 'color'>>): AppState {
-  return mapProject(s, id, (p) => ({ ...p, ...patch }));
+export function updateProject(s: AppState, id: string, patch: Partial<Pick<Project, 'name' | 'path' | 'color' | 'icon'>>): AppState {
+  return mapProject(s, id, (p) => {
+    const next = { ...p, ...patch };
+    if ('icon' in patch && !patch.icon) delete next.icon;
+    return next;
+  });
 }
 
 export function removeProject(s: AppState, id: string): AppState {
@@ -84,7 +92,7 @@ export function setActiveProject(s: AppState, id: string): AppState {
 export interface NewTabInput {
   name?: string;
   layout: GridLayout;
-  cells: Array<{ profileId: string; worktree?: Worktree; session?: Cell['session'] }>;
+  cells: CellInput[];
 }
 
 export function addTab(s: AppState, projectId: string, input: NewTabInput): AppState {
@@ -149,7 +157,7 @@ export function deleteArchived(s: AppState, projectId: string, archivedId: strin
 
 export function addCell(
   s: AppState, projectId: string, tabId: string, profileId: string,
-  extra: { worktree?: Worktree; session?: Cell['session'] } = {},
+  extra: Omit<CellInput, 'profileId'> = {},
 ): AppState {
   return mapTab(s, projectId, tabId, (t) => {
     const layout = growLayout(t.layout);
@@ -218,6 +226,14 @@ export const removeProfile = (s: AppState, id: string): AppState =>
 export const upsertPreset = (s: AppState, p: Preset): AppState => ({ ...s, presets: upsert(s.presets, p) });
 export const removePreset = (s: AppState, id: string): AppState => ({ ...s, presets: s.presets.filter((p) => p.id !== id) });
 export const upsertSnippet = (s: AppState, sn: Snippet): AppState => ({ ...s, snippets: upsert(s.snippets, sn) });
+export function moveSnippet(s: AppState, id: string, beforeId: string | null): AppState {
+  const moving = s.snippets.find((x) => x.id === id);
+  if (!moving || id === beforeId) return s;
+  const rest = s.snippets.filter((x) => x.id !== id);
+  const at = beforeId ? rest.findIndex((x) => x.id === beforeId) : rest.length;
+  rest.splice(at < 0 ? rest.length : at, 0, moving);
+  return { ...s, snippets: rest };
+}
 export const removeSnippet = (s: AppState, id: string): AppState => ({ ...s, snippets: s.snippets.filter((x) => x.id !== id) });
 export const updateSettings = (s: AppState, patch: Partial<Settings>): AppState => ({ ...s, settings: { ...s.settings, ...patch } });
 
@@ -233,14 +249,21 @@ export function normalizeState(raw: unknown): AppState | null {
   const r = raw as Partial<AppState>;
   if (r.version !== 1 || !Array.isArray(r.projects)) return null;
   const d = defaultState();
+  const remap = (id: string) => RETIRED_PROFILES[id] ?? id;
+  const remapCells = <T extends { profileId: string }>(cells: T[]) => cells.map((c) => ({ ...c, profileId: remap(c.profileId) }));
+  const profiles = (Array.isArray(r.profiles) && r.profiles.length ? r.profiles : d.profiles).filter((p) => !(p.id in RETIRED_PROFILES));
   return {
     ...d,
     ...r,
-    profiles: Array.isArray(r.profiles) && r.profiles.length ? r.profiles : d.profiles,
-    presets: Array.isArray(r.presets) ? r.presets : [],
+    profiles: profiles.length ? profiles : d.profiles,
+    presets: (Array.isArray(r.presets) ? r.presets : []).map((p) => ({ ...p, cells: remapCells(p.cells ?? []) })),
     snippets: Array.isArray(r.snippets) ? r.snippets : [],
-    settings: { ...d.settings, ...(r.settings ?? {}) },
-    projects: r.projects.map((p) => ({ ...p, tabs: p.tabs ?? [], archive: p.archive ?? [] })),
+    settings: { ...d.settings, ...(r.settings ?? {}), lastProfileId: remap(r.settings?.lastProfileId ?? d.settings.lastProfileId) },
+    projects: r.projects.map((p) => ({
+      ...p,
+      tabs: (p.tabs ?? []).map((t) => ({ ...t, cells: remapCells(t.cells) })),
+      archive: (p.archive ?? []).map((t) => ({ ...t, cells: remapCells(t.cells) })),
+    })),
   } as AppState;
 }
 

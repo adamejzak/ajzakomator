@@ -80,7 +80,10 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
   const { cols, rows } = terminals.size(cellId);
   const r = await window.mc.spawnCell({
     cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId,
+    startupPrompt: mode === 'new' && profile.cli !== 'shell' ? cell.startupPrompt : undefined,
   });
+  // The startup prompt is a one-shot: later restarts must not send it again.
+  if (r.ok && cell.startupPrompt && mode === 'new') update((s) => updateCell(s, cellId, { startupPrompt: undefined }));
   if (!r.ok) setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: r.error } }));
   else terminals.syncSize(cellId);
 }
@@ -142,6 +145,25 @@ function killAndDispose(cellId: string): void {
       maximizedCellId: ui.maximizedCellId === cellId ? null : ui.maximizedCellId,
     };
   });
+}
+
+export function renameCell(cellId: string, name: string): void {
+  update((s) => updateCell(s, cellId, { name: name.trim() || undefined }));
+}
+
+let titlesTimer: number | undefined;
+/** Refreshes conversation titles for a project (debounced); used as default cell labels. */
+export function refreshSessionTitles(projectPath: string | undefined, delay = 0): void {
+  if (!projectPath) return;
+  clearTimeout(titlesTimer);
+  titlesTimer = window.setTimeout(async () => {
+    const list = await window.mc.listSessions(projectPath);
+    setUi((ui) => {
+      const sessionTitles = { ...ui.sessionTitles };
+      for (const x of list) sessionTitles[x.id] = x.title;
+      return { sessionTitles };
+    });
+  }, delay);
 }
 
 export function focusCell(cellId: string): void {
@@ -235,6 +257,8 @@ export async function relocateProject(projectId: string): Promise<void> {
 export interface TabSpecCell {
   profileId: string;
   worktree: boolean;
+  name?: string;
+  prompt?: string;
   session?: CellSession;
 }
 
@@ -242,7 +266,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
   const project = getS().projects.find((p) => p.id === projectId);
   if (!project) return;
   const tabName = name ?? undefined;
-  const specs: Array<{ profileId: string; worktree?: Worktree; session?: CellSession }> = [];
+  const specs: Array<{ profileId: string; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession }> = [];
   for (let i = 0; i < layout.areas.length; i++) {
     const spec = cells[i] ?? cells[cells.length - 1] ?? { profileId: getS().settings.lastProfileId, worktree: false };
     let worktree: Worktree | undefined;
@@ -253,7 +277,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
         toast(`Worktree nie powstał (komórka ${i + 1}): ${(e as Error).message}`, 'error');
       }
     }
-    specs.push({ profileId: spec.profileId, worktree, session: spec.session });
+    specs.push({ profileId: spec.profileId, name: spec.name, startupPrompt: spec.prompt, worktree, session: spec.session });
   }
   update((s) => setActiveProject(addTab(s, projectId, { name: tabName, layout, cells: specs }), projectId));
   const tab = activeTab(getS().projects.find((p) => p.id === projectId) ?? null);

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { layoutForCount } from '../src/shared/layout';
 import {
-  addCell, addProject, addTab, closeTab, defaultState, findCell, removeCell, removeProject,
-  restoreTab, updateCell,
+  addCell, addProject, addTab, closeTab, defaultState, findCell, moveSnippet, normalizeState, removeCell, removeProject,
+  restoreTab, updateCell, upsertSnippet,
 } from '../src/shared/state';
 
 function withProject() {
@@ -14,7 +14,7 @@ function withProject() {
 describe('state', () => {
   it('defaultState ships the default profiles', () => {
     const s = defaultState();
-    expect(s.profiles.map((p) => p.cli)).toEqual(['claude', 'claude', 'codex', 'codex', 'shell']);
+    expect(s.profiles.map((p) => p.cli)).toEqual(['claude', 'codex', 'shell']);
     expect(s.projects).toEqual([]);
   });
 
@@ -85,6 +85,28 @@ describe('state', () => {
     const b = s.projects[1];
     s = removeProject(s, b.id);
     expect(s.activeProjectId).toBe(s.projects[0].id);
+  });
+
+  it('normalizeState folds retired profiles into claude/codex', () => {
+    const { s: s0, p } = withProject();
+    const old = addTab(s0, p.id, { layout: layoutForCount(2), cells: [{ profileId: 'claude-opus' }, { profileId: 'codex-high' }] });
+    const raw = { ...old, profiles: [...old.profiles, { id: 'claude-opus', name: 'Claude Opus', cli: 'claude', args: '--model opus', color: '#fff' }] };
+    const s = normalizeState(JSON.parse(JSON.stringify(raw)))!;
+    expect(s.profiles.map((x) => x.id)).toEqual(['claude', 'codex', 'shell']);
+    expect(s.projects[0].tabs[0].cells.map((c) => c.profileId)).toEqual(['claude', 'codex']);
+  });
+
+  it('keeps cell names and startup prompts from the tab input', () => {
+    const { s: s0, p } = withProject();
+    const s = addTab(s0, p.id, { layout: layoutForCount(1), cells: [{ profileId: 'claude', name: ' backend ', startupPrompt: 'zrób X' }] });
+    expect(s.projects[0].tabs[0].cells[0]).toMatchObject({ name: 'backend', startupPrompt: 'zrób X' });
+  });
+
+  it('moveSnippet reorders', () => {
+    let s = defaultState();
+    for (const id of ['a', 'b', 'c']) s = upsertSnippet(s, { id, name: id, text: id, autoSend: false });
+    expect(moveSnippet(s, 'c', 'a').snippets.map((x) => x.id)).toEqual(['c', 'a', 'b']);
+    expect(moveSnippet(s, 'a', null).snippets.map((x) => x.id)).toEqual(['b', 'c', 'a']);
   });
 
   it('findCell locates project/tab/cell', () => {

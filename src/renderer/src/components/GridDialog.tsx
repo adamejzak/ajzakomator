@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createLayout, describeLayout, layoutForCount, MAX_COLS, MAX_ROWS, mergeRect, unmergeAll, type GridLayout } from '../../../shared/layout';
-import { removePreset, uid, upsertPreset } from '../../../shared/state';
+import { getProfile, removePreset, uid, upsertPreset } from '../../../shared/state';
 import type { PresetCell } from '../../../shared/types';
 import { openTab } from '../actions';
 import { askChoice, askText, closeModal, update, useStore } from '../store';
@@ -13,7 +13,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
   const project = s.projects.find((p) => p.id === projectId);
   const defaultProfile = s.settings.lastProfileId;
   const [layout, setLayout] = useState<GridLayout>(createLayout(2, 2));
-  const [cells, setCells] = useState<PresetCell[]>(() => Array(20).fill(null).map(() => ({ profileId: defaultProfile, worktree: false })));
+  const [cells, setCells] = useState<PresetCell[]>(() => Array.from({ length: 20 }, () => ({ profileId: defaultProfile, worktree: false })));
   const [hover, setHover] = useState<{ c: number; r: number } | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [name, setName] = useState('');
@@ -24,6 +24,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
 
   if (!project) return null;
   const presets = s.presets.filter((p) => !p.projectId || p.projectId === projectId);
+  const snippets = s.snippets.filter((x) => !x.projectId || x.projectId === projectId);
   const n = layout.areas.length;
 
   const pickSize = (c: number, r: number) => {
@@ -38,12 +39,11 @@ export function GridDialog({ projectId }: { projectId: string }) {
     if (areas.length < 2) return;
     const col = Math.min(...areas.map((a) => a.col));
     const row = Math.min(...areas.map((a) => a.row));
-    const rect = {
+    setLayout(mergeRect(layout, {
       col, row,
       colSpan: Math.max(...areas.map((a) => a.col + a.colSpan)) - col,
       rowSpan: Math.max(...areas.map((a) => a.row + a.rowSpan)) - row,
-    };
-    setLayout(mergeRect(layout, rect));
+    }));
     setSelected(new Set());
   };
 
@@ -53,23 +53,22 @@ export function GridDialog({ projectId }: { projectId: string }) {
   };
 
   const savePreset = async () => {
-    const presetName = await askText('Nazwa presetu', name || `${describeLayout(layout)} ${s.profiles.find((p) => p.id === cells[0].profileId)?.name ?? ''}`.trim());
+    const presetName = await askText('Nazwa presetu', name || `${describeLayout(layout)} ${getProfile(s, cells[0].profileId).name}`);
     if (!presetName?.trim()) return;
     const scope = await askChoice('Gdzie zapisać preset?', 'Preset globalny jest dostępny we wszystkich projektach.', [
       { label: 'Tylko ten projekt', value: 'project' },
       { label: 'Globalnie', value: 'global', primary: true },
     ]);
-    if (scope) {
-      const preset = { id: uid(), name: presetName.trim(), layout, cells: cells.slice(0, n), ...(scope === 'project' ? { projectId } : {}) };
-      update((st) => upsertPreset(st, preset));
-    }
+    if (!scope) return;
+    const preset = { id: uid(), name: presetName.trim(), layout, cells: cells.slice(0, n), ...(scope === 'project' ? { projectId } : {}) };
+    update((st) => upsertPreset(st, preset));
   };
 
   const loadPreset = (id: string) => {
     const p = s.presets.find((x) => x.id === id);
     if (!p) return;
     setLayout(p.layout);
-    setCells((cs) => cs.map((x, i) => p.cells[i] ?? x));
+    setCells((cs) => cs.map((x, i) => p.cells[i] ?? { ...x, name: undefined, prompt: undefined }));
     setSelected(new Set());
   };
 
@@ -85,96 +84,150 @@ export function GridDialog({ projectId }: { projectId: string }) {
       <div className="modal-body">
         <div className="presets">
           {QUICK.map((q) => (
-            <button key={q} className="btn small" onClick={() => setLayout(layoutForCount(q))}>{describeLayout(layoutForCount(q))}</button>
+            <button key={q} className="btn small" onClick={() => { setLayout(layoutForCount(q)); setSelected(new Set()); }}>
+              {describeLayout(layoutForCount(q))}
+            </button>
           ))}
           {presets.length > 0 && <span className="muted" style={{ alignSelf: 'center', margin: '0 4px' }}>·</span>}
           {presets.map((p) => (
             <span key={p.id} className="btn small" onClick={() => loadPreset(p.id)} title={p.projectId ? 'Preset projektu' : 'Preset globalny'}>
               {p.name}
-              <span
-                onClick={(e) => {
-                  e.stopPropagation();
-                  update((st) => removePreset(st, p.id));
-                }}
-                title="Usuń preset"
-                style={{ opacity: 0.6, display: 'grid' }}
-              >
+              <span onClick={(e) => { e.stopPropagation(); update((st) => removePreset(st, p.id)); }} title="Usuń preset" style={{ opacity: 0.6, display: 'grid' }}>
                 <IX />
               </span>
             </span>
           ))}
         </div>
+
         <div className="grid-dialog">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
             <div className="picker" onMouseLeave={() => setHover(null)}>
               {Array.from({ length: MAX_ROWS }, (_, r) =>
                 Array.from({ length: MAX_COLS }, (_, c) => (
-                  <div
-                    key={`${c}-${r}`}
-                    className={`f ${c < hc && r < hr ? 'on' : ''}`}
-                    onMouseEnter={() => setHover({ c: c + 1, r: r + 1 })}
-                    onClick={() => pickSize(c + 1, r + 1)}
-                  />
+                  <div key={`${c}-${r}`} className={`f ${c < hc && r < hr ? 'on' : ''}`}
+                    onMouseEnter={() => setHover({ c: c + 1, r: r + 1 })} onClick={() => pickSize(c + 1, r + 1)} />
                 )),
               )}
             </div>
             <div className="big-size">{hover ? `${hover.c} × ${hover.r}` : describeLayout(layout).replace('×', ' × ')}</div>
             <div className="row">
-              <button className="btn small" disabled={selected.size < 2} onClick={merge} title="Zaznacz komórki w podglądzie (klik), potem scal">Scal</button>
+              <button className="btn small" disabled={selected.size < 2} onClick={merge}>Scal</button>
               <button className="btn small" onClick={() => setLayout(unmergeAll(layout))}>Rozdziel</button>
               <button className="btn small" onClick={() => setSelected(new Set())}>Wyczyść</button>
             </div>
-            <div className="muted" style={{ fontSize: 11, textAlign: 'center' }}>Klik w komórki podglądu zaznacza je do scalenia.</div>
+            <div className="muted" style={{ fontSize: 11, textAlign: 'center' }}>Kliknij komórki w podglądzie, żeby zaznaczyć je do scalenia.</div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-            <div className="row">
-              <span className="muted" style={{ width: 92 }}>Wszystkie:</span>
-              <select className="select" style={{ flex: 1 }} value="" onChange={(e) => e.target.value && setAll({ profileId: e.target.value })}>
-                <option value="">ustaw profil dla wszystkich…</option>
-                {s.profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              {isRepo && (
-                <label className="check"><input type="checkbox" onChange={(e) => setAll({ worktree: e.target.checked })} /> worktree</label>
-              )}
-            </div>
-            <div className="preview" style={{ gridTemplateColumns: `repeat(${layout.cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${layout.rows}, minmax(0,1fr))` }}>
-              {layout.areas.map((a, i) => (
+
+          <div className="preview" style={{ gridTemplateColumns: `repeat(${layout.cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${layout.rows}, minmax(0,1fr))` }}>
+            {layout.areas.map((a, i) => {
+              const prof = getProfile(s, cells[i].profileId);
+              return (
                 <div
                   key={i}
                   className={`pc ${selected.has(i) ? 'sel' : ''}`}
-                  style={{ gridColumn: `${a.col + 1} / span ${a.colSpan}`, gridRow: `${a.row + 1} / span ${a.rowSpan}` }}
-                  onClick={(e) => {
-                    if ((e.target as HTMLElement).closest('select,label')) return;
-                    setSelected((sel) => {
-                      const next = new Set(sel);
-                      next.has(i) ? next.delete(i) : next.add(i);
-                      return next;
-                    });
-                  }}
+                  style={{ gridColumn: `${a.col + 1} / span ${a.colSpan}`, gridRow: `${a.row + 1} / span ${a.rowSpan}`, cursor: 'pointer' }}
+                  onClick={() => setSelected((sel) => {
+                    const next = new Set(sel);
+                    next.has(i) ? next.delete(i) : next.add(i);
+                    return next;
+                  })}
                 >
                   <span className="n">{i + 1}</span>
-                  <select value={cells[i].profileId} onChange={(e) => setCell(i, { profileId: e.target.value })}>
-                    {s.profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                  {isRepo && (
-                    <label><input type="checkbox" checked={cells[i].worktree} onChange={(e) => setCell(i, { worktree: e.target.checked })} /> worktree</label>
-                  )}
+                  <span className="pname">{cells[i].name || <span className="muted">bez nazwy</span>}</span>
+                  <span className="pprof"><i style={{ background: prof.color }} />{prof.name}{cells[i].worktree ? ' · worktree' : ''}</span>
+                  {cells[i].prompt && <span className="pprof">↳ prompt startowy</span>}
                 </div>
-              ))}
-            </div>
-            <div className="row">
-              <input className="input" style={{ flex: 1 }} placeholder="Nazwa zakładki (opcjonalnie)" value={name} onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && open()} />
-            </div>
+              );
+            })}
           </div>
         </div>
+
+        <div className="row" style={{ gap: 8 }}>
+          <span className="section-title" style={{ margin: 0, flex: 1 }}>Komórki</span>
+          <select className="select" value="" onChange={(e) => e.target.value && setAll({ profileId: e.target.value })}>
+            <option value="">profil dla wszystkich…</option>
+            {s.profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {snippets.length > 0 && (
+            <select className="select" value="" onChange={(e) => {
+              const sn = snippets.find((x) => x.id === e.target.value);
+              if (sn) setAll({ prompt: sn.text });
+            }}>
+              <option value="">prompt dla wszystkich…</option>
+              {snippets.map((sn) => <option key={sn.id} value={sn.id}>{sn.name}</option>)}
+            </select>
+          )}
+          {isRepo && <label className="check"><input type="checkbox" onChange={(e) => setAll({ worktree: e.target.checked })} /> worktree dla wszystkich</label>}
+        </div>
+
+        <div className="cell-table">
+          <span className="hd" />
+          <span className="hd">Nazwa</span>
+          <span className="hd">Profil</span>
+          <span className="hd">Prompt startowy</span>
+          <span className="hd">{isRepo ? 'Worktree' : ''}</span>
+          {layout.areas.map((_, i) => (
+            <CellRow
+              key={i}
+              index={i}
+              cell={cells[i]}
+              profiles={s.profiles}
+              snippets={snippets}
+              isRepo={!!isRepo}
+              onChange={(patch) => setCell(i, patch)}
+            />
+          ))}
+        </div>
+
+        <input className="input" placeholder="Nazwa zakładki (opcjonalnie)" value={name} onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && open()} />
       </div>
       <div className="modal-foot">
         <button className="btn" onClick={() => void savePreset()}>Zapisz jako preset</button>
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={closeModal}>Anuluj</button>
-        <button className="btn primary" onClick={open}>Otwórz grid ({n})</button>
+        <button className="btn white" onClick={open}>Otwórz grid ({n})</button>
       </div>
     </div>
+  );
+}
+
+function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
+  index: number;
+  cell: PresetCell;
+  profiles: Array<{ id: string; name: string; cli: string }>;
+  snippets: Array<{ id: string; name: string; text: string }>;
+  isRepo: boolean;
+  onChange: (patch: Partial<PresetCell>) => void;
+}) {
+  const isShell = profiles.find((p) => p.id === cell.profileId)?.cli === 'shell';
+  return (
+    <>
+      <span className="num">{index + 1}</span>
+      <input className="input" placeholder="np. backend" value={cell.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} />
+      <select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
+        {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <span className="prompt-wrap">
+        <input
+          className="input"
+          disabled={isShell}
+          placeholder={isShell ? '—' : 'pierwsza wiadomość dla agenta (opcjonalnie)'}
+          value={isShell ? '' : (cell.prompt ?? '')}
+          title={cell.prompt}
+          onChange={(e) => onChange({ prompt: e.target.value })}
+        />
+        {!isShell && snippets.length > 0 && (
+          <select className="select" value="" title="Wstaw snippet" onChange={(e) => {
+            const sn = snippets.find((x) => x.id === e.target.value);
+            if (sn) onChange({ prompt: sn.text });
+          }}>
+            <option value="">⋯</option>
+            {snippets.map((sn) => <option key={sn.id} value={sn.id}>{sn.name}</option>)}
+          </select>
+        )}
+      </span>
+      <span>{isRepo && <input type="checkbox" checked={cell.worktree} onChange={(e) => onChange({ worktree: e.target.checked })} />}</span>
+    </>
   );
 }

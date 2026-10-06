@@ -11,6 +11,8 @@ export interface SpawnCellRequest {
   profile: Profile;
   mode: 'new' | 'resume';
   sessionId?: string;
+  /** First prompt for a new conversation. */
+  startupPrompt?: string;
 }
 
 export interface McApi {

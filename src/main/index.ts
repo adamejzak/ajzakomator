@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, shell } from 'electron';
-import { existsSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { SpawnCellRequest } from '../preload/api';
@@ -14,10 +14,17 @@ import { claudeProjectDirName, findRecentCodexSession, listSessions } from './se
 import { createSaver, loadState } from './store';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 
-const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'MultiCoding');
+const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
+// Carry over state from the app's previous name.
+const LEGACY_STATE = join(app.getPath('appData'), 'MultiCoding', 'state.json');
+if (!process.env.MC_DATA_DIR && !existsSync(join(DATA_DIR, 'state.json')) && existsSync(LEGACY_STATE)) {
+  mkdirSync(DATA_DIR, { recursive: true });
+  copyFileSync(LEGACY_STATE, join(DATA_DIR, 'state.json'));
+}
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
+const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 app.setPath('userData', DATA_DIR);
-app.setAppUserModelId('com.multicoding.app');
+app.setAppUserModelId('com.ajzakomator.app');
 
 if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
 if (!process.env.MC_DATA_DIR && !app.requestSingleInstanceLock()) app.quit();
@@ -44,7 +51,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 500,
     backgroundColor: '#0d0d0d',
-    title: 'MultiCoding',
+    title: 'ajzakomator',
     icon: join(app.getAppPath(), 'resources', 'icon.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#0d0d0d', symbolColor: '#8a8a8a', height: 36 },
@@ -79,7 +86,7 @@ ptyHost.on('crashed', () => {
 });
 ptyHost.on('fatal', () => {
   alive.clear();
-  dialog.showErrorBox('MultiCoding', 'Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.');
+  dialog.showErrorBox('ajzakomator', 'Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.');
 });
 
 hooks.on('hook', (cellId: string, event: string) => send('cell:hook', cellId, event));
@@ -123,7 +130,15 @@ ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => {
     if (!existsSync(file)) mode = 'new';
   }
   if (mode === 'resume' && !req.sessionId) mode = 'new';
-  const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath, shell: state.settings.shell }) ?? undefined;
+  let initialPrompt: { file: string; text: string } | undefined;
+  if (mode === 'new' && req.startupPrompt?.trim()) {
+    mkdirSync(PROMPTS_DIR, { recursive: true });
+    const file = join(PROMPTS_DIR, `${req.cellId}.txt`);
+    writeFileSync(file, req.startupPrompt, 'utf8');
+    initialPrompt = { file, text: req.startupPrompt };
+  }
+  const command =
+    buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath, shell: state.settings.shell, initialPrompt }) ?? undefined;
   const env = { ...cleanEnv(process.env), MC_CELL_ID: req.cellId };
   alive.add(req.cellId);
   ptyHost.spawn({ id: req.cellId, cwd: req.cwd, cols: req.cols, rows: req.rows, env, shell: state.settings.shell, command });

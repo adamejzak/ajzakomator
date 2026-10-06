@@ -7,7 +7,8 @@ export type Modal =
   | { kind: 'grid'; projectId: string }
   | { kind: 'history'; projectId: string }
   | { kind: 'settings' }
-  | { kind: 'snippet'; snippetId: string | null };
+  | { kind: 'snippet'; snippetId: string | null }
+  | { kind: 'project'; projectId: string };
 
 export type Dialog =
   | { kind: 'prompt'; title: string; value: string; placeholder?: string; onSubmit: (value: string) => void }
@@ -29,6 +30,8 @@ export interface Ui {
   toast: { text: string; kind: 'info' | 'error' } | null;
   cellErrors: Record<string, string>;
   missingPaths: Record<string, true>;
+  /** Conversation titles by session id (from Claude/Codex transcripts) — default cell labels. */
+  sessionTitles: Record<string, string>;
   /** Bumped when every terminal must be (re)started, e.g. after a pty host crash. */
   epoch: number;
 }
@@ -54,6 +57,7 @@ export const useStore = create<Store>((set, get) => ({
     toast: null,
     cellErrors: {},
     missingPaths: {},
+    sessionTitles: {},
     epoch: 0,
   },
   ready: false,

@@ -2,7 +2,7 @@ import { activeProject, activeTab } from '../../../shared/state';
 import { createProject, quickTab } from '../actions';
 import { setUi, useStore } from '../store';
 import { CellView } from './CellView';
-import { IFolder, IGrid } from './icons';
+import { IGrid, IPlus, Logo } from './icons';
 
 export function GridView() {
   const s = useStore((st) => st.s);
@@ -13,10 +13,16 @@ export function GridView() {
   if (!project) {
     return (
       <div className="empty">
-        <div className="empty-inner">
-          <h2>Witaj w MultiCoding</h2>
-          <div className="hint">Dodaj projekt (folder), otwórz w nim grid terminali i odpal tyle Claude / Codex, ile potrzebujesz.</div>
-          <div className="row"><button className="btn primary" onClick={() => void createProject()}><IFolder /> Dodaj projekt</button></div>
+        <div className="welcome">
+          <Logo size={56} />
+          <h2>ajzakomator</h2>
+          <div className="sub">Dodaj projekt, otwórz w nim grid terminali i odpal tyle Claude i Codexów, ile potrzebujesz.</div>
+          <button className="btn white lg" onClick={() => void createProject()}><IPlus /> Nowy projekt</button>
+          <div className="keys">
+            <span><span className="kbd">Ctrl+K</span> szukaj</span>
+            <span><span className="kbd">Ctrl+Shift+G</span> nowy grid</span>
+            <span><span className="kbd">Ctrl+Shift+N</span> dodaj agenta</span>
+          </div>
         </div>
       </div>
     );
@@ -25,25 +31,29 @@ export function GridView() {
   if (!tab) {
     return (
       <div className="empty">
-        <div className="empty-inner">
+        <div className="welcome">
+          <div className="es-icon" style={{ width: 52, height: 52, borderRadius: 14, display: 'grid', placeItems: 'center', background: 'var(--bg-2)', border: '1px solid var(--border-2)', color: 'var(--text-2)' }}>
+            <IGrid />
+          </div>
           <h2>{project.name}</h2>
-          <div className="hint">Otwórz pojedynczy terminal albo cały grid.</div>
-          <div className="row">
+          <div className="sub">Otwórz grid terminali albo pojedynczy terminal z wybranym agentem.</div>
+          <button className="btn white lg" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><IPlus /> Nowy grid</button>
+          <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
             {s.profiles.map((p) => (
-              <button key={p.id} className="btn" onClick={() => quickTab(p.id)}>
-                <span className="pchip" style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} /> {p.name}
+              <button key={p.id} className="btn" onClick={() => quickTab(p.id)} title="Nowa zakładka z jednym terminalem">
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} /> {p.name}
               </button>
             ))}
           </div>
-          <div className="row">
-            <button className="btn primary" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><IGrid /> Grid / preset…</button>
-            {project.archive.length > 0 && (
-              <button className="btn" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}>Historia ({project.archive.length})</button>
-            )}
-          </div>
-          <div className="hint">
-            <span className="kbd">Ctrl+K</span> szukaj · <span className="kbd">Ctrl+Shift+T</span> terminal · <span className="kbd">Ctrl+Shift+G</span> grid ·{' '}
-            <span className="kbd">Ctrl+Shift+N</span> + agent
+          {project.archive.length > 0 && (
+            <button className="btn ghost" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}>
+              Historia — {project.archive.length} zamkniętych gridów
+            </button>
+          )}
+          <div className="keys">
+            <span><span className="kbd">Ctrl+K</span> szukaj</span>
+            <span><span className="kbd">Ctrl+Shift+T</span> terminal</span>
+            <span><span className="kbd">Ctrl+Shift+G</span> grid</span>
           </div>
         </div>
       </div>

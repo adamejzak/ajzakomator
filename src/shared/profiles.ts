@@ -2,11 +2,12 @@ import type { Profile, ShellKind } from './types';
 
 export const DEFAULT_PROFILES: Profile[] = [
   { id: 'claude', name: 'Claude', cli: 'claude', args: '', color: '#d97757' },
-  { id: 'claude-opus', name: 'Claude Opus', cli: 'claude', args: '--model opus', color: '#e0a080' },
   { id: 'codex', name: 'Codex', cli: 'codex', args: '', color: '#10a37f' },
-  { id: 'codex-high', name: 'Codex high', cli: 'codex', args: '-c model_reasoning_effort=high', color: '#4fd1a5' },
   { id: 'shell', name: 'PowerShell', cli: 'shell', args: '', color: '#7a7a7a' },
 ];
+
+/** Profiles shipped by earlier versions, folded into their base profile. */
+export const RETIRED_PROFILES: Record<string, string> = { 'claude-opus': 'claude', 'codex-high': 'codex' };
 
 /** PowerShell single-quoted literal. */
 export const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -20,6 +21,16 @@ export interface LaunchOptions {
   /** Per-cell Claude settings file carrying our status hooks. */
   claudeSettingsPath?: string;
   shell?: ShellKind;
+  /**
+   * First prompt for a new conversation. PowerShell reads it from `file` (keeps newlines and quotes
+   * intact); cmd gets the text inline on one line.
+   */
+  initialPrompt?: { file: string; text: string };
+}
+
+function promptArg(p: { file: string; text: string }, shell: ShellKind = 'pwsh'): string {
+  if (shell === 'cmd') return `"${p.text.replace(/\s+/g, ' ').replace(/"/g, "'").trim()}"`;
+  return `(Get-Content -Raw -Encoding utf8 -LiteralPath ${psQuote(p.file)})`;
 }
 
 /** Command typed into the cell's shell to start the agent; null for plain shell profiles. */
@@ -38,5 +49,6 @@ export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): strin
     return null;
   }
   if (args) parts.push(args);
+  if (opts.mode === 'new' && opts.initialPrompt?.text.trim()) parts.push(promptArg(opts.initialPrompt, opts.shell));
   return parts.join(' ');
 }

@@ -1,4 +1,4 @@
-# MultiCoding
+# ajzakomator
 
 Siatka terminali na Windowsa do pracy z wieloma agentami naraz (Claude Code, Codex). Projekty po lewej,
 w każdym projekcie dowolnie wiele zakładek-gridów (1, 2, 2×2 … 5×4, ze scalaniem komórek), snippety
@@ -55,5 +55,5 @@ Snippety: klik → aktywna komórka, **Shift**+klik → wszystkie komórki siatk
 
 ## Dane
 
-`%APPDATA%\MultiCoding\state.json` (+ `.bak`), pliki hooków w `%APPDATA%\MultiCoding\hooks`.
+`%APPDATA%\ajzakomator\state.json` (+ `.bak`), pliki hooków w `%APPDATA%\ajzakomator\hooks`.
 Zmienna `MC_DATA_DIR` pozwala użyć innego folderu (testy).

@@ -4,8 +4,8 @@ import { activeProject, renameTab } from '../../../shared/state';
 import { aggregate } from '../../../shared/status';
 import { addAgent, closeTab, selectTab } from '../actions';
 import { setUi, update, useStore } from '../store';
-import { openMenuAt } from './ContextMenu';
-import { IGrid, IHistory, IPlus, ISettings, ISidebar, ISnippet, IX } from './icons';
+import { openMenu, openMenuAt } from './ContextMenu';
+import { IGrid, IHistory, IPlus, ISettings, ISidebar, ISnippet, IX, Logo } from './icons';
 import { StatusBadges } from './StatusBadges';
 
 export function TitleBar() {
@@ -26,8 +26,8 @@ export function TitleBar() {
   return (
     <div className="titlebar">
       <div className={`brand ${s.sidebarCollapsed ? 'collapsed' : ''}`}>
-        <span className="brand-logo" />
-        {!s.sidebarCollapsed && <span>MultiCoding</span>}
+        <span className="brand-mark"><Logo size={20} /></span>
+        {!s.sidebarCollapsed && <span className="brand-name" data-text="ajzakomator">ajzakomator</span>}
       </div>
       {project && (
         <div className="tabs no-drag">
@@ -40,7 +40,16 @@ export function TitleBar() {
                 onMouseDown={(e) => e.button === 0 && selectTab(project.id, t)}
                 onAuxClick={(e) => e.button === 1 && closeTab(project.id, t.id)}
                 onDoubleClick={() => setEditing(t.id)}
-                title="Dwuklik: zmień nazwę · środkowy przycisk: zamknij"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  openMenu(e.clientX, e.clientY, [
+                    { label: 'Zmień nazwę', onClick: () => setEditing(t.id) },
+                    { label: 'Nowy grid…', onClick: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) },
+                    { sep: true },
+                    { label: 'Zamknij (do historii)', danger: true, onClick: () => closeTab(project.id, t.id), hint: 'Ctrl+Shift+W' },
+                  ]);
+                }}
+                title="Dwuklik lub prawy klik: zmień nazwę · środkowy przycisk: zamknij"
               >
                 {editing === t.id ? (
                   <input
@@ -50,6 +59,8 @@ export function TitleBar() {
                       update((st) => renameTab(st, project.id, t.id, e.target.value.trim() || t.name));
                       setEditing(null);
                     }}
+                    onFocus={(e) => e.target.select()}
+                    onMouseDown={(e) => e.stopPropagation()}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                       if (e.key === 'Escape') setEditing(null);

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
-import { focusCell, resetStarted, setAliveAtStart } from './actions';
+import { focusCell, refreshSessionTitles, resetStarted, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
 import { GridView } from './components/GridView';
@@ -27,6 +27,13 @@ async function boot(): Promise<void> {
     if (!(await window.mc.pathExists(p.path))) missing[p.id] = true;
   }));
   setUi({ missingPaths: missing, focusedCellId: activeTab(activeProject(state))?.cells[0]?.id ?? null });
+  refreshSessionTitles(activeProject(state)?.path);
+  let lastProject = state.activeProjectId;
+  useStore.subscribe((st) => {
+    if (st.s.activeProjectId === lastProject) return;
+    lastProject = st.s.activeProjectId;
+    refreshSessionTitles(activeProject(st.s)?.path);
+  });
 
   window.mc.on('cell:hook', (cellId, event) => terminals.hook(cellId, event));
   window.mc.on('cell:session', (cellId, session) => update((s) => updateCell(s, cellId, { session })));
@@ -43,6 +50,9 @@ async function boot(): Promise<void> {
     if (status !== 'waiting') return;
     maybeNotify(cellId);
     bindCodexSession(cellId);
+    // A turn finished: the agent may have (re)titled the conversation.
+    const found = findCell(getS(), cellId);
+    if (found && !found.cell.name) refreshSessionTitles(found.project.path, 3000);
   });
   terminals.onExit((cellId) => {
     // Shell exited (e.g. user typed `exit`) — keep the cell, offer a restart from its header.

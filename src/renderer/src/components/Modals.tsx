@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { describeLayout } from '../../../shared/layout';
-import { deleteArchived, getProfile, removeProfile, removeSnippet, uid, updateSettings, upsertProfile, upsertSnippet } from '../../../shared/state';
+import {
+  deleteArchived, getProfile, PROJECT_COLORS, removeProfile, removeSnippet, uid, updateProject, updateSettings, upsertProfile, upsertSnippet,
+} from '../../../shared/state';
 import { fuzzyFilter } from '../../../shared/fuzzy';
-import type { CliKind, SessionInfo, ShellKind, Snippet } from '../../../shared/types';
-import { restoreArchived, resumeSession } from '../actions';
+import type { CliKind, ProjectIcon, SessionInfo, ShellKind, Snippet } from '../../../shared/types';
+import { relocateProject, restoreArchived, resumeSession } from '../actions';
 import { closeDialog, closeModal, update, useStore, type Dialog } from '../store';
 import { GridDialog } from './GridDialog';
 import { IX } from './icons';
@@ -32,6 +34,7 @@ export function Modals() {
           {modal.kind === 'history' && <HistoryModal projectId={modal.projectId} />}
           {modal.kind === 'settings' && <SettingsModal />}
           {modal.kind === 'snippet' && <SnippetEditor snippetId={modal.snippetId} />}
+          {modal.kind === 'project' && <ProjectEditor projectId={modal.projectId} />}
         </div>
       )}
       {dialog && (
@@ -274,6 +277,97 @@ function SnippetEditor({ snippetId }: { snippetId: string | null }) {
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={closeModal}>Anuluj</button>
         <button className="btn primary" onClick={save}>Zapisz <span className="kbd">Ctrl+Enter</span></button>
+      </div>
+    </div>
+  );
+}
+
+// ── project editor ──────────────────────────────────────────────────────────
+
+const EMOJIS = ['📁', '🚀', '🤖', '⚡', '🔥', '🎯', '💎', '🧠', '🛠️', '🌐', '📦', '🎮', '🧪', '📊', '💬', '🔒', '🎨', '🦄', '🐙', '☕'];
+
+/** Downscales an image file to a 96×96 PNG data URL (keeps state.json small). */
+function readIcon(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const size = 96;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d')!;
+      const scale = Math.max(size / img.width, size / img.height);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('Nie udało się wczytać obrazka'));
+    img.src = url;
+  });
+}
+
+function ProjectEditor({ projectId }: { projectId: string }) {
+  const project = useStore((st) => st.s.projects.find((p) => p.id === projectId));
+  const [name, setName] = useState(project?.name ?? '');
+  if (!project) return null;
+  const setIcon = (icon: ProjectIcon | undefined) => update((st) => updateProject(st, projectId, { icon }));
+  const save = () => {
+    if (name.trim()) update((st) => updateProject(st, projectId, { name: name.trim() }));
+    closeModal();
+  };
+  const icon = project.icon;
+  return (
+    <div className="modal">
+      <div className="modal-head">
+        <h3>Edytuj projekt</h3>
+        <button className="btn ghost icon" onClick={closeModal}><IX /></button>
+      </div>
+      <div className="modal-body">
+        <div className="row" style={{ gap: 14 }}>
+          <div className="picon-preview" style={{ background: icon?.kind === 'image' ? undefined : project.color + (icon ? '33' : '') }}>
+            {icon?.kind === 'image' && <img src={icon.dataUrl} alt="" />}
+            {icon?.kind === 'emoji' && icon.value}
+          </div>
+          <div className="field" style={{ flex: 1 }}>
+            <label>Nazwa</label>
+            <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} />
+            <span className="muted" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={project.path}>{project.path}</span>
+          </div>
+        </div>
+        <div className="field">
+          <label>Kolor</label>
+          <div className="color-row">
+            {PROJECT_COLORS.map((c) => (
+              <button key={c} className={c === project.color ? 'on' : ''} style={{ background: c }} onClick={() => update((st) => updateProject(st, projectId, { color: c }))} />
+            ))}
+          </div>
+        </div>
+        <div className="field">
+          <label>Ikona</label>
+          <div className="emoji-grid">
+            {EMOJIS.map((e) => (
+              <button key={e} className={icon?.kind === 'emoji' && icon.value === e ? 'on' : ''} onClick={() => setIcon({ kind: 'emoji', value: e })}>{e}</button>
+            ))}
+          </div>
+          <div className="row" style={{ marginTop: 6 }}>
+            <label className="btn" style={{ cursor: 'pointer' }}>
+              Wgraj własną ikonę…
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) setIcon({ kind: 'image', dataUrl: await readIcon(file) });
+              }} />
+            </label>
+            {icon && <button className="btn ghost" onClick={() => setIcon(undefined)}>Usuń ikonę</button>}
+          </div>
+        </div>
+      </div>
+      <div className="modal-foot">
+        <button className="btn ghost" onClick={() => { closeModal(); void relocateProject(projectId); }}>Zmień folder…</button>
+        <span style={{ flex: 1 }} />
+        <button className="btn" onClick={closeModal}>Anuluj</button>
+        <button className="btn white" onClick={save}>Zapisz</button>
       </div>
     </div>
   );

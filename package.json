@@ -1,6 +1,6 @@
 {
-  "name": "multicoding",
-  "productName": "MultiCoding",
+  "name": "ajzakomator",
+  "productName": "ajzakomator",
   "version": "0.1.0",
   "description": "Terminal grid for multi-agent Claude/Codex work on Windows",
   "main": "out/main/index.js",
@@ -36,8 +36,8 @@
     "@types/node": "^22.0.0"
   },
   "build": {
-    "appId": "com.multicoding.app",
-    "productName": "MultiCoding",
+    "appId": "com.ajzakomator.app",
+    "productName": "ajzakomator",
     "asar": false,
     "npmRebuild": false,
     "directories": {
@@ -71,7 +71,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "MultiCoding",
+      "shortcutName": "ajzakomator",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "portable": {

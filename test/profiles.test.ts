@@ -6,8 +6,16 @@ const P = Object.fromEntries(DEFAULT_PROFILES.map((p) => [p.id, p]));
 
 describe('buildLaunchCommand', () => {
   it('starts a new claude conversation with a fixed session id and our settings', () => {
-    expect(buildLaunchCommand(P['claude-opus'], { mode: 'new', sessionId: 'u1', claudeSettingsPath: 'C:\\a b\\x.json' }))
+    expect(buildLaunchCommand({ ...P.claude, args: '--model opus' }, { mode: 'new', sessionId: 'u1', claudeSettingsPath: 'C:\\a b\\x.json' }))
       .toBe("claude --session-id u1 --settings 'C:\\a b\\x.json' --model opus");
+  });
+
+  it('passes a startup prompt from a file in PowerShell and inline in cmd', () => {
+    const initialPrompt = { file: 'C:/p/c1.txt', text: 'napraw "bug"\nteraz' };
+    expect(buildLaunchCommand(P.codex, { mode: 'new', initialPrompt }))
+      .toBe("codex -c tui.notifications=true (Get-Content -Raw -Encoding utf8 -LiteralPath 'C:/p/c1.txt')");
+    expect(buildLaunchCommand(P.claude, { mode: 'new', initialPrompt, shell: 'cmd' })).toBe(`claude "napraw 'bug' teraz"`);
+    expect(buildLaunchCommand(P.claude, { mode: 'resume', sessionId: 'x', initialPrompt })).toBe('claude --resume x');
   });
 
   it('double-quotes the settings path for cmd', () => {
@@ -21,7 +29,7 @@ describe('buildLaunchCommand', () => {
 
   it('starts and resumes codex with terminal notifications', () => {
     expect(buildLaunchCommand(P.codex, { mode: 'new' })).toBe('codex -c tui.notifications=true');
-    expect(buildLaunchCommand(P['codex-high'], { mode: 'resume', sessionId: 's9' }))
+    expect(buildLaunchCommand({ ...P.codex, args: '-c model_reasoning_effort=high' }, { mode: 'resume', sessionId: 's9' }))
       .toBe('codex resume s9 -c tui.notifications=true -c model_reasoning_effort=high');
   });
 

@@ -8,6 +8,13 @@ import { openMenu } from './ContextMenu';
 import { IFolder, IHistory, IPlus, ISearch } from './icons';
 import { StatusBadges } from './StatusBadges';
 
+export function ProjectIconView({ project }: { project: Project }) {
+  const icon = project.icon;
+  if (icon?.kind === 'image') return <span className="picon"><img src={icon.dataUrl} alt="" /></span>;
+  if (icon?.kind === 'emoji') return <span className="picon" style={{ background: project.color + '33' }}>{icon.value}</span>;
+  return <span className="picon swatch-only" style={{ background: project.color }} />;
+}
+
 export function Sidebar() {
   const s = useStore((st) => st.s);
   const statuses = useStore((st) => st.ui.statuses);
@@ -19,6 +26,7 @@ export function Sidebar() {
     e.preventDefault();
     openMenu(e.clientX, e.clientY, [
       { header: p.name },
+      { label: 'Edytuj projekt (nazwa, ikona)…', onClick: () => setUi({ modal: { kind: 'project', projectId: p.id } }) },
       { label: 'Zmień nazwę', onClick: async () => {
         const name = await askText('Nazwa projektu', p.name);
         if (name?.trim()) update((st) => updateProject(st, p.id, { name: name.trim() }));
@@ -40,11 +48,11 @@ export function Sidebar() {
         {!collapsed && (
           <div className="side-title">
             <span>Projekty</span>
-            <button className="btn ghost icon small" title="Dodaj projekt" onClick={() => void createProject()}><IPlus /></button>
+            <button className="sq" title="Dodaj projekt" onClick={() => void createProject()}><IPlus /></button>
           </div>
         )}
       </div>
-      <div className="side-list">
+      <div className="side-list" style={!s.projects.length ? { flex: 'none' } : undefined}>
         {s.projects.map((p) => {
           const counts = aggregate(p.tabs.flatMap((t) => t.cells.map((c) => statuses[c.id] ?? 'idle')));
           const active = p.id === s.activeProjectId;
@@ -54,6 +62,7 @@ export function Sidebar() {
                 className={`project ${active ? 'active' : ''} ${missing[p.id] ? 'missing' : ''}`}
                 title={missing[p.id] ? `Folder nie istnieje: ${p.path}` : p.path}
                 onClick={() => switchProject(p.id)}
+                onDoubleClick={() => setUi({ modal: { kind: 'project', projectId: p.id } })}
                 onContextMenu={(e) => menu(e, p)}
                 draggable
                 onDragStart={() => setDragId(p.id)}
@@ -63,7 +72,7 @@ export function Sidebar() {
                   setDragId(null);
                 }}
               >
-                <span className="swatch" style={{ background: p.color }} />
+                <ProjectIconView project={p} />
                 {!collapsed && <span className="name">{p.name}</span>}
                 {!collapsed && <StatusBadges counts={counts} />}
               </div>
@@ -83,12 +92,19 @@ export function Sidebar() {
             </div>
           );
         })}
-        {!s.projects.length && !collapsed && (
-          <div className="muted" style={{ padding: '6px 8px', lineHeight: 1.6 }}>Dodaj pierwszy projekt, czyli folder, w którym będą pracować agenci.</div>
-        )}
       </div>
+      {!s.projects.length && !collapsed && (
+        <div className="empty-state">
+          <div className="es-icon"><IFolder /></div>
+          <div className="es-title">Brak projektów</div>
+          <div className="es-text">Projekt to folder, w którym będą pracować Twoi agenci.</div>
+          <button className="btn white lg" onClick={() => void createProject()}><IPlus /> Nowy projekt</button>
+        </div>
+      )}
       <div className="side-footer">
-        <button className="btn" onClick={() => void createProject()} title="Dodaj projekt"><IFolder />{!collapsed && 'Dodaj projekt'}</button>
+        {(s.projects.length > 0 || collapsed) && (
+          <button className="btn" onClick={() => void createProject()} title="Dodaj projekt"><IFolder />{!collapsed && 'Dodaj projekt'}</button>
+        )}
         <button className="btn ghost" onClick={() => setUi({ palette: true })} title="Szukaj wszędzie (Ctrl+K)">
           <ISearch />{!collapsed && <><span style={{ flex: 1, textAlign: 'left' }}>Szukaj…</span><span className="kbd">Ctrl+K</span></>}
         </button>

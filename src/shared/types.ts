@@ -24,6 +24,10 @@ export interface Worktree {
 export interface Cell {
   id: string;
   profileId: string;
+  /** User-given label; without it the header shows the conversation title. */
+  name?: string;
+  /** Sent to the agent as its first prompt on the next new-conversation start, then cleared. */
+  startupPrompt?: string;
   worktree?: Worktree;
   session?: CellSession;
   fontSize?: number;
@@ -40,11 +44,14 @@ export interface ArchivedTab extends Tab {
   closedAt: number;
 }
 
+export type ProjectIcon = { kind: 'emoji'; value: string } | { kind: 'image'; dataUrl: string };
+
 export interface Project {
   id: string;
   name: string;
   path: string;
   color: string;
+  icon?: ProjectIcon;
   tabs: Tab[];
   archive: ArchivedTab[];
   activeTabId: string | null;
@@ -53,6 +60,8 @@ export interface Project {
 export interface PresetCell {
   profileId: string;
   worktree: boolean;
+  name?: string;
+  prompt?: string;
 }
 
 export interface Preset {

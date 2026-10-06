@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { getProfile } from '../../../shared/state';
 import type { Cell } from '../../../shared/types';
-import { changeCellProfile, ensureStarted, ensureTerminal, removeCell, restartCell, sendSnippet, toggleMaximize } from '../actions';
+import {
+  changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, toggleMaximize,
+} from '../actions';
 import { setUi, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
-import { openMenuAt } from './ContextMenu';
+import { openMenu, openMenuAt, type MenuItem } from './ContextMenu';
 import { IBranch, IMax, IRestart, IRestore, IX } from './icons';
 
 export const SNIPPET_MIME = 'application/x-mc-snippet';
@@ -19,7 +21,9 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
   const focused = useStore((st) => st.ui.focusedCellId === cell.id);
   const error = useStore((st) => st.ui.cellErrors[cell.id]);
   const epoch = useStore((st) => st.ui.epoch);
+  const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
   const [drop, setDrop] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     const el = bodyRef.current!;
@@ -35,17 +39,32 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
     terminals.acknowledge(cell.id);
   };
 
-  const profileMenu = (el: HTMLElement) =>
-    openMenuAt(el, [
-      { header: 'Zmień profil (nowa rozmowa)' },
-      ...profiles.map((p) => ({ label: p.name, onClick: () => changeCellProfile(cell.id, p.id) })),
-    ]);
+  const label = cell.name ?? sessionTitle;
 
-  const restartMenu = (el: HTMLElement) =>
-    openMenuAt(el, [
-      ...(cell.session ? [{ label: 'Uruchom ponownie i wznów rozmowę', onClick: () => restartCell(cell.id, 'resume') }] : []),
-      { label: profile.cli === 'shell' ? 'Uruchom ponownie' : 'Nowa rozmowa', onClick: () => restartCell(cell.id, 'new') },
+  const profileItems = (): MenuItem[] => [
+    { header: 'Zmień profil (nowa rozmowa)' },
+    ...profiles.map((p) => ({ label: p.name, onClick: () => changeCellProfile(cell.id, p.id) })),
+  ];
+
+  const restartItems = (): MenuItem[] => [
+    ...(cell.session ? [{ label: 'Uruchom ponownie i wznów rozmowę', onClick: () => restartCell(cell.id, 'resume') }] : []),
+    { label: profile.cli === 'shell' ? 'Uruchom ponownie' : 'Nowa rozmowa', onClick: () => restartCell(cell.id, 'new') },
+  ];
+
+  const headerMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    openMenu(e.clientX, e.clientY, [
+      { label: 'Zmień nazwę', onClick: () => setEditing(true) },
+      ...(cell.name ? [{ label: 'Przywróć nazwę automatyczną', onClick: () => renameCell(cell.id, '') }] : []),
+      { sep: true },
+      ...restartItems(),
+      { label: maximized ? 'Przywróć siatkę' : 'Maksymalizuj', onClick: () => toggleMaximize(cell.id), hint: 'Ctrl+Shift+M' },
+      { sep: true },
+      ...profileItems(),
+      { sep: true },
+      { label: 'Zamknij komórkę', danger: true, onClick: () => void removeCell(cell.id) },
     ]);
+  };
 
   return (
     <div
@@ -67,20 +86,51 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
         sendSnippet(JSON.parse(raw), { cellId: cell.id });
       }}
     >
-      <div className="cell-head" onDoubleClick={(e) => (e.target as HTMLElement).closest('button') || toggleMaximize(cell.id)}>
+      <div
+        className="cell-head"
+        onContextMenu={headerMenu}
+        onDoubleClick={(e) => (e.target as HTMLElement).closest('button,.cell-name,input') || toggleMaximize(cell.id)}
+      >
         <span className="idx">{index + 1}</span>
         <span className={`dot ${status}`} />
-        <span className="profile" onClick={(e) => profileMenu(e.currentTarget)} title="Zmień profil">
+        {editing ? (
+          <input
+            className="cell-name-input"
+            autoFocus
+            defaultValue={cell.name ?? sessionTitle ?? ''}
+            placeholder="Nazwa komórki"
+            onFocus={(e) => e.target.select()}
+            onBlur={(e) => {
+              renameCell(cell.id, e.target.value);
+              setEditing(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Escape') setEditing(false);
+              e.stopPropagation();
+            }}
+          />
+        ) : (
+          label && (
+            <span className={`cell-name ${cell.name ? 'custom' : ''}`} title={`${label}\nDwuklik: zmień nazwę`} onDoubleClick={() => setEditing(true)}>
+              {label}
+            </span>
+          )
+        )}
+        <span className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title="Zmień profil">
           <span className="pchip" style={{ background: profile.color }} />
           {profile.name}
         </span>
+        {!label && !editing && (
+          <span className="cell-name placeholder" onDoubleClick={() => setEditing(true)} title="Dwuklik: nadaj nazwę">bez nazwy</span>
+        )}
         {cell.worktree && (
           <span className="branch" title={cell.worktree.path}><IBranch /> {cell.worktree.branch}</span>
         )}
         {status !== 'idle' && <span className={`status-text ${status}`}>{STATUS_LABEL[status]}</span>}
         <span className="grow" />
         <span className="actions">
-          <button title="Uruchom ponownie" onClick={(e) => restartMenu(e.currentTarget)}><IRestart /></button>
+          <button title="Uruchom ponownie" onClick={(e) => openMenuAt(e.currentTarget, restartItems())}><IRestart /></button>
           <button title={maximized ? 'Przywróć siatkę (Ctrl+Shift+M)' : 'Maksymalizuj (Ctrl+Shift+M)'} onClick={() => toggleMaximize(cell.id)}>
             {maximized ? <IRestore /> : <IMax />}
           </button>
