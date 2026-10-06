@@ -5,3 +5,4 @@ release/
 spike/
 *.log
 .vite/
+*.stackdump
