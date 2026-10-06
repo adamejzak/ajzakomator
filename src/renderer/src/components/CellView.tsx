@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { getProfile } from '../../../shared/state';
 import type { Cell } from '../../../shared/types';
-import { changeCellProfile, ensureStarted, removeCell, restartCell, sendSnippet, toggleMaximize } from '../actions';
+import { changeCellProfile, ensureStarted, ensureTerminal, removeCell, restartCell, sendSnippet, toggleMaximize } from '../actions';
 import { setUi, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { openMenuAt } from './ContextMenu';
@@ -23,8 +23,10 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
 
   useEffect(() => {
     const el = bodyRef.current!;
-    ensureStarted(cell.id);
+    // Attach (and fit) before starting so the pty is spawned with the cell's real size.
+    ensureTerminal(cell.id);
     terminals.attach(cell.id, el);
+    ensureStarted(cell.id);
     return () => terminals.detach(cell.id, el);
   }, [cell.id, epoch]);
 

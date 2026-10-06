@@ -37,8 +37,9 @@ export class StatusTracker {
     this.status = event === 'prompt' ? 'working' : 'waiting';
   }
 
+  /** Terminal notification (OSC 9 / bell). Ignored once precise hooks drive the status. */
   osc9(): void {
-    if (this.status === 'exited') return;
+    if (this.status === 'exited' || this.hooked) return;
     this.armed = false;
     this.status = 'waiting';
   }

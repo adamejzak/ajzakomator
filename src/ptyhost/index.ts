@@ -44,7 +44,8 @@ parentPort.on('message', async (e) => {
       }
       break;
     case 'kill':
-      manager.kill(m.id);
+      await manager.kill(m.id);
+      if (m.ack) toMain({ t: 'killed', id: m.id });
       break;
     case 'killAll':
       await manager.killAll();

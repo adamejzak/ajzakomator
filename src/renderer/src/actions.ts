@@ -44,7 +44,8 @@ export function ensureStarted(cellId: string): void {
   if (started.has(cellId)) return;
   started.add(cellId);
   ensureTerminal(cellId);
-  if (aliveAtStart.has(cellId)) return; // pty survived a renderer reload; output is replayed
+  // pty survived a renderer reload; its output is replayed
+  if (aliveAtStart.delete(cellId)) return;
   const cell = findCell(getS(), cellId)?.cell;
   void spawnCell(cellId, cell?.session ? 'resume' : 'new');
 }
@@ -81,6 +82,7 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
     cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId,
   });
   if (!r.ok) setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: r.error } }));
+  else terminals.syncSize(cellId);
 }
 
 export function restartCell(cellId: string, mode: 'new' | 'resume'): void {
@@ -111,7 +113,11 @@ export async function removeCell(cellId: string): Promise<void> {
   }
   killAndDispose(cellId);
   update((s) => removeCellState(s, project.id, tab.id, cellId));
-  if (removeWt && cell.worktree) await deleteWorktree(project.path, cell.worktree);
+  if (removeWt && cell.worktree) {
+    // Windows can't delete a folder that is still some process's cwd: wait for the pty to exit.
+    await window.mc.killCellAndWait(cellId);
+    await deleteWorktree(project.path, cell.worktree);
+  }
 }
 
 async function deleteWorktree(projectPath: string, wt: Worktree): Promise<void> {
@@ -127,6 +133,7 @@ function killAndDispose(cellId: string): void {
   window.mc.killCell(cellId);
   terminals.dispose(cellId);
   started.delete(cellId);
+  aliveAtStart.delete(cellId);
   setUi((ui) => {
     const { [cellId]: _s, ...statuses } = ui.statuses;
     return {
@@ -141,10 +148,8 @@ export function focusCell(cellId: string): void {
   const found = findCell(getS(), cellId);
   if (!found) return;
   update((s) => setActiveTab(setActiveProject(s, found.project.id), found.project.id, found.tab.id));
-  setUi((ui) => ({
-    focusedCellId: cellId,
-    maximizedCellId: ui.maximizedCellId && found.tab.cells.some((c) => c.id === ui.maximizedCellId) ? ui.maximizedCellId : null,
-  }));
+  // Keep a maximized cell only if it is the one being focused; otherwise the target would be hidden.
+  setUi((ui) => ({ focusedCellId: cellId, maximizedCellId: ui.maximizedCellId === cellId ? cellId : null }));
   requestAnimationFrame(() => requestAnimationFrame(() => terminals.focus(cellId)));
   terminals.acknowledge(cellId);
 }
@@ -353,9 +358,11 @@ export function sendSnippet(snippet: Snippet, target: 'focused' | 'all' | { cell
     const f = getUi().focusedCellId;
     ids = [f && tab.cells.some((c) => c.id === f) ? f : tab.cells[0].id];
   } else ids = [target.cellId];
-  for (const id of ids) {
-    ensureStarted(id);
-    terminals.paste(id, snippet.text, snippet.autoSend);
-  }
+  // Cells that never started have no agent to receive the text yet (it would hit the bare shell
+  // before the launch command): start them, but don't paste.
+  const ready = ids.filter((id) => started.has(id));
+  ids.filter((id) => !started.has(id)).forEach(ensureStarted);
+  if (ready.length < ids.length) toast(`Komórki w trakcie startu: ${ids.length - ready.length} — wklej do nich ponownie za chwilę`);
+  for (const id of ready) terminals.paste(id, snippet.text, snippet.autoSend);
   if (ids.length === 1) focusCell(ids[0]);
 }

@@ -40,7 +40,9 @@ async function boot(): Promise<void> {
 
   terminals.onStatus((cellId, status) => {
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
-    if (status === 'waiting') maybeNotify(cellId);
+    if (status !== 'waiting') return;
+    maybeNotify(cellId);
+    bindCodexSession(cellId);
   });
   terminals.onExit((cellId) => {
     // Shell exited (e.g. user typed `exit`) — keep the cell, offer a restart from its header.
@@ -55,6 +57,13 @@ function isVisible(cellId: string): boolean {
   return !max || max === cellId;
 }
 
+/** A Codex cell just finished a turn: its session file is fresh, so bind it if not known yet. */
+function bindCodexSession(cellId: string): void {
+  const found = findCell(getS(), cellId);
+  if (!found || found.cell.session || getProfile(getS(), found.cell.profileId).cli !== 'codex') return;
+  void window.mc.bindCodexSession(cellId, found.cell.worktree?.path ?? found.project.path);
+}
+
 function maybeNotify(cellId: string): void {
   const s = getS();
   if (!s.settings.notifications) return;
@@ -65,6 +74,7 @@ function maybeNotify(cellId: string): void {
   const found = findCell(s, cellId);
   if (!found) return;
   const profile = getProfile(s, found.cell.profileId);
+  if (profile.cli === 'shell') return;
   const n = found.tab.cells.findIndex((c) => c.id === cellId) + 1;
   window.mc.notify({
     title: `${found.project.name} · ${found.tab.name} #${n}`,

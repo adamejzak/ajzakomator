@@ -35,6 +35,8 @@ export function resolveShell(kind: ShellKind, env: Record<string, string>): { fi
 
 export class PtyManager {
   private entries = new Map<string, Entry>();
+  /** Sizes that arrived before their spawn request (the renderer's port is faster than main). */
+  private earlySizes = new Map<string, { cols: number; rows: number }>();
 
   constructor(private sink: PtySink) {}
 
@@ -49,10 +51,12 @@ export class PtyManager {
   spawn(req: SpawnRequest): number {
     if (this.entries.has(req.id)) this.kill(req.id);
     const { file, args } = resolveShell(req.shell, req.env);
+    const size = this.earlySizes.get(req.id) ?? { cols: req.cols, rows: req.rows };
+    this.earlySizes.delete(req.id);
     const proc = pty.spawn(file, args, {
       name: 'xterm-256color',
-      cols: Math.max(2, req.cols),
-      rows: Math.max(1, req.rows),
+      cols: Math.max(2, size.cols),
+      rows: Math.max(1, size.rows),
       cwd: req.cwd,
       env: { ...req.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'MultiCoding' },
       useConpty: true,
@@ -100,8 +104,14 @@ export class PtyManager {
   }
 
   resize(id: string, cols: number, rows: number): void {
+    const e = this.entries.get(id);
+    if (!e) {
+      this.earlySizes.set(id, { cols, rows });
+      if (this.earlySizes.size > 200) this.earlySizes.delete(this.earlySizes.keys().next().value!);
+      return;
+    }
     try {
-      this.entries.get(id)?.proc.resize(Math.max(2, cols), Math.max(1, rows));
+      e.proc.resize(Math.max(2, cols), Math.max(1, rows));
     } catch {
       // resizing a pty that is exiting throws; harmless
     }
@@ -112,9 +122,10 @@ export class PtyManager {
     return [...this.entries].map(([id, e]) => ({ id, data: e.history }));
   }
 
-  kill(id: string): void {
+  /** Kills a terminal; resolves once it exited (bounded), so its cwd can be deleted afterwards. */
+  kill(id: string, timeoutMs = 3000): Promise<void> {
     const e = this.entries.get(id);
-    if (!e) return;
+    if (!e) return Promise.resolve();
     this.entries.delete(id);
     if (e.timer) clearTimeout(e.timer);
     try {
@@ -122,6 +133,7 @@ export class PtyManager {
     } catch {
       // already gone
     }
+    return Promise.race([e.exited, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
   }
 
   /** Kills every terminal and waits (bounded) for their exits — avoids ConPTY teardown crashes. */

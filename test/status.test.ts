@@ -52,6 +52,13 @@ describe('StatusTracker precise signals', () => {
     expect(t.status).toBe('waiting');
   });
 
+  it('osc9 does not override hook-driven status', () => {
+    const t = new StatusTracker();
+    t.hook('prompt');
+    t.osc9();
+    expect(t.status).toBe('working');
+  });
+
   it('exited is sticky until reset', () => {
     const t = new StatusTracker();
     t.exited();

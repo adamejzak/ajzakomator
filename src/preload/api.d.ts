@@ -18,6 +18,9 @@ export interface McApi {
   saveState(state: AppState): void;
   spawnCell(req: SpawnCellRequest): Promise<{ ok: true } | { ok: false; error: string }>;
   killCell(cellId: string): void;
+  killCellAndWait(cellId: string): Promise<void>;
+  /** Binds the freshest unclaimed Codex session in `cwd` to the cell (emits cell:session). */
+  bindCodexSession(cellId: string, cwd: string): Promise<string | null>;
   aliveCells(): Promise<string[]>;
   pickFolder(): Promise<string | null>;
   pathExists(path: string): Promise<boolean>;

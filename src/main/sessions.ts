@@ -89,7 +89,26 @@ export function listClaudeSessions(home: string, projectPath: string): SessionIn
 
 // ── Codex ───────────────────────────────────────────────────────────────────
 
-function codexMeta(file: string): { id: string; cwd: string; timestamp?: string } | null {
+interface CodexMeta {
+  id: string;
+  cwd: string;
+  timestamp?: string;
+}
+
+// Parsed heads keyed by path; reused while the file's mtime is unchanged.
+const metaCache = new Map<string, { mtimeMs: number; meta: CodexMeta | null; title: string | null | undefined }>();
+
+function cachedCodex(file: string): { mtimeMs: number; meta: CodexMeta | null; entry: { title: string | null | undefined } } {
+  const mtimeMs = statSync(file).mtimeMs;
+  let entry = metaCache.get(file);
+  if (!entry || entry.mtimeMs !== mtimeMs) {
+    entry = { mtimeMs, meta: codexMeta(file), title: undefined };
+    metaCache.set(file, entry);
+  }
+  return { mtimeMs, meta: entry.meta, entry };
+}
+
+function codexMeta(file: string): CodexMeta | null {
   // The first line (session_meta) carries the id and cwd; it can be tens of KB.
   for (let size = 64 * 1024; size <= 1024 * 1024; size *= 4) {
     const text = readSlice(file, 0, size);
@@ -141,11 +160,12 @@ export function listCodexSessions(home: string, projectPath: string): SessionInf
   const out: SessionInfo[] = [];
   for (const file of codexFiles(home)) {
     try {
-      const meta = codexMeta(file);
+      const { meta, entry, mtimeMs } = cachedCodex(file);
       if (!meta || normPath(meta.cwd) !== want) continue;
-      const title = codexTitle(file);
+      if (entry.title === undefined) entry.title = codexTitle(file);
+      const title = entry.title;
       if (!title) continue;
-      const st = statSync(file);
+      const st = { mtimeMs, birthtimeMs: mtimeMs };
       out.push({
         cli: 'codex',
         id: meta.id,
@@ -161,19 +181,24 @@ export function listCodexSessions(home: string, projectPath: string): SessionInf
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Newest Codex session for `cwd` created after `sinceMs` that isn't bound to another cell yet. */
-export function findNewCodexSession(home: string, cwd: string, sinceMs: number, exclude: Set<string>): string | null {
+/**
+ * Codex session for `cwd` written within the last `windowMs` and not bound elsewhere — called right
+ * after a Codex cell finished a turn, when its rollout file was just appended to.
+ */
+export function findRecentCodexSession(home: string, cwd: string, windowMs: number, exclude: Set<string>): string | null {
   const want = normPath(cwd);
-  for (const file of codexFiles(home).slice(0, 50)) {
+  const since = Date.now() - windowMs;
+  let best: { id: string; mtimeMs: number } | null = null;
+  for (const file of codexFiles(home).slice(0, 80)) {
     try {
-      if (statSync(file).birthtimeMs < sinceMs - 2000) continue;
-      const meta = codexMeta(file);
-      if (meta && normPath(meta.cwd) === want && !exclude.has(meta.id)) return meta.id;
+      const { meta, mtimeMs } = cachedCodex(file);
+      if (mtimeMs < since || !meta || exclude.has(meta.id) || normPath(meta.cwd) !== want) continue;
+      if (!best || mtimeMs > best.mtimeMs) best = { id: meta.id, mtimeMs };
     } catch {
       // skip
     }
   }
-  return null;
+  return best?.id ?? null;
 }
 
 export function listSessions(home: string, projectPath: string): SessionInfo[] {

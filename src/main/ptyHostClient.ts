@@ -8,6 +8,7 @@ export class PtyHostClient extends EventEmitter {
   private child: UtilityProcess | null = null;
   private shuttingDown = false;
   private renderer: WebContents | null = null;
+  private crashes: number[] = [];
 
   start(): void {
     const child = utilityProcess.fork(join(__dirname, 'ptyhost.js'), [], {
@@ -20,9 +21,18 @@ export class PtyHostClient extends EventEmitter {
       if (this.child !== child) return;
       this.child = null;
       if (this.shuttingDown) return;
+      const now = Date.now();
+      this.crashes = [...this.crashes.filter((t) => now - t < 60_000), now];
+      if (this.crashes.length > 5) {
+        this.emit('fatal', code);
+        return;
+      }
       this.emit('crashed', code);
-      this.start();
-      if (this.renderer && !this.renderer.isDestroyed()) this.connectRenderer(this.renderer);
+      setTimeout(() => {
+        if (this.shuttingDown) return;
+        this.start();
+        if (this.renderer && !this.renderer.isDestroyed()) this.connectRenderer(this.renderer);
+      }, 500 * 2 ** (this.crashes.length - 1));
     });
   }
 
@@ -45,6 +55,23 @@ export class PtyHostClient extends EventEmitter {
 
   kill(id: string): void {
     this.send({ t: 'kill', id });
+  }
+
+  /** Kills a terminal and waits until its processes are gone (or `timeoutMs`). */
+  killAndWait(id: string, timeoutMs = 4000): Promise<void> {
+    const child = this.child;
+    if (!child) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.off('message', onMsg);
+        resolve();
+      };
+      const onMsg = (m: HostToMain) => m.t === 'killed' && m.id === id && done();
+      const timer = setTimeout(done, timeoutMs);
+      this.on('message', onMsg);
+      this.send({ t: 'kill', id, ack: true });
+    });
   }
 
   /** Kills all terminals (waiting for ConPTY to wind down), then stops the host. */

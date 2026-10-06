@@ -14,13 +14,14 @@ export interface SpawnRequest {
 
 export type MainToHost =
   | { t: 'spawn'; req: SpawnRequest }
-  | { t: 'kill'; id: string }
+  | { t: 'kill'; id: string; ack?: boolean }
   | { t: 'killAll' };
 
 export type HostToMain =
   | { t: 'spawned'; id: string; pid: number }
   | { t: 'spawnError'; id: string; message: string }
   | { t: 'exit'; id: string; code: number }
+  | { t: 'killed'; id: string }
   | { t: 'killedAll' };
 
 export type RendererToHost =

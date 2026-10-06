@@ -10,6 +10,11 @@ describe('buildLaunchCommand', () => {
       .toBe("claude --session-id u1 --settings 'C:\\a b\\x.json' --model opus");
   });
 
+  it('double-quotes the settings path for cmd', () => {
+    expect(buildLaunchCommand(P.claude, { mode: 'new', sessionId: 'u1', claudeSettingsPath: 'C:/a b/x.json', shell: 'cmd' }))
+      .toBe('claude --session-id u1 --settings "C:/a b/x.json"');
+  });
+
   it('resumes claude', () => {
     expect(buildLaunchCommand(P.claude, { mode: 'resume', sessionId: 'u1' })).toBe('claude --resume u1');
   });

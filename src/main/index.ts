@@ -1,5 +1,5 @@
-import { spawn } from 'child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, shell } from 'electron';
+import { spawn, spawnSync } from 'child_process';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, shell } from 'electron';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -10,7 +10,7 @@ import { buildLaunchCommand } from '../shared/profiles';
 import type { AppState, Worktree } from '../shared/types';
 import { HookServer } from './hooks';
 import { PtyHostClient } from './ptyHostClient';
-import { claudeProjectDirName, findNewCodexSession, listSessions } from './sessions';
+import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 
@@ -28,7 +28,10 @@ const saver = createSaver(DATA_DIR);
 const ptyHost = new PtyHostClient();
 const hooks = new HookServer();
 const alive = new Set<string>();
-const codexWatch = new Map<string, NodeJS.Timeout>();
+/** Codex session ids handed to cells this run (state may lag behind the renderer). */
+const claimedCodex = new Set<string>();
+/** Live notifications — Windows drops click handlers of garbage-collected ones. */
+const notifications = new Set<Notification>();
 
 const send = (channel: string, ...args: unknown[]) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
@@ -65,7 +68,6 @@ ptyHost.on('message', (m: HostToMain) => {
   if (m.t === 'spawned') alive.add(m.id);
   else if (m.t === 'exit') {
     alive.delete(m.id);
-    stopCodexWatch(m.id);
   } else if (m.t === 'spawnError') {
     alive.delete(m.id);
     send('cell:spawnError', m.id, m.message);
@@ -75,38 +77,32 @@ ptyHost.on('crashed', () => {
   alive.clear();
   send('ptyhost:crashed');
 });
+ptyHost.on('fatal', () => {
+  alive.clear();
+  dialog.showErrorBox('MultiCoding', 'Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.');
+});
 
 hooks.on('hook', (cellId: string, event: string) => send('cell:hook', cellId, event));
 
 function boundCodexIds(): Set<string> {
-  const ids = new Set<string>();
+  const ids = new Set<string>(claimedCodex);
   for (const p of state.projects)
     for (const t of [...p.tabs, ...p.archive])
       for (const c of t.cells) if (c.session?.cli === 'codex') ids.add(c.session.id);
   return ids;
 }
 
-function stopCodexWatch(cellId: string): void {
-  const t = codexWatch.get(cellId);
-  if (t) clearInterval(t);
-  codexWatch.delete(cellId);
-}
-
-/** Codex picks its own session id; find its new rollout file and bind it to the cell. */
-function watchCodexSession(cellId: string, cwd: string): void {
-  stopCodexWatch(cellId);
-  const since = Date.now();
-  const deadline = since + 30 * 60 * 1000;
-  const timer = setInterval(() => {
-    if (Date.now() > deadline || !alive.has(cellId)) return stopCodexWatch(cellId);
-    const id = findNewCodexSession(homedir(), cwd, since, boundCodexIds());
-    if (id) {
-      stopCodexWatch(cellId);
-      send('cell:session', cellId, { cli: 'codex', id });
-    }
-  }, 3000);
-  codexWatch.set(cellId, timer);
-}
+/**
+ * Codex picks its own session id. The renderer calls this right after a Codex cell finished a
+ * turn: its rollout file was just written, so the freshest unclaimed one in that cwd is the cell's.
+ */
+ipcMain.handle('codex:bind', (_e, cellId: string, cwd: string) => {
+  const id = findRecentCodexSession(homedir(), cwd, 20_000, boundCodexIds());
+  if (!id) return null;
+  claimedCodex.add(id);
+  send('cell:session', cellId, { cli: 'codex', id });
+  return id;
+});
 
 // ── ipc ─────────────────────────────────────────────────────────────────────
 
@@ -127,17 +123,19 @@ ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => {
     if (!existsSync(file)) mode = 'new';
   }
   if (mode === 'resume' && !req.sessionId) mode = 'new';
-  const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath }) ?? undefined;
+  const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath, shell: state.settings.shell }) ?? undefined;
   const env = { ...cleanEnv(process.env), MC_CELL_ID: req.cellId };
   alive.add(req.cellId);
   ptyHost.spawn({ id: req.cellId, cwd: req.cwd, cols: req.cols, rows: req.rows, env, shell: state.settings.shell, command });
-  if (req.profile.cli === 'codex' && mode === 'new') watchCodexSession(req.cellId, req.cwd);
   return { ok: true };
 });
 ipcMain.on('cell:kill', (_e, id: string) => {
   alive.delete(id);
-  stopCodexWatch(id);
   ptyHost.kill(id);
+});
+ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
+  alive.delete(id);
+  await ptyHost.killAndWait(id);
 });
 ipcMain.handle('cell:alive', () => [...alive]);
 
@@ -154,7 +152,12 @@ ipcMain.handle('git:removeWorktree', (_e, p: string, wt: Worktree, del: boolean)
 ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) => {
   if (!Notification.isSupported()) return;
   const notification = new Notification({ title: n.title, body: n.body, silent: false });
+  notifications.add(notification);
+  const forget = () => notifications.delete(notification);
+  notification.on('close', forget);
+  notification.on('failed', forget);
   notification.on('click', () => {
+    forget();
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.show();
@@ -168,9 +171,9 @@ ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text));
 ipcMain.on('shell:openPath', (_e, p: string) => shell.openPath(p));
 ipcMain.on('shell:openInEditor', (_e, p: string) => {
   // `cursor` / `code` are .cmd launchers → need a shell; they get our clean env.
-  const child = spawn('cursor', [`"${p}"`], { shell: true, detached: true, stdio: 'ignore', env: cleanEnv(process.env) });
-  child.on('error', () => spawn('code', [`"${p}"`], { shell: true, detached: true, stdio: 'ignore' }));
-  child.unref();
+  const editor = ['cursor', 'code'].find((cmd) => spawnSync('where', [cmd], { windowsHide: true }).status === 0);
+  if (!editor) return void shell.openPath(p);
+  spawn(editor, [`"${p}"`], { shell: true, detached: true, stdio: 'ignore', windowsHide: true, env: cleanEnv(process.env) }).unref();
 });
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
@@ -182,6 +185,8 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
+  Menu.setApplicationMenu(null);
   await hooks.start();
   ptyHost.start();
   createWindow();
@@ -195,8 +200,11 @@ app.on('before-quit', (e) => {
   send('app:before-quit');
   // Give the renderer a moment to push its final state, then wind down terminals cleanly.
   setTimeout(async () => {
-    saver.flush();
-    for (const id of codexWatch.keys()) stopCodexWatch(id);
+    try {
+      saver.flush();
+    } catch (err) {
+      console.error('state save failed', err);
+    }
     await ptyHost.shutdown();
     hooks.stop();
     app.exit(0);

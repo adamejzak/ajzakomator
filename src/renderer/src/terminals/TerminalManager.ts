@@ -20,6 +20,7 @@ export const THEME: ITheme = {
 };
 
 const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace';
+const PENDING_LIMIT = 512 * 1024;
 
 interface Entry {
   id: string;
@@ -50,6 +51,7 @@ class TerminalManager {
   private port: MessagePort | null = null;
   private pending = new Map<string, Array<{ data: string; replay: boolean }>>();
   private exited = new Set<string>();
+  private disposed = new Set<string>();
   private statusListeners = new Set<StatusListener>();
   private exitListeners = new Set<(cellId: string) => void>();
   private parking: HTMLDivElement;
@@ -95,9 +97,13 @@ class TerminalManager {
     }
     const e = this.entries.get(m.id);
     if (!e) {
+      if (this.disposed.has(m.id)) return; // in-flight output of a closed cell
       const q = this.pending.get(m.id) ?? [];
       if (m.t === 'replay') q.length = 0;
       q.push({ data: m.data, replay: m.t === 'replay' });
+      // Bound memory for busy cells that are never shown: keep roughly the newest PENDING_LIMIT.
+      let size = q.reduce((n, x) => n + x.data.length, 0);
+      while (size > PENDING_LIMIT && q.length > 1) size -= q.shift()!.data.length;
       this.pending.set(m.id, q);
       return;
     }
@@ -125,6 +131,7 @@ class TerminalManager {
       existing.agent = opts.agent;
       return existing;
     }
+    this.disposed.delete(cellId);
     const host = document.createElement('div');
     host.className = 'term-host';
     this.parking.appendChild(host);
@@ -162,7 +169,9 @@ class TerminalManager {
     term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, setW32(true));
     term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, setW32(false));
     // Codex (tui.notifications) and others signal "needs attention" with OSC 9.
-    term.parser.registerOscHandler(9, () => {
+    term.parser.registerOscHandler(9, (payload) => {
+      // 9;4;... = progress, 9;9;... = cwd reporting (oh-my-posh etc.) - not notifications.
+      if (/^(4|9);/.test(payload)) return true;
       if (entry.agent) this.setStatus(entry, () => entry.tracker.osc9());
       return true;
     });
@@ -320,6 +329,12 @@ class TerminalManager {
     }
   }
 
+  /** Re-sends the current size (e.g. right after a spawn that raced with a resize). */
+  syncSize(cellId: string): void {
+    const e = this.entries.get(cellId);
+    if (e) this.post({ t: 'resize', id: cellId, cols: e.term.cols, rows: e.term.rows });
+  }
+
   size(cellId: string): { cols: number; rows: number } {
     const e = this.entries.get(cellId);
     return e ? { cols: e.term.cols, rows: e.term.rows } : { cols: 120, rows: 30 };
@@ -359,6 +374,7 @@ class TerminalManager {
     e.host.remove();
     this.entries.delete(cellId);
     this.pending.delete(cellId);
+    this.disposed.add(cellId);
   }
 
   // ── statuses ──────────────────────────────────────────────────────────────

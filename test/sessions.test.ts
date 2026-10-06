@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { claudeProjectDirName, findNewCodexSession, listClaudeSessions, listCodexSessions } from '../src/main/sessions';
+import { claudeProjectDirName, findRecentCodexSession, listClaudeSessions, listCodexSessions } from '../src/main/sessions';
 
 const PROJECT = 'D:\\Projekty\\bot-discord';
 const jsonl = (rows: unknown[]) => rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
@@ -53,9 +53,10 @@ describe('sessions', () => {
     expect(list[0]).toMatchObject({ cli: 'codex', id: 'c1', title: 'dodaj testy' });
   });
 
-  it('finds a freshly created codex session not bound elsewhere', () => {
+  it('finds a recently written codex session not bound elsewhere', () => {
     const home = fakeHome();
-    expect(findNewCodexSession(home, PROJECT, Date.now() - 60000, new Set())).toBe('c1');
-    expect(findNewCodexSession(home, PROJECT, Date.now() - 60000, new Set(['c1']))).toBeNull();
+    expect(findRecentCodexSession(home, PROJECT, 60000, new Set())).toBe('c1');
+    expect(findRecentCodexSession(home, PROJECT, 60000, new Set(['c1']))).toBeNull();
+    expect(findRecentCodexSession(home, 'D:\Nowhere', 60000, new Set())).toBeNull();
   });
 });
