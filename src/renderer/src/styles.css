@@ -509,3 +509,12 @@ select option { background: #171717; color: var(--text); }
 .update-pill .pulse { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 0 #22c55e88; animation: upd-pulse 1.6s infinite; }
 @keyframes upd-pulse { 0% { box-shadow: 0 0 0 0 #22c55e88; } 70% { box-shadow: 0 0 0 6px #22c55e00; } 100% { box-shadow: 0 0 0 0 #22c55e00; } }
 @keyframes pill-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* "+ Dodaj" pill in the tab bar */
+.tb-add {
+  -webkit-app-region: no-drag; height: 28px; display: inline-flex; align-items: center; gap: 7px; padding: 0 9px 0 10px; margin-left: 2px;
+  border: 1px solid #2c2c2c; border-radius: 8px; background: #161616; color: #d6d6d6; font-size: 12.5px; font-weight: 500; cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.tb-add:hover { background: #222; border-color: #3d3d3d; color: #fff; }
+.tb-add svg:last-child { opacity: .55; margin-left: -1px; }

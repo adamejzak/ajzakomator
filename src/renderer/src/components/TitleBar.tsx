@@ -5,7 +5,7 @@ import { aggregate } from '../../../shared/status';
 import { addAgent, closeTab, selectTab } from '../actions';
 import { setUi, update, useStore } from '../store';
 import { openMenu, openMenuAt } from './ContextMenu';
-import { IX, Logo, TGrid, THistory, TPlus, TSettings, TSidebar, TSnippet } from './icons';
+import { IChevron, IPlusBold, IX, Logo, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
 import { StatusBadges } from './StatusBadges';
 import { UpdateBadge } from './UpdateBadge';
 
@@ -110,7 +110,9 @@ export function TitleBar() {
             );
           })}
           <button className="tb-btn" title="Nowy grid (Ctrl+Shift+G)" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
-          <button className="tb-btn wide" title="Dodaj agenta do siatki" onClick={(e) => agentMenu(e.currentTarget)}><TPlus /> agent</button>
+          <button className="tb-add" title="Dodaj agenta do siatki (Ctrl+Shift+N)" onClick={(e) => agentMenu(e.currentTarget)}>
+            <IPlusBold /> Dodaj <IChevron />
+          </button>
         </div>
       )}
       <div className="spacer" />
