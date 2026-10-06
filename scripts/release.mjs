@@ -35,9 +35,7 @@ try {
 }
 if (exists) run(`gh release upload ${tag} ${files} -R ${REPO} --clobber`);
 else {
-  const notes = process.env.NOTES ? `${process.env.NOTES}
-
-` : '';
+  const notes = process.env.NOTES ? `${process.env.NOTES}\n\n` : '';
   const body = `${notes}Pobierz \`ajzakomator-Setup-${version}.exe\`. Zainstalowana aplikacja aktualizuje się sama.`;
   writeFileSync('release/notes.md', body);
   run(`gh release create ${tag} ${files} -R ${REPO} --title "ajzakomator ${version}" --notes-file release/notes.md --latest`);
