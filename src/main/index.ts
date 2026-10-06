@@ -42,6 +42,7 @@ function createWindow(): void {
     minHeight: 500,
     backgroundColor: '#0d0d0d',
     title: 'MultiCoding',
+    icon: join(app.getAppPath(), 'resources', 'icon.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#0d0d0d', symbolColor: '#8a8a8a', height: 36 },
     show: false,
