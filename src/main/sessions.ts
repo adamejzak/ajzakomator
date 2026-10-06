@@ -1,15 +1,10 @@
 // Index of past Claude Code / Codex conversations for a project folder.
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'fs';
 import { join } from 'path';
+import type { SessionInfo } from '../shared/types';
 
-export interface SessionInfo {
-  cli: 'claude' | 'codex';
-  id: string;
-  cwd: string;
-  title: string;
-  startedAt: number;
-  updatedAt: number;
-}
+export type { SessionInfo };
+
 
 const HEAD_BYTES = 256 * 1024;
 const TAIL_BYTES = 64 * 1024;

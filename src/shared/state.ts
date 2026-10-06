@@ -192,7 +192,7 @@ export function updateCell(s: AppState, cellId: string, patch: Partial<Omit<Cell
       if (c.id !== cellId) return c;
       const next: Cell = { ...c, ...patch };
       // `undefined` in the patch means "remove the field".
-      for (const k of Object.keys(patch) as Array<keyof Cell>) if (patch[k] === undefined) delete next[k];
+      for (const k of Object.keys(patch) as Array<keyof typeof patch>) if (patch[k] === undefined) delete next[k];
       return next;
     }),
   }));

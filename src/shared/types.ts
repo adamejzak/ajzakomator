@@ -91,3 +91,12 @@ export interface AppState {
   sidebarCollapsed: boolean;
   snippetsOpen: boolean;
 }
+
+export interface SessionInfo {
+  cli: 'claude' | 'codex';
+  id: string;
+  cwd: string;
+  title: string;
+  startedAt: number;
+  updatedAt: number;
+}
