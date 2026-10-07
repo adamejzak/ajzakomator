@@ -5,7 +5,7 @@ import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { UpdateState } from '../shared/types';
 
-export const RELEASES_URL = 'https://github.com/adamejzak/ajzakomator-releases/releases/latest';
+export const RELEASES_URL = 'https://github.com/adamejzak/ajzakomator/releases/latest';
 const CHECK_EVERY_MS = 30 * 60 * 1000;
 
 let state: UpdateState = { status: 'idle' };

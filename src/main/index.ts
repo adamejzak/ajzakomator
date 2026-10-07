@@ -58,8 +58,10 @@ function createWindow(): void {
     titleBarOverlay: { color: '#0d0d0d', symbolColor: '#8a8a8a', height: 36 },
     show: false,
     webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true },
+    // Off-screen, non-focusable window for automated screenshots (docs).
+    ...(process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
   });
-  win.once('ready-to-show', () => win?.show());
+  win.once('ready-to-show', () => (process.env.MC_OFFSCREEN ? win?.showInactive() : win?.show()));
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
   win.webContents.on('did-finish-load', () => win && ptyHost.connectRenderer(win.webContents));
   win.webContents.setWindowOpenHandler(({ url }) => {

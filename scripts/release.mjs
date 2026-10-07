@@ -1,11 +1,11 @@
 // npm run release [patch|minor|major|x.y.z|--current]   (optional: NOTES="co nowego" for release notes)
 // Bumps the version, runs tests, builds locally and publishes the installers to the public
-// releases repo (adamejzak/ajzakomator-releases) with the logged-in `gh` CLI. One `gh` call creates
+// GitHub releases of adamejzak/ajzakomator with the logged-in `gh` CLI. One `gh` call creates
 // the release with every asset (avoids electron-builder's parallel publishers racing to create it).
 import { execSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 
-const REPO = 'adamejzak/ajzakomator-releases';
+const REPO = 'adamejzak/ajzakomator';
 const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
 const arg = process.argv[2] ?? 'patch';
 

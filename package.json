@@ -2,9 +2,26 @@
   "name": "ajzakomator",
   "productName": "ajzakomator",
   "version": "0.2.1",
-  "description": "Terminal grid for multi-agent Claude/Codex work on Windows",
+  "description": "A terminal grid for running many Claude Code and Codex agents side by side on Windows",
+  "author": "ajzak",
+  "license": "MIT",
+  "homepage": "https://github.com/adamejzak/ajzakomator",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adamejzak/ajzakomator.git"
+  },
+  "bugs": "https://github.com/adamejzak/ajzakomator/issues",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "terminal",
+    "ai-agents",
+    "electron",
+    "windows",
+    "xterm",
+    "multi-agent"
+  ],
   "main": "out/main/index.js",
-  "private": true,
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -83,9 +100,9 @@
       {
         "provider": "github",
         "owner": "adamejzak",
-        "repo": "ajzakomator-releases"
+        "repo": "ajzakomator"
       }
     ]
   },
-  "author": "ajzak"
+  "private": true
 }
