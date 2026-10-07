@@ -1,3 +1,4 @@
+import { basename } from 'path';
 import { describe, expect, it } from 'vitest';
 import { cleanEnv } from '../src/shared/env';
 import { PtyManager } from '../src/ptyhost/manager';
@@ -28,7 +29,7 @@ describe('PtyManager (real ConPTY)', () => {
     const m = new PtyManager(sink);
     m.spawn({ id: 'a', cwd: process.cwd(), cols: 100, rows: 30, env, shell: 'pwsh', command: 'echo "mc-$((1+1))-ok"; (Get-Location).Path' });
     await waitFor(() => (out.get('a') ?? '').includes('mc-2-ok'));
-    expect(out.get('a')).toContain('MULTICODING');
+    expect(out.get('a')).toContain(basename(process.cwd()));
     m.resize('a', 80, 20);
     m.write('a', 'exit\r');
     await waitFor(() => exits.has('a'));
