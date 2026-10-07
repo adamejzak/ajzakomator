@@ -1,7 +1,7 @@
 {
   "name": "ajzakomator",
   "productName": "ajzakomator",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A terminal grid for running many Claude Code and Codex agents side by side on Windows",
   "author": "ajzak",
   "license": "MIT",
