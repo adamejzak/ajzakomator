@@ -47,11 +47,14 @@ jobs:
           path: release-assets
       - name: Verify installers and prepare update manifests
         run: node scripts/prepare-release-assets.mjs release-assets "${RELEASE_TAG#v}"
+      - name: Prepare release description with download guide
+        run: |
+          cat "docs/releases/${RELEASE_TAG#v}.md" docs/releases/DOWNLOADS.md > release-notes.md
       - name: Create draft with all platform packages
         run: |
           gh release create "$RELEASE_TAG" release-assets/publish/* \
             --repo "$RELEASE_REPOSITORY" --verify-tag --draft \
             --title "ajzakomator ${RELEASE_TAG#v}" \
-            --notes-file "docs/releases/${RELEASE_TAG#v}.md"
+            --notes-file release-notes.md
       - name: Publish release
         run: gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --draft=false --latest
