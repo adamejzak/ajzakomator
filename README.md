@@ -63,6 +63,9 @@ background, tells you which one needs you, and brings any grid or conversation b
 
 **Small things that add up**
 - Project icons (emoji or your own image), drag to reorder projects and snippets
+- Resize both side panels by dragging their inner edge; double click to reset. Widths and list order are saved
+- Browse the active project's file tree in the sidebar's Files tab, preview text, or open files in your editor
+- Right-click projects, grids, snippets, files, or empty panel space for their actions; click the project editor's avatar to choose an image
 - Auto updates in the background, one click to restart into the new version
 - Dark, minimal UI in the spirit of Cursor
 

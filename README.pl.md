@@ -19,6 +19,9 @@
 - **Statusy na żywo**: ◐ pracuje, ● czeka na Ciebie, plus powiadomienie Windows, gdy agent w tle skończy
 - **Nic nie ginie**: po restarcie aplikacji rozmowy same się wznawiają, zamknięte gridy trafiają do Historii, a lista starych czatów Claude i Codex jest pod ręką
 - **Snippety** z ikonami i kolorami: klik wkleja do aktywnej komórki, Shift+klik do całej siatki, można też przeciągnąć na komórkę
+- **Układ paneli**: przeciągnij krawędź projektów lub snippetów, aby zmienić szerokość; podwójny klik przywraca domyślną. Szerokości i kolejność projektów oraz snippetów są zapamiętywane
+- **Przeglądarka plików**: zakładka „Pliki” w lewym panelu pokazuje drzewo projektu, podgląd tekstu i skróty do edytora lub Eksploratora Windows
+- **Menu pod prawym przyciskiem**: na projekcie, gridzie, snippecie, pliku i pustej przestrzeni paneli. W edytorze projektu kliknięcie avatara wybiera własną ikonę, a „Anuluj” odrzuca zmiany
 - **Paleta `Ctrl+K`** przeszukuje projekty, gridy, snippety, presety, historię i akcje
 - **Terminal jak w Windows Terminal**: kolory agentów, klikanie myszą, AltGr, wklejanie obrazków i **przytrzymanie spacji do dyktowania**
 - **Automatyczne aktualizacje** w tle
