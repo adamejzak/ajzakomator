@@ -211,6 +211,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
           <span className="hd" />
           <span className="hd">{tr("Nazwa")}</span>
           <span className="hd">{tr("Profil")}</span>
+          <span className="hd">{tr('Rola / MCP')}</span>
           <span className="hd">{tr("Prompt startowy")}</span>
           <span className="hd">{isRepo ? 'Worktree' : ''}</span>
           {layout.areas.map((_, i) => (
@@ -255,6 +256,10 @@ function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
       <input className="input" placeholder={tr("np. backend")} value={cell.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} />
       <select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
         {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <select className="select" aria-label={tr('Rola agenta')} disabled={isShell} value={cell.role ?? ''} onChange={(e) => onChange({ role: e.target.value ? e.target.value as 'coordinator' | 'worker' : undefined })}>
+        <option value="">{tr('Bez MCP')}</option>
+        <option value="coordinator">{tr('Koordynator')}</option><option value="worker">{tr('Wykonawca')}</option>
       </select>
       <span className="prompt-wrap">
         <input

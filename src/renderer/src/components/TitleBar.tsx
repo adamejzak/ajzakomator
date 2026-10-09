@@ -51,6 +51,8 @@ export function TitleBar() {
   const { tr } = useI18n();
   const s = useStore((st) => st.s);
   const statuses = useStore((st) => st.ui.statuses);
+  const automationOpen = useStore((st) => st.ui.automationOpen);
+  const pendingTasks = s.automation.tasks.filter((t) => !['completed', 'cancelled'].includes(t.status)).length;
   const project = activeProject(s);
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -122,6 +124,9 @@ export function TitleBar() {
       {project && <span className="project-path" title={project.path}>{project.path}</span>}
       <UpdateBadge />
       <div className="row no-drag" style={{ gap: 2 }}>
+        <button className={`tb-btn team-toggle ${automationOpen ? 'on' : ''}`} title={tr('Zadania i wiadomości agentów')} onClick={() => setUi({ automationOpen: !automationOpen })}>
+          AI{pendingTasks > 0 && <span className="team-count">{pendingTasks}</span>}
+        </button>
         {project && <button className="tb-btn" title={tr("Historia czatów i gridów") + keyLabel(" (Ctrl+Shift+H)")} onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
         <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title={tr("Snippety") + keyLabel(" (Ctrl+Shift+B)")} onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
         <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title={tr("Panel projektów") + keyLabel(" (Ctrl+Shift+E)")} onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>

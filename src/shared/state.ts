@@ -4,6 +4,7 @@ import { DEFAULT_PROFILES, RETIRED_PROFILES } from './profiles';
 import { isLanguage } from './languages';
 import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
 import { normalizePanelWidth, PANEL_LIMITS } from './panels';
+import { defaultAutomation } from './automation';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
@@ -16,6 +17,7 @@ export const uid = () => globalThis.crypto.randomUUID();
 export function defaultState(platform: AppPlatform = 'win32'): AppState {
   return {
     version: 1,
+    automation: defaultAutomation(),
     projects: [],
     activeProjectId: null,
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
@@ -37,11 +39,12 @@ const mapProject = (s: AppState, projectId: string, fn: (p: Project) => Project)
 const mapTab = (s: AppState, projectId: string, tabId: string, fn: (t: Tab) => Tab): AppState =>
   mapProject(s, projectId, (p) => ({ ...p, tabs: p.tabs.map((t) => (t.id === tabId ? fn(t) : t)) }));
 
-type CellInput = { profileId: string; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session'] };
+type CellInput = { profileId: string; role?: Cell['role']; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session'] };
 
 const newCell = (c: CellInput): Cell => ({
   id: uid(),
   profileId: c.profileId,
+  ...(c.role ? { role: c.role } : {}),
   ...(c.name?.trim() ? { name: c.name.trim() } : {}),
   ...(c.startupPrompt?.trim() ? { startupPrompt: c.startupPrompt } : {}),
   ...(c.worktree ? { worktree: c.worktree } : {}),
@@ -112,7 +115,10 @@ export function addTab(s: AppState, projectId: string, input: NewTabInput): AppS
   const project = s.projects.find((p) => p.id === projectId);
   if (!project) return s;
   const count = input.layout.areas.length;
-  const cells = Array.from({ length: count }, (_, i) => newCell(input.cells[i] ?? input.cells[0] ?? { profileId: 'shell' }));
+  const cells = Array.from({ length: count }, (_, i) => {
+    const spec = input.cells[i] ?? input.cells[0] ?? { profileId: 'shell' };
+    return newCell(spec);
+  });
   const tab: Tab = { id: uid(), name: input.name ?? nextTabName(project), layout: input.layout, cells };
   return mapProject(s, projectId, (p) => ({ ...p, tabs: [...p.tabs, tab], activeTabId: tab.id }));
 }
@@ -264,6 +270,12 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
   return {
     ...d,
     ...r,
+    automation: {
+      paused: r.automation?.paused === true,
+      tasks: Array.isArray(r.automation?.tasks) ? r.automation.tasks : [],
+      messages: Array.isArray(r.automation?.messages) ? r.automation.messages : [],
+      events: Array.isArray(r.automation?.events) ? r.automation.events.slice(-200) : [],
+    },
     sidebarWidth: normalizePanelWidth(r.sidebarWidth, 'sidebar'),
     snippetsWidth: normalizePanelWidth(r.snippetsWidth, 'snippets'),
     profiles: profiles.length ? profiles : d.profiles,

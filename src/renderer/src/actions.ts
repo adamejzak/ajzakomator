@@ -82,6 +82,7 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
   const { cols, rows } = terminals.size(cellId);
   const r = await window.mc.spawnCell({
     cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId,
+    sessionConfirmed: mode === 'resume' && cell.session?.confirmed === true,
     startupPrompt: mode === 'new' && profile.cli !== 'shell' ? cell.startupPrompt : undefined,
   });
   // The startup prompt is a one-shot: later restarts must not send it again.
@@ -262,6 +263,7 @@ export async function relocateProject(projectId: string): Promise<void> {
 
 export interface TabSpecCell {
   profileId: string;
+  role?: import('../../shared/automation').AgentRole;
   worktree: boolean;
   name?: string;
   prompt?: string;
@@ -271,8 +273,27 @@ export interface TabSpecCell {
 export async function openTab(projectId: string, layout: GridLayout, cells: TabSpecCell[], name?: string): Promise<void> {
   const project = getS().projects.find((p) => p.id === projectId);
   if (!project) return;
+  if (!cells.some((cell) => cell.session)) {
+    const used = new Set([...project.tabs, ...project.archive].map((tab) => tab.name));
+    let number = 1;
+    while (used.has(`Grid ${number}`)) number++;
+    try {
+      const created = await window.mc.automation('create_grid', {
+        projectId, name: name?.trim() || `Grid ${number}`, layout,
+        cells: layout.areas.map((_, i) => {
+          const spec = cells[i] ?? cells[cells.length - 1] ?? { profileId: getS().settings.lastProfileId, worktree: false };
+          return { profileId: spec.profileId, role: getProfile(getS(), spec.profileId).cli === 'shell' ? undefined : spec.role, name: spec.name?.trim() || undefined,
+            worktree: spec.worktree, prompt: getProfile(getS(), spec.profileId).cli === 'shell' ? undefined : spec.prompt?.trim() || undefined };
+        }),
+      }) as { gridId: string; cellIds: string[] };
+      update((s) => setActiveTab(setActiveProject(s, projectId), projectId, created.gridId));
+      if (created.cellIds[0]) focusCell(created.cellIds[0]);
+      update((s) => updateSettings(s, { lastProfileId: cells[0]?.profileId ?? s.settings.lastProfileId }));
+    } catch (error) { toast(tr('Nie udało się utworzyć gridu: {error}', { error: String(error) }), 'error'); }
+    return;
+  }
   const tabName = name ?? undefined;
-  const specs: Array<{ profileId: string; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession }> = [];
+  const specs: Array<{ profileId: string; role?: import('../../shared/automation').AgentRole; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession }> = [];
   for (let i = 0; i < layout.areas.length; i++) {
     const spec = cells[i] ?? cells[cells.length - 1] ?? { profileId: getS().settings.lastProfileId, worktree: false };
     let worktree: Worktree | undefined;
@@ -283,7 +304,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
         toast(tr('Worktree nie powstał (komórka {number}): {error}', { number: i + 1, error: (e as Error).message }), 'error');
       }
     }
-    specs.push({ profileId: spec.profileId, name: spec.name, startupPrompt: spec.prompt, worktree, session: spec.session });
+    specs.push({ profileId: spec.profileId, role: spec.role, name: spec.name, startupPrompt: spec.prompt, worktree, session: spec.session });
   }
   update((s) => setActiveProject(addTab(s, projectId, { name: tabName, layout, cells: specs }), projectId));
   const tab = activeTab(getS().projects.find((p) => p.id === projectId) ?? null);
@@ -358,7 +379,7 @@ export function resumeSession(info: SessionInfo, target: 'cell' | 'newCell' | 'n
   const p = activeProject(getS());
   if (!p) return;
   const profile = profileFor(info.cli);
-  const session: CellSession = { cli: info.cli, id: info.id };
+  const session: CellSession = { cli: info.cli, id: info.id, confirmed: true };
   const focused = getUi().focusedCellId;
   if (target === 'cell' && focused && findCell(getS(), focused)) {
     update((s) => updateCell(s, focused, { profileId: profile.id, session }));

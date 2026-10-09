@@ -47,6 +47,18 @@ describe('buildLaunchCommand', () => {
   it('returns null for shell profiles', () => {
     expect(buildLaunchCommand(P.shell, { mode: 'new' })).toBeNull();
   });
+  it('adds app-owned MCP settings without removing user CLI arguments', () => {
+    const mcp = { url: 'http://127.0.0.1:12345/mcp', tokenEnv: 'AJZ_MCP_TOKEN', claudeConfigPath: "C:/User's files/mcp.json" };
+    const claude = buildLaunchCommand({ ...P.claude, args: '--model opus' }, { mode: 'new', mcp })!;
+    expect(claude).toContain("--mcp-config 'C:/User''s files/mcp.json'");
+    expect(claude).toContain('--model opus');
+    const codex = buildLaunchCommand(P.codex, { mode: 'resume', sessionId: 'known', mcp })!;
+    expect(codex).toContain('codex resume known');
+    expect(codex).toContain("'mcp_servers.ajzakomator.url=\"http://127.0.0.1:12345/mcp\"'");
+    expect(codex).toContain("'mcp_servers.ajzakomator.bearer_token_env_var=\"AJZ_MCP_TOKEN\"'");
+    expect(buildLaunchCommand(P.codex, { mode: 'new', shell: 'cmd', mcp })).toContain("mcp_servers.ajzakomator.url='http://127.0.0.1:12345/mcp'");
+    expect(buildLaunchCommand(P.claude, { mode: 'new', shell: 'bash', mcp })).toContain("'C:/User'\"'\"'s files/mcp.json'");
+  });
 
   it('psQuote escapes single quotes and keeps Polish characters', () => {
     expect(psQuote("D:\\Moje Projekty\\źródło's")).toBe("'D:\\Moje Projekty\\źródło''s'");
@@ -58,6 +70,7 @@ describe('cleanEnv', () => {
     const env = cleanEnv({
       PATH: 'x', CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', CLAUDE_CODE_SESSION_ID: 'a',
       CLAUDE_CODE_MESSAGING_SOCKET: 's', CLAUDE_CODE_ENABLE_TELEMETRY: '1', ELECTRON_RUN_AS_NODE: '1', U: undefined,
+      AJZ_MCP_TOKEN: 'parent-token', MC_CELL_ID: 'parent-cell',
     });
     expect(env).toEqual({ PATH: 'x', CLAUDE_CODE_ENABLE_TELEMETRY: '1' });
   });

@@ -2,7 +2,7 @@ import { tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
-import { focusCell, refreshSessionTitles, resetStarted, setAliveAtStart } from './actions';
+import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
 import { GridView } from './components/GridView';
@@ -14,6 +14,7 @@ import { TitleBar } from './components/TitleBar';
 import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
 import { terminals } from './terminals/TerminalManager';
+import { AutomationPanel } from './components/AutomationPanel';
 
 let booted = false;
 
@@ -21,9 +22,13 @@ async function boot(): Promise<void> {
   if (booted) return;
   booted = true;
   terminals.setWindowsBuild(window.mc.windowsBuild);
-  const [state, alive] = await Promise.all([window.mc.loadState(), window.mc.aliveCells()]);
+  window.mc.on('state:changed', (snapshot) => useStore.getState().sync(snapshot));
+  window.mc.on('automation:start-cells', (ids) => ids.forEach(ensureStarted));
+  const [snapshot, alive, mcpInfo] = await Promise.all([window.mc.loadSnapshot(), window.mc.aliveCells(), window.mc.getMcpInfo()]);
   setAliveAtStart(alive);
-  useStore.getState().init(state);
+  useStore.getState().init(snapshot);
+  setUi({ mcpInfo });
+  const state = getS();
 
   const missing: Record<string, true> = {};
   await Promise.all(state.projects.map(async (p) => {
@@ -46,9 +51,9 @@ async function boot(): Promise<void> {
     toast(tr("Proces terminali się zrestartował, wznawiam rozmowy"), 'error');
     resetStarted();
   });
-  window.mc.on('app:before-quit', () => window.mc.saveState(getS()));
 
   terminals.onStatus((cellId, status) => {
+    window.mc.reportCellStatus(cellId, status);
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
     if (status !== 'waiting') return;
     maybeNotify(cellId);
@@ -61,6 +66,10 @@ async function boot(): Promise<void> {
     // Shell exited (e.g. user typed `exit`) — keep the cell, offer a restart from its header.
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: 'exited' } }));
   });
+  // Restore background cells with unfinished assigned work, without changing the user's selection.
+  for (const task of state.automation.tasks) {
+    if (!['completed', 'cancelled'].includes(task.status)) ensureStarted(task.cellId);
+  }
 }
 
 function isVisible(cellId: string): boolean {
@@ -99,6 +108,7 @@ function maybeNotify(cellId: string): void {
 export function App() {
   const { language } = useI18n();
   const ready = useStore((st) => st.ready);
+  const automationOpen = useStore((st) => st.ui.automationOpen);
   const languageChosen = useStore((st) => st.s.settings.language !== null);
   const snippetsOpen = useStore((st) => st.s.snippetsOpen);
   const collapsed = useStore((st) => st.s.sidebarCollapsed);
@@ -139,6 +149,7 @@ export function App() {
         <Sidebar resize={resizeProps('sidebar')} />
         <div className="main">
           <GridView />
+          {automationOpen && <AutomationPanel />}
         </div>
         {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
       </div>

@@ -35,6 +35,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 
 ## Features
 
+- **Optional agent MCP**: background grids, roles, tasks with results and messages in the AI panel. Ordinary grids default to no MCP — [usage guide (Polish)](docs/MCP.md).
 **Grids that fit the work**
 - 1, 2, 2×2 up to 5×4, plus row layouts like `3+2` or `2+2+1`, and merged cells
 - Several grids per project as tabs; `+ Dodaj` grows the current grid one agent at a time

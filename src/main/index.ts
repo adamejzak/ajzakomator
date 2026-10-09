@@ -18,6 +18,13 @@ import { claudeProjectDirName, findRecentCodexSession, listSessions } from './se
 import { createSaver, loadState } from './store';
 import { getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
+import { StateController } from './stateController';
+import { AutomationService } from './automation';
+import { AjzakomatorMcpServer } from './mcp';
+import { queueCodexMessage } from './agentDelivery';
+import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
+import type { StateEdit } from '../shared/stateEdits';
+import { findCell, getProfile } from '../shared/state';
 
 const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
 // Carry over state from the app's previous name.
@@ -28,6 +35,7 @@ if (!process.env.MC_DATA_DIR && !existsSync(join(DATA_DIR, 'state.json')) && exi
 }
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
+const MCP_DIR = join(DATA_DIR, 'mcp');
 app.setPath('userData', DATA_DIR);
 if (process.platform === 'win32') app.setAppUserModelId('com.ajzakomator.app');
 
@@ -45,15 +53,41 @@ const alive = new Set<string>();
 const claimedCodex = new Set<string>();
 /** Live notifications — Windows drops click handlers of garbage-collected ones. */
 const notifications = new Set<Notification>();
+/** Only sessions explicitly chosen by the user authorize native message delivery. */
+const verifiedCodex = new Map<string, string>();
+let mcpError: string | undefined;
 
 const send = (channel: string, ...args: unknown[]) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
 };
 
+const controller = new StateController(state, (snapshot) => {
+  for (const project of state.projects) for (const tab of project.tabs) for (const cell of tab.cells) {
+    if (cell.role && !findCell(snapshot.state, cell.id)?.cell.role) mcp.revokeCell(cell.id);
+  }
+  state = snapshot.state;
+  saver.save(state);
+  send('state:changed', snapshot);
+});
+const automation = new AutomationService(controller, {
+  createWorktree,
+  removeWorktree: (path, wt) => removeWorktree(path, wt, true),
+  startCells: (ids) => send('automation:start-cells', ids),
+  deliver: async (cellId, text) => {
+    const found = findCell(state, cellId);
+    if (!found || !alive.has(cellId)) throw new Error('Agent is not running. The item is available in its MCP inbox.');
+    if (getProfile(state, found.cell.profileId).cli !== 'codex') throw new Error('Available in the MCP inbox. Use Paste to insert it into this agent without submitting.');
+    const sessionId = verifiedCodex.get(cellId);
+    if (!sessionId || found.cell.session?.id !== sessionId) throw new Error('Session identity is not verified. The item is available in the MCP inbox.');
+    await queueCodexMessage(sessionId, text);
+  },
+});
+const mcp = new AjzakomatorMcpServer(automation);
+
 function createWindow(): void {
   win = new BrowserWindow({
-    width: 1600,
-    height: 1000,
+    width: process.env.MC_OFFSCREEN ? 1100 : 1600,
+    height: process.env.MC_OFFSCREEN ? 700 : 1000,
     minWidth: 800,
     minHeight: 500,
     backgroundColor: '#0d0d0d',
@@ -82,15 +116,22 @@ function createWindow(): void {
 // ── pty host ────────────────────────────────────────────────────────────────
 
 ptyHost.on('message', (m: HostToMain) => {
-  if (m.t === 'spawned') alive.add(m.id);
+  if (m.t === 'spawned') { alive.add(m.id); automation.statuses.set(m.id, 'unknown'); }
   else if (m.t === 'exit') {
     alive.delete(m.id);
+    verifiedCodex.delete(m.id);
+    mcp.revokeCell(m.id);
+    automation.statuses.set(m.id, 'exited');
   } else if (m.t === 'spawnError') {
     alive.delete(m.id);
+    mcp.revokeCell(m.id);
+    automation.statuses.set(m.id, 'exited');
     send('cell:spawnError', m.id, m.message);
   }
 });
 ptyHost.on('crashed', () => {
+  for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
+  verifiedCodex.clear();
   alive.clear();
   send('ptyhost:crashed');
 });
@@ -99,7 +140,10 @@ ptyHost.on('fatal', () => {
   dialog.showErrorBox('ajzakomator', tr('Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.'));
 });
 
-hooks.on('hook', (cellId: string, event: string) => send('cell:hook', cellId, event));
+hooks.on('hook', (cellId: string, event: string) => {
+  automation.statuses.set(cellId, event === 'prompt' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
+  send('cell:hook', cellId, event);
+});
 
 function boundCodexIds(): Set<string> {
   const ids = new Set<string>(claimedCodex);
@@ -114,19 +158,26 @@ function boundCodexIds(): Set<string> {
  * turn: its rollout file was just written, so the freshest unclaimed one in that cwd is the cell's.
  */
 ipcMain.handle('codex:bind', (_e, cellId: string, cwd: string) => {
+  const peers = state.projects.flatMap((p) => p.tabs.flatMap((t) => t.cells
+    .filter((c) => alive.has(c.id) && getProfile(state, c.profileId).cli === 'codex' && (c.worktree?.path ?? p.path) === cwd)));
+  // Shared-directory simultaneous starts are ambiguous. Never guess a message recipient.
+  if (peers.length !== 1 || peers[0].id !== cellId) return null;
   const id = findRecentCodexSession(homedir(), cwd, 20_000, boundCodexIds());
   if (!id) return null;
   claimedCodex.add(id);
-  send('cell:session', cellId, { cli: 'codex', id });
+  send('cell:session', cellId, { cli: 'codex', id, confirmed: false });
   return id;
 });
 
 // ── ipc ─────────────────────────────────────────────────────────────────────
 
 ipcMain.handle('state:load', () => state);
-ipcMain.on('state:save', (_e, s: AppState) => {
-  state = s;
-  saver.save(s);
+ipcMain.handle('state:snapshot', () => controller.snapshot());
+ipcMain.handle('state:edit', (_e, edit: StateEdit) => controller.apply(edit));
+ipcMain.handle('mcp:info', (): McpInfo => ({ ...mcp.getInfo(), error: mcpError }));
+ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input: unknown) => {
+  if (!Object.hasOwn(automationSchemas, operation)) throw new Error('Unknown operation.');
+  return automation.execute(operation, input);
 });
 
 ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => {
@@ -147,22 +198,50 @@ ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => {
     writeFileSync(file, req.startupPrompt, 'utf8');
     initialPrompt = { file, text: req.startupPrompt };
   }
-  const command =
-    buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath, shell: state.settings.shell, initialPrompt }) ?? undefined;
-  const env = { ...cleanEnv(process.env), MC_CELL_ID: req.cellId };
+  const env: Record<string, string> = { ...cleanEnv(process.env), MC_CELL_ID: req.cellId };
+  let mcpConfig: { url: string; tokenEnv: string; claudeConfigPath: string } | undefined;
+  if (req.profile.cli !== 'shell' && findCell(state, req.cellId)?.cell.role && mcp.getInfo().running) {
+    env.AJZ_MCP_TOKEN = mcp.issueToken(req.cellId);
+    const url = mcp.getInfo().url!;
+    mkdirSync(MCP_DIR, { recursive: true });
+    const claudeConfigPath = join(MCP_DIR, `${req.cellId}.json`);
+    writeFileSync(claudeConfigPath, JSON.stringify({ mcpServers: { ajzakomator: {
+      type: 'http', url, headers: { Authorization: 'Bearer ${AJZ_MCP_TOKEN}' },
+    } } }), 'utf8');
+    mcpConfig = { url, tokenEnv: 'AJZ_MCP_TOKEN', claudeConfigPath };
+  } else mcp.revokeCell(req.cellId);
+  const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath,
+    shell: state.settings.shell, initialPrompt, mcp: mcpConfig }) ?? undefined;
+  verifiedCodex.delete(req.cellId);
+  if (req.profile.cli === 'codex' && mode === 'resume' && req.sessionId && req.sessionConfirmed) verifiedCodex.set(req.cellId, req.sessionId);
+  automation.statuses.set(req.cellId, 'starting');
   alive.add(req.cellId);
   ptyHost.spawn({ id: req.cellId, cwd: req.cwd, cols: req.cols, rows: req.rows, env, shell: state.settings.shell, command });
   return { ok: true };
 });
 ipcMain.on('cell:kill', (_e, id: string) => {
+  mcp.revokeCell(id);
+  verifiedCodex.delete(id);
+  automation.statuses.set(id, 'exited');
   alive.delete(id);
   ptyHost.kill(id);
 });
 ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
+  mcp.revokeCell(id);
+  verifiedCodex.delete(id);
+  automation.statuses.set(id, 'exited');
   alive.delete(id);
   await ptyHost.killAndWait(id);
 });
 ipcMain.handle('cell:alive', () => [...alive]);
+ipcMain.on('cell:runtime', (_e, cellId: string, status: string) => {
+  const found = findCell(state, cellId);
+  if (!found || !alive.has(cellId) || getProfile(state, found.cell.profileId).cli !== 'codex') return;
+  // TUI heuristics can indicate activity or a request for attention, never precise readiness.
+  if (status === 'working') automation.statuses.set(cellId, 'working');
+  else if (status === 'waiting' && automation.statuses.get(cellId) !== 'ready') automation.statuses.set(cellId, 'needs_attention');
+  else if (status === 'idle' && automation.statuses.get(cellId) !== 'ready') automation.statuses.set(cellId, 'unknown');
+});
 
 ipcMain.handle('dialog:pickFolder', async () => {
   const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: tr('Wybierz folder projektu') });
@@ -233,6 +312,7 @@ app.whenReady().then(async () => {
   // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
   Menu.setApplicationMenu(null);
   await hooks.start();
+  try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   createWindow();
   initUpdater((s) => send('update:state', s));
@@ -252,6 +332,7 @@ app.on('before-quit', (e) => {
       console.error('state save failed', err);
     }
     await ptyHost.shutdown();
+    await mcp.stop();
     hooks.stop();
     installOnQuit();
     app.exit(0);

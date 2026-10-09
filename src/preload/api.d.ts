@@ -1,4 +1,7 @@
 import type { HookEvent } from '../shared/status';
+import type { CellStatus } from '../shared/status';
+import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
+import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
@@ -12,6 +15,7 @@ export interface SpawnCellRequest {
   profile: Profile;
   mode: 'new' | 'resume';
   sessionId?: string;
+  sessionConfirmed?: boolean;
   /** First prompt for a new conversation. */
   startupPrompt?: string;
 }
@@ -19,13 +23,17 @@ export interface SpawnCellRequest {
 export interface McApi {
   platform: AppPlatform;
   loadState(): Promise<AppState>;
-  saveState(state: AppState): void;
+  loadSnapshot(): Promise<StateSnapshot>;
+  applyStateEdit(edit: StateEdit): Promise<StateSnapshot>;
+  getMcpInfo(): Promise<McpInfo>;
+  automation<K extends AutomationOperation>(operation: K, input: AutomationInput<K>): Promise<unknown>;
   spawnCell(req: SpawnCellRequest): Promise<{ ok: true } | { ok: false; error: string }>;
   killCell(cellId: string): void;
   killCellAndWait(cellId: string): Promise<void>;
   /** Binds the freshest unclaimed Codex session in `cwd` to the cell (emits cell:session). */
   bindCodexSession(cellId: string, cwd: string): Promise<string | null>;
   aliveCells(): Promise<string[]>;
+  reportCellStatus(cellId: string, status: CellStatus): void;
   pickFolder(): Promise<string | null>;
   pathExists(path: string): Promise<boolean>;
   listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;
@@ -51,6 +59,8 @@ export interface McApi {
   on(channel: 'ptyhost:crashed', cb: () => void): () => void;
   on(channel: 'app:before-quit', cb: () => void): () => void;
   on(channel: 'update:state', cb: (s: UpdateState) => void): () => void;
+  on(channel: 'state:changed', cb: (snapshot: StateSnapshot) => void): () => void;
+  on(channel: 'automation:start-cells', cb: (cellIds: string[]) => void): () => void;
 }
 
 declare global {

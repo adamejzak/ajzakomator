@@ -24,6 +24,8 @@ export interface LaunchOptions {
   /** Per-cell Claude settings file carrying our status hooks. */
   claudeSettingsPath?: string;
   shell?: ShellKind;
+  /** App-owned, per-cell MCP configuration; never changes the user's global config. */
+  mcp?: { url: string; tokenEnv: string; claudeConfigPath: string };
   /**
    * First prompt for a new conversation. PowerShell and POSIX shells read it from `file`
    * (keeping newlines and quotes intact); cmd gets the text inline on one line.
@@ -45,10 +47,18 @@ export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): strin
     parts.push('claude');
     if (opts.sessionId) parts.push(opts.mode === 'resume' ? '--resume' : '--session-id', opts.sessionId);
     if (opts.claudeSettingsPath) parts.push('--settings', shellQuote(opts.claudeSettingsPath, opts.shell));
+    if (opts.mcp) parts.push('--mcp-config', shellQuote(opts.mcp.claudeConfigPath, opts.shell));
   } else if (profile.cli === 'codex') {
     parts.push('codex');
     if (opts.mode === 'resume' && opts.sessionId) parts.push('resume', opts.sessionId);
     parts.push('-c', 'tui.notifications=true');
+    if (opts.mcp) {
+      for (const [key, value] of [['url', opts.mcp.url], ['bearer_token_env_var', opts.mcp.tokenEnv]]) {
+        const setting = `mcp_servers.ajzakomator.${key}=${JSON.stringify(value)}`;
+        // cmd does not interpret TOML single quotes; these generated values contain no spaces/apostrophes.
+        parts.push('-c', opts.shell === 'cmd' ? `mcp_servers.ajzakomator.${key}='${value}'` : shellQuote(setting, opts.shell));
+      }
+    }
   } else {
     return null;
   }

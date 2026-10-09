@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { defaultState } from '../../shared/state';
 import type { CellStatus } from '../../shared/status';
 import type { AppState } from '../../shared/types';
+import { OptimisticState } from '../../shared/optimisticState';
+import type { StateSnapshot } from '../../shared/stateEdits';
+import type { McpInfo } from '../../shared/automation';
 
 export type Modal =
   | { kind: 'grid'; projectId: string }
@@ -36,6 +39,8 @@ export interface Ui {
   /** Bumped when every terminal must be (re)started, e.g. after a pty host crash. */
   epoch: number;
   sidebarView: 'projects' | 'files';
+  automationOpen: boolean;
+  mcpInfo: McpInfo;
 }
 
 interface Store {
@@ -44,8 +49,11 @@ interface Store {
   ready: boolean;
   update(fn: (s: AppState) => AppState): void;
   setUi(patch: Partial<Ui> | ((ui: Ui) => Partial<Ui>)): void;
-  init(s: AppState): void;
+  init(snapshot: StateSnapshot): void;
+  sync(snapshot: StateSnapshot): void;
 }
+
+const optimistic = new OptimisticState({ state: defaultState(window.mc.platform), revision: -1 });
 
 export const useStore = create<Store>((set, get) => ({
   s: defaultState(window.mc.platform),
@@ -62,20 +70,29 @@ export const useStore = create<Store>((set, get) => ({
     sessionTitles: {},
     epoch: 0,
     sidebarView: 'projects',
+    automationOpen: false,
+    mcpInfo: { running: false },
   },
   ready: false,
   update(fn) {
-    const next = fn(get().s);
-    if (next === get().s) return;
+    const base = get().s;
+    const next = fn(base);
+    if (next === base) return;
+    const edit = { id: crypto.randomUUID(), base, next };
+    optimistic.stage(edit);
     set({ s: next });
-    window.mc.saveState(next);
+    void window.mc.applyStateEdit(edit).then((snapshot) => get().sync(snapshot)).catch((error) => {
+      set({ s: optimistic.reject(edit.id) });
+      toast(String(error), 'error');
+    });
   },
   setUi(patch) {
     set((st) => ({ ui: { ...st.ui, ...(typeof patch === 'function' ? patch(st.ui) : patch) } }));
   },
-  init(s) {
-    set({ s, ready: true });
+  init(snapshot) {
+    set({ s: optimistic.accept(snapshot), ready: true });
   },
+  sync(snapshot) { set({ s: optimistic.accept(snapshot) }); },
 }));
 
 export const getS = () => useStore.getState().s;

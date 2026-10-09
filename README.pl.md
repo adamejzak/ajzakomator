@@ -14,6 +14,7 @@
 
 ## Co potrafi
 
+- **Opcjonalny MCP dla agentów**: role, gridy w tle, zadania z wynikami i wiadomości w panelu AI. Zwykłe gridy domyślnie działają bez MCP — [instrukcja](docs/MCP.md).
 - **Projekty po lewej**, a w każdym kilka gridów jako zakładki: od jednego terminala po 5×4, układy rzędami (`3+2`, `2+2+1`) i scalanie komórek
 - **Każda komórka** może mieć nazwę, kolor, prompt startowy i osobny `git worktree`
 - **Statusy na żywo**: ◐ pracuje, ● czeka na Ciebie, plus powiadomienie systemowe, gdy agent w tle skończy

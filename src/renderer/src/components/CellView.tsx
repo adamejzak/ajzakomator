@@ -6,7 +6,7 @@ import type { Cell } from '../../../shared/types';
 import {
   changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, setCellColor, toggleMaximize,
 } from '../actions';
-import { setUi, useStore } from '../store';
+import { setUi, toast, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { openMenu, openMenuAt, type MenuItem } from './ContextMenu';
 import { IBranch, IMax, IRestart, IRestore, IX } from './icons';
@@ -67,6 +67,12 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
       { label: maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), onClick: () => toggleMaximize(cell.id), hint: keyLabel("Ctrl+Shift+M") },
       { sep: true },
       ...profileItems(),
+      ...(profile.cli !== 'shell' ? [
+        { sep: true as const },
+        { label: tr('Bez MCP'), onClick: () => { void window.mc.automation('set_role', { cellId: cell.id, role: null }).catch((e) => toast(errorText(String(e)), 'error')); } },
+        { label: tr('Koordynator'), onClick: () => { void window.mc.automation('set_role', { cellId: cell.id, role: 'coordinator' }).catch((e) => toast(errorText(String(e)), 'error')); } },
+        { label: tr('Wykonawca'), onClick: () => { void window.mc.automation('set_role', { cellId: cell.id, role: 'worker' }).catch((e) => toast(errorText(String(e)), 'error')); } },
+      ] : []),
       { sep: true },
       { label: tr("Zamknij komórkę"), danger: true, onClick: () => void removeCell(cell.id) },
     ]);
@@ -99,6 +105,7 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
         onDoubleClick={(e) => (e.target as HTMLElement).closest('button,.cell-name,input') || toggleMaximize(cell.id)}
       >
         <span className="idx">{index + 1}</span>
+        {profile.cli !== 'shell' && cell.role === 'coordinator' && <span className="coordinator-mark" title={tr('Koordynator')}>◆</span>}
         <span className={`dot ${status}`} />
         {editing ? (
           <input

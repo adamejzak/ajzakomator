@@ -1,0 +1,192 @@
+// Exercise the built Electron app using isolated data and fake agents (no model calls).
+import assert from 'node:assert/strict';
+import { spawn, execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import electron from 'electron';
+
+const root = mkdtempSync(join(tmpdir(), 'ajzakomator-automation-'));
+const data = join(root, 'data'), agents = join(root, 'fake-agents'), tokens = join(root, 'tokens');
+for (const dir of [data, agents, tokens]) mkdirSync(dir);
+for (const name of ['claude', 'codex']) {
+  const path = join(agents, process.platform === 'win32' ? `${name}.cmd` : name);
+  writeFileSync(path, process.platform === 'win32'
+    ? `@echo off\r\n> "${tokens}\\%MC_CELL_ID%.token" echo %AJZ_MCP_TOKEN%\r\necho ajzakomator-smoke-agent-ready\r\n`
+    : '#!/bin/sh\nprintf "%s" "$AJZ_MCP_TOKEN" > "$AJZ_SMOKE_TOKENS/$MC_CELL_ID.token"\nprintf "ajzakomator-smoke-agent-ready\\n"\n');
+  if (process.platform !== 'win32') chmodSync(path, 0o755);
+}
+writeFileSync(join(data, 'state.json'), JSON.stringify({
+  version: 1, activeProjectId: 'smoke-project',
+  projects: [{ id: 'smoke-project', name: 'Automation smoke', path: root, color: '#3b82f6', archive: [], activeTabId: 'smoke-grid', tabs: [{
+    id: 'smoke-grid', name: 'Team', layout: { cols: 2, rows: 1, areas: [{ col: 0, row: 0, colSpan: 1, rowSpan: 1 }, { col: 1, row: 0, colSpan: 1, rowSpan: 1 }] },
+    cells: [{ id: 'smoke-coordinator', name: 'Coordinator', profileId: 'claude', role: 'coordinator' }, { id: 'smoke-worker', name: 'Worker', profileId: 'claude', role: 'worker' }],
+  }] }],
+  profiles: [{ id: 'claude', name: 'Claude', cli: 'claude', args: '', color: '#d97757' }, { id: 'codex', name: 'Codex', cli: 'codex', args: '', color: '#10a37f' }, { id: 'shell', name: 'Terminal', cli: 'shell', args: '', color: '#7a7a7a' }],
+  snippets: [], presets: [], settings: { language: 'pl', fontSize: 13, notifications: false, shell: process.platform === 'win32' ? 'cmd' : 'bash', lastProfileId: 'claude' },
+  sidebarCollapsed: false, snippetsOpen: true, sidebarWidth: 228, snippetsWidth: 210,
+}));
+
+const port = await new Promise((resolvePort, reject) => {
+  const probe = createServer(); probe.on('error', reject);
+  probe.listen(0, '127.0.0.1', () => { const p = probe.address().port; probe.close(() => resolvePort(p)); });
+});
+const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), AJZ_SMOKE_TOKENS: tokens,
+  PATH: agents + delimiter + (process.env.PATH ?? process.env.Path ?? '') };
+delete env.ELECTRON_RUN_AS_NODE;
+delete env.ELECTRON_RENDERER_URL;
+const child = spawn(electron, ['.'], { cwd: process.cwd(), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+let appOutput = '', exited = false;
+child.on('error', (error) => { appOutput += error.message; exited = true; });
+child.stdout.on('data', (data) => { appOutput += data; });
+child.stderr.on('data', (data) => { appOutput += data; });
+child.once('exit', () => { exited = true; });
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+async function until(fn, label) {
+  const end = Date.now() + 20000;
+  while (Date.now() < end) { const value = await fn(); if (value) return value; if (exited) throw new Error(`App exited during ${label}: ${appOutput}`); await sleep(100); }
+  throw new Error(`Timeout waiting for ${label}: ${appOutput}`);
+}
+let socket;
+const clients = [];
+let requestId = 0;
+const requests = new Map();
+const exceptions = [];
+async function cdp(method, params = {}) {
+  const id = ++requestId;
+  return new Promise((resolveRequest, reject) => {
+    const timer = setTimeout(() => { requests.delete(id); reject(new Error(`CDP timeout: ${method}`)); }, 10000);
+    requests.set(id, { resolve: (value) => { clearTimeout(timer); resolveRequest(value); }, reject: (error) => { clearTimeout(timer); reject(error); } });
+    socket.send(JSON.stringify({ id, method, params }));
+  });
+}
+async function evaluate(expression) {
+  const result = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text);
+  return result.result.value;
+}
+async function snapshot() { return evaluate('window.mc.loadSnapshot()'); }
+async function mcpClient(cellId) {
+  await until(() => existsSync(join(tokens, `${cellId}.token`)), 'fake agent token');
+  const token = readFileSync(join(tokens, `${cellId}.token`), 'utf8').trim();
+  assert.match(token, /^[0-9a-f]{64}$/);
+  const { url } = await evaluate('window.mc.getMcpInfo()');
+  const client = new Client({ name: 'electron-smoke', version: '1' });
+  await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  clients.push(client);
+  return client;
+}
+async function call(client, name, args = {}) {
+  const result = await client.callTool({ name, arguments: args });
+  assert.notEqual(result.isError, true, JSON.stringify(result.content));
+  return result.structuredContent.result;
+}
+async function screenshot(name) {
+  const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
+  writeFileSync(join(root, `${name}.png`), Buffer.from(data, 'base64'));
+}
+try {
+  const target = await until(async () => {
+    try { return (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find((tab) => tab.type === 'page'); } catch { return null; }
+  }, 'Electron debugger');
+  socket = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise((resolveSocket, reject) => { socket.addEventListener('open', resolveSocket, { once: true }); socket.addEventListener('error', reject, { once: true }); });
+  socket.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    if (message.method === 'Runtime.exceptionThrown') exceptions.push(message.params.exceptionDetails.text);
+    const pending = requests.get(message.id);
+    if (pending) { requests.delete(message.id); message.error ? pending.reject(new Error(message.error.message)) : pending.resolve(message.result); }
+  });
+  await cdp('Runtime.enable');
+  await until(() => evaluate('Boolean(document.querySelector(".team-toggle"))'), 'renderer boot');
+  assert.equal((await evaluate('window.mc.getMcpInfo()')).running, true);
+  await evaluate('document.querySelector(".team-toggle").click()');
+  await until(() => evaluate('Boolean(document.querySelector(".automation-panel"))'), 'team panel');
+
+  // Submit the actual React form.
+  await evaluate(`(() => {
+    const form = document.querySelector('.automation-compose');
+    const set = (el, value, prototype) => { Object.getOwnPropertyDescriptor(prototype, 'value').set.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); };
+    set(form.querySelector('input'), 'Zadanie z formularza', HTMLInputElement.prototype);
+    set(form.querySelector('textarea'), 'Sprawdź panel zadań', HTMLTextAreaElement.prototype);
+  })()`);
+  await evaluate('document.querySelector(".automation-compose").requestSubmit()');
+  await until(async () => (await snapshot()).state.automation.tasks.some((t) => t.title === 'Zadanie z formularza'), 'task form submit');
+
+  const coordinator = await mcpClient('smoke-coordinator');
+  const focusedBefore = await evaluate('document.activeElement?.tagName');
+  const created = await call(coordinator, 'create_grid', { name: 'Background team', rows: [2], cells: [
+    { profileId: 'codex', role: 'worker', name: 'Backend', prompt: 'Review the backend' },
+    { profileId: 'claude', role: 'worker', name: 'Frontend', prompt: 'Review the frontend' },
+  ] });
+  assert.equal((await snapshot()).state.projects[0].activeTabId, 'smoke-grid');
+  assert.equal(await evaluate('document.activeElement?.tagName'), focusedBefore);
+  assert.equal(await evaluate('document.querySelectorAll(".grid > .cell").length'), 2);
+  const backend = await mcpClient(created.cellIds[0]);
+  const inbox = await call(backend, 'get_tasks', { status: 'queued' });
+  assert.equal(inbox.length, 1);
+  await call(backend, 'update_task', { taskId: inbox[0].id, status: 'in_progress' });
+  await call(backend, 'update_task', { taskId: inbox[0].id, status: 'completed', result: { summary: 'Backend sprawdzony — testy przeszły.', files: ['src/backend.ts'], tests: ['smoke: passed'], branch: 'mc/backend' } });
+  const message = await call(coordinator, 'send_message', { toCellId: created.cellIds[0], text: 'Dziękuję, przekazuję do review.' });
+  assert.equal((await call(backend, 'get_messages'))[0].id, message.id);
+  await call(backend, 'acknowledge_message', { messageId: message.id });
+  assert.equal((await call(backend, 'get_messages')).length, 0);
+  await call(coordinator, 'save_snippet', { name: 'Review checklist', text: 'Sprawdź testy i regresje' });
+  await call(coordinator, 'save_preset', { name: 'Review team', cells: [{ profileId: 'codex', role: 'worker', prompt: 'Review changes' }] });
+  assert.equal((await call(coordinator, 'list_library')).snippets[0].name, 'Review checklist');
+  await until(() => evaluate('document.querySelector(".automation-list").textContent.includes("Backend sprawdzony")'), 'task result rendering');
+  await screenshot('tasks');
+
+  await evaluate('Array.from(document.querySelectorAll(".automation-tabs button")).find(b => b.textContent === "Agenci").click()');
+  await screenshot('agents');
+  await evaluate('Array.from(document.querySelectorAll(".automation-head button")).find(b => b.textContent.includes("Wstrzymaj")).click()');
+  await until(async () => (await snapshot()).state.automation.paused, 'pause control');
+  const denied = await coordinator.callTool({ name: 'send_message', arguments: { toCellId: 'smoke-worker', text: 'Denied while paused' } });
+  assert.equal(denied.isError, true);
+  await evaluate('Array.from(document.querySelectorAll(".automation-head button")).find(b => b.textContent.includes("Wznów")).click()');
+  await until(async () => !(await snapshot()).state.automation.paused, 'resume control');
+
+  // Check the grid editor and narrow-window layout.
+  await evaluate('Array.from(document.querySelectorAll(".titlebar button")).find(b => b.title.includes("Nowy grid")).click()');
+  await until(() => evaluate('Boolean(document.querySelector(".cell-table"))'), 'grid editor');
+  assert.equal(await evaluate('document.querySelector(".cell-table").textContent.includes("Rola / MCP")'), true);
+  assert.equal(await evaluate('Array.from(document.querySelectorAll(".cell-table select[aria-label]")).every(s => s.value === "")'), true);
+  await screenshot('grid-editor');
+  await evaluate('Array.from(document.querySelectorAll(".presets span.btn")).find(b => b.textContent.includes("Review team")).click()');
+  await until(() => evaluate('document.querySelector(".cell-table select[aria-label]").value === "worker"'), 'preset MCP role');
+  await evaluate('(() => { const s = document.querySelector(".cell-table select[aria-label]"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, ""); s.dispatchEvent(new Event("change", { bubbles: true })); })()');
+  await evaluate('Array.from(document.querySelectorAll(".modal-foot button")).find(b => b.textContent.startsWith("Otwórz grid")).click()');
+  await until(async () => (await snapshot()).state.projects[0].tabs.length === 3, 'ordinary UI grid');
+  const plainGrid = (await snapshot()).state.projects[0].tabs.at(-1);
+  assert.equal(plainGrid.cells[0].role, undefined);
+  assert.equal(plainGrid.cells[0].startupPrompt?.includes('update_task') ?? false, false);
+  await until(() => evaluate('document.querySelectorAll(".cell").length === 1'), 'ordinary grid rendered');
+  await evaluate('Array.from(document.querySelectorAll(".titlebar .tab")).find(b => b.textContent.includes("Team")).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))');
+  await until(async () => (await snapshot()).state.projects[0].activeTabId === 'smoke-grid', 'return to original grid');
+  await until(() => evaluate('innerWidth <= 1100 && innerHeight <= 700 && document.querySelector(".automation-panel").getBoundingClientRect().bottom <= innerHeight && document.querySelector(".automation-panel").getBoundingClientRect().height >= 180'), 'narrow panel layout');
+  await evaluate('Array.from(document.querySelectorAll(".automation-tabs button")).find(b => b.textContent.startsWith("Zadania")).click()');
+  await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+  await screenshot('tasks-narrow');
+  await until(() => {
+    const saved = JSON.parse(readFileSync(join(data, 'state.json'), 'utf8'));
+    return saved.automation?.tasks.some((t) => t.result?.summary.includes('Backend sprawdzony')) && saved.snippets.length === 1 && saved.presets.length === 1;
+  }, 'durable state save');
+  assert.deepEqual(exceptions, []);
+  console.log(`Automation Electron smoke passed. Screenshots: ${root}`);
+} catch (error) {
+  process.exitCode = 1;
+  console.error(error);
+  console.error(appOutput.slice(-4000));
+} finally {
+  await Promise.all(clients.map((client) => client.close().catch(() => {})));
+  if (socket?.readyState === WebSocket.OPEN) { await cdp('Browser.close').catch(() => {}); socket.close(); }
+  for (let i = 0; i < 50 && !exited; i++) await sleep(100);
+  if (!exited) {
+    if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    else child.kill('SIGTERM');
+  }
+}

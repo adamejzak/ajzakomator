@@ -1,6 +1,8 @@
 // Each row contains English, German, Spanish, French and Portuguese translations.
 // Polish uses the source message (the key). Placeholders must match across a row.
+import { automationMessages } from './automationMessages';
 export const messages = {
+  ...automationMessages,
   'Wybierz język': ['Choose your language', 'Sprache wählen', 'Elige tu idioma', 'Choisissez votre langue', 'Escolha o seu idioma'],
   'Witaj w ajzakomatorze': ['Welcome to ajzakomator', 'Willkommen bei ajzakomator', 'Bienvenido a ajzakomator', 'Bienvenue dans ajzakomator', 'Bem-vindo ao ajzakomator'],
   'Wybierz język aplikacji. Możesz go później zmienić w ustawieniach.': ['Choose the app language. You can change it later in Settings.', 'Wähle die Sprache der App. Du kannst sie später in den Einstellungen ändern.', 'Elige el idioma de la aplicación. Puedes cambiarlo después en Ajustes.', 'Choisissez la langue de l’application. Vous pourrez la modifier dans les paramètres.', 'Escolha o idioma da aplicação. Pode alterá-lo mais tarde nas definições.'],

@@ -1,5 +1,6 @@
 import type { GridLayout } from './layout';
 import type { Language } from './languages';
+import type { AgentRole, AutomationState } from './automation';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
 
@@ -15,6 +16,8 @@ export interface Profile {
 export interface CellSession {
   cli: 'claude' | 'codex';
   id: string;
+  /** Explicitly chosen by the user; transcript timestamp guesses cannot authorize delivery. */
+  confirmed?: boolean;
 }
 
 export interface Worktree {
@@ -25,6 +28,7 @@ export interface Worktree {
 export interface Cell {
   id: string;
   profileId: string;
+  role?: AgentRole;
   /** User-given label; without it the header shows the conversation title. */
   name?: string;
   /** Accent color of the cell (header tint + border). */
@@ -62,6 +66,7 @@ export interface Project {
 
 export interface PresetCell {
   profileId: string;
+  role?: AgentRole;
   worktree: boolean;
   name?: string;
   prompt?: string;
@@ -98,6 +103,7 @@ export interface Settings {
 
 export interface AppState {
   version: 1;
+  automation: AutomationState;
   projects: Project[];
   activeProjectId: string | null;
   profiles: Profile[];
