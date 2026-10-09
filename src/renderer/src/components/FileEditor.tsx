@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
+import { CodeEditor } from './CodeEditor';
 import { closeFile, editFile, fileErrorLabel, fileLabel, isFileDirty, retryFile, saveFile, toggleFileWrap, useFileStore } from '../files';
 import { useI18n } from '../i18n';
 import { getUi, useStore } from '../store';
@@ -8,8 +9,6 @@ export function FileEditor() {
   const { tr, language, errorText } = useI18n();
   const doc = useFileStore((s) => s.documents.find((d) => d.id === s.activeFileId));
   const project = useStore((s) => s.s.projects.find((p) => p.id === doc?.projectId));
-  const editor = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (doc?.status === 'ready') editor.current?.focus(); }, [doc?.id, doc?.status]);
   useEffect(() => {
     if (!doc) return;
     const onKey = (event: KeyboardEvent) => {
@@ -35,19 +34,7 @@ export function FileEditor() {
       </div>
       {doc.error && <div className="preview-notice error" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{errorText(fileErrorLabel(doc.error, language))}</div>}
       {doc.status === 'loading' && <div className="file-preview-message muted">{tr('Wczytywanie pliku…')}</div>}
-      {doc.status === 'ready' && <textarea
-        ref={editor} key={doc.id} value={doc.text} onChange={(event) => editFile(doc.id, event.target.value)}
-        aria-label={doc.relativePath} spellCheck={false} autoCapitalize="off" autoCorrect="off" wrap={doc.wrap ? 'soft' : 'off'}
-        style={{ flex: 1, minHeight: 0, width: '100%', resize: 'none', border: 0, outline: 'none', padding: '16px 20px', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'Consolas, Menlo, monospace', fontSize: 13, lineHeight: 1.6, tabSize: 2 }}
-        onKeyDown={(event) => {
-          if (event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey) return;
-          event.preventDefault();
-          const input = event.currentTarget;
-          const start = input.selectionStart; const end = input.selectionEnd;
-          editFile(doc.id, doc.text.slice(0, start) + '\t' + doc.text.slice(end));
-          requestAnimationFrame(() => input.setSelectionRange(start + 1, start + 1));
-        }}
-      />}
+      {doc.status === 'ready' && <CodeEditor key={doc.id} path={doc.relativePath} text={doc.text} wrap={doc.wrap} onChange={text => editFile(doc.id, text)} />}
       {doc.status === 'binary' && <div className="file-preview-message muted">{tr('Ten plik jest binarny lub ma nieobsługiwane kodowanie. Otwórz go w edytorze albo menedżerze plików.')}</div>}
       {doc.status === 'truncated' && <div className="file-preview-message muted">{fileLabel('tooLarge', language)}</div>}
       {doc.status !== 'loading' && doc.status !== 'ready' && <div style={{ padding: 16, display: 'flex', gap: 8 }}>
