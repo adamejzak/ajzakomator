@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { isAbsolute, join, relative } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { listProjectDirectory, PREVIEW_BYTES, readProjectFile } from '../src/main/files';
+import { listProjectDirectory, PREVIEW_BYTES, readProjectFile, writeProjectFile } from '../src/main/files';
 
 let fixture: string;
 let root: string;
@@ -71,5 +71,74 @@ describe('project file browsing', () => {
     expect(await readProjectFile(root, 'missing.txt')).toMatchObject({ kind: 'error', message: expect.stringContaining('nie istnieje') });
     expect(await listProjectDirectory(root, 'missing')).toMatchObject({ ok: false });
     expect(await readProjectFile(root, 'nested')).toMatchObject({ kind: 'error' });
+  });
+});
+
+describe('safe project file editing', () => {
+  it.each(['utf8', 'utf8-bom', 'utf16le', 'utf16be'])('preserves encoding, BOM and CRLF for %s', async (encoding) => {
+    const path = `edit-${encoding}.txt`;
+    const original = 'Cześć\r\nświat\r\n';
+    const updated = 'Cześć\r\nnowy świat\r\n';
+    const encode = (text: string) => {
+      if (encoding.startsWith('utf16')) {
+        const bytes = Buffer.from('\ufeff' + text, 'utf16le');
+        return encoding === 'utf16be' ? bytes.swap16() : bytes;
+      }
+      return Buffer.from((encoding === 'utf8-bom' ? '\ufeff' : '') + text, 'utf8');
+    };
+    await writeFile(join(root, path), encode(original));
+    expect(await writeProjectFile(root, path, 'Cześć\nnowy świat\n', original)).toEqual({ ok: true });
+    expect(await readFile(join(root, path))).toEqual(encode(updated));
+  });
+
+  it('preserves mixed line endings and empty files', async () => {
+    await writeFile(join(root, 'mixed.txt'), 'one\r\ntwo\nthree\r');
+    expect(await writeProjectFile(root, 'mixed.txt', 'ONE\nTWO\nTHREE\n', 'one\r\ntwo\nthree\r')).toEqual({ ok: true });
+    expect(await readFile(join(root, 'mixed.txt'), 'utf8')).toBe('ONE\r\nTWO\nTHREE\r');
+    await writeFile(join(root, 'empty.txt'), '');
+    expect(await writeProjectFile(root, 'empty.txt', 'ą\n', '')).toEqual({ ok: true });
+    expect(await writeProjectFile(root, 'empty.txt', '', 'ą\n')).toEqual({ ok: true });
+    expect(await readFile(join(root, 'empty.txt'), 'utf8')).toBe('');
+  });
+
+  it('rejects an external edit without changing bytes or leaving temporary files', async () => {
+    await writeFile(join(root, 'conflict.txt'), 'external');
+    expect(await writeProjectFile(root, 'conflict.txt', 'draft', 'original')).toMatchObject({ ok: false, error: expect.stringContaining('zmienił') });
+    expect(await readFile(join(root, 'conflict.txt'), 'utf8')).toBe('external');
+    expect((await readdir(root)).filter((name) => name.includes('.mc-save-'))).toEqual([]);
+  });
+
+  it('serializes concurrent saves to the same baseline', async () => {
+    await writeFile(join(root, 'concurrent.txt'), 'initial');
+    const results = await Promise.all([
+      writeProjectFile(root, 'concurrent.txt', 'first', 'initial'),
+      writeProjectFile(root, 'concurrent.txt', 'second', 'initial'),
+    ]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(['first', 'second']).toContain(await readFile(join(root, 'concurrent.txt'), 'utf8'));
+  });
+
+  it('rejects binary, truncated, oversized output and invalid text without damage', async () => {
+    for (const [path, original] of [
+      ['edit-binary.dat', Buffer.from([0, 1, 2, 255])],
+      ['edit-large.txt', Buffer.from('a'.repeat(PREVIEW_BYTES + 1))],
+      ['edit-invalid.txt', Buffer.from([0xc3, 0x28])],
+    ] as const) {
+      await writeFile(join(root, path), original);
+      expect(await writeProjectFile(root, path, 'replacement', '')).toMatchObject({ ok: false });
+      expect(await readFile(join(root, path))).toEqual(original);
+    }
+    await writeFile(join(root, 'edit-output.txt'), 'original');
+    for (const text of ['a'.repeat(PREVIEW_BYTES + 1), 'null\0byte', '\ud800']) {
+      expect(await writeProjectFile(root, 'edit-output.txt', text, 'original')).toMatchObject({ ok: false });
+      expect(await readFile(join(root, 'edit-output.txt'), 'utf8')).toBe('original');
+    }
+  });
+
+  it('rejects missing files, directories, traversal, absolute paths and external junctions', async () => {
+    for (const path of ['missing-edit.txt', 'nested', '../outside.txt', join(fixture, 'outside.txt'), 'external-link/secret.txt']) {
+      expect(await writeProjectFile(root, path, 'overwrite', '')).toMatchObject({ ok: false });
+    }
+    expect(await readFile(join(fixture, 'outside.txt'), 'utf8')).toBe('outside the project');
   });
 });
