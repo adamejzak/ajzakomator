@@ -106,6 +106,10 @@ try {
   await evaluate('document.querySelector(".team-toggle").click()');
   await until(() => evaluate('Boolean(document.querySelector(".automation-panel"))'), 'team panel');
 
+  // Compact task cards keep the composer hidden until requested.
+  assert.equal(await evaluate('!!document.querySelector(".automation-compose")'), false);
+  await evaluate('Array.from(document.querySelectorAll(".automation-head button")).find(b => b.textContent.includes("Nowe zadanie")).click()');
+  await until(() => evaluate('!!document.querySelector(".automation-compose")'), 'task composer');
   // Submit the actual React form.
   await evaluate(`(() => {
     const form = document.querySelector('.automation-compose');
@@ -131,12 +135,15 @@ try {
   await call(backend, 'update_task', { taskId: inbox[0].id, status: 'in_progress' });
   await call(backend, 'update_task', { taskId: inbox[0].id, status: 'completed', result: { summary: 'Backend sprawdzony — testy przeszły.', files: ['src/backend.ts'], tests: ['smoke: passed'], branch: 'mc/backend' } });
   const message = await call(coordinator, 'send_message', { toCellId: created.cellIds[0], text: 'Dziękuję, przekazuję do review.' });
-  assert.equal((await call(backend, 'get_messages'))[0].id, message.id);
-  await call(backend, 'acknowledge_message', { messageId: message.id });
-  assert.equal((await call(backend, 'get_messages')).length, 0);
+  const combined = await call(backend, 'read_inbox', { acknowledge: true });
+  assert.equal(combined.messages[0].id, message.id);
+  assert.deepEqual(combined.acknowledgedMessageIds, [message.id]);
+  assert.equal((await call(backend, 'read_inbox')).messages.length, 0);
   await call(coordinator, 'save_snippet', { name: 'Review checklist', text: 'Sprawdź testy i regresje' });
   await call(coordinator, 'save_preset', { name: 'Review team', cells: [{ profileId: 'codex', role: 'worker', prompt: 'Review changes' }] });
   assert.equal((await call(coordinator, 'list_library')).snippets[0].name, 'Review checklist');
+  await until(() => evaluate('!!Array.from(document.querySelectorAll(".task-open")).find(b => b.textContent.includes("Backend"))'), 'compact task cards');
+  await evaluate('Array.from(document.querySelectorAll(".task-open")).find(b => b.textContent.includes("Backend")).click()');
   await until(() => evaluate('document.querySelector(".automation-list").textContent.includes("Backend sprawdzony")'), 'task result rendering');
   await screenshot('tasks');
 
@@ -150,21 +157,23 @@ try {
   await until(async () => !(await snapshot()).state.automation.paused, 'resume control');
 
   // Check the grid editor and narrow-window layout.
-  await evaluate('Array.from(document.querySelectorAll(".titlebar button")).find(b => b.title.includes("Nowy grid")).click()');
+  await evaluate('Array.from(document.querySelectorAll(".workspace-tabs button")).find(b => b.title.includes("Nowy grid")).click()');
   await until(() => evaluate('Boolean(document.querySelector(".cell-table"))'), 'grid editor');
   assert.equal(await evaluate('document.querySelector(".cell-table").textContent.includes("Rola / MCP")'), true);
-  assert.equal(await evaluate('Array.from(document.querySelectorAll(".cell-table select[aria-label]")).every(s => s.value === "")'), true);
+  assert.equal(await evaluate('Array.from(document.querySelectorAll(".cell-table .role-select")).every(s => s.dataset.role === "")'), true);
   await screenshot('grid-editor');
   await evaluate('Array.from(document.querySelectorAll(".presets span.btn")).find(b => b.textContent.includes("Review team")).click()');
-  await until(() => evaluate('document.querySelector(".cell-table select[aria-label]").value === "worker"'), 'preset MCP role');
-  await evaluate('(() => { const s = document.querySelector(".cell-table select[aria-label]"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, ""); s.dispatchEvent(new Event("change", { bubbles: true })); })()');
+  await until(() => evaluate('document.querySelector(".cell-table .role-select").dataset.role === "worker"'), 'preset MCP role');
+  await evaluate('document.querySelector(".cell-table .role-select").click()');
+  await until(() => evaluate('!!document.querySelector(".menu")'), 'styled role menu');
+  await evaluate('Array.from(document.querySelectorAll(".menu-item")).find(b => b.textContent.includes("Bez MCP")).click()');
   await evaluate('Array.from(document.querySelectorAll(".modal-foot button")).find(b => b.textContent.startsWith("Otwórz grid")).click()');
   await until(async () => (await snapshot()).state.projects[0].tabs.length === 3, 'ordinary UI grid');
   const plainGrid = (await snapshot()).state.projects[0].tabs.at(-1);
   assert.equal(plainGrid.cells[0].role, undefined);
   assert.equal(plainGrid.cells[0].startupPrompt?.includes('update_task') ?? false, false);
   await until(() => evaluate('document.querySelectorAll(".cell").length === 1'), 'ordinary grid rendered');
-  await evaluate('Array.from(document.querySelectorAll(".titlebar .tab")).find(b => b.textContent.includes("Team")).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))');
+  await evaluate('Array.from(document.querySelectorAll(".workspace-tabs .tab")).find(b => b.textContent.includes("Team")).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))');
   await until(async () => (await snapshot()).state.projects[0].activeTabId === 'smoke-grid', 'return to original grid');
   await until(() => evaluate('innerWidth <= 1100 && innerHeight <= 700 && document.querySelector(".automation-panel").getBoundingClientRect().bottom <= innerHeight && document.querySelector(".automation-panel").getBoundingClientRect().height >= 180'), 'narrow panel layout');
   await evaluate('Array.from(document.querySelectorAll(".automation-tabs button")).find(b => b.textContent.startsWith("Zadania")).click()');
@@ -175,6 +184,10 @@ try {
     const saved = JSON.parse(readFileSync(join(data, 'state.json'), 'utf8'));
     return saved.automation?.tasks.some((t) => t.result?.summary.includes('Backend sprawdzony')) && saved.snippets.length === 1 && saved.presets.length === 1;
   }, 'durable state save');
+  await call(coordinator, 'update_grid', { gridId: created.gridId, name: 'Finished review', color: '#a78bfa' });
+  assert.equal((await snapshot()).state.projects[0].tabs.find(t => t.id === created.gridId).color, '#a78bfa');
+  await call(coordinator, 'close_grid', { gridId: created.gridId, cancelTasks: true });
+  assert.ok((await snapshot()).state.projects[0].archive.some(t => t.id === created.gridId));
   assert.deepEqual(exceptions, []);
   console.log(`Automation Electron smoke passed. Screenshots: ${root}`);
 } catch (error) {
