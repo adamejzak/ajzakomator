@@ -1,89 +1,159 @@
+import { keyLabel } from '../platform';
+import { useI18n } from '../i18n';
 import { useState } from 'react';
-import { fuzzyFilter } from '../../../shared/fuzzy';
+import { fuzzyScore } from '../../../shared/fuzzy';
 import type { Snippet } from '../../../shared/types';
 import { sendSnippet } from '../actions';
-import { moveSnippet } from '../../../shared/state';
-import { setUi, update, useStore } from '../store';
+import { moveSnippet, removeSnippet, uid, upsertSnippet, type DropEdge } from '../../../shared/state';
+import { PANEL_LIMITS } from '../../../shared/panels';
+import { askChoice, setUi, update, useStore } from '../store';
 import { SNIPPET_MIME } from './CellView';
-import { IEdit, IPlus, ISnippet } from './icons';
+import { IEdit, IGrip, IPlus, ISnippet } from './icons';
+import { dropEdge, scrollDragList } from './listDrag';
+import { openMenu } from './ContextMenu';
+import { PanelResizeHandle, type PanelResizeProps } from './PanelResizeHandle';
 
-export function SnippetPanel() {
+export function SnippetPanel({ resize }: { resize: PanelResizeProps }) {
+  const { tr } = useI18n();
   const snippets = useStore((st) => st.s.snippets);
   const projectId = useStore((st) => st.s.activeProjectId);
   const [q, setQ] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
-  const visible = fuzzyFilter(
-    snippets.filter((sn) => !sn.projectId || sn.projectId === projectId),
-    q,
-    (sn) => `${sn.name} ${sn.text}`,
-    500,
-  );
+  const [over, setOver] = useState<{ id: string | null; edge: DropEdge } | null>(null);
+  // Searching filters the library while preserving the user's chosen order.
+  const visible = snippets.filter((sn) => !sn.projectId || sn.projectId === projectId)
+    .filter((sn) => fuzzyScore(q, `${sn.name} ${sn.text}`) !== null).slice(0, 500);
+  const endDrag = () => { setDragId(null); setOver(null); };
 
   const use = (sn: Snippet, all: boolean) => sendSnippet(sn, all ? 'all' : 'focused');
+  const create = (projectId?: string) => setUi({ modal: { kind: 'snippet', snippetId: null, projectId } });
+  const backgroundMenu = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, input, .snippet')) return;
+    e.preventDefault();
+    openMenu(e.clientX, e.clientY, [
+      { header: tr("Snippety") },
+      { label: tr("Nowy snippet") + '…', onClick: () => create() },
+      ...(projectId ? [{ label: tr("Nowy snippet tylko w tym projekcie…"), onClick: () => create(projectId) }] : []),
+      { sep: true },
+      { label: tr("Przywróć szerokość panelu"), onClick: () => resize.onFinish(PANEL_LIMITS.snippets.default) },
+      { label: tr("Ukryj panel snippetów"), hint: keyLabel("Ctrl+Shift+B"), onClick: () => update((st) => ({ ...st, snippetsOpen: false })) },
+    ]);
+  };
+  const snippetMenu = (e: React.MouseEvent, sn: Snippet) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const index = visible.findIndex((item) => item.id === sn.id);
+    openMenu(e.clientX, e.clientY, [
+      { header: sn.name },
+      { label: tr("Wklej do aktywnej komórki"), onClick: () => use(sn, false) },
+      { label: tr("Wklej do wszystkich komórek"), onClick: () => use(sn, true) },
+      { sep: true },
+      { label: tr("Edytuj snippet") + '…', onClick: () => setUi({ modal: { kind: 'snippet', snippetId: sn.id } }) },
+      { label: tr("Duplikuj snippet"), onClick: () => update((st) => upsertSnippet(st, { ...sn, id: uid(), name: tr('{name} (kopia)', { name: sn.name }) })) },
+      { label: tr("Kopiuj treść"), onClick: () => window.mc.clipboardWrite(sn.text) },
+      ...(index > 0 ? [{ label: tr("Przesuń wyżej"), onClick: () => update((st) => moveSnippet(st, sn.id, visible[index - 1].id, 'before')) }] : []),
+      ...(index < visible.length - 1 ? [{ label: tr("Przesuń niżej"), onClick: () => update((st) => moveSnippet(st, sn.id, visible[index + 1].id, 'after')) }] : []),
+      { sep: true },
+      { label: tr("Usuń snippet"), danger: true, onClick: async () => {
+        const choice = await askChoice(tr('Usunąć snippet „{name}”?', { name: sn.name }), tr("Zapisany prompt zostanie usunięty z biblioteki."), [{ label: tr("Usuń"), value: 'yes', danger: true }]);
+        if (choice === 'yes') update((st) => removeSnippet(st, sn.id));
+      } },
+    ]);
+  };
 
   return (
-    <div className="rpanel">
+    <aside className="rpanel" aria-label={tr("Panel snippetów")} onContextMenu={backgroundMenu}>
+      <PanelResizeHandle {...resize} />
       <div className="side-title">
         <span className="row" style={{ gap: 6 }}>
-          Snippety
+
+          {tr("Snippety")}
           <span className="help">
             ?
             <span className="help-pop">
-              <span className="kbd">Klik</span><span>wklej do aktywnej komórki</span>
-              <span className="kbd">Shift + klik</span><span>wklej do wszystkich</span>
-              <span className="kbd">Przeciągnij</span><span>na komórkę albo zmień kolejność</span>
+              <span className="kbd">{tr("Klik")}</span><span>{tr("Wklej do aktywnej komórki")}</span>
+              <span className="kbd">{tr("Shift + klik")}</span><span>{tr("wklej do wszystkich")}</span>
+              <span className="kbd">{tr("Przeciągnij")}</span><span>{tr("na komórkę albo zmień kolejność")}</span>
             </span>
           </span>
         </span>
-        <button className="sq" title="Nowy snippet" onClick={() => setUi({ modal: { kind: 'snippet', snippetId: null } })}><IPlus /></button>
+        <button className="sq" title={tr("Nowy snippet")} aria-label={tr("Nowy snippet")} onClick={() => create()}><IPlus /></button>
       </div>
       {!snippets.length ? (
         <div className="empty-state">
           <div className="es-icon"><ISnippet /></div>
-          <div className="es-title">Brak snippetów</div>
-          <div className="es-text">Zapisz prompty, których często używasz, i wklejaj je do terminali jednym kliknięciem.</div>
-          <button className="btn white lg" onClick={() => setUi({ modal: { kind: 'snippet', snippetId: null } })}><IPlus /> Nowy snippet</button>
+          <div className="es-title">{tr("Brak snippetów")}</div>
+          <div className="es-text">{tr("Zapisz prompty, których często używasz, i wklejaj je do terminali jednym kliknięciem.")}</div>
+          <button className="btn white lg" onClick={() => create()}><IPlus />  {tr("Nowy snippet")}</button>
         </div>
       ) : (
       <>
-      <input className="search" placeholder="Szukaj snippetów…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <div className="snippets">
+      <input className="search" aria-label={tr("Szukaj snippetów")} placeholder={tr("Szukaj snippetów") + '…'} value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="snippets"
+        onDragOver={(e) => {
+          if (!dragId || !e.dataTransfer.types.includes(SNIPPET_MIME)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          scrollDragList(e.currentTarget, e.clientY);
+          if (!(e.target as HTMLElement).closest('.snippet')) setOver({ id: null, edge: 'after' });
+        }}
+        onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(null); }}
+        onDrop={(e) => {
+          if (!dragId || !e.dataTransfer.types.includes(SNIPPET_MIME)) return;
+          e.preventDefault();
+          update((st) => moveSnippet(st, dragId, visible.at(-1)?.id ?? null, 'after'));
+          endDrag();
+        }}
+      >
         {visible.map((sn) => (
           <div
             key={sn.id}
-            className={`snippet ${dragId === sn.id ? 'dragging' : ''} ${overId === sn.id && dragId !== sn.id ? 'drag-over' : ''}`}
+            className={`snippet ${dragId === sn.id ? 'dragging' : ''} ${over?.id === sn.id && dragId !== sn.id ? `drop-${over.edge}` : ''}`}
+            data-snippet-id={sn.id}
             style={sn.color ? ({ '--sc': sn.color } as React.CSSProperties) : undefined}
             data-colored={sn.color ? '' : undefined}
+            role="button"
+            tabIndex={0}
+            aria-label={sn.name}
             draggable
             onDragStart={(e) => {
               e.dataTransfer.setData(SNIPPET_MIME, JSON.stringify(sn));
               e.dataTransfer.effectAllowed = 'copyMove';
               setDragId(sn.id);
             }}
-            onDragEnd={() => { setDragId(null); setOverId(null); }}
+            onDragEnd={endDrag}
             onDragOver={(e) => {
-              if (!dragId) return;
+              if (!dragId || !e.dataTransfer.types.includes(SNIPPET_MIME)) return;
               e.preventDefault();
-              setOverId(sn.id);
+              setOver({ id: sn.id, edge: dropEdge(e.currentTarget, e.clientY) });
             }}
             onDrop={(e) => {
-              if (!dragId) return;
+              if (!dragId || !e.dataTransfer.types.includes(SNIPPET_MIME)) return;
               e.preventDefault();
-              update((st) => moveSnippet(st, dragId, sn.id));
-              setDragId(null);
-              setOverId(null);
+              e.stopPropagation();
+              update((st) => moveSnippet(st, dragId, sn.id, dropEdge(e.currentTarget, e.clientY)));
+              endDrag();
             }}
             onClick={(e) => use(sn, e.shiftKey)}
-            title={'Klik: wklej do aktywnej komórki · Shift+klik: do wszystkich · przeciągnij na komórkę'}
+            onContextMenu={(e) => snippetMenu(e, sn)}
+            onKeyDown={(e) => {
+              if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault();
+                use(sn, e.shiftKey);
+              }
+            }}
+            title={tr("Klik: wklej do aktywnej komórki · Shift+klik: do wszystkich · przeciągnij na komórkę")}
           >
             <div className="s-head">
+              <span className="list-drag-grip" title={tr("Przeciągnij snippet, aby zmienić kolejność")} aria-hidden="true"><IGrip /></span>
               {sn.icon && <span className="s-icon">{sn.icon}</span>}
               <span className="s-name">{sn.name}</span>
-              {sn.projectId && <span className="tag">projekt</span>}
+              {sn.projectId && <span className="tag">{tr("Projekt")}</span>}
               <span style={{ flex: 1 }} />
               <button
                 className="btn ghost icon small s-edit"
+                title={tr("Edytuj snippet")}
+                aria-label={tr('Edytuj snippet {name}', { name: sn.name })}
                 onClick={(e) => {
                   e.stopPropagation();
                   setUi({ modal: { kind: 'snippet', snippetId: sn.id } });
@@ -95,10 +165,12 @@ export function SnippetPanel() {
             <div className="s-text">{sn.text}</div>
           </div>
         ))}
-        {!visible.length && <div className="muted" style={{ padding: '8px 2px' }}>Nic nie pasuje do „{q}”.</div>}
+        {visible.length > 0 && <div className={`snippet-drop-space ${over?.id === null ? 'drop-end' : ''}`} aria-hidden="true" />}
+        {!visible.length && <div className="muted" style={{ padding: '8px 2px' }}>{q ? tr('Nic nie pasuje do „{query}”.', { query: q }) : tr("Brak snippetów dostępnych w tym projekcie.")}</div>}
       </div>
       </>
       )}
-    </div>
+      {snippets.length > 0 && <div className="side-footer"><button className="btn" onClick={() => create()}><IPlus />  {tr("Nowy snippet")}</button></div>}
+    </aside>
   );
 }

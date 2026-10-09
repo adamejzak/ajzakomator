@@ -1,6 +1,9 @@
 // Pure state transitions. Every function returns a new AppState and never mutates its input.
 import { growLayout, removeArea, type GridLayout } from './layout';
 import { DEFAULT_PROFILES, RETIRED_PROFILES } from './profiles';
+import { isLanguage } from './languages';
+import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
+import { normalizePanelWidth, PANEL_LIMITS } from './panels';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
@@ -10,17 +13,19 @@ export const PROJECT_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a85
 
 export const uid = () => globalThis.crypto.randomUUID();
 
-export function defaultState(): AppState {
+export function defaultState(platform: AppPlatform = 'win32'): AppState {
   return {
     version: 1,
     projects: [],
     activeProjectId: null,
-    profiles: DEFAULT_PROFILES.map((p) => ({ ...p })),
+    profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { fontSize: 13, notifications: true, shell: 'pwsh', lastProfileId: 'claude' },
+    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude' },
     sidebarCollapsed: false,
     snippetsOpen: true,
+    sidebarWidth: PANEL_LIMITS.sidebar.default,
+    snippetsWidth: PANEL_LIMITS.snippets.default,
   };
 }
 
@@ -74,13 +79,21 @@ export function removeProject(s: AppState, id: string): AppState {
   return { ...s, projects, activeProjectId };
 }
 
-export function moveProject(s: AppState, id: string, toIndex: number): AppState {
-  const projects = [...s.projects];
-  const from = projects.findIndex((p) => p.id === id);
-  if (from < 0) return s;
-  const [p] = projects.splice(from, 1);
-  projects.splice(Math.max(0, Math.min(projects.length, toIndex)), 0, p);
-  return { ...s, projects };
+export type DropEdge = 'before' | 'after';
+
+function moveRelative<T extends { id: string }>(items: T[], id: string, targetId: string | null, edge: DropEdge): T[] {
+  const moving = items.find((item) => item.id === id);
+  if (!moving || id === targetId) return items;
+  const rest = items.filter((item) => item.id !== id);
+  const target = targetId === null ? rest.length : rest.findIndex((item) => item.id === targetId);
+  if (target < 0) return items;
+  rest.splice(target + (targetId !== null && edge === 'after' ? 1 : 0), 0, moving);
+  return rest.every((item, i) => item === items[i]) ? items : rest;
+}
+
+export function moveProject(s: AppState, id: string, targetId: string | null, edge: DropEdge = 'before'): AppState {
+  const projects = moveRelative(s.projects, id, targetId, edge);
+  return projects === s.projects ? s : { ...s, projects };
 }
 
 export function setActiveProject(s: AppState, id: string): AppState {
@@ -226,13 +239,9 @@ export const removeProfile = (s: AppState, id: string): AppState =>
 export const upsertPreset = (s: AppState, p: Preset): AppState => ({ ...s, presets: upsert(s.presets, p) });
 export const removePreset = (s: AppState, id: string): AppState => ({ ...s, presets: s.presets.filter((p) => p.id !== id) });
 export const upsertSnippet = (s: AppState, sn: Snippet): AppState => ({ ...s, snippets: upsert(s.snippets, sn) });
-export function moveSnippet(s: AppState, id: string, beforeId: string | null): AppState {
-  const moving = s.snippets.find((x) => x.id === id);
-  if (!moving || id === beforeId) return s;
-  const rest = s.snippets.filter((x) => x.id !== id);
-  const at = beforeId ? rest.findIndex((x) => x.id === beforeId) : rest.length;
-  rest.splice(at < 0 ? rest.length : at, 0, moving);
-  return { ...s, snippets: rest };
+export function moveSnippet(s: AppState, id: string, targetId: string | null, edge: DropEdge = 'before'): AppState {
+  const snippets = moveRelative(s.snippets, id, targetId, edge);
+  return snippets === s.snippets ? s : { ...s, snippets };
 }
 export const removeSnippet = (s: AppState, id: string): AppState => ({ ...s, snippets: s.snippets.filter((x) => x.id !== id) });
 export const updateSettings = (s: AppState, patch: Partial<Settings>): AppState => ({ ...s, settings: { ...s.settings, ...patch } });
@@ -244,21 +253,29 @@ export const activeProject = (s: AppState): Project | null => s.projects.find((p
 export const activeTab = (p: Project | null): Tab | null => p?.tabs.find((t) => t.id === p.activeTabId) ?? null;
 
 /** Basic shape check for data loaded from disk; fills in fields added in later versions. */
-export function normalizeState(raw: unknown): AppState | null {
+export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): AppState | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<AppState>;
   if (r.version !== 1 || !Array.isArray(r.projects)) return null;
-  const d = defaultState();
+  const d = defaultState(platform);
   const remap = (id: string) => RETIRED_PROFILES[id] ?? id;
   const remapCells = <T extends { profileId: string }>(cells: T[]) => cells.map((c) => ({ ...c, profileId: remap(c.profileId) }));
   const profiles = (Array.isArray(r.profiles) && r.profiles.length ? r.profiles : d.profiles).filter((p) => !(p.id in RETIRED_PROFILES));
   return {
     ...d,
     ...r,
+    sidebarWidth: normalizePanelWidth(r.sidebarWidth, 'sidebar'),
+    snippetsWidth: normalizePanelWidth(r.snippetsWidth, 'snippets'),
     profiles: profiles.length ? profiles : d.profiles,
     presets: (Array.isArray(r.presets) ? r.presets : []).map((p) => ({ ...p, cells: remapCells(p.cells ?? []) })),
     snippets: Array.isArray(r.snippets) ? r.snippets : [],
-    settings: { ...d.settings, ...(r.settings ?? {}), lastProfileId: remap(r.settings?.lastProfileId ?? d.settings.lastProfileId) },
+    settings: {
+      ...d.settings, ...(r.settings ?? {}),
+      // Existing Polish installations keep their UI and do not get first-run onboarding again.
+      language: r.settings?.language === undefined ? 'pl' : isLanguage(r.settings.language) ? r.settings.language : null,
+      shell: shellsForPlatform(platform).some((shell) => shell.code === r.settings?.shell) ? r.settings!.shell! : d.settings.shell,
+      lastProfileId: remap(r.settings?.lastProfileId ?? d.settings.lastProfileId),
+    },
     projects: r.projects.map((p) => ({
       ...p,
       tabs: (p.tabs ?? []).map((t) => ({ ...t, cells: remapCells(t.cells) })),

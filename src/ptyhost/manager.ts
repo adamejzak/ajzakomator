@@ -27,7 +27,12 @@ function onPath(exe: string, env: Record<string, string>): boolean {
   return path.split(delimiter).some((dir) => dir && existsSync(join(dir, exe)));
 }
 
-export function resolveShell(kind: ShellKind, env: Record<string, string>): { file: string; args: string[] } {
+export function resolveShell(kind: ShellKind, env: Record<string, string>, platform = process.platform): { file: string; args: string[] } {
+  if (platform !== 'win32') {
+    const shell = kind === 'bash' || (platform !== 'darwin' && kind !== 'zsh') ? 'bash' : 'zsh';
+    // Login shells load the PATH used by Homebrew and user-installed agent CLIs.
+    return { file: `/bin/${shell}`, args: ['-il'] };
+  }
   if (kind === 'cmd') return { file: 'cmd.exe', args: [] };
   if (kind === 'pwsh' && onPath('pwsh.exe', env)) return { file: 'pwsh.exe', args: ['-NoLogo'] };
   return { file: 'powershell.exe', args: ['-NoLogo'] };
@@ -59,8 +64,7 @@ export class PtyManager {
       rows: Math.max(1, size.rows),
       cwd: req.cwd,
       env: { ...req.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'ajzakomator' },
-      useConpty: true,
-      useConptyDll: true,
+      ...(process.platform === 'win32' ? { useConpty: true, useConptyDll: true } : {}),
     });
     let resolveExit!: () => void;
     const entry: Entry = { proc, buf: '', timer: null, history: '', exited: new Promise((r) => (resolveExit = r)) };

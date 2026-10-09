@@ -1,9 +1,12 @@
-import { useEffect } from 'react';
+import { tr, useI18n } from './i18n';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { focusCell, refreshSessionTitles, resetStarted, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
 import { GridView } from './components/GridView';
+import { LanguageSetup } from './components/LanguageSetup';
 import { Modals } from './components/Modals';
 import { Sidebar } from './components/Sidebar';
 import { SnippetPanel } from './components/SnippetPanel';
@@ -40,7 +43,7 @@ async function boot(): Promise<void> {
   window.mc.on('cell:spawnError', (cellId, message) => setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: message } })));
   window.mc.on('focus-cell', (cellId) => focusCell(cellId));
   window.mc.on('ptyhost:crashed', () => {
-    toast('Proces terminali się zrestartował, wznawiam rozmowy', 'error');
+    toast(tr("Proces terminali się zrestartował, wznawiam rozmowy"), 'error');
     resetStarted();
   });
   window.mc.on('app:before-quit', () => window.mc.saveState(getS()));
@@ -88,26 +91,56 @@ function maybeNotify(cellId: string): void {
   const n = found.tab.cells.findIndex((c) => c.id === cellId) + 1;
   window.mc.notify({
     title: `${found.project.name} · ${found.tab.name} #${n}`,
-    body: `${profile.name} czeka na Ciebie`,
+    body: tr('{name} czeka na Ciebie', { name: profile.name }),
     cellId,
   });
 }
 
 export function App() {
+  const { language } = useI18n();
   const ready = useStore((st) => st.ready);
+  const languageChosen = useStore((st) => st.s.settings.language !== null);
   const snippetsOpen = useStore((st) => st.s.snippetsOpen);
+  const collapsed = useStore((st) => st.s.sidebarCollapsed);
+  const sidebarWidth = useStore((st) => st.s.sidebarWidth);
+  const snippetsWidth = useStore((st) => st.s.snippetsWidth);
+  const body = useRef<HTMLDivElement>(null);
+  const [available, setAvailable] = useState(window.innerWidth);
+  const [live, setLive] = useState<Partial<Record<Panel, number>>>({});
   useEffect(() => void boot(), []);
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.documentElement.dataset.platform = window.mc.platform;
+  }, [language]);
+  useLayoutEffect(() => {
+    if (!ready || !body.current) return;
+    const observer = new ResizeObserver(([entry]) => setAvailable(entry.contentRect.width));
+    observer.observe(body.current);
+    return () => observer.disconnect();
+  }, [ready, languageChosen]);
   useShortcuts();
   if (!ready) return <div className="app" />;
+  if (!languageChosen) return <LanguageSetup />;
+  const widths = fitPanelWidths(available, live.sidebar ?? sidebarWidth, live.snippets ?? snippetsWidth, collapsed, snippetsOpen);
+  const resizeProps = (panel: Panel) => ({
+    panel,
+    width: widths[panel],
+    maxWidth: available - MIN_WORKSPACE_WIDTH - widths[panel === 'sidebar' ? 'snippets' : 'sidebar'],
+    onResize: (width: number) => setLive((current) => ({ ...current, [panel]: width })),
+    onFinish: (width: number | null) => {
+      if (width !== null) update((s) => ({ ...s, [panel === 'sidebar' ? 'sidebarWidth' : 'snippetsWidth']: width }));
+      setLive((current) => { const next = { ...current }; delete next[panel]; return next; });
+    },
+  });
   return (
-    <div className="app">
+    <div className="app" style={{ '--sidebar-width': `${widths.sidebar}px`, '--snippets-width': `${widths.snippets}px` } as CSSProperties}>
       <TitleBar />
-      <div className="app-body">
-        <Sidebar />
+      <div className="app-body" ref={body}>
+        <Sidebar resize={resizeProps('sidebar')} />
         <div className="main">
           <GridView />
         </div>
-        {snippetsOpen && <SnippetPanel />}
+        {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
       </div>
       <CommandPalette />
       <Modals />

@@ -15,6 +15,9 @@ export const IGrid = () => <Svg><rect x="2.5" y="2.5" width="4.5" height="4.5" r
 export const IHistory = () => <Svg><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 3v2.5H5" /><path d="M8 5.5V8l2 1.5" /></Svg>;
 export const ISettings = () => <Svg><circle cx="8" cy="8" r="2" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" /></Svg>;
 export const IFolder = () => <Svg><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z" /></Svg>;
+export const IFile = () => <Svg><path d="M9.5 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z" /><path d="M9 2v4h4M5.5 9h5M5.5 11.5h3" /></Svg>;
+export const ICollapse = () => <Svg><rect x="2" y="5" width="9" height="9" rx="1.5" /><path d="M5 2h8a1 1 0 0 1 1 1v8M4.5 9.5h4" /></Svg>;
+export const IGrip = () => <Svg size={12}><path d="M5 4h.01M10 4h.01M5 8h.01M10 8h.01M5 12h.01M10 12h.01" strokeWidth="2.5" /></Svg>;
 export const ISnippet = () => <Svg><path d="M5 4L1.5 8 5 12M11 4l3.5 4-3.5 4M9.5 3l-3 10" /></Svg>;
 export const ISidebar = () => <Svg><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M6 3v10" /></Svg>;
 export const ISearch = () => <Svg><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></Svg>;

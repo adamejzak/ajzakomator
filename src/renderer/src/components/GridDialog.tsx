@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n';
 import { useEffect, useState } from 'react';
 import {
   createLayout, describeLayout, layoutForCount, layoutFromRows, MAX_COLS, MAX_ROWS, mergeRect, rowCountsOf, unmergeAll, type GridLayout,
@@ -13,6 +14,7 @@ const QUICK = [1, 2, 4, 6, 9, 12];
 const ROW_TEMPLATES = [[2, 1], [1, 2], [3, 2], [2, 3], [3, 1], [1, 3], [4, 2], [2, 2, 1]];
 
 export function GridDialog({ projectId }: { projectId: string }) {
+  const { tr } = useI18n();
   const s = useStore((st) => st.s);
   const project = s.projects.find((p) => p.id === projectId);
   const defaultProfile = s.settings.lastProfileId;
@@ -57,11 +59,11 @@ export function GridDialog({ projectId }: { projectId: string }) {
   };
 
   const savePreset = async () => {
-    const presetName = await askText('Nazwa presetu', name || `${describeLayout(layout)} ${getProfile(s, cells[0].profileId).name}`);
+    const presetName = await askText(tr("Nazwa presetu"), name || `${describeLayout(layout)} ${getProfile(s, cells[0].profileId).name}`);
     if (!presetName?.trim()) return;
-    const scope = await askChoice('Gdzie zapisać preset?', 'Preset globalny jest dostępny we wszystkich projektach.', [
-      { label: 'Tylko ten projekt', value: 'project' },
-      { label: 'Globalnie', value: 'global', primary: true },
+    const scope = await askChoice(tr("Gdzie zapisać preset?"), tr("Preset globalny jest dostępny we wszystkich projektach."), [
+      { label: tr("Tylko ten projekt"), value: 'project' },
+      { label: tr("Globalnie"), value: 'global', primary: true },
     ]);
     if (!scope) return;
     const preset = { id: uid(), name: presetName.trim(), layout, cells: cells.slice(0, n), ...(scope === 'project' ? { projectId } : {}) };
@@ -87,7 +89,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
   return (
     <div className="modal wide" onMouseDown={(e) => e.stopPropagation()}>
       <div className="modal-head">
-        <h3>Nowy grid · {project.name}</h3>
+        <h3>{tr('Nowy grid')} · {project.name}</h3>
         <button className="btn ghost icon" onClick={closeModal}><IX /></button>
       </div>
       <div className="modal-body">
@@ -99,15 +101,15 @@ export function GridDialog({ projectId }: { projectId: string }) {
           ))}
           <span className="muted" style={{ alignSelf: 'center', margin: '0 4px' }}>·</span>
           {ROW_TEMPLATES.map((t) => (
-            <button key={t.join('+')} className={`btn small ${describeLayout(layout) === t.join('+') ? 'primary' : ''}`} onClick={() => setRows(t)} title="Rzędy o różnej liczbie komórek">
+            <button key={t.join('+')} className={`btn small ${describeLayout(layout) === t.join('+') ? 'primary' : ''}`} onClick={() => setRows(t)} title={tr("Rzędy o różnej liczbie komórek")}>
               {t.join('+')}
             </button>
           ))}
           {presets.length > 0 && <span className="muted" style={{ alignSelf: 'center', margin: '0 4px' }}>·</span>}
           {presets.map((p) => (
-            <span key={p.id} className="btn small" onClick={() => loadPreset(p.id)} title={p.projectId ? 'Preset projektu' : 'Preset globalny'}>
+            <span key={p.id} className="btn small" onClick={() => loadPreset(p.id)} title={p.projectId ? tr("Preset projektu") : tr("Preset globalny")}>
               {p.name}
-              <span onClick={(e) => { e.stopPropagation(); update((st) => removePreset(st, p.id)); }} title="Usuń preset" style={{ opacity: 0.6, display: 'grid' }}>
+              <span onClick={(e) => { e.stopPropagation(); update((st) => removePreset(st, p.id)); }} title={tr("Usuń preset")} style={{ opacity: 0.6, display: 'grid' }}>
                 <IX />
               </span>
             </span>
@@ -126,26 +128,26 @@ export function GridDialog({ projectId }: { projectId: string }) {
             </div>
             <div className="big-size">{hover ? `${hover.c} × ${hover.r}` : describeLayout(layout).replace('×', ' × ')}</div>
             <div className="row">
-              <button className="btn small" disabled={selected.size < 2} onClick={merge}>Scal</button>
-              <button className="btn small" onClick={() => setLayout(unmergeAll(layout))}>Rozdziel</button>
-              <button className="btn small" onClick={() => setSelected(new Set())}>Wyczyść</button>
+              <button className="btn small" disabled={selected.size < 2} onClick={merge}>{tr("Scal")}</button>
+              <button className="btn small" onClick={() => setLayout(unmergeAll(layout))}>{tr("Rozdziel")}</button>
+              <button className="btn small" onClick={() => setSelected(new Set())}>{tr("Wyczyść")}</button>
             </div>
-            <div className="muted" style={{ fontSize: 11, textAlign: 'center' }}>Kliknij komórki w podglądzie, żeby zaznaczyć je do scalenia.</div>
+            <div className="muted" style={{ fontSize: 11, textAlign: 'center' }}>{tr("Kliknij komórki w podglądzie, żeby zaznaczyć je do scalenia.")}</div>
             <div className="row-editor">
-              <div className="section-title" style={{ margin: 0 }}>Rzędy</div>
+              <div className="section-title" style={{ margin: 0 }}>{tr("Rzędy")}</div>
               {rows.map((count, r) => (
                 <div key={r} className="re-row">
-                  <span className="muted">Rząd {r + 1}</span>
+                  <span className="muted">{tr('Rząd {number}', { number: r + 1 })}</span>
                   <span className="stepper">
                     <button onClick={() => setRows(rows.map((x, j) => (j === r ? Math.max(1, x - 1) : x)))} disabled={count <= 1}>−</button>
                     <b>{count}</b>
                     <button onClick={() => setRows(rows.map((x, j) => (j === r ? Math.min(MAX_COLS, x + 1) : x)))} disabled={count >= MAX_COLS}>+</button>
                   </span>
-                  <button className="re-del" title="Usuń rząd" disabled={rows.length <= 1} onClick={() => setRows(rows.filter((_, j) => j !== r))}><IX /></button>
+                  <button className="re-del" title={tr("Usuń rząd")} disabled={rows.length <= 1} onClick={() => setRows(rows.filter((_, j) => j !== r))}><IX /></button>
                 </div>
               ))}
               {rows.length < MAX_ROWS && (
-                <button className="btn small ghost" onClick={() => setRows([...rows, rows[rows.length - 1] ?? 1])}>+ dodaj rząd</button>
+                <button className="btn small ghost" onClick={() => setRows([...rows, rows[rows.length - 1] ?? 1])}>{tr("+ dodaj rząd")}</button>
               )}
             </div>
           </div>
@@ -166,7 +168,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
                 >
                   <div className="pc-head">
                     <span className="n">{i + 1}</span>
-                    <span className="nm">{cells[i].name || `Komórka ${i + 1}`}</span>
+                    <span className="nm">{cells[i].name || tr('Komórka {number}', { number: i + 1 })}</span>
                     <span className="pill" style={{ color: prof.color, background: prof.color + '1f' }}>{prof.name}</span>
                   </div>
                   <div className="pc-body">
@@ -187,29 +189,29 @@ export function GridDialog({ projectId }: { projectId: string }) {
         </div>
 
         <div className="row" style={{ gap: 8 }}>
-          <span className="section-title" style={{ margin: 0, flex: 1 }}>Komórki</span>
+          <span className="section-title" style={{ margin: 0, flex: 1 }}>{tr("Komórki")}</span>
           <select className="select" value="" onChange={(e) => e.target.value && setAll({ profileId: e.target.value })}>
-            <option value="">profil dla wszystkich…</option>
+            <option value="">{tr("profil dla wszystkich…")}</option>
             {s.profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           {snippets.length > 0 && (
             <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, [
-              { header: 'Prompt startowy dla wszystkich' },
+              { header: tr("Prompt startowy dla wszystkich") },
               ...snippets.map((sn) => ({ label: sn.name, onClick: () => setAll({ prompt: sn.text }) })),
               { sep: true as const },
-              { label: 'Wyczyść prompty', onClick: () => setAll({ prompt: undefined }) },
+              { label: tr("Wyczyść prompty"), onClick: () => setAll({ prompt: undefined }) },
             ])}>
-              <ISnippet /> Prompt dla wszystkich <IChevron />
+              <ISnippet />  {tr("Prompt dla wszystkich")} <IChevron />
             </button>
           )}
-          {isRepo && <label className="check"><input type="checkbox" onChange={(e) => setAll({ worktree: e.target.checked })} /> worktree dla wszystkich</label>}
+          {isRepo && <label className="check"><input type="checkbox" onChange={(e) => setAll({ worktree: e.target.checked })} />  {tr("worktree dla wszystkich")}</label>}
         </div>
 
         <div className="cell-table">
           <span className="hd" />
-          <span className="hd">Nazwa</span>
-          <span className="hd">Profil</span>
-          <span className="hd">Prompt startowy</span>
+          <span className="hd">{tr("Nazwa")}</span>
+          <span className="hd">{tr("Profil")}</span>
+          <span className="hd">{tr("Prompt startowy")}</span>
           <span className="hd">{isRepo ? 'Worktree' : ''}</span>
           {layout.areas.map((_, i) => (
             <CellRow
@@ -224,14 +226,14 @@ export function GridDialog({ projectId }: { projectId: string }) {
           ))}
         </div>
 
-        <input className="input" placeholder="Nazwa zakładki (opcjonalnie)" value={name} onChange={(e) => setName(e.target.value)}
+        <input className="input" placeholder={tr("Nazwa zakładki (opcjonalnie)")} value={name} onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && open()} />
       </div>
       <div className="modal-foot">
-        <button className="btn" onClick={() => void savePreset()}>Zapisz jako preset</button>
+        <button className="btn" onClick={() => void savePreset()}>{tr("Zapisz jako preset")}</button>
         <span style={{ flex: 1 }} />
-        <button className="btn" onClick={closeModal}>Anuluj</button>
-        <button className="btn white" onClick={open}>Otwórz grid ({n})</button>
+        <button className="btn" onClick={closeModal}>{tr("Anuluj")}</button>
+        <button className="btn white" onClick={open}>{tr('Otwórz grid ({count})', { count: n })}</button>
       </div>
     </div>
   );
@@ -245,11 +247,12 @@ function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
   isRepo: boolean;
   onChange: (patch: Partial<PresetCell>) => void;
 }) {
+  const { tr } = useI18n();
   const isShell = profiles.find((p) => p.id === cell.profileId)?.cli === 'shell';
   return (
     <>
       <span className="num">{index + 1}</span>
-      <input className="input" placeholder="np. backend" value={cell.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} />
+      <input className="input" placeholder={tr("np. backend")} value={cell.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} />
       <select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
         {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
@@ -257,17 +260,17 @@ function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
         <input
           className="input"
           disabled={isShell}
-          placeholder={isShell ? 'nie dotyczy PowerShella' : 'pierwsza wiadomość dla agenta (opcjonalnie)'}
+          placeholder={isShell ? tr("nie dotyczy PowerShella") : tr("pierwsza wiadomość dla agenta (opcjonalnie)")}
           value={isShell ? '' : (cell.prompt ?? '')}
           title={cell.prompt}
           onChange={(e) => onChange({ prompt: e.target.value })}
         />
         {!isShell && snippets.length > 0 && (
-          <button className="btn snip-btn" title="Wstaw snippet" onClick={(e) => openMenuAt(e.currentTarget, [
-            { header: 'Wstaw snippet' },
+          <button className="btn snip-btn" title={tr("Wstaw snippet")} onClick={(e) => openMenuAt(e.currentTarget, [
+            { header: tr("Wstaw snippet") },
             ...snippets.map((sn) => ({ label: sn.name, onClick: () => onChange({ prompt: sn.text }) })),
           ])}>
-            <ISnippet /> Snippet <IChevron />
+            <ISnippet />  {tr("Snippet")} <IChevron />
           </button>
         )}
       </span>

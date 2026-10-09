@@ -1,4 +1,5 @@
 import type { GridLayout } from './layout';
+import type { Language } from './languages';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
 
@@ -84,9 +85,11 @@ export interface Snippet {
   projectId?: string;
 }
 
-export type ShellKind = 'pwsh' | 'powershell' | 'cmd';
+export type ShellKind = 'pwsh' | 'powershell' | 'cmd' | 'zsh' | 'bash';
 
 export interface Settings {
+  /** null until the language is confirmed on first launch. */
+  language: Language | null;
   fontSize: number;
   notifications: boolean;
   shell: ShellKind;
@@ -103,7 +106,25 @@ export interface AppState {
   settings: Settings;
   sidebarCollapsed: boolean;
   snippetsOpen: boolean;
+  sidebarWidth: number;
+  snippetsWidth: number;
 }
+
+export interface ProjectFileEntry {
+  name: string;
+  /** Relative to the project root, with forward slashes. */
+  path: string;
+  kind: 'directory' | 'file' | 'symlink';
+}
+
+export type ProjectDirectory =
+  | { ok: true; entries: ProjectFileEntry[]; truncated: boolean }
+  | { ok: false; error: string };
+
+export type ProjectFilePreview =
+  | { kind: 'text'; text: string; size: number; truncated: boolean }
+  | { kind: 'binary'; size: number }
+  | { kind: 'error'; message: string };
 
 export interface SessionInfo {
   cli: 'claude' | 'codex';

@@ -1,5 +1,7 @@
+import { tr } from './i18n';
 // High-level user actions: they combine state transitions with pty/terminal side effects.
 import type { GridLayout } from '../../shared/layout';
+import { normalizeProjectPath } from '../../shared/platform';
 import { layoutForCount } from '../../shared/layout';
 import {
   activeProject, activeTab, addCell, addProject, addTab, closeTab as closeTabState, findCell, getProfile,
@@ -107,9 +109,9 @@ export async function removeCell(cellId: string): Promise<void> {
   if (tab.cells.length === 1) return closeTab(project.id, tab.id);
   let removeWt = false;
   if (cell.worktree) {
-    const choice = await askChoice('Zamknąć komórkę z worktree?', `${cell.worktree.path}\nbranch ${cell.worktree.branch}`, [
-      { label: 'Zostaw worktree', value: 'keep', primary: true },
-      { label: 'Usuń worktree i branch', value: 'remove', danger: true },
+    const choice = await askChoice(tr("Zamknąć komórkę z worktree?"), `${cell.worktree.path}\nbranch ${cell.worktree.branch}`, [
+      { label: tr("Zostaw worktree"), value: 'keep', primary: true },
+      { label: tr("Usuń worktree i branch"), value: 'remove', danger: true },
     ]);
     if (!choice) return;
     removeWt = choice === 'remove';
@@ -126,9 +128,9 @@ export async function removeCell(cellId: string): Promise<void> {
 async function deleteWorktree(projectPath: string, wt: Worktree): Promise<void> {
   try {
     await window.mc.removeWorktree(projectPath, wt, true);
-    toast(`Usunięto worktree ${wt.branch}`);
+    toast(tr('Usunięto worktree {branch}', { branch: wt.branch }));
   } catch (e) {
-    toast(`Nie udało się usunąć worktree: ${(e as Error).message}`, 'error');
+    toast(tr('Nie udało się usunąć worktree: {error}', { error: (e as Error).message }), 'error');
   }
 }
 
@@ -218,7 +220,7 @@ export function toggleMaximize(cellId?: string): void {
 export async function createProject(): Promise<void> {
   const path = await window.mc.pickFolder();
   if (!path) return;
-  const existing = getS().projects.find((p) => p.path.toLowerCase() === path.toLowerCase());
+  const existing = getS().projects.find((p) => normalizeProjectPath(p.path) === normalizeProjectPath(path));
   if (existing) return switchProject(existing.id);
   update((s) => addProject(s, { name: basename(path), path }));
 }
@@ -237,9 +239,9 @@ export async function removeProject(projectId: string): Promise<void> {
   if (!p) return;
   const live = p.tabs.reduce((n, t) => n + t.cells.length, 0);
   const choice = await askChoice(
-    `Usunąć projekt „${p.name}” z listy?`,
-    `Folder na dysku zostaje nietknięty.${live ? ` Zamkniętych zostanie ${live} terminali.` : ''}`,
-    [{ label: 'Usuń z listy', value: 'yes', danger: true }],
+    tr('Usunąć projekt „{name}” z listy?', { name: p.name }),
+    tr('Folder na dysku zostaje nietknięty.') + (live ? ' ' + tr('Zamkniętych zostanie {count} terminali.', { count: live }) : ''),
+    [{ label: tr("Usuń z listy"), value: 'yes', danger: true }],
   );
   if (choice !== 'yes') return;
   for (const t of p.tabs) for (const c of t.cells) killAndDispose(c.id);
@@ -278,7 +280,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
       try {
         worktree = await window.mc.createWorktree(project.path, `${tabName ?? 'grid'}-${i + 1}`);
       } catch (e) {
-        toast(`Worktree nie powstał (komórka ${i + 1}): ${(e as Error).message}`, 'error');
+        toast(tr('Worktree nie powstał (komórka {number}): {error}', { number: i + 1, error: (e as Error).message }), 'error');
       }
     }
     specs.push({ profileId: spec.profileId, name: spec.name, startupPrompt: spec.prompt, worktree, session: spec.session });
@@ -300,13 +302,13 @@ export async function addAgent(profileId: string, worktree = false): Promise<voi
   if (!p) return void createProject();
   const tab = activeTab(p);
   if (!tab) return openTab(p.id, layoutForCount(1), [{ profileId, worktree }]);
-  if (tab.cells.length >= 20) return toast('Siatka ma już maksymalnie 20 komórek', 'error');
+  if (tab.cells.length >= 20) return toast(tr("Siatka ma już maksymalnie 20 komórek"), 'error');
   let wt: Worktree | undefined;
   if (worktree) {
     try {
       wt = await window.mc.createWorktree(p.path, `${tab.name}-${tab.cells.length + 1}`);
     } catch (e) {
-      toast(`Worktree nie powstał: ${(e as Error).message}`, 'error');
+      toast(tr('Worktree nie powstał: {error}', { error: (e as Error).message }), 'error');
     }
   }
   update((s) => updateSettings(addCell(s, p.id, tab.id, profileId, { worktree: wt }), { lastProfileId: profileId }));
@@ -320,7 +322,7 @@ export function closeTab(projectId: string, tabId: string): void {
   if (!tab) return;
   for (const c of tab.cells) killAndDispose(c.id);
   update((s) => closeTabState(s, projectId, tabId));
-  toast(`Zakładka „${tab.name}” trafiła do historii`);
+  toast(tr('Zakładka „{name}” trafiła do historii', { name: tab.name }));
 }
 
 export function restoreArchived(projectId: string, archivedId: string): void {
@@ -379,7 +381,7 @@ export function resumeSession(info: SessionInfo, target: 'cell' | 'newCell' | 'n
 /** Pastes a snippet: into the focused cell, a given cell, or every cell of the active tab. */
 export function sendSnippet(snippet: Snippet, target: 'focused' | 'all' | { cellId: string }): void {
   const tab = activeTab(activeProject(getS()));
-  if (!tab) return toast('Najpierw otwórz grid w projekcie', 'error');
+  if (!tab) return toast(tr("Najpierw otwórz grid w projekcie"), 'error');
   let ids: string[];
   if (target === 'all') ids = tab.cells.map((c) => c.id);
   else if (target === 'focused') {
@@ -390,7 +392,7 @@ export function sendSnippet(snippet: Snippet, target: 'focused' | 'all' | { cell
   // before the launch command): start them, but don't paste.
   const ready = ids.filter((id) => started.has(id));
   ids.filter((id) => !started.has(id)).forEach(ensureStarted);
-  if (ready.length < ids.length) toast(`Komórki w trakcie startu: ${ids.length - ready.length}. Wklej do nich ponownie za chwilę.`);
+  if (ready.length < ids.length) toast(tr('Komórki w trakcie startu: {count}. Wklej do nich ponownie za chwilę.', { count: ids.length - ready.length }));
   for (const id of ready) terminals.paste(id, snippet.text, snippet.autoSend);
   if (ids.length === 1) focusCell(ids[0]);
 }

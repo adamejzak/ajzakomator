@@ -11,9 +11,12 @@ export const RETIRED_PROFILES: Record<string, string> = { 'claude-opus': 'claude
 
 /** PowerShell single-quoted literal. */
 export const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+/** POSIX shell single-quoted literal (bash/zsh). */
+export const posixQuote = (s: string) => "'" + s.replace(/'/g, "'\"'\"'") + "'";
 
 /** Quotes a path for the cell's shell (cmd has no single-quote strings). */
-export const shellQuote = (s: string, shell: ShellKind = 'pwsh') => (shell === 'cmd' ? `"${s}"` : psQuote(s));
+export const shellQuote = (s: string, shell: ShellKind = 'pwsh') =>
+  shell === 'cmd' ? `"${s}"` : shell === 'zsh' || shell === 'bash' ? posixQuote(s) : psQuote(s);
 
 export interface LaunchOptions {
   mode: 'new' | 'resume';
@@ -29,6 +32,7 @@ export interface LaunchOptions {
 }
 
 function promptArg(p: { file: string; text: string }, shell: ShellKind = 'pwsh'): string {
+  if (shell === 'zsh' || shell === 'bash') return `"$(cat ${posixQuote(p.file)})"`;
   if (shell === 'cmd') return `"${p.text.replace(/\s+/g, ' ').replace(/"/g, "'").trim()}"`;
   return `(Get-Content -Raw -Encoding utf8 -LiteralPath ${psQuote(p.file)})`;
 }

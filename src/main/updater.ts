@@ -16,7 +16,8 @@ export function getUpdateState(): UpdateState {
 
 export function initUpdater(onChange: (s: UpdateState) => void): void {
   if (!app.isPackaged) return;
-  const portable = !!process.env.PORTABLE_EXECUTABLE_DIR;
+  // macOS builds are unsigned: Squirrel.Mac requires a signed app for automatic installation.
+  const portable = !!process.env.PORTABLE_EXECUTABLE_DIR || process.platform === 'darwin';
   const set = (patch: UpdateState) => {
     state = { ...patch, portable };
     onChange(state);

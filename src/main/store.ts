@@ -3,27 +3,28 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFil
 import { join } from 'path';
 import { defaultState, normalizeState } from '../shared/state';
 import type { AppState } from '../shared/types';
+import type { AppPlatform } from '../shared/platform';
 
 const FILE = 'state.json';
 
-function readState(path: string): AppState | null {
+function readState(path: string, platform: AppPlatform): AppState | null {
   try {
-    return normalizeState(JSON.parse(readFileSync(path, 'utf8')));
+    return normalizeState(JSON.parse(readFileSync(path, 'utf8')), platform);
   } catch {
     return null;
   }
 }
 
-export function loadState(dir: string): AppState {
+export function loadState(dir: string, platform: AppPlatform = 'win32'): AppState {
   mkdirSync(dir, { recursive: true });
   const main = join(dir, FILE);
   const bak = join(dir, FILE + '.bak');
-  const state = existsSync(main) ? readState(main) : null;
+  const state = existsSync(main) ? readState(main, platform) : null;
   if (state) {
     copyFileSync(main, bak);
     return state;
   }
-  return (existsSync(bak) ? readState(bak) : null) ?? defaultState();
+  return (existsSync(bak) ? readState(bak, platform) : null) ?? defaultState(platform);
 }
 
 export function writeStateNow(dir: string, state: AppState): void {

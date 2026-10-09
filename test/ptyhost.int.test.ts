@@ -23,11 +23,16 @@ async function waitFor(cond: () => boolean, ms = 15000) {
 
 const env = cleanEnv(process.env);
 
-describe('PtyManager (real ConPTY)', () => {
+const shell = process.platform === 'win32' ? 'pwsh' : 'bash';
+const alternateShell = process.platform === 'win32' ? 'cmd' : 'zsh';
+
+describe('PtyManager (real PTY)', () => {
   it('runs the startup command in the given cwd and reports exit', async () => {
     const { out, exits, sink } = collect();
     const m = new PtyManager(sink);
-    m.spawn({ id: 'a', cwd: process.cwd(), cols: 100, rows: 30, env, shell: 'pwsh', command: 'echo "mc-$((1+1))-ok"; (Get-Location).Path' });
+    m.spawn({ id: 'a', cwd: process.cwd(), cols: 100, rows: 30, env, shell, command: process.platform === 'win32'
+      ? 'echo "mc-$((1+1))-ok"; (Get-Location).Path'
+      : 'printf "mc-%s-ok\\n" "$((1+1))"; pwd' });
     await waitFor(() => (out.get('a') ?? '').includes('mc-2-ok'));
     expect(out.get('a')).toContain(basename(process.cwd()));
     m.resize('a', 80, 20);
@@ -39,8 +44,8 @@ describe('PtyManager (real ConPTY)', () => {
   it('killAll resolves once all terminals are gone', async () => {
     const { sink } = collect();
     const m = new PtyManager(sink);
-    m.spawn({ id: 'x', cwd: process.cwd(), cols: 80, rows: 24, env, shell: 'pwsh' });
-    m.spawn({ id: 'y', cwd: process.cwd(), cols: 80, rows: 24, env, shell: 'cmd' });
+    m.spawn({ id: 'x', cwd: process.cwd(), cols: 80, rows: 24, env, shell });
+    m.spawn({ id: 'y', cwd: process.cwd(), cols: 80, rows: 24, env, shell: alternateShell });
     await new Promise((r) => setTimeout(r, 500));
     const t0 = Date.now();
     await m.killAll(5000);
@@ -51,7 +56,7 @@ describe('PtyManager (real ConPTY)', () => {
   it('keeps a replay history per terminal', async () => {
     const { out, sink } = collect();
     const m = new PtyManager(sink);
-    m.spawn({ id: 'h', cwd: process.cwd(), cols: 80, rows: 24, env, shell: 'cmd', command: 'echo replay-me' });
+    m.spawn({ id: 'h', cwd: process.cwd(), cols: 80, rows: 24, env, shell: alternateShell, command: process.platform === 'win32' ? 'echo replay-me' : 'printf "replay-%s\\n" me' });
     await waitFor(() => (out.get('h') ?? '').includes('replay-me'));
     expect(m.histories().find((h) => h.id === 'h')!.data).toContain('replay-me');
     await m.killAll();

@@ -7,8 +7,9 @@ export type Modal =
   | { kind: 'grid'; projectId: string }
   | { kind: 'history'; projectId: string }
   | { kind: 'settings' }
-  | { kind: 'snippet'; snippetId: string | null }
-  | { kind: 'project'; projectId: string };
+  | { kind: 'snippet'; snippetId: string | null; projectId?: string }
+  | { kind: 'project'; projectId: string }
+  | { kind: 'file'; projectId: string; relativePath: string };
 
 export type Dialog =
   | { kind: 'prompt'; title: string; value: string; placeholder?: string; onSubmit: (value: string) => void }
@@ -34,6 +35,7 @@ export interface Ui {
   sessionTitles: Record<string, string>;
   /** Bumped when every terminal must be (re)started, e.g. after a pty host crash. */
   epoch: number;
+  sidebarView: 'projects' | 'files';
 }
 
 interface Store {
@@ -46,7 +48,7 @@ interface Store {
 }
 
 export const useStore = create<Store>((set, get) => ({
-  s: defaultState(),
+  s: defaultState(window.mc.platform),
   ui: {
     statuses: {},
     focusedCellId: null,
@@ -59,6 +61,7 @@ export const useStore = create<Store>((set, get) => ({
     missingPaths: {},
     sessionTitles: {},
     epoch: 0,
+    sidebarView: 'projects',
   },
   ready: false,
   update(fn) {

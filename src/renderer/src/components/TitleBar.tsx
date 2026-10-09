@@ -1,3 +1,5 @@
+import { keyLabel } from '../platform';
+import { useI18n } from '../i18n';
 import { useEffect, useState } from 'react';
 import { describeLayout } from '../../../shared/layout';
 import { activeProject, renameTab } from '../../../shared/state';
@@ -46,6 +48,7 @@ function Brand({ collapsed }: { collapsed: boolean }) {
 }
 
 export function TitleBar() {
+  const { tr } = useI18n();
   const s = useStore((st) => st.s);
   const statuses = useStore((st) => st.ui.statuses);
   const project = activeProject(s);
@@ -53,10 +56,10 @@ export function TitleBar() {
 
   const agentMenu = (el: HTMLElement) =>
     openMenuAt(el, [
-      { header: 'Dodaj komórkę do siatki' },
-      ...s.profiles.map((p) => ({ label: p.name, onClick: () => void addAgent(p.id), hint: p.id === s.settings.lastProfileId ? 'Ctrl+Shift+N' : undefined })),
+      { header: tr("Dodaj komórkę do siatki") },
+      ...s.profiles.map((p) => ({ label: p.name, onClick: () => void addAgent(p.id), hint: p.id === s.settings.lastProfileId ? keyLabel("Ctrl+Shift+N") : undefined })),
       { sep: true as const },
-      { header: 'W osobnym git worktree' },
+      { header: tr("W osobnym git worktree") },
       ...s.profiles.filter((p) => p.cli !== 'shell').map((p) => ({ label: `${p.name} + worktree`, onClick: () => void addAgent(p.id, true) })),
     ]);
 
@@ -77,13 +80,13 @@ export function TitleBar() {
                 onContextMenu={(e) => {
                   e.preventDefault();
                   openMenu(e.clientX, e.clientY, [
-                    { label: 'Zmień nazwę', onClick: () => setEditing(t.id) },
-                    { label: 'Nowy grid…', onClick: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) },
+                    { label: tr("Zmień nazwę"), onClick: () => setEditing(t.id) },
+                    { label: tr("Nowy grid") + '…', onClick: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) },
                     { sep: true },
-                    { label: 'Zamknij (do historii)', danger: true, onClick: () => closeTab(project.id, t.id), hint: 'Ctrl+Shift+W' },
+                    { label: tr("Zamknij (do historii)"), danger: true, onClick: () => closeTab(project.id, t.id), hint: keyLabel("Ctrl+Shift+W") },
                   ]);
                 }}
-                title="Dwuklik lub prawy klik: zmień nazwę · środkowy przycisk: zamknij"
+                title={tr("Dwuklik lub prawy klik: zmień nazwę · środkowy przycisk: zamknij")}
               >
                 {editing === t.id ? (
                   <input
@@ -109,9 +112,9 @@ export function TitleBar() {
               </div>
             );
           })}
-          <button className="tb-btn" title="Nowy grid (Ctrl+Shift+G)" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
-          <button className="tb-add" title="Dodaj agenta do siatki (Ctrl+Shift+N)" onClick={(e) => agentMenu(e.currentTarget)}>
-            <IPlusBold /> Dodaj <IChevron />
+          <button className="tb-btn" title={tr("Nowy grid") + keyLabel("(Ctrl+Shift+G)")} onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
+          <button className="tb-add" title={tr("Dodaj agenta do siatki") + keyLabel("(Ctrl+Shift+N)")} onClick={(e) => agentMenu(e.currentTarget)}>
+            <IPlusBold />  {tr("Dodaj")} <IChevron />
           </button>
         </div>
       )}
@@ -119,10 +122,10 @@ export function TitleBar() {
       {project && <span className="project-path" title={project.path}>{project.path}</span>}
       <UpdateBadge />
       <div className="row no-drag" style={{ gap: 2 }}>
-        {project && <button className="tb-btn" title="Historia czatów i gridów (Ctrl+Shift+H)" onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
-        <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title="Snippety (Ctrl+Shift+B)" onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
-        <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title="Panel projektów (Ctrl+Shift+E)" onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
-        <button className="tb-btn" title="Ustawienia" onClick={() => setUi({ modal: { kind: 'settings' } })}><TSettings /></button>
+        {project && <button className="tb-btn" title={tr("Historia czatów i gridów") + keyLabel("(Ctrl+Shift+H)")} onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
+        <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title={tr("Snippety") + keyLabel("(Ctrl+Shift+B)")} onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
+        <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title={tr("Panel projektów") + keyLabel("(Ctrl+Shift+E)")} onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
+        <button className="tb-btn" title={tr("Ustawienia")} onClick={() => setUi({ modal: { kind: 'settings' } })}><TSettings /></button>
       </div>
     </div>
   );

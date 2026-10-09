@@ -8,7 +8,11 @@ import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
 import { buildLaunchCommand } from '../shared/profiles';
 import type { AppState, Worktree } from '../shared/types';
+import { appPlatform } from '../shared/platform';
+import { detectLanguage } from '../shared/languages';
+import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
+import { listProjectDirectory, readProjectFile } from './files';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
@@ -25,13 +29,14 @@ if (!process.env.MC_DATA_DIR && !existsSync(join(DATA_DIR, 'state.json')) && exi
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 app.setPath('userData', DATA_DIR);
-app.setAppUserModelId('com.ajzakomator.app');
+if (process.platform === 'win32') app.setAppUserModelId('com.ajzakomator.app');
 
 if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
 if (!process.env.MC_DATA_DIR && !app.requestSingleInstanceLock()) app.quit();
 
 let win: BrowserWindow | null = null;
-let state: AppState = loadState(DATA_DIR);
+let state: AppState = loadState(DATA_DIR, appPlatform(process.platform));
+const tr = (key: MessageKey, params?: MessageParams) => translate(state.settings.language ?? detectLanguage([app.getLocale()]), key, params);
 const saver = createSaver(DATA_DIR);
 const ptyHost = new PtyHostClient();
 const hooks = new HookServer();
@@ -55,7 +60,9 @@ function createWindow(): void {
     title: 'ajzakomator',
     icon: join(app.getAppPath(), 'resources', 'icon.png'),
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#0d0d0d', symbolColor: '#8a8a8a', height: 36 },
+    ...(process.platform === 'darwin'
+      ? { trafficLightPosition: { x: 12, y: 10 } }
+      : { titleBarOverlay: { color: '#0d0d0d', symbolColor: '#8a8a8a', height: 36 } }),
     show: false,
     webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true },
     // Off-screen, non-focusable window for automated screenshots (docs).
@@ -89,7 +96,7 @@ ptyHost.on('crashed', () => {
 });
 ptyHost.on('fatal', () => {
   alive.clear();
-  dialog.showErrorBox('ajzakomator', 'Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.');
+  dialog.showErrorBox('ajzakomator', tr('Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.'));
 });
 
 hooks.on('hook', (cellId: string, event: string) => send('cell:hook', cellId, event));
@@ -123,7 +130,7 @@ ipcMain.on('state:save', (_e, s: AppState) => {
 });
 
 ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => {
-  if (!existsSync(req.cwd)) return { ok: false, error: `Folder nie istnieje: ${req.cwd}` };
+  if (!existsSync(req.cwd)) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const claudeSettingsPath = req.profile.cli === 'claude' ? hooks.writeClaudeSettings(HOOKS_DIR, req.cellId) : undefined;
   let mode = req.mode;
   // Claude only writes a transcript after the first prompt: resuming an unused id would fail,
@@ -158,10 +165,18 @@ ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
 ipcMain.handle('cell:alive', () => [...alive]);
 
 ipcMain.handle('dialog:pickFolder', async () => {
-  const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: 'Wybierz folder projektu' });
+  const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: tr('Wybierz folder projektu') });
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('fs:exists', (_e, p: string) => existsSync(p));
+ipcMain.handle('fs:listProjectDirectory', (_e, projectId: string, path: string) => {
+  const project = state.projects.find((p) => p.id === projectId);
+  return project ? listProjectDirectory(project.path, path) : { ok: false, error: 'Projekt już nie istnieje.' };
+});
+ipcMain.handle('fs:readProjectFile', (_e, projectId: string, path: string) => {
+  const project = state.projects.find((p) => p.id === projectId);
+  return project ? readProjectFile(project.path, path) : { kind: 'error', message: 'Projekt już nie istnieje.' };
+});
 ipcMain.handle('sessions:list', (_e, projectPath: string) => listSessions(homedir(), projectPath));
 ipcMain.handle('git:isRepo', (_e, p: string) => isGitRepo(p));
 ipcMain.handle('git:createWorktree', (_e, p: string, name: string) => createWorktree(p, name));
@@ -187,14 +202,23 @@ ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) =>
 ipcMain.handle('clipboard:read', () => clipboard.readText());
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text));
 ipcMain.on('shell:openPath', (_e, p: string) => shell.openPath(p));
+ipcMain.on('shell:revealPath', (_e, p: string) => shell.showItemInFolder(p));
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
 ipcMain.on('update:install', () => installNow());
 ipcMain.on('update:open', () => shell.openExternal(RELEASES_URL));
 ipcMain.on('shell:openInEditor', (_e, p: string) => {
   // `cursor` / `code` are .cmd launchers → need a shell; they get our clean env.
-  const editor = ['cursor', 'code'].find((cmd) => spawnSync('where', [cmd], { windowsHide: true }).status === 0);
+  const editor = ['cursor', 'code'].find((cmd) => spawnSync(process.platform === 'win32' ? 'where' : '/usr/bin/which', [cmd], { windowsHide: true }).status === 0);
+  if (!editor && process.platform === 'darwin') {
+    const application = ['Cursor', 'Visual Studio Code'].find((name) =>
+      existsSync(join('/Applications', `${name}.app`)) || existsSync(join(homedir(), 'Applications', `${name}.app`)));
+    if (application) {
+      spawn('/usr/bin/open', ['-a', application, p], { detached: true, stdio: 'ignore' }).unref();
+      return;
+    }
+  }
   if (!editor) return void shell.openPath(p);
-  spawn(editor, [`"${p}"`], { shell: true, detached: true, stdio: 'ignore', windowsHide: true, env: cleanEnv(process.env) }).unref();
+  spawn(editor, process.platform === 'win32' ? [`"${p}"`] : [p], { shell: process.platform === 'win32', detached: true, stdio: 'ignore', windowsHide: true, env: cleanEnv(process.env) }).unref();
 });
 
 // ── lifecycle ───────────────────────────────────────────────────────────────

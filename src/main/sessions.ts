@@ -2,6 +2,7 @@
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'fs';
 import { join } from 'path';
 import type { SessionInfo } from '../shared/types';
+import { normalizeProjectPath } from '../shared/platform';
 
 export type { SessionInfo };
 
@@ -13,7 +14,7 @@ const MAX_CODEX_FILES = 600;
 /** Claude stores sessions under ~/.claude/projects/<path with every non-alphanumeric char → '-'>. */
 export const claudeProjectDirName = (projectPath: string) => projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 
-const normPath = (p: string) => p.replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase();
+const normPath = normalizeProjectPath;
 
 function readSlice(file: string, start: number, length: number): string {
   const fd = openSync(file, 'r');

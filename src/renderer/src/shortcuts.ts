@@ -4,17 +4,20 @@ import { useEffect } from 'react';
 import { activeProject, activeTab } from '../../shared/state';
 import { addAgent, closeTab, cycleTab, moveFocus, quickTab, toggleMaximize } from './actions';
 import { getS, getUi, setUi, update } from './store';
+import { hasPrimaryModifier } from './platform';
 
 export function useShortcuts(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.type !== 'keydown') return;
+      if (!getS().settings.language) return;
+      const primary = hasPrimaryModifier(e);
       const ui = getUi();
       if (ui.dialog || ui.modal || ui.palette) {
-        if (e.ctrlKey && e.code === 'KeyK' && ui.palette) stop(e, () => setUi({ palette: false }));
+        if (primary && !e.altKey && e.code === 'KeyK' && ui.palette) stop(e, () => setUi({ palette: false }));
         return;
       }
-      const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
+      const ctrl = primary && !e.altKey;
       const ctrlShift = ctrl && e.shiftKey;
       const project = activeProject(getS());
 
@@ -32,7 +35,7 @@ export function useShortcuts(): void {
       if (ctrlShift && e.code === 'KeyE') return stop(e, () => update((s) => ({ ...s, sidebarCollapsed: !s.sidebarCollapsed })));
       if (ctrlShift && e.code === 'KeyM') return stop(e, () => toggleMaximize());
       if (ctrl && e.code === 'Tab') return stop(e, () => cycleTab(e.shiftKey ? -1 : 1));
-      if (e.ctrlKey && e.altKey && !e.shiftKey && !e.getModifierState('AltGraph')) {
+      if (primary && e.altKey && !e.shiftKey && !e.getModifierState('AltGraph')) {
         const dir: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
         const d = dir[e.code];
         if (d) return stop(e, () => moveFocus(d[0], d[1]));

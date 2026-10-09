@@ -1,5 +1,6 @@
 import type { HookEvent } from '../shared/status';
-import type { AppState, CellSession, Profile, SessionInfo, UpdateState, Worktree } from '../shared/types';
+import type { AppPlatform } from '../shared/platform';
+import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
 export type { SessionInfo };
 
@@ -16,6 +17,7 @@ export interface SpawnCellRequest {
 }
 
 export interface McApi {
+  platform: AppPlatform;
   loadState(): Promise<AppState>;
   saveState(state: AppState): void;
   spawnCell(req: SpawnCellRequest): Promise<{ ok: true } | { ok: false; error: string }>;
@@ -26,12 +28,15 @@ export interface McApi {
   aliveCells(): Promise<string[]>;
   pickFolder(): Promise<string | null>;
   pathExists(path: string): Promise<boolean>;
+  listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;
+  readProjectFile(projectId: string, relativePath: string): Promise<ProjectFilePreview>;
   listSessions(projectPath: string): Promise<SessionInfo[]>;
   isGitRepo(path: string): Promise<boolean>;
   createWorktree(projectPath: string, name: string): Promise<Worktree>;
   removeWorktree(projectPath: string, wt: Worktree, deleteBranch: boolean): Promise<void>;
   notify(n: { title: string; body: string; cellId: string }): void;
   openPath(path: string): void;
+  revealPath(path: string): void;
   openInEditor(path: string): void;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): void;

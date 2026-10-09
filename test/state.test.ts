@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { layoutForCount } from '../src/shared/layout';
 import {
-  addCell, addProject, addTab, closeTab, defaultState, findCell, moveSnippet, normalizeState, removeCell, removeProject,
+  addCell, addProject, addTab, closeTab, defaultState, findCell, moveProject, moveSnippet, normalizeState, removeCell, removeProject,
   restoreTab, updateCell, upsertSnippet,
 } from '../src/shared/state';
 
@@ -107,6 +107,32 @@ describe('state', () => {
     for (const id of ['a', 'b', 'c']) s = upsertSnippet(s, { id, name: id, text: id, autoSend: false });
     expect(moveSnippet(s, 'c', 'a').snippets.map((x) => x.id)).toEqual(['c', 'a', 'b']);
     expect(moveSnippet(s, 'a', null).snippets.map((x) => x.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('moves projects before or after a target in either direction without changing the active project', () => {
+    let s = defaultState();
+    for (const name of ['a', 'b', 'c']) s = addProject(s, { name, path: name });
+    const [a, b, c] = s.projects;
+    const names = (state: typeof s) => state.projects.map((p) => p.name);
+    expect(names(moveProject(s, a.id, b.id, 'before'))).toEqual(['a', 'b', 'c']);
+    expect(names(moveProject(s, a.id, b.id, 'after'))).toEqual(['b', 'a', 'c']);
+    expect(names(moveProject(s, c.id, a.id, 'before'))).toEqual(['c', 'a', 'b']);
+    expect(names(moveProject(s, c.id, a.id, 'after'))).toEqual(['a', 'c', 'b']);
+    const moved = moveProject(s, a.id, null);
+    expect(names(moved)).toEqual(['b', 'c', 'a']);
+    expect(moved.activeProjectId).toBe(s.activeProjectId);
+    expect(moved.projects[2]).toBe(a);
+    expect(moveProject(s, b.id, b.id)).toBe(s);
+    expect(moveProject(s, b.id, 'missing')).toBe(s);
+  });
+
+  it('moves snippets below a target, to the end, and past hidden project snippets', () => {
+    let s = defaultState();
+    for (const id of ['a', 'hidden', 'b', 'c']) s = upsertSnippet(s, { id, name: id, text: id, autoSend: false, projectId: id === 'hidden' ? 'another-project' : undefined });
+    expect(moveSnippet(s, 'a', 'b', 'after').snippets.map((x) => x.id)).toEqual(['hidden', 'b', 'a', 'c']);
+    expect(moveSnippet(s, 'c', 'b', 'after').snippets.map((x) => x.id)).toEqual(['a', 'hidden', 'b', 'c']);
+    expect(moveSnippet(s, 'a', 'c', 'after').snippets.map((x) => x.id)).toEqual(['hidden', 'b', 'c', 'a']);
+    expect(moveSnippet(s, 'c', 'c', 'after')).toBe(s);
   });
 
   it('findCell locates project/tab/cell', () => {

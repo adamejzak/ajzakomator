@@ -8,6 +8,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
 import { StatusTracker, type CellStatus, type HookEvent } from '../../../shared/status';
 import { encodeWin32Key } from '../../../shared/win32input';
+import { tr } from '../i18n';
 
 // Campbell (Windows Terminal / PowerShell default) on a Cursor-like background.
 export const THEME: ITheme = {
@@ -19,7 +20,7 @@ export const THEME: ITheme = {
   brightBlue: '#3b78ff', brightMagenta: '#b4009e', brightCyan: '#61d6d6', brightWhite: '#f2f2f2',
 };
 
-const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace';
+const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, "SFMono-Regular", "Courier New", monospace';
 const PENDING_LIMIT = 512 * 1024;
 
 interface Entry {
@@ -89,7 +90,7 @@ class TerminalManager {
       this.exited.add(m.id);
       const e = this.entries.get(m.id);
       if (e) {
-        e.term.write('\r\n\x1b[90m[terminal zakończony]\x1b[0m\r\n');
+        e.term.write(`\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
         this.setStatus(e, () => e.tracker.exited());
       }
       this.exitListeners.forEach((l) => l(m.id));
@@ -144,7 +145,7 @@ class TerminalManager {
       cursorBlink: true,
       scrollback: 10000,
       allowProposedApi: true,
-      windowsPty: { backend: 'conpty', buildNumber: this.buildNumber || 26100 },
+      ...(window.mc.platform === 'win32' ? { windowsPty: { backend: 'conpty' as const, buildNumber: this.buildNumber || 26100 } } : {}),
       rightClickSelectsWord: false,
       drawBoldTextInBrightColors: false,
       minimumContrastRatio: 1,
@@ -163,7 +164,7 @@ class TerminalManager {
 
     // ConPTY asks its host terminal for win32-input-mode with CSI ? 9001 h.
     const setW32 = (on: boolean) => (params: (number | number[])[]) => {
-      if (params.includes(9001)) entry.win32 = on;
+      if (window.mc.platform === 'win32' && params.includes(9001)) entry.win32 = on;
       return false; // let xterm process the remaining modes
     };
     term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, setW32(true));
@@ -188,7 +189,7 @@ class TerminalManager {
     term.onBinary((d) => entry.replaying === 0 && this.post({ t: 'write', id: cellId, data: d }));
 
     host.addEventListener('wheel', (ev) => {
-      if (!ev.ctrlKey) return;
+      if (!ev.ctrlKey && !(window.mc.platform === 'darwin' && ev.metaKey)) return;
       ev.preventDefault();
       ev.stopPropagation();
       const size = Math.max(8, Math.min(32, (term.options.fontSize ?? 13) + (ev.deltaY < 0 ? 1 : -1)));
@@ -221,10 +222,11 @@ class TerminalManager {
   private handleKey(entry: Entry, ev: KeyboardEvent): boolean {
     const { term } = entry;
     const ctrl = ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.getModifierState('AltGraph');
+    const command = window.mc.platform === 'darwin' && ev.metaKey && !ev.ctrlKey && !ev.altKey;
 
-    if (ev.type === 'keydown' && ctrl) {
+    if (ev.type === 'keydown' && (ctrl || command)) {
       // Copy: Ctrl+C with a selection, Ctrl+Shift+C always.
-      if (ev.code === 'KeyC' && (term.hasSelection() || ev.shiftKey)) {
+      if (ev.code === 'KeyC' && (term.hasSelection() || ev.shiftKey || command)) {
         if (term.hasSelection()) window.mc.clipboardWrite(term.getSelection());
         term.clearSelection();
         ev.preventDefault();
