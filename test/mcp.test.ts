@@ -32,6 +32,10 @@ describe('local MCP over Streamable HTTP', () => {
       await client.connect(new StreamableHTTPClientTransport(new URL(f.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
       const tools = (await client.listTools()).tools.map((tool) => tool.name);
       expect(tools).toContain('create_grid');
+      expect(tools).toContain('add_agents');
+      expect(tools).toContain('read_inbox');
+      expect(tools).toContain('update_grid');
+      expect(tools).toContain('update_agent');
       expect(tools).toContain('apply_snippet');
       expect(tools).not.toContain('set_role');
       expect(tools).not.toContain('set_paused');
@@ -68,6 +72,12 @@ describe('local MCP over Streamable HTTP', () => {
     const client = new Client({ name: 'worker-test', version: '1' });
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(f.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+      const peerEdit = await client.callTool({ name: 'update_agent', arguments: { cellId: f.coordinator.id, name: 'Denied' } });
+      expect(peerEdit.isError).toBe(true);
+      const ownEdit = await client.callTool({ name: 'update_agent', arguments: { cellId: f.worker.id, name: 'Worker label', model: 'gpt-5.4' } });
+      expect(ownEdit.structuredContent).toMatchObject({ result: { needsRestart: true, restarted: false } });
+      const inbox = await client.callTool({ name: 'read_inbox', arguments: { acknowledge: true } });
+      expect(inbox.structuredContent).toMatchObject({ result: { tasks: [], messages: [], acknowledgedMessageIds: [] } });
       const forbidden = await client.callTool({ name: 'create_grid', arguments: { name: 'Denied', cells: [{ profileId: 'codex' }] } });
       expect(forbidden.isError).toBe(true);
       expect(f.controller.get().projects[0].tabs).toHaveLength(1);
@@ -82,5 +92,31 @@ describe('local MCP over Streamable HTTP', () => {
     }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'save_snippet', arguments: { name: 'Too large', text: 'x'.repeat(300000) } } }) });
     expect(response.status).toBe(413);
     expect(f.controller.get().snippets).toEqual([]);
+  });
+});
+
+
+describe('MCP connection indicators', () => {
+  it('distinguishes configured tokens from authenticated connections and clears on revoke/stop', async () => {
+    const f = await setup();
+    const token = f.server.issueToken(f.worker.id);
+    expect(f.server.getInfo()).toMatchObject({ configuredCellIds: [f.worker.id], connectedCellIds: [] });
+    await fetch(f.url, { method: 'POST', headers: { Authorization: 'Bearer bad' } });
+    expect(f.server.getInfo().connectedCellIds).toEqual([]);
+    const client = new Client({ name: 'status-test', version: '1' });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(f.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+      expect(f.server.getInfo().connectedCellIds).toEqual([f.worker.id]);
+      const copy = f.server.getInfo();
+      copy.connectedCellIds!.length = 0;
+      expect(f.server.getInfo().connectedCellIds).toEqual([f.worker.id]);
+      f.server.issueToken(f.worker.id);
+      expect(f.server.getInfo()).toMatchObject({ configuredCellIds: [f.worker.id], connectedCellIds: [] });
+      f.server.revokeCell(f.worker.id);
+      expect(f.server.getInfo()).toMatchObject({ configuredCellIds: [], connectedCellIds: [] });
+      f.server.issueToken(f.coordinator.id);
+      await f.server.stop();
+      expect(f.server.getInfo()).toMatchObject({ running: false, configuredCellIds: [], connectedCellIds: [] });
+    } finally { await client.close(); }
   });
 });

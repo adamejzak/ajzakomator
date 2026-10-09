@@ -15,6 +15,8 @@ export function automationFixture() {
   const controller = new StateController(state, vi.fn());
   const deps = {
     createWorktree: vi.fn(async (path: string, name: string) => ({ path: `${path}-wt-${name}`, branch: `mc/${name}` })),
+    isCellRunning: vi.fn(() => true),
+    restartAgent: vi.fn(async (): Promise<{ restarted: boolean; reason?: string }> => ({ restarted: true })),
     removeWorktree: vi.fn(async () => {}), startCells: vi.fn(), deliver: vi.fn(async () => {}),
   };
   return { service: new AutomationService(controller, deps), controller, deps, project, coordinator, worker, outsider };
@@ -154,5 +156,186 @@ describe('automation service', () => {
     expect(await f.service.execute('get_tasks', { cellId: f.coordinator.id }, f.worker.id)).toEqual([]);
     f.controller.change((s) => updateCell(s, f.coordinator.id, { role: 'worker' }));
     await expect(f.service.execute('create_grid', { name: 'Forbidden', cells: [{ profileId: 'codex' }] }, f.coordinator.id)).rejects.toThrow('coordinator');
+  });
+});
+
+
+describe('MCP grid and agent customization', () => {
+  it('appends to an existing grid, preserves identities and selection, starts only additions', async () => {
+    const f = automationFixture();
+    const selection = f.controller.get().activeProjectId;
+    const existing = f.project.tabs[0];
+    const result = await f.service.execute('add_agents', { gridId: existing.id, rows: [2, 1], cells: [
+      { profileId: 'codex', name: 'Reviewer', role: 'worker', model: 'gpt-5.4', prompt: 'Review' },
+    ] }, f.coordinator.id) as { gridId: string; cellIds: string[] };
+    const grid = f.controller.get().projects[0].tabs[0];
+    expect(result.gridId).toBe(existing.id);
+    expect(grid.cells.slice(0, 2)).toEqual(existing.cells);
+    expect(grid.cells[2]).toMatchObject({ name: 'Reviewer', model: 'gpt-5.4', color: '#34d399' });
+    expect(grid.layout.areas).toHaveLength(3);
+    expect(f.controller.get().activeProjectId).toBe(selection);
+    expect(f.controller.get().projects[0].activeTabId).toBe(existing.id);
+    expect(f.deps.startCells).toHaveBeenCalledWith(result.cellIds);
+    expect(result.cellIds).toEqual([grid.cells[2].id]);
+    expect(f.controller.get().automation.tasks[0].cellId).toBe(grid.cells[2].id);
+  });
+  it('validates full grid layouts and project permissions before creating worktrees', async () => {
+    const f = automationFixture();
+    await expect(f.service.execute('add_agents', { gridId: f.project.tabs[0].id, rows: [1], cells: [{ profileId: 'codex', worktree: true }] }, f.coordinator.id)).rejects.toThrow('Row sizes');
+    await expect(f.service.execute('add_agents', { gridId: f.project.tabs[0].id, cells: [{ profileId: 'codex' }] }, f.worker.id)).rejects.toThrow('coordinator');
+    const foreignGrid = f.controller.get().projects[1].tabs[0].id;
+    await expect(f.service.execute('add_agents', { gridId: foreignGrid, cells: [{ profileId: 'codex' }] }, f.coordinator.id)).rejects.toThrow('access denied');
+    expect(f.deps.createWorktree).not.toHaveBeenCalled();
+  });
+  it('rolls back worktrees if existing grid changes while additions are prepared', async () => {
+    const f = automationFixture();
+    f.deps.createWorktree.mockImplementationOnce(async () => {
+      f.controller.change((s) => ({ ...s, projects: s.projects.map((p) => p.id === f.project.id ? { ...p, tabs: [] } : p) }));
+      return { path: 'D:/new-wt', branch: 'mc/new' };
+    });
+    await expect(f.service.execute('add_agents', { gridId: f.project.tabs[0].id, cells: [{ profileId: 'codex', worktree: true }] }, f.coordinator.id)).rejects.toThrow();
+    expect(f.deps.removeWorktree).toHaveBeenCalledTimes(1);
+    expect(f.deps.startCells).not.toHaveBeenCalled();
+  });
+  it('defaults team accents distinctly and honors explicit colors/models', async () => {
+    const f = automationFixture();
+    await f.service.execute('create_grid', { name: 'Team', color: '#123456', cells: [
+      { profileId: 'codex', color: '#abcdef', model: 'gpt-5.4' }, { profileId: 'claude' },
+    ] }, f.coordinator.id);
+    const grid = f.controller.get().projects[0].tabs.at(-1)!;
+    expect(grid.color).toBe('#123456');
+    expect(grid.cells[0]).toMatchObject({ color: '#abcdef', model: 'gpt-5.4' });
+    expect(grid.cells[1].color).toBe('#a78bfa');
+  });
+  it('restricts peer identities and grid updates to coordinators, honors pause', async () => {
+    const f = automationFixture();
+    await expect(f.service.execute('update_agent', { cellId: f.coordinator.id, name: 'Hijack' }, f.worker.id)).rejects.toThrow('coordinator');
+    await expect(f.service.execute('update_grid', { gridId: f.project.tabs[0].id, name: 'Hijack' }, f.worker.id)).rejects.toThrow('coordinator');
+    await f.service.execute('update_agent', { cellId: f.worker.id, name: 'Own', color: '#123456' }, f.worker.id);
+    await f.service.execute('update_grid', { gridId: f.project.tabs[0].id, name: 'Renamed', color: '#abcdef' }, f.coordinator.id);
+    expect(f.controller.get().projects[0].tabs[0]).toMatchObject({ name: 'Renamed', color: '#abcdef' });
+    await f.service.execute('set_paused', { paused: true });
+    await expect(f.service.execute('update_agent', { cellId: f.worker.id, model: 'new' }, f.worker.id)).rejects.toThrow('paused');
+    expect(f.deps.restartAgent).not.toHaveBeenCalled();
+  });
+  it('saves launch settings, explicitly restarts safely, and reports deferred or refused restart', async () => {
+    const f = automationFixture();
+    expect(await f.service.execute('update_agent', { cellId: f.worker.id, model: 'new' }, f.coordinator.id)).toMatchObject({ needsRestart: true, restarted: false });
+    expect(f.deps.restartAgent).not.toHaveBeenCalled();
+    expect(await f.service.execute('update_agent', { cellId: f.worker.id, name: 'Worker' }, f.worker.id)).toMatchObject({ needsRestart: true });
+    f.deps.restartAgent.mockResolvedValueOnce({ restarted: false, reason: 'Session is unconfirmed' });
+    expect(await f.service.execute('update_agent', { cellId: f.worker.id, restart: true }, f.coordinator.id)).toMatchObject({ needsRestart: true, restartReason: 'Session is unconfirmed' });
+    expect(await f.service.execute('update_agent', { cellId: f.worker.id, restart: true }, f.coordinator.id)).toMatchObject({ needsRestart: false, restarted: true });
+    f.deps.isCellRunning.mockReturnValue(false);
+    expect(await f.service.execute('update_agent', { cellId: f.worker.id, model: null }, f.coordinator.id)).toMatchObject({ needsRestart: false, restarted: false });
+    expect(f.controller.get().projects[0].tabs[0].cells[1].model).toBeUndefined();
+    expect(f.deps.deliver).not.toHaveBeenCalled();
+  });
+  it('rejects unsafe models and invalid profiles before mutating cells', async () => {
+    const f = automationFixture();
+    await expect(f.service.execute('update_agent', { cellId: f.worker.id, model: 'x; echo bad' }, f.coordinator.id)).rejects.toThrow();
+    await expect(f.service.execute('update_agent', { cellId: f.worker.id, profileId: 'shell' }, f.coordinator.id)).rejects.toThrow('AI agent');
+    await expect(f.service.execute('update_agent', { cellId: f.outsider.id, model: 'new' }, f.coordinator.id)).rejects.toThrow('access denied');
+    expect(f.controller.get().projects[0].tabs[0].cells[1]).toEqual(f.worker);
+  });
+});
+
+
+describe('task dependencies', () => {
+  it('defers dependent delivery and claims until prerequisites complete and exposes readiness', async () => {
+    const f = automationFixture();
+    const prerequisite = await f.service.execute('create_task', { cellId: f.coordinator.id, title: 'API', prompt: 'Build API' }, f.coordinator.id) as AgentTask;
+    f.deps.deliver.mockClear();
+    const dependent = await f.service.execute('create_task', { cellId: f.worker.id, title: 'UI', prompt: 'Use API', dependsOn: [prerequisite.id, prerequisite.id] }, f.coordinator.id) as AgentTask;
+    expect(dependent).toMatchObject({ dependsOn: [prerequisite.id], delivery: 'pending' });
+    expect(f.deps.deliver).not.toHaveBeenCalled();
+    expect(await f.service.execute('get_tasks', { readyOnly: true }, f.worker.id)).toEqual([]);
+    expect(await f.service.execute('get_tasks', {}, f.worker.id)).toMatchObject([{ blockedBy: [prerequisite.id], ready: false }]);
+    await expect(f.service.execute('update_task', { taskId: dependent.id, status: 'in_progress' }, f.worker.id)).rejects.toThrow('dependencies');
+    await f.service.execute('update_task', { taskId: prerequisite.id, status: 'completed', result: { summary: 'API available' } }, f.coordinator.id);
+    expect(await f.service.execute('get_tasks', { readyOnly: true }, f.worker.id)).toMatchObject([{ id: dependent.id, blockedBy: [], ready: true }]);
+    await f.service.execute('deliver_task', { taskId: dependent.id }, f.worker.id);
+    expect(f.deps.deliver).toHaveBeenCalledTimes(1);
+    await f.service.execute('update_task', { taskId: dependent.id, status: 'in_progress' }, f.worker.id);
+  });
+  it('rejects missing or foreign prerequisites and does not consider cancelled work completed', async () => {
+    const f = automationFixture();
+    const foreign = await f.service.execute('create_task', { cellId: f.outsider.id, title: 'Other', prompt: 'Other' }, f.outsider.id) as AgentTask;
+    await expect(f.service.execute('create_task', { cellId: f.worker.id, title: 'Bad', prompt: 'Bad', dependsOn: ['missing'] }, f.coordinator.id)).rejects.toThrow('this project');
+    await expect(f.service.execute('create_task', { cellId: f.worker.id, title: 'Bad', prompt: 'Bad', dependsOn: [foreign.id] }, f.coordinator.id)).rejects.toThrow('this project');
+    const prerequisite = await f.service.execute('create_task', { cellId: f.worker.id, title: 'First', prompt: 'First' }, f.coordinator.id) as AgentTask;
+    const dependent = await f.service.execute('create_task', { cellId: f.worker.id, title: 'Second', prompt: 'Second', dependsOn: [prerequisite.id] }, f.coordinator.id) as AgentTask;
+    await f.service.execute('update_task', { taskId: prerequisite.id, status: 'cancelled' }, f.worker.id);
+    await expect(f.service.execute('update_task', { taskId: dependent.id, status: 'in_progress' }, f.worker.id)).rejects.toThrow('dependencies');
+  });
+});
+
+
+it('reports unavailable or failing runtime restart without typing into the agent shell', async () => {
+  const f = automationFixture();
+  const withoutRestart = new AutomationService(f.controller, {
+    createWorktree: f.deps.createWorktree, removeWorktree: f.deps.removeWorktree,
+    startCells: f.deps.startCells, deliver: f.deps.deliver, isCellRunning: f.deps.isCellRunning,
+  });
+  expect(await withoutRestart.execute('update_agent', { cellId: f.worker.id, model: 'new', restart: true }, f.coordinator.id))
+    .toMatchObject({ needsRestart: true, restarted: false, restartReason: 'Safe runtime restart is unavailable.' });
+  f.deps.restartAgent.mockRejectedValueOnce(new Error('Runtime rejected restart'));
+  expect(await f.service.execute('update_agent', { cellId: f.worker.id, restart: true }, f.coordinator.id))
+    .toMatchObject({ needsRestart: true, restarted: false, restartReason: 'Runtime rejected restart' });
+  expect(f.deps.deliver).not.toHaveBeenCalled();
+});
+
+
+describe('combined agent inbox', () => {
+  it('batches own tasks/messages and optionally acknowledges only the returned page, including paused', async () => {
+    const f = automationFixture();
+    await f.service.execute('create_task', { cellId: f.worker.id, title: 'Work', prompt: 'Work' }, f.coordinator.id);
+    await f.service.execute('create_task', { cellId: f.coordinator.id, title: 'Private', prompt: 'Private' }, f.coordinator.id);
+    const first = await f.service.execute('send_message', { toCellId: f.worker.id, text: 'First' }, f.coordinator.id) as { id: string };
+    await f.service.execute('send_message', { toCellId: f.worker.id, text: 'Second' }, f.coordinator.id);
+    await f.service.execute('send_message', { toCellId: f.coordinator.id, text: 'Private' }, f.worker.id);
+    const inbox = await f.service.execute('read_inbox', { limit: 1 }, f.worker.id) as { tasks: AgentTask[]; messages: { id: string }[]; acknowledgedMessageIds: string[]; hasMoreMessages: boolean };
+    expect(inbox.tasks).toHaveLength(1);
+    expect(inbox.tasks[0].cellId).toBe(f.worker.id);
+    expect(inbox.messages.map((m) => m.id)).toEqual([first.id]);
+    expect(inbox.acknowledgedMessageIds).toEqual([]);
+    expect(inbox.hasMoreMessages).toBe(true);
+    await f.service.execute('set_paused', { paused: true });
+    expect(await f.service.execute('read_inbox', { limit: 1, acknowledge: true }, f.worker.id)).toMatchObject({ acknowledgedMessageIds: [first.id] });
+    expect(await f.service.execute('get_messages', {}, f.worker.id)).toMatchObject([{ text: 'Second' }]);
+    expect(await f.service.execute('get_messages', {}, f.coordinator.id)).toMatchObject([{ text: 'Private' }]);
+    await expect(f.service.execute('read_inbox', { limit: 101 }, f.worker.id)).rejects.toThrow();
+  });
+});
+
+describe('closing grids through MCP', () => {
+  it('archives finished grids, preserves worktrees and stops only their cells', async () => {
+    const f = automationFixture();
+    const stopCells = vi.fn(async (_ids: string[]) => {});
+    const service = new AutomationService(f.controller, { ...f.deps, stopCells });
+    const created = await service.execute('create_grid', { name: 'Review', cells: [{ profileId: 'claude', role: 'worker', worktree: true }] }, f.coordinator.id) as { gridId: string; cellIds: string[] };
+    const result = await service.execute('close_grid', { gridId: created.gridId }, f.coordinator.id);
+    expect(result).toMatchObject({ archivedGridId: created.gridId, stoppedCellIds: created.cellIds });
+    const project = f.controller.get().projects[0];
+    expect(project.tabs.some((t) => t.id === created.gridId)).toBe(false);
+    expect(project.archive.find((t) => t.id === created.gridId)?.cells[0].worktree).toBeDefined();
+    expect(stopCells).toHaveBeenCalledWith(created.cellIds);
+    expect(f.deps.removeWorktree).not.toHaveBeenCalled();
+  });
+  it('guards role, project, own grid, paused operation and unfinished tasks', async () => {
+    const f = automationFixture();
+    const stopCells = vi.fn(async (_ids: string[]) => {});
+    const service = new AutomationService(f.controller, { ...f.deps, stopCells });
+    const created = await service.execute('create_grid', { name: 'Worker', cells: [{ profileId: 'claude', role: 'worker', prompt: 'Review' }] }, f.coordinator.id) as { gridId: string; cellIds: string[] };
+    await expect(service.execute('close_grid', { gridId: created.gridId }, f.worker.id)).rejects.toThrow('coordinator');
+    await expect(service.execute('close_grid', { gridId: f.project.tabs[0].id }, f.coordinator.id)).rejects.toThrow('own grid');
+    await expect(service.execute('close_grid', { gridId: created.gridId }, f.outsider.id)).rejects.toThrow();
+    await expect(service.execute('close_grid', { gridId: created.gridId }, f.coordinator.id)).rejects.toThrow('unfinished');
+    expect(stopCells).not.toHaveBeenCalled();
+    await service.execute('set_paused', { paused: true });
+    await expect(service.execute('close_grid', { gridId: created.gridId, cancelTasks: true }, f.coordinator.id)).rejects.toThrow('paused');
+    await service.execute('set_paused', { paused: false });
+    await service.execute('close_grid', { gridId: created.gridId, cancelTasks: true }, f.coordinator.id);
+    expect(f.controller.get().automation.tasks.find((t) => t.cellId === created.cellIds[0])?.status).toBe('cancelled');
   });
 });
