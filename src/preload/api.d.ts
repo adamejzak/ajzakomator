@@ -38,11 +38,13 @@ export interface McApi {
   pathExists(path: string): Promise<boolean>;
   listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;
   readProjectFile(projectId: string, relativePath: string): Promise<ProjectFilePreview>;
+  writeProjectFile(projectId: string, relativePath: string, text: string, expectedText: string): Promise<{ ok: true } | { ok: false; error: string }>;
   listSessions(projectPath: string): Promise<SessionInfo[]>;
   isGitRepo(path: string): Promise<boolean>;
   createWorktree(projectPath: string, name: string): Promise<Worktree>;
   removeWorktree(projectPath: string, wt: Worktree, deleteBranch: boolean): Promise<void>;
   notify(n: { title: string; body: string; cellId: string }): void;
+  openExternal(url: string): void;
   openPath(path: string): void;
   revealPath(path: string): void;
   openInEditor(path: string): void;
@@ -50,8 +52,10 @@ export interface McApi {
   clipboardWrite(text: string): void;
   windowsBuild: number;
   getUpdate(): Promise<UpdateState & { currentVersion: string }>;
+  checkUpdates(): Promise<void>;
   installUpdate(): void;
   openReleases(): void;
+  on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;
   on(channel: 'cell:spawnError', cb: (cellId: string, message: string) => void): () => void;

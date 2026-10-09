@@ -10,6 +10,7 @@ import {
 } from '../../shared/state';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
+import { showTerminalTabs } from './files';
 import { terminals } from './terminals/TerminalManager';
 
 /** Cells whose pty was started (or found alive) during this renderer session. */
@@ -137,6 +138,10 @@ async function deleteWorktree(projectPath: string, wt: Worktree): Promise<void> 
 
 function killAndDispose(cellId: string): void {
   window.mc.killCell(cellId);
+  releaseCellTerminal(cellId);
+}
+
+export function releaseCellTerminal(cellId: string): void {
   terminals.dispose(cellId);
   started.delete(cellId);
   aliveAtStart.delete(cellId);
@@ -227,6 +232,7 @@ export async function createProject(): Promise<void> {
 }
 
 export function switchProject(projectId: string): void {
+  showTerminalTabs();
   update((s) => setActiveProject(s, projectId));
   const p = getS().projects.find((x) => x.id === projectId);
   const tab = activeTab(p ?? null);
@@ -262,6 +268,8 @@ export async function relocateProject(projectId: string): Promise<void> {
 // ── tabs ────────────────────────────────────────────────────────────────────
 
 export interface TabSpecCell {
+  model?: string;
+  color?: string;
   profileId: string;
   role?: import('../../shared/automation').AgentRole;
   worktree: boolean;
@@ -282,7 +290,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
         projectId, name: name?.trim() || `Grid ${number}`, layout,
         cells: layout.areas.map((_, i) => {
           const spec = cells[i] ?? cells[cells.length - 1] ?? { profileId: getS().settings.lastProfileId, worktree: false };
-          return { profileId: spec.profileId, role: getProfile(getS(), spec.profileId).cli === 'shell' ? undefined : spec.role, name: spec.name?.trim() || undefined,
+          return { profileId: spec.profileId, model: spec.model, color: spec.color, role: getProfile(getS(), spec.profileId).cli === 'shell' ? undefined : spec.role, name: spec.name?.trim() || undefined,
             worktree: spec.worktree, prompt: getProfile(getS(), spec.profileId).cli === 'shell' ? undefined : spec.prompt?.trim() || undefined };
         }),
       }) as { gridId: string; cellIds: string[] };
@@ -293,7 +301,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
     return;
   }
   const tabName = name ?? undefined;
-  const specs: Array<{ profileId: string; role?: import('../../shared/automation').AgentRole; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession }> = [];
+  const specs: Array<{ model?: string; color?: string; profileId: string; role?: import('../../shared/automation').AgentRole; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession }> = [];
   for (let i = 0; i < layout.areas.length; i++) {
     const spec = cells[i] ?? cells[cells.length - 1] ?? { profileId: getS().settings.lastProfileId, worktree: false };
     let worktree: Worktree | undefined;
@@ -304,7 +312,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
         toast(tr('Worktree nie powstał (komórka {number}): {error}', { number: i + 1, error: (e as Error).message }), 'error');
       }
     }
-    specs.push({ profileId: spec.profileId, role: spec.role, name: spec.name, startupPrompt: spec.prompt, worktree, session: spec.session });
+    specs.push({ profileId: spec.profileId, model: spec.model, color: spec.color, role: spec.role, name: spec.name, startupPrompt: spec.prompt, worktree, session: spec.session });
   }
   update((s) => setActiveProject(addTab(s, projectId, { name: tabName, layout, cells: specs }), projectId));
   const tab = activeTab(getS().projects.find((p) => p.id === projectId) ?? null);
@@ -361,6 +369,7 @@ export function cycleTab(dir: 1 | -1): void {
 }
 
 export function selectTab(projectId: string, tab: Tab): void {
+  showTerminalTabs();
   update((s) => setActiveTab(s, projectId, tab.id));
   setUi({ maximizedCellId: null, focusedCellId: tab.cells[0]?.id ?? null });
   const id = tab.cells[0]?.id;

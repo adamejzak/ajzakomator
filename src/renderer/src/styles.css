@@ -569,7 +569,7 @@ select option { background: #171717; color: var(--text); }
 .panel-resize { position: absolute; top: 0; bottom: 0; width: 8px; z-index: 35; cursor: col-resize; touch-action: none; outline: none; }
 .panel-resize.edge-sidebar { right: -4px; }
 .panel-resize.edge-snippets { left: -4px; }
-.panel-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; border-radius: 2px; background: var(--accent); opacity: 0; transition: opacity .12s; }
+.panel-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; border-radius: 2px; background: #a8a29e; opacity: 0; transition: opacity .12s; }
 .panel-resize:hover::after, .panel-resize:focus-visible::after, .panel-resize.dragging::after { opacity: 1; }
 .panel-resizing, .panel-resizing * { cursor: col-resize !important; user-select: none !important; }
 .sidebar-heading { display: flex; align-items: center; gap: 6px; padding: 0 2px 6px; }
@@ -652,3 +652,43 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .project-drop-space.drop-end::before, .snippet-drop-space.drop-end::before {
   content: ''; position: absolute; height: 2px; top: 0; left: 0; right: 0; background: var(--accent); border-radius: 2px;
 }
+
+/* Workspace tabs live below the navbar. Color accents identify teams without obscuring labels. */
+.workspace-tabs { flex: none; height: 38px; min-width: 0; display: flex; background: #111; border-bottom: 1px solid var(--border); }
+.workspace-tabs .tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; flex: 1; padding: 0; min-width: 0; }
+.workspace-tabs .tab { --tab-color: #a8a29e; position: relative; display: flex; align-items: center; gap: 8px; flex: none; min-width: 100px; max-width: 230px; height: 37px; padding: 0 12px; border-radius: 0; border: 0; border-right: 1px solid #272727; border-top: 2px solid color-mix(in srgb, var(--tab-color) 55%, transparent); background: color-mix(in srgb, var(--tab-color) 5%, #141414); color: #969696; cursor: pointer; }
+.workspace-tabs .tab:hover { background: color-mix(in srgb, var(--tab-color) 10%, #1a1a1a); color: #eee; }
+.workspace-tabs .tab.active { background: color-mix(in srgb, var(--tab-color) 12%, #191919); border-top-color: var(--tab-color); color: #f2f2f2; }
+.workspace-tabs .tab .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-tabs .tab .size { color: #727272; font-size: 10px; }
+.workspace-tabs .tab .x { flex: none; border: 0; background: transparent; padding: 2px; display: grid; place-items: center; border-radius: 3px; color: #888; cursor: pointer; }
+.workspace-tabs .tab .x:hover { color: #fff; background: #ffffff15; }
+.workspace-tabs .tb-btn, .workspace-tabs .tb-add { flex: none; align-self: center; margin: 0 5px; border-radius: 3px; }
+.workspace-tabs .tab input { width: 130px; background: #121212; border: 1px solid #555; outline: none; }
+.file-dirty { color: #e5cfa7; font-size: 9px; }
+.workspace-content, .terminal-workspace { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.role-button { padding: 2px 6px; border: 1px solid #ffffff18; border-radius: 4px; background: #ffffff05; color: #aaa; font-size: 10px; cursor: pointer; white-space: nowrap; }
+.role-button.coordinator { color: #c4b5fd; border-color: #a78bfa40; }
+.role-button.worker { color: #a7d8bc; border-color: #6ba88440; }
+.role-button:hover { background: #ffffff10; color: #fff; }
+.agent-mcp-status { color: #c6ad7c; font-size: 10px; }
+.agent-mcp-status.connected { color: #86cda0; }
+.link-confirm-address { padding: 12px; border: 1px solid #353535; border-radius: 6px; background: #111; word-break: break-all; white-space: pre-wrap; font-family: Consolas, monospace; }
+
+.role-select { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; min-height: 28px; cursor: pointer; background-image: none !important; padding: 4px 8px !important; }
+.role-select svg { width: 12px; height: 12px; opacity: .6; flex: none; }
+.role-select.coordinator { color: #c4b5fd; border-color: #a78bfa40; }
+.role-select.worker { color: #a7d8bc; border-color: #6ba88440; }
+.role-select:disabled { cursor: default; opacity: .4; }
+
+.task-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; align-content: start; }
+.automation-card.task-summary { padding: 0; margin: 0; overflow: hidden; min-width: 0; border-radius: 6px; background: #151515; }
+.task-open { display: flex; flex-direction: column; gap: 7px; padding: 11px 12px; width: 100%; min-height: 86px; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.task-open:hover { background: #ffffff05; }
+.task-summary-head { display: flex; align-items: center; gap: 8px; width: 100%; }
+.task-summary-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-summary-head .task-state { border: 1px solid #ffffff12; border-radius: 4px; padding: 2px 5px; font-size: 9px; }
+.task-summary-foot { display: flex; justify-content: space-between; gap: 8px; width: 100%; color: #747474; font-size: 10px; }
+.task-back { margin-bottom: 10px; }
+.task-detail-list .automation-card { max-width: 900px; }
+.task-detail .automation-text { max-width: 100%; }

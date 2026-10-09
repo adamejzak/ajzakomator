@@ -12,11 +12,11 @@ import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
-import { listProjectDirectory, readProjectFile } from './files';
+import { listProjectDirectory, readProjectFile, writeProjectFile } from './files';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
-import { getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
+import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 import { StateController } from './stateController';
 import { AutomationService } from './automation';
@@ -73,6 +73,27 @@ const automation = new AutomationService(controller, {
   createWorktree,
   removeWorktree: (path, wt) => removeWorktree(path, wt, true),
   startCells: (ids) => send('automation:start-cells', ids),
+  stopCells: async (ids) => {
+    for (const id of ids) { mcp.revokeCell(id); verifiedCodex.delete(id); alive.delete(id); automation.statuses.set(id, 'exited'); }
+    await Promise.all(ids.map((id) => ptyHost.killAndWait(id)));
+  },
+  isCellRunning: (cellId) => alive.has(cellId),
+  restartAgent: async (cellId) => {
+    const found = findCell(state, cellId);
+    if (!found || !alive.has(cellId)) return { restarted: false, reason: 'Agent is not running.' };
+    const profile = getProfile(state, found.cell.profileId);
+    const session = found.cell.session;
+    if (!session || session.cli !== profile.cli || !session.confirmed) return { restarted: false, reason: 'Choose a compatible conversation from History before restarting through MCP.' };
+    const cwd = found.cell.worktree?.path ?? found.project.path;
+    if (!existsSync(cwd)) return { restarted: false, reason: 'Project folder does not exist.' };
+    mcp.revokeCell(cellId);
+    verifiedCodex.delete(cellId);
+    alive.delete(cellId);
+    await ptyHost.killAndWait(cellId);
+    const result = spawnRequest({ cellId, cwd, profile, mode: 'resume', sessionId: session.id, sessionConfirmed: true, cols: 100, rows: 30 });
+    if (result.ok) send('cell:restarted', cellId);
+    return { restarted: result.ok, reason: result.ok ? undefined : result.error };
+  },
   deliver: async (cellId, text) => {
     const found = findCell(state, cellId);
     if (!found || !alive.has(cellId)) throw new Error('Agent is not running. The item is available in its MCP inbox.');
@@ -116,7 +137,7 @@ function createWindow(): void {
 // ── pty host ────────────────────────────────────────────────────────────────
 
 ptyHost.on('message', (m: HostToMain) => {
-  if (m.t === 'spawned') { alive.add(m.id); automation.statuses.set(m.id, 'unknown'); }
+  if (m.t === 'spawned') { automation.runtimeStarted(m.id); alive.add(m.id); automation.statuses.set(m.id, 'unknown'); }
   else if (m.t === 'exit') {
     alive.delete(m.id);
     verifiedCodex.delete(m.id);
@@ -180,7 +201,8 @@ ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input:
   return automation.execute(operation, input);
 });
 
-ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => {
+ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => spawnRequest(req));
+function spawnRequest(req: SpawnCellRequest): { ok: true } | { ok: false; error: string } {
   if (!existsSync(req.cwd)) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const claudeSettingsPath = req.profile.cli === 'claude' ? hooks.writeClaudeSettings(HOOKS_DIR, req.cellId) : undefined;
   let mode = req.mode;
@@ -211,14 +233,15 @@ ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => {
     mcpConfig = { url, tokenEnv: 'AJZ_MCP_TOKEN', claudeConfigPath };
   } else mcp.revokeCell(req.cellId);
   const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath,
-    shell: state.settings.shell, initialPrompt, mcp: mcpConfig }) ?? undefined;
+    shell: state.settings.shell, model: findCell(state, req.cellId)?.cell.model, initialPrompt, mcp: mcpConfig }) ?? undefined;
   verifiedCodex.delete(req.cellId);
   if (req.profile.cli === 'codex' && mode === 'resume' && req.sessionId && req.sessionConfirmed) verifiedCodex.set(req.cellId, req.sessionId);
+  automation.runtimeStarted(req.cellId);
   automation.statuses.set(req.cellId, 'starting');
   alive.add(req.cellId);
   ptyHost.spawn({ id: req.cellId, cwd: req.cwd, cols: req.cols, rows: req.rows, env, shell: state.settings.shell, command });
   return { ok: true };
-});
+}
 ipcMain.on('cell:kill', (_e, id: string) => {
   mcp.revokeCell(id);
   verifiedCodex.delete(id);
@@ -256,6 +279,10 @@ ipcMain.handle('fs:readProjectFile', (_e, projectId: string, path: string) => {
   const project = state.projects.find((p) => p.id === projectId);
   return project ? readProjectFile(project.path, path) : { kind: 'error', message: 'Projekt już nie istnieje.' };
 });
+ipcMain.handle('fs:writeProjectFile', (_e, projectId: string, path: string, text: string, expectedText: string) => {
+  const project = state.projects.find((p) => p.id === projectId);
+  return project ? writeProjectFile(project.path, path, text, expectedText) : { ok: false, error: 'Projekt już nie istnieje.' };
+});
 ipcMain.handle('sessions:list', (_e, projectPath: string) => listSessions(homedir(), projectPath));
 ipcMain.handle('git:isRepo', (_e, p: string) => isGitRepo(p));
 ipcMain.handle('git:createWorktree', (_e, p: string, name: string) => createWorktree(p, name));
@@ -280,8 +307,12 @@ ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) =>
 });
 ipcMain.handle('clipboard:read', () => clipboard.readText());
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text));
+ipcMain.on('shell:openExternal', (_e, address: string) => {
+  try { const url = new URL(address); if (['http:', 'https:'].includes(url.protocol)) void shell.openExternal(url.href); } catch { /* invalid address */ }
+});
 ipcMain.on('shell:openPath', (_e, p: string) => shell.openPath(p));
 ipcMain.on('shell:revealPath', (_e, p: string) => shell.showItemInFolder(p));
+ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
 ipcMain.on('update:install', () => installNow());
 ipcMain.on('update:open', () => shell.openExternal(RELEASES_URL));

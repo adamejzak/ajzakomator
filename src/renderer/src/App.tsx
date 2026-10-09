@@ -2,7 +2,7 @@ import { tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
-import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, setAliveAtStart } from './actions';
+import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
 import { GridView } from './components/GridView';
@@ -10,11 +10,13 @@ import { LanguageSetup } from './components/LanguageSetup';
 import { Modals } from './components/Modals';
 import { Sidebar } from './components/Sidebar';
 import { SnippetPanel } from './components/SnippetPanel';
-import { TitleBar } from './components/TitleBar';
+import { TitleBar, WorkspaceTabs } from './components/TitleBar';
 import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
 import { terminals } from './terminals/TerminalManager';
 import { AutomationPanel } from './components/AutomationPanel';
+import { FileEditor } from './components/FileEditor';
+import { useFileStore } from './files';
 
 let booted = false;
 
@@ -22,7 +24,11 @@ async function boot(): Promise<void> {
   if (booted) return;
   booted = true;
   terminals.setWindowsBuild(window.mc.windowsBuild);
-  window.mc.on('state:changed', (snapshot) => useStore.getState().sync(snapshot));
+  window.mc.on('state:changed', (snapshot) => {
+    const previous = getS().projects.flatMap((p) => p.tabs.flatMap((t) => t.cells));
+    useStore.getState().sync(snapshot);
+    for (const cell of previous) if (!findCell(getS(), cell.id)) releaseCellTerminal(cell.id);
+  });
   window.mc.on('automation:start-cells', (ids) => ids.forEach(ensureStarted));
   const [snapshot, alive, mcpInfo] = await Promise.all([window.mc.loadSnapshot(), window.mc.aliveCells(), window.mc.getMcpInfo()]);
   setAliveAtStart(alive);
@@ -43,6 +49,7 @@ async function boot(): Promise<void> {
     refreshSessionTitles(activeProject(st.s)?.path);
   });
 
+  window.mc.on('cell:restarted', (cellId) => { terminals.prepareSpawn(cellId); terminals.syncSize(cellId); });
   window.mc.on('cell:hook', (cellId, event) => terminals.hook(cellId, event));
   window.mc.on('cell:session', (cellId, session) => update((s) => updateCell(s, cellId, { session })));
   window.mc.on('cell:spawnError', (cellId, message) => setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: message } })));
@@ -107,6 +114,10 @@ function maybeNotify(cellId: string): void {
 
 export function App() {
   const { language } = useI18n();
+  const selectedFile = useFileStore((st) => st.activeFileId);
+  const documents = useFileStore((st) => st.documents);
+  const projectId = useStore((st) => st.s.activeProjectId);
+  const fileOpen = documents.some((doc) => doc.id === selectedFile && doc.projectId === projectId);
   const ready = useStore((st) => st.ready);
   const automationOpen = useStore((st) => st.ui.automationOpen);
   const languageChosen = useStore((st) => st.s.settings.language !== null);
@@ -118,6 +129,12 @@ export function App() {
   const [available, setAvailable] = useState(window.innerWidth);
   const [live, setLive] = useState<Partial<Record<Panel, number>>>({});
   useEffect(() => void boot(), []);
+  useEffect(() => {
+    if (!ready) return;
+    const refresh = () => void window.mc.getMcpInfo().then((mcpInfo) => setUi({ mcpInfo })).catch(() => {});
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [ready]);
   useEffect(() => {
     document.documentElement.lang = language;
     document.documentElement.dataset.platform = window.mc.platform;
@@ -148,7 +165,11 @@ export function App() {
       <div className="app-body" ref={body}>
         <Sidebar resize={resizeProps('sidebar')} />
         <div className="main">
-          <GridView />
+          <WorkspaceTabs />
+          <div className="workspace-content">
+            <div className="terminal-workspace" style={{ display: fileOpen ? 'none' : 'flex' }}><GridView /></div>
+            {fileOpen && <FileEditor />}
+          </div>
           {automationOpen && <AutomationPanel />}
         </div>
         {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
