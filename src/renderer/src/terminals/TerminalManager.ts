@@ -9,6 +9,7 @@ import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
 import { StatusTracker, type CellStatus, type HookEvent } from '../../../shared/status';
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
+import { confirmTerminalLink } from '../terminalLinks';
 
 // Campbell (Windows Terminal / PowerShell default) on a Cursor-like background.
 export const THEME: ITheme = {
@@ -139,6 +140,7 @@ class TerminalManager {
 
     const term = new Terminal({
       theme: THEME,
+      linkHandler: { activate: (event, address) => { event.preventDefault(); void confirmTerminalLink(address); } },
       fontFamily: FONT,
       fontSize: opts.fontSize,
       lineHeight: 1.1,
