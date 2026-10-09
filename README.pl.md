@@ -73,6 +73,8 @@ Więcej szczegółów, w tym architektura i instrukcja dla deweloperów, jest w 
 
 Workflow [CI](.github/workflows/ci.yml) testuje i buduje Windows x64 oraz macOS ARM64 i x64 na natywnych runnerach. Po wypchnięciu zmian możesz uruchomić build Maca z Windowsa przez **Actions → CI → Run workflow**. Pliki znajdziesz w artefaktach zakończonego uruchomienia; workflow nie publikuje automatycznie wydań.
 
+Wydanie wszystkich platform opublikujesz przez **Actions → Publish release**, podając istniejący tag wersji i ID udanego CI dla tego samego commita. Wcześniej dodaj opis w `docs/releases/x.y.z.md`. Workflow sprawdza sumy paczek i dodaje instalatory Windows oraz DMG/ZIP obu architektur Maca do jednego wydania.
+
 Dane aplikacji są lokalne: `%APPDATA%\ajzakomator\state.json` na Windowsie i `~/Library/Application Support/ajzakomator/state.json` na Macu.
 
 ## Licencja

@@ -171,7 +171,7 @@ Built with Electron, TypeScript, React, Zustand, xterm.js, node-pty, electron-vi
 
 Windows releases: `npm run release` bumps the version, runs the tests, builds and publishes to GitHub Releases
 (set `NOTES="what changed"` for release notes).
-Mac DMG/ZIP artifacts from CI can be attached to the same release; CI itself does not publish releases.
+To publish all platforms together, push a version tag, wait for CI to pass, and run **Actions → Publish release** with the tag and successful CI run ID. Add notes in `docs/releases/x.y.z.md` first. The workflow checks that the build matches the tag, verifies package hashes, combines both Mac update manifests, and publishes all installers in one release.
 
 ## Roadmap
 
