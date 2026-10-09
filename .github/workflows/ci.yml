@@ -3,11 +3,45 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    runs-on: windows-latest
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            command: npm run dist:win
+            artifact: windows-x64
+            files: |
+              release/*.exe
+              release/*.exe.blockmap
+              release/latest.yml
+          - name: macOS Apple Silicon
+            os: macos-15
+            command: npm run dist:mac -- --arm64
+            artifact: macos-arm64
+            files: |
+              release/*-mac-arm64.dmg
+              release/*-mac-arm64.zip
+              release/latest-mac*.yml
+          - name: macOS Intel
+            os: macos-15-intel
+            command: npm run dist:mac -- --x64
+            artifact: macos-x64
+            files: |
+              release/*-mac-x64.dmg
+              release/*-mac-x64.zip
+              release/latest-mac*.yml
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,3 +53,15 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npm run typecheck
       - run: npm test
+      - name: Package application
+        run: ${{ matrix.command }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify packaged terminal runtime
+        run: npm run test:packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ajzakomator-${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 14

@@ -2,7 +2,7 @@
   "name": "ajzakomator",
   "productName": "ajzakomator",
   "version": "0.2.2",
-  "description": "A terminal grid for running many Claude Code and Codex agents side by side on Windows",
+  "description": "A terminal grid for running many Claude Code and Codex agents side by side on Windows and macOS",
   "author": "ajzak",
   "license": "MIT",
   "homepage": "https://github.com/adamejzak/ajzakomator",
@@ -29,6 +29,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "dist": "electron-vite build && electron-builder --win --publish never",
+    "dist:win": "electron-vite build && electron-builder --win --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never -c.npmRebuild=true",
+    "test:packaged": "node scripts/smoke-pty.mjs",
     "release": "node scripts/release.mjs"
   },
   "dependencies": {
@@ -95,6 +98,13 @@
     },
     "portable": {
       "artifactName": "${productName}-Portable-${version}.${ext}"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools",
+      "icon": "resources/icon.png",
+      "identity": null,
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "publish": [
       {
