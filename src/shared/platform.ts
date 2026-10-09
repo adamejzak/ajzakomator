@@ -22,7 +22,7 @@ export function defaultShell(platform: AppPlatform): ShellKind {
 }
 
 export function shortcutLabel(platform: AppPlatform, value: string): string {
-  return platform === 'darwin' ? value.replace(/Ctrl/g, 'Cmd').replace(/Alt/g, 'Option') : value;
+  return platform === 'darwin' ? value.replace(/\bCtrl(?=\+)/g, 'Cmd').replace(/\bAlt(?=\+)/g, 'Option') : value;
 }
 
 export function fullProjectPath(root: string, relative: string, platform: AppPlatform): string {

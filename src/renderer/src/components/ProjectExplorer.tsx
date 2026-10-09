@@ -28,7 +28,7 @@ function Directory({ project, path, depth, expanded, toggle, refresh }: TreeProp
     setListing(null);
     window.mc.listProjectDirectory(project.id, path)
       .then((result) => { if (!cancelled) setListing(result); })
-      .catch(() => { if (!cancelled) setListing({ ok: false, error: tr("Nie udało się wczytać folderu.") }); });
+      .catch(() => { if (!cancelled) setListing({ ok: false, error: 'Nie udało się wczytać folderu.' }); });
     return () => { cancelled = true; };
   }, [project.id, project.path, path, refresh, retry]);
 

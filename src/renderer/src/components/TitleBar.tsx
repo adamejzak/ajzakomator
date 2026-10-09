@@ -112,8 +112,8 @@ export function TitleBar() {
               </div>
             );
           })}
-          <button className="tb-btn" title={tr("Nowy grid") + keyLabel("(Ctrl+Shift+G)")} onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
-          <button className="tb-add" title={tr("Dodaj agenta do siatki") + keyLabel("(Ctrl+Shift+N)")} onClick={(e) => agentMenu(e.currentTarget)}>
+          <button className="tb-btn" title={tr("Nowy grid") + keyLabel(" (Ctrl+Shift+G)")} onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
+          <button className="tb-add" title={tr("Dodaj agenta do siatki") + keyLabel(" (Ctrl+Shift+N)")} onClick={(e) => agentMenu(e.currentTarget)}>
             <IPlusBold />  {tr("Dodaj")} <IChevron />
           </button>
         </div>
@@ -122,9 +122,9 @@ export function TitleBar() {
       {project && <span className="project-path" title={project.path}>{project.path}</span>}
       <UpdateBadge />
       <div className="row no-drag" style={{ gap: 2 }}>
-        {project && <button className="tb-btn" title={tr("Historia czatów i gridów") + keyLabel("(Ctrl+Shift+H)")} onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
-        <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title={tr("Snippety") + keyLabel("(Ctrl+Shift+B)")} onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
-        <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title={tr("Panel projektów") + keyLabel("(Ctrl+Shift+E)")} onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
+        {project && <button className="tb-btn" title={tr("Historia czatów i gridów") + keyLabel(" (Ctrl+Shift+H)")} onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
+        <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title={tr("Snippety") + keyLabel(" (Ctrl+Shift+B)")} onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
+        <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title={tr("Panel projektów") + keyLabel(" (Ctrl+Shift+E)")} onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
         <button className="tb-btn" title={tr("Ustawienia")} onClick={() => setUi({ modal: { kind: 'settings' } })}><TSettings /></button>
       </div>
     </div>

@@ -242,7 +242,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
         {(s.projects.length > 0 || collapsed) && (
           <button className="btn" onClick={() => void createProject()} title={tr("Dodaj projekt")}><IFolder />{!collapsed && tr("Dodaj projekt")}</button>
         )}
-        <button className="btn ghost" onClick={() => setUi({ palette: true })} title={tr("Szukaj wszędzie") + keyLabel("(Ctrl+K)")}>
+        <button className="btn ghost" onClick={() => setUi({ palette: true })} title={tr("Szukaj wszędzie") + keyLabel(" (Ctrl+K)")}>
           <ISearch />{!collapsed && <><span style={{ flex: 1, textAlign: 'left' }}>{tr("Szukaj…")}</span><span className="kbd">{keyLabel("Ctrl+K")}</span></>}
         </button>
       </div>

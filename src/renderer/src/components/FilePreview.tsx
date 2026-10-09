@@ -15,7 +15,7 @@ export function FilePreview({ projectId, relativePath }: { projectId: string; re
     setPreview(null);
     window.mc.readProjectFile(projectId, relativePath)
       .then((value) => { if (!cancelled) setPreview(value); })
-      .catch(() => { if (!cancelled) setPreview({ kind: 'error', message: tr("Nie udało się wczytać pliku.") }); });
+      .catch(() => { if (!cancelled) setPreview({ kind: 'error', message: 'Nie udało się wczytać pliku.' }); });
     return () => { cancelled = true; };
   }, [projectId, project?.path, relativePath]);
   if (!project) return null;

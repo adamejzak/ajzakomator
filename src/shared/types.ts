@@ -7,7 +7,7 @@ export interface Profile {
   id: string;
   name: string;
   cli: CliKind;
-  /** Extra CLI arguments, typed verbatim after the command (PowerShell syntax). */
+  /** Extra CLI arguments, typed verbatim using the selected shell's syntax. */
   args: string;
   color: string;
 }
@@ -139,7 +139,7 @@ export interface UpdateState {
   status: 'idle' | 'available' | 'downloading' | 'ready';
   version?: string;
   percent?: number;
-  /** Portable builds can't self-update: they only link to the download page. */
+  /** Builds without automatic installation (portable Windows and ad-hoc macOS) link to downloads. */
   portable?: boolean;
   url?: string;
 }

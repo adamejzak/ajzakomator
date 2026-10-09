@@ -138,7 +138,7 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
         <span className="grow" />
         <span className="actions">
           <button title={tr("Uruchom ponownie")} onClick={(e) => openMenuAt(e.currentTarget, restartItems())}><IRestart /></button>
-          <button title={maximized ? tr("Przywróć siatkę") + keyLabel("(Ctrl+Shift+M)") : tr("Maksymalizuj") + keyLabel("(Ctrl+Shift+M)")} onClick={() => toggleMaximize(cell.id)}>
+          <button title={maximized ? tr("Przywróć siatkę") + keyLabel(" (Ctrl+Shift+M)") : tr("Maksymalizuj") + keyLabel(" (Ctrl+Shift+M)")} onClick={() => toggleMaximize(cell.id)}>
             {maximized ? <IRestore /> : <IMax />}
           </button>
           <button title={tr("Zamknij komórkę")} onClick={() => void removeCell(cell.id)}><IX /></button>

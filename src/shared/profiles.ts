@@ -25,8 +25,8 @@ export interface LaunchOptions {
   claudeSettingsPath?: string;
   shell?: ShellKind;
   /**
-   * First prompt for a new conversation. PowerShell reads it from `file` (keeps newlines and quotes
-   * intact); cmd gets the text inline on one line.
+   * First prompt for a new conversation. PowerShell and POSIX shells read it from `file`
+   * (keeping newlines and quotes intact); cmd gets the text inline on one line.
    */
   initialPrompt?: { file: string; text: string };
 }

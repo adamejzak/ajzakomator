@@ -1,7 +1,7 @@
 {
   "name": "ajzakomator",
   "productName": "ajzakomator",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "A terminal grid for running many Claude Code and Codex agents side by side on Windows and macOS",
   "author": "ajzak",
   "license": "MIT",
@@ -18,11 +18,13 @@
     "ai-agents",
     "electron",
     "windows",
+    "macos",
     "xterm",
     "multi-agent"
   ],
   "main": "out/main/index.js",
   "scripts": {
+    "postinstall": "node scripts/fix-pty-permissions.cjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
@@ -62,6 +64,7 @@
     "productName": "ajzakomator",
     "asar": false,
     "npmRebuild": false,
+    "afterPack": "scripts/fix-pty-permissions.cjs",
     "directories": {
       "output": "release",
       "buildResources": "resources"
@@ -100,10 +103,16 @@
       "artifactName": "${productName}-Portable-${version}.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools",
       "icon": "resources/icon.png",
-      "identity": null,
+      "identity": "-",
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist",
+      "notarize": false,
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     },
     "publish": [
