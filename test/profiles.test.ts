@@ -75,3 +75,26 @@ describe('cleanEnv', () => {
     expect(env).toEqual({ PATH: 'x', CLAUDE_CODE_ENABLE_TELEMETRY: '1' });
   });
 });
+
+describe('per-cell model overrides', () => {
+  it('replaces a profile model while retaining unrelated CLI flags', () => {
+    const command = buildLaunchCommand({ ...P.codex, args: '--model old-model --no-alt-screen' }, { mode: 'new', model: 'new-model' })!;
+    expect(command).not.toContain('old-model');
+    expect(command.match(/--model/g)).toHaveLength(1);
+    expect(command).toContain('--no-alt-screen');
+  });
+  it('passes a quoted model to both agents for every supported shell', () => {
+    for (const shell of ['pwsh', 'powershell', 'cmd', 'zsh', 'bash'] as const) {
+      for (const profile of [P.claude, P.codex]) {
+        const command = buildLaunchCommand(profile, { mode: 'new', model: 'provider/model-v2', shell })!;
+        expect(command).toContain('--model');
+        expect(command).toContain(shell === 'cmd' ? '"provider/model-v2"' : "'provider/model-v2'");
+      }
+    }
+  });
+  it('rejects model strings that could execute shell syntax', () => {
+    for (const model of ['a;whoami', '%PATH%', 'a`id`', '$(id)', 'a"b', '-bad', 'a b']) {
+      expect(() => buildLaunchCommand(P.codex, { mode: 'new', model })).toThrow('Invalid model');
+    }
+  });
+});

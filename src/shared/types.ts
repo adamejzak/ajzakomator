@@ -29,6 +29,7 @@ export interface Cell {
   id: string;
   profileId: string;
   role?: AgentRole;
+  model?: string;
   /** User-given label; without it the header shows the conversation title. */
   name?: string;
   /** Accent color of the cell (header tint + border). */
@@ -42,6 +43,7 @@ export interface Cell {
 
 export interface Tab {
   id: string;
+  color?: string;
   name: string;
   layout: GridLayout;
   cells: Cell[];
@@ -65,8 +67,10 @@ export interface Project {
 }
 
 export interface PresetCell {
+  color?: string;
   profileId: string;
   role?: AgentRole;
+  model?: string;
   worktree: boolean;
   name?: string;
   prompt?: string;
@@ -142,7 +146,11 @@ export interface SessionInfo {
 }
 
 export interface UpdateState {
-  status: 'idle' | 'available' | 'downloading' | 'ready';
+  status: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'error';
+  message?: string;
+  transferred?: number;
+  total?: number;
+  bytesPerSecond?: number;
   version?: string;
   percent?: number;
   /** Builds without automatic installation (portable Windows and ad-hoc macOS) link to downloads. */

@@ -1,0 +1,14 @@
+export const updateMessages = {
+  'Sprawdź aktualizacje': ['Check for updates', 'Nach Updates suchen', 'Buscar actualizaciones', 'Rechercher des mises à jour', 'Procurar atualizações'],
+  'Sprawdzanie aktualizacji…': ['Checking for updates…', 'Updates werden gesucht…', 'Buscando actualizaciones…', 'Recherche de mises à jour…', 'A procurar atualizações…'],
+  'Masz najnowszą wersję': ['You’re up to date', 'Du bist auf dem neuesten Stand', 'Tienes la última versión', 'Vous êtes à jour', 'Está atualizado'],
+  'Błąd aktualizacji · ponów': ['Update failed · retry', 'Update fehlgeschlagen · erneut versuchen', 'Error de actualización · reintentar', 'Échec de mise à jour · réessayer', 'Falha na atualização · tentar novamente'],
+  'Instalowanie aktualizacji…': ['Installing update…', 'Update wird installiert…', 'Instalando actualización…', 'Installation de la mise à jour…', 'A instalar atualização…'],
+  'Kliknij nazwę · prawy klik: aktualizacje': ['Click the name · right-click: updates', 'Namen anklicken · Rechtsklick: Updates', 'Haz clic en el nombre · clic derecho: actualizaciones', 'Cliquez sur le nom · clic droit : mises à jour', 'Clique no nome · botão direito: atualizações'],
+  'Wersja {version}': ['Version {version}', 'Version {version}', 'Versión {version}', 'Version {version}', 'Versão {version}'],
+  'Aktualizacje są dostępne w zainstalowanej aplikacji.': ['Updates are available in the installed app.', 'Updates sind in der installierten App verfügbar.', 'Las actualizaciones están disponibles en la aplicación instalada.', 'Les mises à jour sont disponibles dans l’application installée.', 'As atualizações estão disponíveis na aplicação instalada.'],
+  'Brak odpowiedzi serwera aktualizacji. Spróbuj ponownie.': ['The update server is not responding. Try again.', 'Der Update-Server antwortet nicht. Versuche es erneut.', 'El servidor de actualizaciones no responde. Reinténtalo.', 'Le serveur de mise à jour ne répond pas. Réessayez.', 'O servidor de atualizações não responde. Tente novamente.'],
+  'Nie udało się sprawdzić aktualizacji.': ['Could not check for updates.', 'Updates konnten nicht geprüft werden.', 'No se pudieron buscar actualizaciones.', 'Impossible de rechercher les mises à jour.', 'Não foi possível procurar atualizações.'],
+  'Nie udało się uruchomić sprawdzania aktualizacji.': ['Could not start checking for updates.', 'Die Update-Suche konnte nicht gestartet werden.', 'No se pudo iniciar la búsqueda de actualizaciones.', 'Impossible de démarrer la recherche de mises à jour.', 'Não foi possível iniciar a procura de atualizações.'],
+  'Nie udało się zainstalować aktualizacji.': ['Could not install the update.', 'Das Update konnte nicht installiert werden.', 'No se pudo instalar la actualización.', 'Impossible d’installer la mise à jour.', 'Não foi possível instalar a atualização.'],
+} as const;

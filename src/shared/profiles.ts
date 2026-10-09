@@ -19,6 +19,7 @@ export const shellQuote = (s: string, shell: ShellKind = 'pwsh') =>
   shell === 'cmd' ? `"${s}"` : shell === 'zsh' || shell === 'bash' ? posixQuote(s) : psQuote(s);
 
 export interface LaunchOptions {
+  model?: string;
   mode: 'new' | 'resume';
   sessionId?: string;
   /** Per-cell Claude settings file carrying our status hooks. */
@@ -41,7 +42,8 @@ function promptArg(p: { file: string; text: string }, shell: ShellKind = 'pwsh')
 
 /** Command typed into the cell's shell to start the agent; null for plain shell profiles. */
 export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): string | null {
-  const args = profile.args.trim();
+  // A cell override replaces a profile's model flag instead of giving the CLI duplicates.
+  const args = (opts.model ? profile.args.replace(/(?:^|\s)(?:--model(?:=|\s+)|-m\s+)(?:"[^"]*"|'[^']*'|[^\s]+)/g, ' ') : profile.args).trim();
   const parts: string[] = [];
   if (profile.cli === 'claude') {
     parts.push('claude');
@@ -63,6 +65,10 @@ export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): strin
     return null;
   }
   if (args) parts.push(args);
+  if (opts.model) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/.test(opts.model)) throw new Error('Invalid model name.');
+    parts.push('--model', shellQuote(opts.model, opts.shell));
+  }
   if (opts.mode === 'new' && opts.initialPrompt?.text.trim()) parts.push(promptArg(opts.initialPrompt, opts.shell));
   return parts.join(' ');
 }

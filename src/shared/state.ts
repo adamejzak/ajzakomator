@@ -39,11 +39,13 @@ const mapProject = (s: AppState, projectId: string, fn: (p: Project) => Project)
 const mapTab = (s: AppState, projectId: string, tabId: string, fn: (t: Tab) => Tab): AppState =>
   mapProject(s, projectId, (p) => ({ ...p, tabs: p.tabs.map((t) => (t.id === tabId ? fn(t) : t)) }));
 
-type CellInput = { profileId: string; role?: Cell['role']; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session'] };
+type CellInput = { color?: string; model?: string; profileId: string; role?: Cell['role']; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session'] };
 
 const newCell = (c: CellInput): Cell => ({
   id: uid(),
   profileId: c.profileId,
+  ...(c.color ? { color: c.color } : {}),
+  ...(c.model ? { model: c.model } : {}),
   ...(c.role ? { role: c.role } : {}),
   ...(c.name?.trim() ? { name: c.name.trim() } : {}),
   ...(c.startupPrompt?.trim() ? { startupPrompt: c.startupPrompt } : {}),
@@ -106,6 +108,7 @@ export function setActiveProject(s: AppState, id: string): AppState {
 // ── tabs ────────────────────────────────────────────────────────────────────
 
 export interface NewTabInput {
+  color?: string;
   name?: string;
   layout: GridLayout;
   cells: CellInput[];
@@ -119,7 +122,7 @@ export function addTab(s: AppState, projectId: string, input: NewTabInput): AppS
     const spec = input.cells[i] ?? input.cells[0] ?? { profileId: 'shell' };
     return newCell(spec);
   });
-  const tab: Tab = { id: uid(), name: input.name ?? nextTabName(project), layout: input.layout, cells };
+  const tab: Tab = { id: uid(), ...(input.color ? { color: input.color } : {}), name: input.name ?? nextTabName(project), layout: input.layout, cells };
   return mapProject(s, projectId, (p) => ({ ...p, tabs: [...p.tabs, tab], activeTabId: tab.id }));
 }
 
