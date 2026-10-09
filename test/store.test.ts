@@ -3,11 +3,17 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { createSaver, loadState, writeStateNow } from '../src/main/store';
-import { addProject, defaultState } from '../src/shared/state';
+import { addProject, defaultState, updateSettings } from '../src/shared/state';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'mc-store-'));
 
 describe('store', () => {
+  it('persists the language across restarts and uses macOS defaults on first launch', () => {
+    const dir = tmp();
+    expect(loadState(dir, 'darwin').settings).toMatchObject({ language: null, shell: 'zsh' });
+    writeStateNow(dir, updateSettings(defaultState('darwin'), { language: 'fr' }));
+    expect(loadState(dir, 'darwin').settings).toMatchObject({ language: 'fr', shell: 'zsh' });
+  });
   it('roundtrips state and makes a .bak on load', () => {
     const dir = tmp();
     const s = addProject(defaultState(), { name: 'p', path: 'D:\\p' });

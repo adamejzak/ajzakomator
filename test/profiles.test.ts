@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { cleanEnv } from '../src/shared/env';
-import { buildLaunchCommand, DEFAULT_PROFILES, psQuote } from '../src/shared/profiles';
+import { buildLaunchCommand, DEFAULT_PROFILES, posixQuote, psQuote } from '../src/shared/profiles';
 
 const P = Object.fromEntries(DEFAULT_PROFILES.map((p) => [p.id, p]));
 
 describe('buildLaunchCommand', () => {
+  it('quotes macOS settings and prompts safely for bash and zsh', () => {
+    const path = "/Users/ala/Project's files/prompt.txt";
+    const initialPrompt = { file: path, text: 'Napraw "błąd"\n$HOME; `whoami`' };
+    for (const shell of ['zsh', 'bash'] as const) {
+      const command = buildLaunchCommand(P.claude, { mode: 'new', shell, claudeSettingsPath: path, initialPrompt })!;
+      expect(command).toContain("--settings '/Users/ala/Project'\"'\"'s files/prompt.txt'");
+      expect(command).toContain('"$(cat ' + posixQuote(path) + ')"');
+      expect(command).not.toContain('Get-Content');
+      expect(command).not.toContain(initialPrompt.text);
+    }
+  });
   it('starts a new claude conversation with a fixed session id and our settings', () => {
     expect(buildLaunchCommand({ ...P.claude, args: '--model opus' }, { mode: 'new', sessionId: 'u1', claudeSettingsPath: 'C:\\a b\\x.json' }))
       .toBe("claude --session-id u1 --settings 'C:\\a b\\x.json' --model opus");
