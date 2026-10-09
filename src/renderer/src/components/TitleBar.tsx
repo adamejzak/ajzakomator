@@ -66,7 +66,7 @@ export function WorkspaceTabs() {
             return (
               <div
                 key={t.id}
-                className={`tab ${!activeFileId && t.id === project.activeTabId ? 'active' : ''}`}
+                className={`tab grid-tab ${!activeFileId && t.id === project.activeTabId ? 'active' : ''}`}
                 style={t.color ? { '--tab-color': t.color } as CSSProperties : undefined}
                 onMouseDown={(e) => e.button === 0 && selectTab(project.id, t)}
                 onAuxClick={(e) => e.button === 1 && closeTab(project.id, t.id)}
@@ -85,6 +85,7 @@ export function WorkspaceTabs() {
                 }}
                 title={tr("Dwuklik lub prawy klik: zmień nazwę · środkowy przycisk: zamknij")}
               >
+                <span className="tab-type-icon" aria-hidden="true"><TGrid /></span>
                 {editing === t.id ? (
                   <input
                     autoFocus
@@ -112,7 +113,7 @@ export function WorkspaceTabs() {
           {documents.filter((doc) => doc.projectId === project.id).map((doc) => (
             <div key={doc.id} className={`tab file-tab ${activeFileId === doc.id ? 'active' : ''}`} title={doc.relativePath}
               onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) void closeFile(doc.id); }}>
-              <IFile /><span className="label">{doc.name}</span>
+              <span className="tab-type-icon" aria-hidden="true"><IFile /></span><span className="label">{doc.name}</span>
               {doc.text !== doc.savedText && <span className="file-dirty" aria-label={tr('Niezapisane zmiany')}>●</span>}
               <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); void closeFile(doc.id); }}><IX /></button>
             </div>

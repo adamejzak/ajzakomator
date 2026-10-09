@@ -624,6 +624,11 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .file-preview-toolbar { display: flex; align-items: center; gap: 12px; padding: 0 16px 12px; border-bottom: 1px solid var(--border); font-size: 11.5px; }
 .file-preview-toolbar > :not(.file-preview-path) { flex: none; }
 .file-preview-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-editor .file-preview-toolbar { min-height: 42px; padding: 8px 12px; gap: 8px; }
+.file-editor .file-preview-path { min-width: 0; line-height: 22px; }
+.file-editor .file-preview-toolbar > [role=status] { line-height: 22px; font-size: 11px; }
+.file-editor .file-preview-toolbar .btn { display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.code-editor { flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .file-content { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 16px; background: var(--bg-1); font-family: 'Cascadia Mono', Consolas, monospace; font-size: 12px; line-height: 1.6; tab-size: 2; white-space: pre; user-select: text; }
 .file-content.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .file-preview-message { flex: 1; display: grid; place-items: center; padding: 24px; text-align: center; line-height: 1.6; }
@@ -665,6 +670,11 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .workspace-tabs .tab .x:hover { color: #fff; background: #ffffff15; }
 .workspace-tabs .tb-btn, .workspace-tabs .tb-add { flex: none; align-self: center; margin: 0 5px; border-radius: 3px; }
 .workspace-tabs .tab input { width: 130px; background: #121212; border: 1px solid #555; outline: none; }
+.workspace-tabs .tab-type-icon { display: grid; place-items: center; width: 15px; height: 15px; flex: none; opacity: .8; }
+.workspace-tabs .tab-type-icon svg { width: 14px; height: 14px; }
+.workspace-tabs .grid-tab .tab-type-icon { color: var(--tab-color); }
+.workspace-tabs .file-tab { --tab-color: #737373; background: #101010; }
+.workspace-tabs .file-tab.active { background: #202020; border-top-color: #dedede; }
 .file-dirty { color: #e5cfa7; font-size: 9px; }
 .workspace-content, .terminal-workspace { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .role-button { padding: 2px 6px; border: 1px solid #ffffff18; border-radius: 4px; background: #ffffff05; color: #aaa; font-size: 10px; cursor: pointer; white-space: nowrap; }
