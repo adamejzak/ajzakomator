@@ -1,0 +1,57 @@
+name: Publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag (for example v0.3.0)
+        required: true
+        type: string
+      build_run_id:
+        description: Successful CI run that built this tag's commit
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify tag and successful build
+        run: node scripts/verify-release-build.mjs
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+          pattern: ajzakomator-*
+          path: release-assets
+      - name: Verify installers and prepare update manifests
+        run: node scripts/prepare-release-assets.mjs release-assets "${RELEASE_TAG#v}"
+      - name: Create draft with all platform packages
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/publish/* \
+            --repo "$RELEASE_REPOSITORY" --verify-tag --draft \
+            --title "ajzakomator ${RELEASE_TAG#v}" \
+            --notes-file "docs/releases/${RELEASE_TAG#v}.md"
+      - name: Publish release
+        run: gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --draft=false --latest
