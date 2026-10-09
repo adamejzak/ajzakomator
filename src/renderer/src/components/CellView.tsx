@@ -1,3 +1,4 @@
+import { changeAgentRole } from '../agentRoles';
 import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
@@ -22,6 +23,7 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
   const profile = useStore((st) => getProfile(st.s, cell.profileId));
   const status = useStore((st) => st.ui.statuses[cell.id] ?? 'idle');
   const focused = useStore((st) => st.ui.focusedCellId === cell.id);
+  const mcpInfo = useStore((st) => st.ui.mcpInfo);
   const error = useStore((st) => st.ui.cellErrors[cell.id]);
   const epoch = useStore((st) => st.ui.epoch);
   const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
@@ -69,9 +71,9 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
       ...profileItems(),
       ...(profile.cli !== 'shell' ? [
         { sep: true as const },
-        { label: tr('Bez MCP'), onClick: () => { void window.mc.automation('set_role', { cellId: cell.id, role: null }).catch((e) => toast(errorText(String(e)), 'error')); } },
-        { label: tr('Koordynator'), onClick: () => { void window.mc.automation('set_role', { cellId: cell.id, role: 'coordinator' }).catch((e) => toast(errorText(String(e)), 'error')); } },
-        { label: tr('Wykonawca'), onClick: () => { void window.mc.automation('set_role', { cellId: cell.id, role: 'worker' }).catch((e) => toast(errorText(String(e)), 'error')); } },
+        { label: tr('Bez MCP'), onClick: () => { void changeAgentRole(cell.id, null); } },
+        { label: tr('Koordynator'), onClick: () => { void changeAgentRole(cell.id, 'coordinator'); } },
+        { label: tr('Wykonawca'), onClick: () => { void changeAgentRole(cell.id, 'worker'); } },
       ] : []),
       { sep: true },
       { label: tr("Zamknij komórkę"), danger: true, onClick: () => void removeCell(cell.id) },
@@ -105,7 +107,13 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
         onDoubleClick={(e) => (e.target as HTMLElement).closest('button,.cell-name,input') || toggleMaximize(cell.id)}
       >
         <span className="idx">{index + 1}</span>
-        {profile.cli !== 'shell' && cell.role === 'coordinator' && <span className="coordinator-mark" title={tr('Koordynator')}>◆</span>}
+        {profile.cli !== 'shell' && <button className={`role-button ${cell.role ?? ''}`} title={tr('Rola / MCP')} onClick={(e) => openMenuAt(e.currentTarget, [
+          { header: tr('Rola / MCP') },
+          { label: tr('Koordynator'), onClick: () => void changeAgentRole(cell.id, 'coordinator') },
+          { label: tr('Wykonawca'), onClick: () => void changeAgentRole(cell.id, 'worker') },
+          { label: tr('Bez MCP'), onClick: () => void changeAgentRole(cell.id, null) },
+        ])}>{tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Włącz MCP')}
+        {cell.role && <span title={tr(mcpInfo.connectedCellIds?.includes(cell.id) ? 'MCP działa' : mcpInfo.configuredCellIds?.includes(cell.id) ? 'MCP skonfigurowane · oczekiwanie na agenta' : 'Wymaga restartu')}> · {mcpInfo.connectedCellIds?.includes(cell.id) ? '●' : '○'}</span>}</button>}
         <span className={`dot ${status}`} />
         {editing ? (
           <input

@@ -1,3 +1,4 @@
+import { RoleSelect } from './RoleSelect';
 import { useI18n } from '../i18n';
 import { useEffect, useState } from 'react';
 import {
@@ -257,10 +258,7 @@ function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
       <select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
         {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
-      <select className="select" aria-label={tr('Rola agenta')} disabled={isShell} value={cell.role ?? ''} onChange={(e) => onChange({ role: e.target.value ? e.target.value as 'coordinator' | 'worker' : undefined })}>
-        <option value="">{tr('Bez MCP')}</option>
-        <option value="coordinator">{tr('Koordynator')}</option><option value="worker">{tr('Wykonawca')}</option>
-      </select>
+      <RoleSelect value={cell.role} disabled={isShell} onChange={(role) => onChange({ role })} />
       <span className="prompt-wrap">
         <input
           className="input"
