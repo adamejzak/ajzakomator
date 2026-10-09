@@ -24,7 +24,7 @@ Przełączaj projekty, gdy terminale nadal pracują w tle.
 - **Nic nie ginie**: po restarcie aplikacji rozmowy same się wznawiają, zamknięte gridy trafiają do Historii, a lista starych czatów Claude i Codex jest pod ręką
 - **Snippety** z ikonami i kolorami: klik wkleja do aktywnej komórki, Shift+klik do całej siatki, można też przeciągnąć na komórkę
 - **Układ paneli**: przeciągnij krawędź projektów lub snippetów, aby zmienić szerokość; podwójny klik przywraca domyślną. Szerokości i kolejność projektów oraz snippetów są zapamiętywane
-- **Pliki i edytor kodu**: zakładka „Pliki” pokazuje drzewo projektu; kod możesz edytować w aplikacji lub otworzyć w edytorze zewnętrznym. Dostępne są też skróty do Eksploratora Windows lub Findera
+- **Pliki i edytor kodu**: zakładka „Pliki” pokazuje drzewo projektu; edytor ma numery wierszy, kolorowanie składni, zwijanie kodu, wyszukiwanie i cofanie zmian. Kod możesz też otworzyć w edytorze zewnętrznym
 - **Menu pod prawym przyciskiem**: na projekcie, gridzie, snippecie, pliku i pustej przestrzeni paneli. W edytorze projektu kliknięcie avatara wybiera własną ikonę, a „Anuluj” odrzuca zmiany
 - **Paleta `Ctrl+K` (`Cmd+K` na Macu)** przeszukuje projekty, gridy, snippety, presety, historię i akcje
 - **Terminale systemowe**: Windows korzysta z PowerShella i ConPTY, macOS z zsh/bash i PTY. Na Macu działają `Cmd+C` / `Cmd+V`, a powłoka logowania wczytuje `PATH` agentów

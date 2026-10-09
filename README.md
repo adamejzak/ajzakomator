@@ -64,6 +64,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 **Edit without leaving the workspace**
 
 - Open text files from **Files** into editor tabs and switch back to the running grid
+- Line numbers, syntax colors for common code/config formats, bracket matching, code folding, search and undo/redo
 - Save with `Ctrl+S` / `Cmd+S`, insert indentation with Tab and toggle line wrapping
 - Unsaved changes are marked; closing a modified file offers save, discard or cancel
 - Drafts survive a renderer reload; a file changed on disk is checked before saving
