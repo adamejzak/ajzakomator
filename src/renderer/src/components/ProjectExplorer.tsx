@@ -2,6 +2,7 @@ import { useI18n } from '../i18n';
 import { useEffect, useState } from 'react';
 import type { Project, ProjectDirectory, ProjectFileEntry } from '../../../shared/types';
 import { setUi } from '../store';
+import { openFile } from '../files';
 import { openMenu } from './ContextMenu';
 import { IChevron, ICollapse, IFile, IFolder, IRestart } from './icons';
 import { ProjectIconView } from './ProjectIcon';
@@ -40,7 +41,7 @@ function Directory({ project, path, depth, expanded, toggle, refresh }: TreeProp
       { header: entry.name },
       entry.kind === 'directory'
         ? { label: expanded.has(entry.path) ? tr("Zwiń folder") : tr("Rozwiń folder"), onClick: () => toggle(entry.path) }
-        : { label: tr("Podgląd pliku"), onClick: () => setUi({ modal: { kind: 'file', projectId: project.id, relativePath: entry.path } }) },
+        : { label: tr("Podgląd pliku"), onClick: () => void openFile(project.id, entry.path) },
       { label: tr("Otwórz w edytorze"), onClick: () => window.mc.openInEditor(fullPath) },
       { label: tr("Pokaż w menedżerze plików"), onClick: () => window.mc.revealPath(fullPath) },
       { sep: true },
@@ -70,7 +71,7 @@ function Directory({ project, path, depth, expanded, toggle, refresh }: TreeProp
               aria-expanded={folder ? open : undefined}
               title={entry.kind === 'symlink' ? `${entry.path} · link` : entry.path}
               style={{ paddingLeft: 10 + depth * 16 }}
-              onClick={() => folder ? toggle(entry.path) : setUi({ modal: { kind: 'file', projectId: project.id, relativePath: entry.path } })}
+              onClick={() => folder ? toggle(entry.path) : void openFile(project.id, entry.path)}
               onContextMenu={(e) => fileMenu(e, entry)}
               onKeyDown={(e) => {
                 if (folder && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
@@ -130,10 +131,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
       <div className="explorer-tree">
         <Directory project={project} path="" depth={0} expanded={expanded} toggle={toggle} refresh={refresh} />
       </div>
-      <div className="explorer-foot">
-        <button className="btn ghost" onClick={() => window.mc.openPath(project.path)}><IFolder />  {tr("Otwórz w menedżerze plików")}</button>
-        <span className="muted">{tr("Kliknij plik, aby zobaczyć podgląd.")}</span>
-      </div>
+
     </div>
   );
 }

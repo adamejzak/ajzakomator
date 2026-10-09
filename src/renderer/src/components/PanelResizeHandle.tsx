@@ -17,13 +17,19 @@ export function PanelResizeHandle({ panel, width, maxWidth, onResize, onFinish }
   const direction = panel === 'sidebar' ? 1 : -1;
   const drag = useRef<{ id: number; x: number; start: number; current: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const handle = useRef<HTMLDivElement>(null);
   const clamp = (value: number) => Math.round(Math.max(limits.min, Math.min(max, value)));
   const label = panel === 'sidebar' ? tr("Szerokość panelu projektów") : tr("Szerokość panelu snippetów");
 
   useEffect(() => {
     if (!dragging) return;
     document.documentElement.classList.add('panel-resizing');
-    return () => document.documentElement.classList.remove('panel-resizing');
+    const cancel = () => finish(true);
+    window.addEventListener('blur', cancel);
+    return () => {
+      document.documentElement.classList.remove('panel-resizing');
+      window.removeEventListener('blur', cancel);
+    };
   }, [dragging]);
 
   const finish = (cancel = false) => {
@@ -31,11 +37,16 @@ export function PanelResizeHandle({ panel, width, maxWidth, onResize, onFinish }
     if (!current) return;
     drag.current = null;
     setDragging(false);
+    document.documentElement.classList.remove('panel-resizing');
+    const el = handle.current;
+    if (el?.hasPointerCapture(current.id)) el.releasePointerCapture(current.id);
+    el?.blur();
     onFinish(cancel ? null : current.current);
   };
 
   return (
     <div
+      ref={handle}
       className={`panel-resize edge-${panel} ${dragging ? 'dragging' : ''}`}
       role="separator"
       aria-orientation="vertical"
@@ -49,7 +60,6 @@ export function PanelResizeHandle({ panel, width, maxWidth, onResize, onFinish }
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
-        e.currentTarget.focus();
         e.currentTarget.setPointerCapture(e.pointerId);
         drag.current = { id: e.pointerId, x: e.clientX, start: width, current: width };
         setDragging(true);

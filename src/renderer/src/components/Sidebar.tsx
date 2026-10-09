@@ -9,7 +9,7 @@ import type { Project } from '../../../shared/types';
 import { closeTab, createProject, relocateProject, removeProject, selectTab, switchProject } from '../actions';
 import { askText, setUi, update, useStore } from '../store';
 import { openMenu } from './ContextMenu';
-import { IFolder, IGrid, IGrip, IHistory, IPlus, ISearch } from './icons';
+import { IFolder, IGrid, IHistory, IPlus, ISearch } from './icons';
 import { dropEdge, scrollDragList } from './listDrag';
 import { StatusBadges } from './StatusBadges';
 import { PanelResizeHandle, type PanelResizeProps } from './PanelResizeHandle';
@@ -201,7 +201,6 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
                 }}
                 onDragEnd={endDrag}
               >
-                {!collapsed && <span className="list-drag-grip" title={tr("Przeciągnij projekt, aby zmienić kolejność")} aria-hidden="true"><IGrip /></span>}
                 <button className="project-avatar" title={tr('Edytuj ikonę projektu {name}', { name: p.name })} aria-label={tr('Edytuj ikonę projektu {name}', { name: p.name })} onClick={(e) => {
                   e.stopPropagation();
                   setUi({ modal: { kind: 'project', projectId: p.id } });
