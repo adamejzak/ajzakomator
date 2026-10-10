@@ -21,6 +21,9 @@ import { createSaver, loadState } from './store';
 import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
 import { scheduleUpdateCleanup, signalUpdateReady } from './updateSplash';
 import { createChangelog } from './changelog';
+import { systemCredentialSource } from './usage/credentials';
+import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
+import { UsageService } from './usage/service';
 import type { UpdateStrings } from '../shared/updateProgress';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 import { StateController } from './stateController';
@@ -51,6 +54,22 @@ let win: BrowserWindow | null = null;
 let state: AppState = loadState(DATA_DIR, appPlatform(process.platform));
 const tr = (key: MessageKey, params?: MessageParams) => translate(state.settings.language ?? detectLanguage([app.getLocale()]), key, params);
 const saver = createSaver(DATA_DIR);
+const usageDeps: FetcherDeps = {
+  credentials: systemCredentialSource(),
+  // net.fetch follows the system proxy settings, like the rest of Chromium.
+  fetch: ((input: RequestInfo | URL, init?: RequestInit) => net.fetch(String(input), init)) as typeof fetch,
+  now: () => Date.now(),
+  codexHome: () => process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'),
+  claudeUrl: process.env.MC_USAGE_CLAUDE_URL || 'https://api.anthropic.com/api/oauth/usage',
+  codexUrl: process.env.MC_USAGE_CODEX_URL || 'https://chatgpt.com/backend-api/wham/usage',
+};
+const usage = new UsageService({
+  fetchers: { claude: () => fetchClaude(usageDeps), codex: () => fetchCodex(usageDeps) },
+  cacheFile: join(DATA_DIR, 'usage-cache.json'),
+  enabled: () => state.settings.showAiUsage,
+  intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
+});
+let usageKey = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
 const ptyHost = new PtyHostClient();
 const hooks = new HookServer();
 const alive = new Set<string>();
@@ -89,6 +108,8 @@ const controller = new StateController(state, (snapshot) => {
     if (cell.role && !findCell(snapshot.state, cell.id)?.cell.role) mcp.revokeCell(cell.id);
   }
   state = snapshot.state;
+  const key = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
+  if (key !== usageKey) { usageKey = key; usage.reschedule(); }
   saver.save(state);
   send('state:changed', snapshot);
 });
@@ -150,6 +171,10 @@ function createWindow(): void {
     if (process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show();
     void signalUpdateReady();
   });
+  win.on('minimize', () => usage.setActive(false));
+  win.on('hide', () => usage.setActive(false));
+  win.on('restore', () => usage.setActive(true));
+  win.on('show', () => usage.setActive(true));
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
   win.webContents.on('did-finish-load', () => win && ptyHost.connectRenderer(win.webContents));
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -359,6 +384,9 @@ const changelog = createChangelog({
   },
 });
 ipcMain.handle('changelog:get', (_e, force: boolean) => changelog.get(force));
+ipcMain.handle('usage:get', () => usage.getState());
+ipcMain.handle('usage:refresh', () => usage.refresh());
+usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
 ipcMain.on('update:install', () => installNow());
@@ -393,6 +421,7 @@ app.whenReady().then(async () => {
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   createWindow();
+  usage.start();
   initUpdater((s) => send('update:state', s), { strings: updateStrings, autoInstallOnQuit: () => state.settings.autoInstallUpdates });
   scheduleUpdateCleanup();
 });
@@ -402,6 +431,7 @@ app.on('before-quit', (e) => {
   if (quitting) return;
   e.preventDefault();
   quitting = true;
+  usage.stop();
   send('app:before-quit');
   // Give the renderer a moment to push its final state, then wind down terminals cleanly.
   setTimeout(async () => {

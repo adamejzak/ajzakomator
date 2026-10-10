@@ -4,6 +4,7 @@ import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/au
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
 import type { ChangelogResult } from '../shared/changelog';
+import type { UsageState } from '../shared/usage';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
@@ -61,6 +62,8 @@ export interface McApi {
   installUpdate(): void;
   openReleases(): void;
   getChangelog(force?: boolean): Promise<ChangelogResult>;
+  getUsage(): Promise<UsageState>;
+  refreshUsage(): Promise<UsageState>;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;
@@ -69,6 +72,7 @@ export interface McApi {
   on(channel: 'ptyhost:crashed', cb: () => void): () => void;
   on(channel: 'app:before-quit', cb: () => void): () => void;
   on(channel: 'update:state', cb: (s: UpdateState) => void): () => void;
+  on(channel: 'usage:state', cb: (state: UsageState) => void): () => void;
   on(channel: 'state:changed', cb: (snapshot: StateSnapshot) => void): () => void;
   on(channel: 'automation:start-cells', cb: (cellIds: string[]) => void): () => void;
 }
