@@ -645,7 +645,7 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .project-group .project:active { cursor: grabbing; }
 .list-drag-grip { width: 12px; flex: none; display: grid; place-items: center; color: var(--muted); opacity: .45; cursor: grab; }
 .project:hover .list-drag-grip, .snippet:hover .list-drag-grip { opacity: 1; }
-.project-group .sub-item { padding-left: 65px; }
+.project-group .sub-item { padding-left: 24px; }
 .snippet { position: relative; flex: none; }
 .project-group.drop-before::before, .project-group.drop-after::after,
 .snippet.drop-before::before, .snippet.drop-after::after {
