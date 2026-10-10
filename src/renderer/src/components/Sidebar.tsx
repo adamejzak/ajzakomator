@@ -142,7 +142,6 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
               <button id="projects-view" role="tab" aria-selected={view === 'projects' || !project} aria-controls="sidebar-projects" className={view === 'projects' || !project ? 'on' : ''} onClick={() => setUi({ sidebarView: 'projects' })}>{tr("Projekty")}</button>
               <button id="files-view" role="tab" aria-selected={view === 'files' && !!project} aria-controls="sidebar-files" className={view === 'files' && project ? 'on' : ''} disabled={!project} title={project ? tr('Pliki projektu {name}', { name: project.name }) : tr("Najpierw dodaj projekt")} onClick={() => setUi({ sidebarView: 'files' })}>{tr("Pliki")}</button>
             </div>
-            <button className="sq" title={tr("Dodaj projekt")} aria-label={tr("Dodaj projekt")} onClick={() => void createProject()}><IPlus /></button>
           </div>
         )}
       </div>
