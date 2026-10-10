@@ -813,8 +813,8 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .usage-provider { display: flex; flex-direction: column; gap: 4px; }
 .usage-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--text); font-weight: 600; }
 .usage-plan { color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-row { display: grid; grid-template-columns: 34px 1fr 32px; align-items: center; column-gap: 6px; row-gap: 1px; }
-.usage-label { color: var(--muted); }
+.usage-row { display: grid; grid-template-columns: 44px 1fr 32px; align-items: center; column-gap: 6px; row-gap: 1px; }
+.usage-label { color: var(--muted); white-space: nowrap; }
 .usage-bar { height: 4px; border-radius: 3px; background: var(--border-2); overflow: hidden; }
 .usage-bar > span { display: block; height: 100%; border-radius: inherit; transition: width .3s ease-out; }
 .usage-bar .low { background: var(--accent); }

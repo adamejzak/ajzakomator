@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import { effectivePercent, formatDuration, usageBand, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { useI18n } from '../i18n';
@@ -12,10 +12,10 @@ const COMMANDS: Record<UsageProvider, string> = { claude: 'claude', codex: 'code
 const CLIS: Record<UsageProvider, string> = { claude: 'Claude Code', codex: 'Codex' };
 const RAIL: Record<UsageProvider, string> = { claude: 'Cl', codex: 'Cx' };
 
-function Bar({ percent }: { percent: number }) {
+function Bar({ percent, label }: { percent: number; label: string }) {
   return (
-    <div className="usage-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)}>
-      <span className={usageBand(percent)} style={{ width: `${percent}%` }} />
+    <div className="usage-bar" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)}>
+      <span className={usageBand(percent)} style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
     </div>
   );
 }
@@ -31,7 +31,7 @@ function WindowRow({ window, now, language }: { window: UsageWindow; now: number
   return (
     <div className="usage-row">
       <span className="usage-label">{window.id === '5h' ? tr('5 godz.') : tr('7 dni')}</span>
-      <Bar percent={percent} />
+      <Bar percent={percent} label={window.id === '5h' ? tr('5 godz.') : tr('7 dni')} />
       <span className="usage-pct">{Math.round(percent)}%</span>
       {upcoming && <span className="usage-reset">{tr('reset {time}', { time: clock })} · {tr('za {time}', { time: formatDuration(window.resetsAt - now / 1000) })}</span>}
     </div>
@@ -73,6 +73,8 @@ export function UsagePanel() {
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const spinning = useHoldBusy(refreshing, 700);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
@@ -82,14 +84,16 @@ export function UsagePanel() {
   const signedIn = providers.filter((usage) => usage.status !== 'signedOut' && usage.status !== 'apiKey');
   const refresh = async () => {
     setRefreshing(true);
-    try { await window.mc.refreshUsage(); } finally { setRefreshing(false); }
+    try { await window.mc.refreshUsage(); } catch { /* the next scheduled refresh retries */ } finally { if (alive.current) setRefreshing(false); }
   };
   const summary = signedIn.length
     ? signedIn.map((usage) => `${NAMES[usage.provider]} ${Math.round(worstPercent(usage, now))}%`).join(' · ')
     : tr('Konta AI');
-  const updated = providers.length ? new Date(Math.max(...providers.map((usage) => usage.fetchedAt))).toLocaleTimeString(language) : '';
+  const known = providers.filter((usage) => usage.status !== 'signedOut');
+  const updated = known.length ? new Date(Math.max(...known.map((usage) => usage.fetchedAt))).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' }) : '';
 
   if (rail) {
+    if (!signedIn.length) return null;
     return (
       <div className="usage-panel usage-rail" title={summary}>
         {signedIn.map((usage) => {
@@ -97,7 +101,7 @@ export function UsagePanel() {
           return (
             <div key={usage.provider} className="usage-rail-item">
               <span>{RAIL[usage.provider]}</span>
-              <Bar percent={percent} />
+              <Bar percent={percent} label={NAMES[usage.provider]} />
               <span>{Math.round(percent)}</span>
             </div>
           );
@@ -119,7 +123,7 @@ export function UsagePanel() {
       </div>
       {!collapsed && (
         <>
-          {providers.some((usage) => usage.status !== 'signedOut')
+          {known.length
             ? providers.map((usage) => <Provider key={usage.provider} usage={usage} now={now} language={language} />)
             : <p className="usage-note">{tr('Zaloguj się w Claude Code lub Codexie, aby zobaczyć limity.')}</p>}
           {updated && <p className="usage-note">{tr('Zaktualizowano {time}', { time: updated })}</p>}
