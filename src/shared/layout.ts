@@ -11,8 +11,12 @@ export type GridLayout = {
   rowSizes?: number[];
   /** Relative widths of the `cols` tracks for each row; `null` entries (or no field) mean equal. */
   rowColSizes?: Array<number[] | null>;
-  /** Grid-wide column widths written by 0.5.5; read as the default for every row. */
+  /** Relative widths of the `cols` tracks shared by every row without its own (also written by 0.5.5). */
   colSizes?: number[];
+  /** `cols`: widths are shared and every column has its own heights (`colRowSizes`); absent: the rows mode above. */
+  mode?: 'cols';
+  /** Relative heights of the `rows` tracks for each column in cols mode. */
+  colRowSizes?: Array<number[] | null>;
 };
 
 export const MAX_COLS = 5;
@@ -43,7 +47,7 @@ export function mergeRect(layout: GridLayout, rect: Area): GridLayout {
   if (hit.length < 2 || hit.some((a) => !inside(a, rect))) return layout;
   const rest = layout.areas.filter((a) => !overlaps(a, rect));
   // Merged areas span rows, so per-row column widths no longer apply.
-  const { rowColSizes: _widths, colSizes: _legacy, ...kept } = layout;
+  const { rowColSizes: _widths, colSizes: _legacy, colRowSizes: _heights, mode: _mode, ...kept } = layout;
   return { ...kept, areas: sortAreas([...rest, { ...rect }]) };
 }
 
@@ -102,8 +106,13 @@ export function describeLayout(layout: GridLayout): string {
 
 // ── resizable splits ────────────────────────────────────────────────────────
 //
-// Heights are shared by the whole width (`rowSizes`), widths belong to each row (`rowColSizes`), so a row's
-// vertical dividers can move without touching the other rows. Every combination stays a gap-free tiling.
+// Dividers can be dragged one segment at a time. A tiling stays gap-free as long as, at every "+" junction, at
+// most one of the two crossing lines is split into independently moving halves. So a grid keeps one *shared*
+// axis and one *independent* axis:
+//   rows mode (default): heights are shared (`rowSizes`), every row has its own widths (`rowColSizes`)
+//   cols mode:           widths are shared (`colSizes`), every column has its own heights (`colRowSizes`)
+// Until a divider has been dragged, both axes are free; the first drag of a half decides which axis becomes
+// independent. Double-clicking the dragged divider returns the grid to the free state.
 
 export type Axis = 'col' | 'row';
 /** No area may shrink below this share of the grid while a divider is dragged. */
@@ -113,26 +122,69 @@ const validSizes = (sizes: readonly number[] | null | undefined, n: number): siz
   !!sizes && sizes.length === n && sizes.every((v) => Number.isFinite(v) && v > 0);
 const equalSizes = (n: number) => Array.from({ length: n }, () => 1);
 const sum = (values: readonly number[], from = 0, to = values.length) => values.slice(from, to).reduce((a, b) => a + b, 0);
-
-/** Row heights (relative); equal when unset or stale. */
-export function rowWeights(layout: GridLayout): number[] {
-  return validSizes(layout.rowSizes, layout.rows) ? layout.rowSizes : equalSizes(layout.rows);
-}
-
-/** Column widths (relative) of one row; equal when unset or stale. `colSizes` is the older grid-wide form. */
-export function colWeights(layout: GridLayout, row: number): number[] {
-  const own = layout.rowColSizes?.[row];
-  if (validSizes(own, layout.cols)) return own;
-  return validSizes(layout.colSizes, layout.cols) ? layout.colSizes : equalSizes(layout.cols);
-}
+const isEqual = (sizes: number[]) => sizes.every((v) => Math.abs(v - sizes[0]) < 1e-6 * sizes[0]);
 
 /** Position and size of every area as fractions of the grid (same order as `layout.areas`). */
 export interface Rect { x0: number; y0: number; x1: number; y1: number }
-export function areaRects(layout: GridLayout): Rect[] {
-  const rows = rowWeights(layout);
+
+/** A divider between areas: grid line `line` (1..n-1) over the other axis' tracks `from`..`to` (inclusive). */
+export interface Divider { axis: Axis; line: number; from: number; to: number }
+
+const swapAxis = (d: Divider): Divider => ({ ...d, axis: d.axis === 'col' ? 'row' : 'col' });
+const along = (a: Area, axis: Axis) => (axis === 'col' ? { start: a.col, size: a.colSpan } : { start: a.row, size: a.rowSpan });
+const across = (a: Area, axis: Axis) => along(a, axis === 'col' ? 'row' : 'col');
+
+// ── canonical (rows mode) form ──────────────────────────────────────────────
+// Cols mode is the same algorithm on the transposed grid, so everything below works on the rows-mode form.
+
+const SIZE_FIELDS = ['rowSizes', 'rowColSizes', 'colSizes', 'colRowSizes', 'mode'] as const;
+
+function canon(layout: GridLayout): GridLayout {
+  if (layout.mode !== 'cols') return layout;
+  return {
+    cols: layout.rows, rows: layout.cols,
+    areas: layout.areas.map((a) => ({ col: a.row, row: a.col, colSpan: a.rowSpan, rowSpan: a.colSpan })),
+    ...(layout.colSizes ? { rowSizes: layout.colSizes } : {}),
+    ...(layout.colRowSizes ? { rowColSizes: layout.colRowSizes } : {}),
+    ...(layout.rowSizes ? { colSizes: layout.rowSizes } : {}),
+  };
+}
+
+/** Writes the size fields of a canonical layout back onto the layout it was derived from. */
+function fromCanon(original: GridLayout, r: GridLayout): GridLayout {
+  const base: Record<string, unknown> = { ...original };
+  for (const field of SIZE_FIELDS) delete base[field];
+  if (original.mode !== 'cols') {
+    return { ...base, ...(r.rowSizes ? { rowSizes: r.rowSizes } : {}), ...(r.rowColSizes ? { rowColSizes: r.rowColSizes } : {}), ...(r.colSizes ? { colSizes: r.colSizes } : {}) } as GridLayout;
+  }
+  return {
+    ...base,
+    ...(r.colSizes ? { rowSizes: r.colSizes } : {}),
+    ...(r.rowSizes ? { colSizes: r.rowSizes } : {}),
+    ...(r.rowColSizes ? { colRowSizes: r.rowColSizes, mode: 'cols' as const } : {}),
+  } as GridLayout;
+}
+
+/** Whether some row (rows mode) already has widths of its own. */
+const hasJog = (r: GridLayout) => !!r.rowColSizes?.some((row) => validSizes(row, r.cols));
+
+/** Row heights (relative) of a canonical layout. */
+function rowWeightsR(r: GridLayout): number[] {
+  return validSizes(r.rowSizes, r.rows) ? r.rowSizes : equalSizes(r.rows);
+}
+
+/** Column widths (relative) of one row of a canonical layout; `colSizes` is the default for rows without their own. */
+function colWeightsR(r: GridLayout, row: number): number[] {
+  const own = r.rowColSizes?.[row];
+  if (validSizes(own, r.cols)) return own;
+  return validSizes(r.colSizes, r.cols) ? r.colSizes : equalSizes(r.cols);
+}
+
+function areaRectsR(r: GridLayout): Rect[] {
+  const rows = rowWeightsR(r);
   const height = sum(rows);
-  return layout.areas.map((a) => {
-    const cols = colWeights(layout, a.row);
+  return r.areas.map((a) => {
+    const cols = colWeightsR(r, a.row);
     const width = sum(cols);
     return {
       x0: sum(cols, 0, a.col) / width, x1: sum(cols, 0, a.col + a.colSpan) / width,
@@ -141,29 +193,24 @@ export function areaRects(layout: GridLayout): Rect[] {
   });
 }
 
-/** A divider between areas: grid line `line` (1..n-1) over the other axis' tracks `from`..`to` (inclusive). */
-export interface Divider { axis: Axis; line: number; from: number; to: number }
+export function areaRects(layout: GridLayout): Rect[] {
+  const rects = areaRectsR(canon(layout));
+  return layout.mode === 'cols' ? rects.map((q) => ({ x0: q.y0, y0: q.x0, x1: q.y1, y1: q.x1 })) : rects;
+}
 
-const along = (a: Area, axis: Axis) => (axis === 'col' ? { start: a.col, size: a.colSpan } : { start: a.row, size: a.rowSpan });
-const across = (a: Area, axis: Axis) => along(a, axis === 'col' ? 'row' : 'col');
-
-/**
- * Divider segments. A vertical line is cut at every crossing with a horizontal divider ("+" junctions), so
- * each row's divider moves on its own; it stays in one piece where an area spans across (T junctions).
- * Horizontal dividers span the full width and are only interrupted where an area crosses them.
- */
-export function dividers(layout: GridLayout): Divider[] {
+function dividersR(r: GridLayout): Divider[] {
   const out: Divider[] = [];
+  const free = !hasJog(r);
   for (const axis of ['col', 'row'] as const) {
-    const n = axis === 'col' ? layout.cols : layout.rows;
-    const other = axis === 'col' ? layout.rows : layout.cols;
+    const n = axis === 'col' ? r.cols : r.rows;
+    const other = axis === 'col' ? r.rows : r.cols;
     for (let line = 1; line < n; line++) {
-      const touches = (t: number, side: 'end' | 'start') => layout.areas.some((a) => {
+      const touches = (t: number, side: 'end' | 'start') => r.areas.some((a) => {
         const m = along(a, axis); const o = across(a, axis);
         return (side === 'end' ? m.start + m.size === line : m.start === line) && o.start <= t && t < o.start + o.size;
       });
       // An area on this side finishes right after track t: a perpendicular divider meets the line here.
-      const corner = (t: number, side: 'end' | 'start') => layout.areas.some((a) => {
+      const corner = (t: number, side: 'end' | 'start') => r.areas.some((a) => {
         const m = along(a, axis); const o = across(a, axis);
         return (side === 'end' ? m.start + m.size === line : m.start === line) && o.start + o.size === t + 1;
       });
@@ -171,7 +218,8 @@ export function dividers(layout: GridLayout): Divider[] {
       for (let t = 0; t < other; t++) {
         const real = touches(t, 'end') && touches(t, 'start');
         if (real && from < 0) from = t;
-        const cut = t === other - 1 || (axis === 'col' && corner(t, 'end') && corner(t, 'start'));
+        // Vertical lines are always cut at crossings; horizontal ones only while no row has its own widths.
+        const cut = t === other - 1 || ((axis === 'col' || free) && corner(t, 'end') && corner(t, 'start'));
         if (real && cut) { out.push({ axis, line, from, to: t }); from = -1; }
         else if (!real) from = -1;
       }
@@ -180,16 +228,26 @@ export function dividers(layout: GridLayout): Divider[] {
   return out;
 }
 
+/**
+ * Divider segments. Lines are cut at "+" crossings so each piece moves on its own; they stay whole where an
+ * area spans across (T junctions) and, once one axis was made independent, along the shared axis.
+ */
+export function dividers(layout: GridLayout): Divider[] {
+  const list = dividersR(canon(layout));
+  return layout.mode === 'cols' ? list.map(swapAxis) : list;
+}
+
 /** Where to draw a divider, as fractions of the grid: its line coordinate and its extent along the line. */
 export function dividerBox(layout: GridLayout, d: Divider): { pos: number; start: number; end: number } {
-  const rows = rowWeights(layout);
-  if (d.axis === 'col') {
-    const cols = colWeights(layout, d.from);
-    return { pos: sum(cols, 0, d.line) / sum(cols), start: sum(rows, 0, d.from) / sum(rows), end: sum(rows, 0, d.to + 1) / sum(rows) };
+  const r = canon(layout);
+  const dr = layout.mode === 'cols' ? swapAxis(d) : d;
+  const rows = rowWeightsR(r);
+  if (dr.axis === 'col') {
+    const cols = colWeightsR(r, dr.from);
+    return { pos: sum(cols, 0, dr.line) / sum(cols), start: sum(rows, 0, dr.from) / sum(rows), end: sum(rows, 0, dr.to + 1) / sum(rows) };
   }
-  const rects = areaRects(layout);
-  const touching = rects.filter((_, i) => { const a = layout.areas[i]; return a.row + a.rowSpan === d.line && a.col <= d.to && d.from < a.col + a.colSpan; });
-  return { pos: sum(rows, 0, d.line) / sum(rows), start: Math.min(...touching.map((r) => r.x0)), end: Math.max(...touching.map((r) => r.x1)) };
+  const rects = areaRectsR(r).filter((_, i) => { const a = r.areas[i]; return a.row + a.rowSpan === dr.line && a.col <= dr.to && dr.from < a.col + a.colSpan; });
+  return { pos: sum(rows, 0, dr.line) / sum(rows), start: Math.min(...rects.map((q) => q.x0)), end: Math.max(...rects.map((q) => q.x1)) };
 }
 
 /** Clamp range for moving grid line `line` of a weight list by a fraction of its total. */
@@ -212,53 +270,71 @@ const shift = (weights: number[], line: number, delta: number) => {
   return next;
 };
 
-/**
- * Moves a divider by `delta` (fraction of the grid, positive = right/down). A vertical divider only moves
- * the rows it spans; a horizontal one moves the whole line. The move is clamped so no area gets too small.
- */
-export function resizeDivider(layout: GridLayout, d: Divider, delta: number): GridLayout {
-  if (d.axis === 'row') {
-    const weights = rowWeights(layout);
-    if (d.line < 1 || d.line >= weights.length) return layout;
-    const [lo, hi] = moveLimits(weights, layout.areas.map((a) => along(a, 'row')), d.line);
-    return withRowSizes(layout, shift(weights, d.line, Math.min(hi, Math.max(lo, delta))));
-  }
-  if (d.line < 1 || d.line >= layout.cols) return layout;
-  let lo = -Infinity;
-  let hi = Infinity;
-  for (let t = d.from; t <= d.to; t++) {
-    const touching = layout.areas.filter((a) => a.row <= t && t < a.row + a.rowSpan && (a.col + a.colSpan === d.line || a.col === d.line));
-    const [l, h] = moveLimits(colWeights(layout, t), touching.map((a) => along(a, 'col')), d.line);
-    lo = Math.max(lo, l); hi = Math.min(hi, h);
-  }
-  const clamped = Math.min(hi, Math.max(lo, delta));
-  const rowColSizes = Array.from({ length: layout.rows }, (_, t) => layout.rowColSizes?.[t] ?? null);
-  for (let t = d.from; t <= d.to; t++) rowColSizes[t] = shift(colWeights(layout, t), d.line, clamped);
-  return withRowColSizes(layout, rowColSizes);
-}
-
-/** Restores the equal split of the rows a divider spans (vertical) or of all heights (horizontal). */
-export function resetDivider(layout: GridLayout, d: Divider): GridLayout {
-  if (d.axis === 'row') return withRowSizes(layout, undefined);
-  const rowColSizes = Array.from({ length: layout.rows }, (_, t) => (t >= d.from && t <= d.to ? null : layout.rowColSizes?.[t] ?? null));
-  return withRowColSizes(layout, rowColSizes);
-}
-
-const isEqual = (sizes: number[]) => sizes.every((v) => Math.abs(v - sizes[0]) < 1e-6 * sizes[0]);
-
 /** Stores row heights, dropping them when they equal the default split. */
-export function withRowSizes(layout: GridLayout, sizes: number[] | undefined): GridLayout {
-  const { rowSizes: _old, ...rest } = layout;
+function withRowSizes(r: GridLayout, sizes: number[] | undefined): GridLayout {
+  const { rowSizes: _old, ...rest } = r;
   return !sizes || isEqual(sizes) ? rest : { ...rest, rowSizes: sizes };
 }
 
 /** Stores per-row column widths (`null` = default), dropping the field when nothing is customised. */
-export function withRowColSizes(layout: GridLayout, sizes: Array<number[] | null>): GridLayout {
-  const { rowColSizes: _old, colSizes: legacy, ...rest } = layout;
+function withRowColSizes(r: GridLayout, sizes: Array<number[] | null>): GridLayout {
+  const { rowColSizes: _old, ...rest } = r;
   const custom = sizes.map((row) => (row && !isEqual(row) ? row : null));
-  // Rows that were not customised keep the grid-wide widths written by 0.5.5, if any.
-  const base = legacy ? { colSizes: legacy } : {};
-  if (!custom.some(Boolean)) return { ...rest, ...base };
-  const filled = custom.map((row, t) => row ?? (legacy && validSizes(legacy, layout.cols) ? legacy : null));
-  return { ...rest, ...base, rowColSizes: filled };
+  if (!custom.some(Boolean)) return rest;
+  // Rows without their own widths (null) keep using the grid-wide default.
+  return { ...rest, rowColSizes: custom };
+}
+
+function resizeR(r: GridLayout, d: Divider, delta: number): GridLayout {
+  if (d.axis === 'row') {
+    const weights = rowWeightsR(r);
+    if (d.line < 1 || d.line >= weights.length) return r;
+    const [lo, hi] = moveLimits(weights, r.areas.map((a) => along(a, 'row')), d.line);
+    return withRowSizes(r, shift(weights, d.line, Math.min(hi, Math.max(lo, delta))));
+  }
+  if (d.line < 1 || d.line >= r.cols) return r;
+  let lo = -Infinity;
+  let hi = Infinity;
+  for (let t = d.from; t <= d.to; t++) {
+    const touching = r.areas.filter((a) => a.row <= t && t < a.row + a.rowSpan && (a.col + a.colSpan === d.line || a.col === d.line));
+    const [l, h] = moveLimits(colWeightsR(r, t), touching.map((a) => along(a, 'col')), d.line);
+    lo = Math.max(lo, l); hi = Math.min(hi, h);
+  }
+  const clamped = Math.min(hi, Math.max(lo, delta));
+  const sizes = Array.from({ length: r.rows }, (_, t) => (r.rowColSizes?.[t] && validSizes(r.rowColSizes[t], r.cols) ? r.rowColSizes[t] : null));
+  for (let t = d.from; t <= d.to; t++) sizes[t] = shift(colWeightsR(r, t), d.line, clamped);
+  return withRowColSizes(r, sizes);
+}
+
+/**
+ * Moves a divider by `delta` (fraction of the grid, positive = right/down), clamped so no area gets too small.
+ * Dragging half of a line while no axis is independent yet makes that axis the independent one.
+ */
+export function resizeDivider(layout: GridLayout, d: Divider, delta: number): GridLayout {
+  const r = canon(layout);
+  const dr = layout.mode === 'cols' ? swapAxis(d) : d;
+  if (dr.axis === 'row' && !hasJog(r) && !(dr.from === 0 && dr.to === r.cols - 1)) {
+    return resizeDivider(flipMode(layout), d, delta);
+  }
+  return fromCanon(layout, resizeR(r, dr, delta));
+}
+
+/** Swaps the independent axis of a grid whose axes are still free. */
+function flipMode(layout: GridLayout): GridLayout {
+  const { mode: _mode, ...rest } = layout;
+  return layout.mode === 'cols' ? rest : { ...rest, mode: 'cols' };
+}
+
+/**
+ * Centres a divider between its neighbouring lines (double click). Only this line moves, so every other divider
+ * and every T junction stays consistent; once everything is centred again the grid is free.
+ */
+export function resetDivider(layout: GridLayout, d: Divider): GridLayout {
+  const r = canon(layout);
+  const dr = layout.mode === 'cols' ? swapAxis(d) : d;
+  const rows = dr.axis === 'row' ? [rowWeightsR(r)] : Array.from({ length: dr.to - dr.from + 1 }, (_, i) => colWeightsR(r, dr.from + i));
+  const at = (weights: number[], line: number) => sum(weights, 0, line) / sum(weights);
+  const here = rows.reduce((a, w) => a + at(w, dr.line), 0) / rows.length;
+  const middle = rows.reduce((a, w) => a + (at(w, dr.line - 1) + at(w, dr.line + 1)) / 2, 0) / rows.length;
+  return fromCanon(layout, resizeR(r, dr, middle - here));
 }
