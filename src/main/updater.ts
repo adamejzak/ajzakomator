@@ -1,8 +1,10 @@
 import { app } from 'electron';
+import { join } from 'path';
 import { autoUpdater } from 'electron-updater';
 import type { UpdateState } from '../shared/types';
 import type { UpdateStrings } from '../shared/updateProgress';
 import { abortUpdateWindow, showUpdateWindow, stageSplashRuntime } from './updateSplash';
+import { createUpdaterLogger } from './updaterLog';
 
 export const RELEASES_URL = 'https://github.com/adamejzak/ajzakomator/releases/latest';
 const CHECK_EVERY_MS = 30 * 60 * 1000;
@@ -73,8 +75,11 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
   if (!app.isPackaged) return;
   autoUpdater.autoDownload = !portable;
   autoUpdater.autoInstallOnAppQuit = false;
+  // A proxy or CDN in between must not answer with an older copy of the release feed.
+  autoUpdater.requestHeaders = { 'Cache-Control': 'no-cache', Pragma: 'no-cache' };
+  try { autoUpdater.logger = createUpdaterLogger(join(app.getPath('userData'), 'updater.log')); } catch { /* the logger is optional */ }
   autoUpdater.on('checking-for-update', () => set({ status: 'checking' }));
-  autoUpdater.on('update-not-available', () => set({ status: 'current' }));
+  autoUpdater.on('update-not-available', (info) => set({ status: 'current', version: info?.version, checkedAt: Date.now() }));
   autoUpdater.on('update-available', (info) => set(portable
     ? { status: 'available', version: info.version, url: RELEASES_URL }
     : { status: 'downloading', version: info.version, percent: 0 }));

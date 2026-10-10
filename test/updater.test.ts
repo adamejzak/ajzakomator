@@ -6,7 +6,7 @@ vi.mock('electron', () => ({ app: mock.app }));
 const splash = vi.hoisted(() => ({ show: vi.fn(), stage: vi.fn(), abort: vi.fn() }));
 vi.mock('../src/main/updateSplash', () => ({ showUpdateWindow: splash.show, stageSplashRuntime: splash.stage, abortUpdateWindow: splash.abort }));
 const strings = { title: 't' } as never;
-let updater: EventEmitter & { autoDownload: boolean; autoInstallOnAppQuit: boolean; checkForUpdates: typeof mock.check; quitAndInstall: typeof mock.quit; install: typeof mock.install };
+let updater: EventEmitter & { requestHeaders?: Record<string, string>; autoDownload: boolean; autoInstallOnAppQuit: boolean; checkForUpdates: typeof mock.check; quitAndInstall: typeof mock.quit; install: typeof mock.install };
 vi.mock('electron-updater', () => ({ get autoUpdater() { return updater; } }));
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
 
@@ -138,6 +138,13 @@ describe('updater lifecycle', () => {
     expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
   });
 
+  it('asks for fresh release data and remembers when the last check found nothing', async () => {
+    vi.setSystemTime(new Date('2026-10-11T10:00:00Z'));
+    const api = await setup();
+    expect(updater.requestHeaders).toMatchObject({ 'Cache-Control': 'no-cache' });
+    updater.emit('update-not-available', { version: '0.5.5' });
+    expect(api.getUpdateState()).toMatchObject({ status: 'current', version: '0.5.5', checkedAt: Date.parse('2026-10-11T10:00:00Z') });
+  });
   it('installs on quit only while automatic installation is on and keeps the update for the button otherwise', async () => {
     const api = await import('../src/main/updater');
     let automatic = false;
