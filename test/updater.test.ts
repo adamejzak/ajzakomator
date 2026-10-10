@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mock = vi.hoisted(() => ({ app: { isPackaged: true, once: vi.fn() }, check: vi.fn(), quit: vi.fn(), install: vi.fn() }));
 vi.mock('electron', () => ({ app: mock.app }));
+const splash = vi.hoisted(() => ({ show: vi.fn(), stage: vi.fn(), abort: vi.fn() }));
+vi.mock('../src/main/updateSplash', () => ({ showUpdateWindow: splash.show, stageSplashRuntime: splash.stage, abortUpdateWindow: splash.abort }));
+const strings = { title: 't' } as never;
 let updater: EventEmitter & { autoDownload: boolean; autoInstallOnAppQuit: boolean; checkForUpdates: typeof mock.check; quitAndInstall: typeof mock.quit; install: typeof mock.install };
 vi.mock('electron-updater', () => ({ get autoUpdater() { return updater; } }));
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -16,6 +19,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   mock.app.isPackaged = true;
   mock.check.mockResolvedValue({}); mock.install.mockReturnValue(true);
+  splash.show.mockResolvedValue(true); splash.stage.mockResolvedValue('runtime.exe'); splash.abort.mockResolvedValue(undefined);
   updater = Object.assign(new EventEmitter(), { autoDownload: false, autoInstallOnAppQuit: true, checkForUpdates: mock.check, quitAndInstall: mock.quit, install: mock.install });
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); Object.defineProperty(process, 'platform', platformDescriptor); });
@@ -129,8 +133,64 @@ describe('updater lifecycle', () => {
     const snapshot = api.getUpdateState(); snapshot.status = 'idle';
     expect(api.getUpdateState().status).toBe('ready');
     mock.install.mockReturnValueOnce(false);
-    api.installOnQuit();
+    await api.installOnQuit();
     expect(api.getUpdateState().status).toBe('error');
     expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
+  });
+
+  describe('update window', () => {
+    const setupWindow = async () => { const api = await import('../src/main/updater'); const changed = vi.fn(); api.initUpdater(changed, () => strings); return { ...api, changed }; };
+    it('stages the window runtime in the background once the update is downloaded', async () => {
+      await setupWindow();
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      expect(splash.stage).toHaveBeenCalledOnce();
+    });
+    it('does not stage anything without localized strings or for portable builds', async () => {
+      await setup(); updater.emit('update-downloaded', { version: '0.6.0' });
+      expect(splash.stage).not.toHaveBeenCalled();
+      vi.resetModules(); vi.stubEnv('PORTABLE_EXECUTABLE_FILE', 'D:/app.exe');
+      await setupWindow(); updater.emit('update-downloaded', { version: '0.6.0' });
+      expect(splash.stage).not.toHaveBeenCalled();
+    });
+    it('shows the window before handing over to the installer, without the artificial pause', async () => {
+      const api = await setupWindow();
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      api.installNow();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', 'relaunch', strings);
+      expect(mock.quit).toHaveBeenCalledExactlyOnceWith(true, true);
+    });
+    it('installs after the short pause when the window cannot be shown', async () => {
+      splash.show.mockResolvedValueOnce(false);
+      const api = await setupWindow();
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      api.installNow();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(mock.quit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(mock.quit).toHaveBeenCalledExactlyOnceWith(true, true);
+    });
+    it('closes the window again when the installer hand-off fails', async () => {
+      const api = await setupWindow();
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      mock.quit.mockImplementationOnce(() => { throw new Error('installer failed'); });
+      api.installNow(); await vi.advanceTimersByTimeAsync(0);
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', message: 'installer failed' });
+      expect(splash.abort).toHaveBeenCalledOnce();
+    });
+    it('treats a crashing window as unavailable and still installs', async () => {
+      splash.show.mockRejectedValueOnce(new Error('spawn failed'));
+      const api = await setupWindow();
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      api.installNow(); await vi.advanceTimersByTimeAsync(400);
+      expect(mock.quit).toHaveBeenCalledExactlyOnceWith(true, true);
+    });
+    it('shows the window for installation on quit as well', async () => {
+      const api = await setupWindow();
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      await api.installOnQuit();
+      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', 'quit', strings);
+      expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
+    });
   });
 });

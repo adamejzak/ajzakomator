@@ -1,6 +1,8 @@
 import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { UpdateState } from '../shared/types';
+import type { UpdateStrings } from '../shared/updateProgress';
+import { abortUpdateWindow, showUpdateWindow, stageSplashRuntime } from './updateSplash';
 
 export const RELEASES_URL = 'https://github.com/adamejzak/ajzakomator/releases/latest';
 const CHECK_EVERY_MS = 30 * 60 * 1000;
@@ -11,6 +13,7 @@ let initialized = false;
 let portable = false;
 let pending: Promise<void> | undefined;
 let watchdog: ReturnType<typeof setTimeout> | undefined;
+let getStrings: (() => UpdateStrings) | undefined;
 
 function set(next: UpdateState): void {
   clearTimeout(watchdog);
@@ -51,8 +54,10 @@ export async function checkForUpdates(): Promise<void> {
 
 export function getUpdateState(): UpdateState { return { ...state }; }
 
-export function initUpdater(onChange: (s: UpdateState) => void): void {
+/** `strings` localizes the detached update window; without it installation stays invisible as before. */
+export function initUpdater(onChange: (s: UpdateState) => void, strings?: () => UpdateStrings): void {
   emit = onChange;
+  getStrings = strings;
   if (initialized) { emit(state); return; }
   initialized = true;
   portable = !!(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE) || process.platform === 'darwin';
@@ -74,7 +79,9 @@ export function initUpdater(onChange: (s: UpdateState) => void): void {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
-    if (!portable) set({ status: 'ready', version: info.version });
+    if (portable) return;
+    set({ status: 'ready', version: info.version });
+    if (getStrings) void stageSplashRuntime();
   });
   autoUpdater.on('error', fail);
   const check = () => void checkForUpdates();
@@ -85,19 +92,30 @@ export function initUpdater(onChange: (s: UpdateState) => void): void {
   app.once('before-quit', () => { clearTimeout(first); clearInterval(recurring); clearTimeout(watchdog); });
 }
 
+/** Shows the progress window; false means installation proceeds without it. */
+async function showWindow(mode: 'relaunch' | 'quit'): Promise<boolean> {
+  if (!getStrings || !state.version) return false;
+  try { return await showUpdateWindow(state.version, mode, getStrings()); }
+  catch (error) { console.error('update window failed', error); return false; }
+}
+
 export function installNow(): void {
   if (portable || state.status !== 'ready') return;
   set({ ...state, status: 'installing' });
-  setTimeout(() => {
+  void (async () => {
+    const shown = await showWindow('relaunch');
+    // Without the window, keep the short pause that lets the renderer paint the installing state.
+    if (!shown) await new Promise((resolve) => setTimeout(resolve, 400));
     try { autoUpdater.quitAndInstall(true, true); }
-    catch (error) { fail(error); }
-  }, 400);
+    catch (error) { fail(error); if (shown) void abortUpdateWindow(); }
+  })();
 }
 
-export function installOnQuit(): void {
+export async function installOnQuit(): Promise<void> {
   if (portable || state.status !== 'ready') return;
+  const shown = await showWindow('quit');
   try {
     const installed = (autoUpdater as unknown as { install(silent: boolean, relaunch: boolean): boolean }).install(true, false);
-    if (!installed) fail(new Error('Nie udało się zainstalować aktualizacji.'));
-  } catch (error) { fail(error); }
+    if (!installed) { fail(new Error('Nie udało się zainstalować aktualizacji.')); if (shown) void abortUpdateWindow(); }
+  } catch (error) { fail(error); if (shown) void abortUpdateWindow(); }
 }

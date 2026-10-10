@@ -1,0 +1,41 @@
+:root {
+  --bg: #0d0d0d; --bg-2: #171717; --bg-hover: #222222; --border: #242424; --border-2: #2e2e2e;
+  --text: #d4d4d4; --text-2: #a3a3a3; --muted: #6e6e6e; --accent: #3b82f6; --waiting: #4ade80; --error: #f87171;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px; color: var(--text); background: var(--bg); color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); user-select: none; }
+button { font: inherit; color: inherit; }
+
+.card { height: 100%; display: flex; flex-direction: column; padding: 14px 18px 14px; border: 1px solid var(--border-2); background: var(--bg); -webkit-app-region: drag; }
+.top { display: flex; align-items: center; gap: 8px; }
+.logo { width: 20px; height: 20px; flex: none; }
+.top strong { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.versions { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dismiss { margin-left: auto; -webkit-app-region: no-drag; border: 0; background: transparent; color: var(--muted); font-size: 12px; width: 24px; height: 24px; border-radius: 5px; cursor: pointer; }
+.dismiss:hover { background: var(--bg-hover); color: var(--text); }
+.dismiss[hidden], .actions[hidden] { display: none; }
+
+.body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+h1 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--text); }
+.line { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+.status { margin: 0; color: var(--text-2); min-height: 16px; }
+.percent { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.track { height: 3px; border-radius: 3px; background: var(--border-2); overflow: hidden; }
+.fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .35s ease-out; }
+
+.foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 26px; }
+.foot p { margin: 0; color: var(--muted); font-size: 11px; }
+.actions { display: flex; gap: 6px; -webkit-app-region: no-drag; }
+.actions button { padding: 4px 11px; border: 1px solid var(--border-2); border-radius: 6px; background: var(--bg-2); cursor: pointer; }
+.actions button:hover { background: var(--bg-hover); }
+.actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.actions .primary:hover { background: #2f6fd8; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.card[data-stage='done'] .fill { background: var(--waiting); }
+.card[data-stage='error'] .fill { background: var(--error); }
+.card[data-stage='error'] .status { color: var(--error); }
+
+@media (prefers-reduced-motion: reduce) { .fill { transition: none; } }

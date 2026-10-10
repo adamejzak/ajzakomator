@@ -17,6 +17,8 @@ import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
 import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
+import { scheduleUpdateCleanup, signalUpdateReady } from './updateSplash';
+import type { UpdateStrings } from '../shared/updateProgress';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 import { StateController } from './stateController';
 import { AutomationService } from './automation';
@@ -56,6 +58,24 @@ const notifications = new Set<Notification>();
 /** Only sessions explicitly chosen by the user authorize native message delivery. */
 const verifiedCodex = new Map<string, string>();
 let mcpError: string | undefined;
+
+/** Localized texts for the detached update window (it cannot load the app's catalog). */
+const updateStrings = (): UpdateStrings => ({
+  title: tr('Aktualizacja do wersji {version}', { version: getUpdateState().version ?? '' }),
+  hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
+  stages: {
+    preparing: tr('Przygotowanie aktualizacji…'),
+    closing: tr('Zamykanie ajzakomatora…'),
+    installing: tr('Instalowanie nowej wersji…'),
+    launching: tr('Uruchamianie ajzakomatora…'),
+  },
+  done: tr('Gotowe — uruchamiam nową wersję'),
+  doneQuit: tr('Aktualizacja zainstalowana'),
+  slow: tr('Aktualizacja trwa dłużej niż zwykle'),
+  slowHint: tr('Możesz uruchomić ajzakomator ręcznie.'),
+  open: tr('Uruchom ajzakomator'),
+  close: tr('Zamknij'),
+});
 
 const send = (channel: string, ...args: unknown[]) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
@@ -123,7 +143,10 @@ function createWindow(): void {
     // Off-screen, non-focusable window for automated screenshots (docs).
     ...(process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
   });
-  win.once('ready-to-show', () => (process.env.MC_OFFSCREEN ? win?.showInactive() : win?.show()));
+  win.once('ready-to-show', () => {
+    if (process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show();
+    void signalUpdateReady();
+  });
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
   win.webContents.on('did-finish-load', () => win && ptyHost.connectRenderer(win.webContents));
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -346,7 +369,8 @@ app.whenReady().then(async () => {
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   createWindow();
-  initUpdater((s) => send('update:state', s));
+  initUpdater((s) => send('update:state', s), updateStrings);
+  scheduleUpdateCleanup();
 });
 
 let quitting = false;
@@ -365,7 +389,7 @@ app.on('before-quit', (e) => {
     await ptyHost.shutdown();
     await mcp.stop();
     hooks.stop();
-    installOnQuit();
+    await installOnQuit();
     app.exit(0);
   }, 150);
 });
