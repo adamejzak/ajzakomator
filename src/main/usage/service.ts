@@ -134,7 +134,8 @@ export class UsageService {
     }
     // Expired or failed: keep the last numbers, marked as remembered, so the panel is never blank after a hiccup.
     const previous = this.providers.get(provider);
-    this.providers.set(provider, previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);
+    const own = usage.windows.length > 0;
+    this.providers.set(provider, !own && previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);
     if (failed) this.startBackoff(provider, now, hold?.failures, retryAfterMs);
     else this.backoff.delete(provider);
   }

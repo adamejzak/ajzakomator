@@ -75,7 +75,8 @@ export async function fetchCodex(deps: FetcherDeps): Promise<FetchResult> {
   const fromLog = async (status: 'expired' | 'error', error?: string, retry?: number): Promise<FetchResult> => {
     const log = await readCodexLog(deps.codexHome());
     if (log) {
-      const usage: ProviderUsage = { ...known, plan: log.plan ?? known.plan, status: 'ok', windows: log.windows, fetchedAt: log.at, source: 'log' };
+      // A dead login is reported even though the log has numbers; a failed request is not, the log is as fresh either way.
+      const usage: ProviderUsage = { ...known, plan: log.plan ?? known.plan, status: error ? 'ok' : 'expired', windows: log.windows, fetchedAt: log.at, source: 'log' };
       return error ? { usage, failed: true, retryAfterMs: retry } : { usage };
     }
     return { usage: { ...known, status, ...(error ? { error } : {}) }, retryAfterMs: retry };

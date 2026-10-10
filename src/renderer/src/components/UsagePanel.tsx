@@ -60,6 +60,7 @@ function Provider({ usage, now, language }: { usage: ProviderUsage; now: number;
       <div className="usage-name">{name}{usage.plan && <span className="usage-plan">{usage.plan}</span>}{usage.email && <span className="usage-plan" title={usage.email}>{usage.email}</span>}</div>
       {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
       {hint && <p className={`usage-note ${stale ? 'warn' : ''}`}>{stale && usage.source === 'cache' ? `${hint} (${tr('dane sprzed {age}', { age })})` : hint}</p>}
+      {stale && usage.source === 'log' && <p className="usage-note">{tr('stan z ostatniej sesji, sprzed {age}', { age })}</p>}
     </div>
   );
 }

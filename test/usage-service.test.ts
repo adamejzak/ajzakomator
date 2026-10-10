@@ -221,6 +221,19 @@ describe('UsageService', () => {
     expect(service.getState().providers[1].windows[0].usedPercent).toBe(12);
   });
 
+  it('stores an expired result that carries its own log windows as given and starts no backoff', async () => {
+    let step = 0;
+    const logWindows = [{ id: '5h' as const, usedPercent: 21, resetsAt: 1781010642 }];
+    const { service, codex } = make({ codex: async () => (step++ === 0 ? ok('codex', 77) : { usage: { provider: 'codex', status: 'expired', fetchedAt: 5, source: 'log', windows: logWindows } }) });
+    await service.refresh();
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(service.getState().providers[1]).toMatchObject({ status: 'expired', source: 'log', fetchedAt: 5, windows: logWindows });
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(codex).toHaveBeenCalledTimes(3);
+  });
+
   it('ignores a corrupt cache file', () => {
     writeFileSync(cacheFile, '{broken');
     expect(make().service.getState().providers).toEqual([]);

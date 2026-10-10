@@ -132,15 +132,17 @@ describe('fetchCodex', () => {
   it('falls back to the last session when the live request fails, is rejected or the token expired', async () => {
     codexLogin();
     put('.codex/sessions/2026/10/09/rollout-a.jsonl', `${logEvent(31, '2026-10-09T10:00:00Z')}\n`);
-    for (const failing of [async () => { throw new Error('offline'); }, async () => reply(401, {}), async () => reply(500, {}), async () => reply(200, { nothing: 1 })]) {
+    for (const failing of [async () => { throw new Error('offline'); }, async () => reply(401, {}), async () => reply(403, {}), async () => reply(500, {}), async () => reply(200, { nothing: 1 })]) {
       const { usage } = await fetchCodex(deps(failing as never));
-      expect(usage).toMatchObject({ status: 'ok', source: 'log', email: 'me@example.com' });
+      const dead = [401, 403].includes((await failing().then((r) => (r as Response).status, () => 0)));
+      expect(usage).toMatchObject({ status: dead ? 'expired' : 'ok', source: 'log', email: 'me@example.com' });
       expect(usage.windows[0].usedPercent).toBe(31);
       expect(usage.fetchedAt).toBe(Date.parse('2026-10-09T10:00:00Z'));
     }
     codexLogin(Math.floor(NOW / 1000) - 10);
     const spy = vi.fn();
-    expect((await fetchCodex(deps(spy))).usage).toMatchObject({ status: 'ok', source: 'log' });
+    expect((await fetchCodex(deps(spy))).usage).toMatchObject({ status: 'expired', source: 'log' });
+    expect((await fetchCodex(deps(spy))).usage.windows[0].usedPercent).toBe(31);
     expect(spy).not.toHaveBeenCalled();
   });
 
