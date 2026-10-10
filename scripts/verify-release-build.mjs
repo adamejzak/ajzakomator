@@ -18,10 +18,13 @@ assert.equal(run.conclusion, 'success');
 assert.equal(run.name, 'CI');
 assert.equal(run.repository.full_name, repository);
 assert.equal(run.head_sha, commit, 'Build and tag must point to the same commit');
-const { jobs } = api(`actions/runs/${runId}/jobs`);
-const expected = ['Windows x64', 'macOS Apple Silicon', 'macOS Intel'];
-assert.equal(jobs.length, expected.length);
+const { jobs } = api(`actions/runs/${runId}/jobs?per_page=100`);
+const expected = ['Release metadata', 'Windows x64', 'macOS Apple Silicon', 'macOS Intel'];
 for (const name of expected) {
   assert.equal(jobs.find(job => job.name === name)?.conclusion, 'success', `${name} did not pass`);
 }
-console.log(`Verified ${tag}: all three platform builds passed at ${commit}.`);
+// Any other job of the run (for example the quick checks, skipped on tags) must not have failed.
+for (const job of jobs.filter(job => !expected.includes(job.name))) {
+  assert.ok(['success', 'skipped'].includes(job.conclusion), `${job.name} ended as ${job.conclusion}`);
+}
+console.log(`Verified ${tag}: release metadata and all three platform builds passed at ${commit}.`);

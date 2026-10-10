@@ -1,47 +1,111 @@
-// npm run release [patch|minor|major|x.y.z|--current]   (optional: NOTES="co nowego" for release notes)
-// Bumps the version, runs tests, builds locally and publishes the installers to the public
-// GitHub releases of adamejzak/ajzakomator with the logged-in `gh` CLI. One `gh` call creates
-// the release with every asset (avoids electron-builder's parallel publishers racing to create it).
-import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+// npm run release -- [patch|minor|major|x.y.z] --title "short summary" [--current] [--dry-run]
+//
+// Releases through the GitHub workflows, never from this machine:
+//   1. checks the working tree, branch and release notes, runs typecheck and tests
+//   2. bumps the version, commits "release: X.Y.Z with <title>" and tags vX.Y.Z
+//   3. pushes main and the tag together (no force)
+//   4. waits for the CI run on the tag (Windows + both Mac builds)
+//   5. dispatches "Publish release" with that run and waits for it
+//
+// --current  the version in package.json is already the one to release (skips the bump)
+// --dry-run  validates everything and prints the plan without changing anything
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 
-const REPO = 'adamejzak/ajzakomator';
-const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
-const arg = process.argv[2] ?? 'patch';
+const args = process.argv.slice(2);
+const flag = (name) => args.includes(name);
+const option = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
+const bump = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--title') ?? 'patch';
+const title = option('--title');
+const dryRun = flag('--dry-run');
+const current = flag('--current');
 
-if (arg !== '--current') run(`npm version ${arg} --no-git-tag-version`);
-const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-const tag = `v${version}`;
-console.log(`\n▶ ajzakomator ${tag}\n`);
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const run = (cmd, cmdArgs, opts = {}) => execFileSync(cmd, cmdArgs, { encoding: 'utf8', stdio: opts.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' && cmd.endsWith('.cmd') });
+const out = (cmd, cmdArgs) => run(cmd, cmdArgs).trim();
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const fail = (message) => { console.error(`\n✖ ${message}\n`); process.exit(1); };
+const step = (message) => console.log(`\n▶ ${message}`);
 
-run('npx vitest run');
-run('npx electron-vite build');
-run('npx electron-builder --win --publish never');
+if (!title) fail('Provide a short summary: --title "status bar and resizable cells"');
+if (!/^(patch|minor|major|\d+\.\d+\.\d+)$/.test(bump)) fail(`Unknown version "${bump}" (use patch, minor, major or x.y.z)`);
 
-const assets = [
-  `release/ajzakomator-Setup-${version}.exe`,
-  `release/ajzakomator-Setup-${version}.exe.blockmap`,
-  'release/latest.yml', // the auto-updater reads this
-  `release/ajzakomator-Portable-${version}.exe`,
-];
-for (const a of assets) if (!existsSync(a)) throw new Error(`missing build artifact: ${a}`);
-const files = assets.map((a) => `"${a}"`).join(' ');
+// ── checks ─────────────────────────────────────────────────────────────────
+step('Checking the repository');
+if (out('git', ['rev-parse', '--abbrev-ref', 'HEAD']) !== 'main') fail('Release from the main branch.');
+run('git', ['fetch', 'origin', 'main', '--tags', '--quiet']);
+if (Number(out('git', ['rev-list', '--count', 'HEAD..origin/main'])) > 0) fail('Local main is behind origin/main; pull first.');
+try { out('gh', ['auth', 'status']); } catch { fail('Log in with `gh auth login` first.'); }
+const repository = out('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']);
 
-let exists = true;
-try {
-  execSync(`gh release view ${tag} -R ${REPO}`, { stdio: 'ignore' });
-} catch {
-  exists = false;
+const pkg = () => JSON.parse(readFileSync('package.json', 'utf8'));
+const next = (() => {
+  if (current) return pkg().version;
+  const [major, minor, patch] = pkg().version.split('.').map(Number);
+  if (bump === 'major') return `${major + 1}.0.0`;
+  if (bump === 'minor') return `${major}.${minor + 1}.0`;
+  if (bump === 'patch') return `${major}.${minor}.${patch + 1}`;
+  return bump;
+})();
+const tag = `v${next}`;
+const notes = `docs/releases/${next}.md`;
+const releaseFiles = ['package.json', 'package-lock.json', notes];
+
+if (!existsSync(notes)) fail(`Write the release notes first: ${notes}`);
+if (out('git', ['tag', '--list', tag])) fail(`Tag ${tag} already exists. Never reuse or move a published tag; release the next version.`);
+const dirty = out('git', ['status', '--porcelain']).split('\n').filter(Boolean).map((line) => line.slice(3).replace(/^"|"$/g, ''));
+const unexpected = dirty.filter((file) => !releaseFiles.includes(file));
+if (unexpected.length) fail(`Commit or stash these files first:\n  ${unexpected.join('\n  ')}`);
+console.log(`Releasing ${tag} on ${repository}: "release: ${next} with ${title}"`);
+
+if (dryRun) {
+  console.log('\nDry run: checks passed; would run typecheck and tests, commit, tag, push, wait for CI and publish.');
+  process.exit(0);
 }
-if (exists) run(`gh release upload ${tag} ${files} -R ${REPO} --clobber`);
-else {
-  const notes = process.env.NOTES ? `${process.env.NOTES}\n\n` : '';
-  const body = `${notes}Windows packages for ajzakomator ${version}.\n\n${readFileSync('docs/releases/DOWNLOADS.md', 'utf8')}`;
-  writeFileSync('release/notes.md', body);
-  run(`gh release create ${tag} ${files} -R ${REPO} --title "ajzakomator ${version}" --notes-file release/notes.md --latest`);
-}
 
-run('git add package.json package-lock.json');
-run(`git commit -m "release ${tag}" --allow-empty`);
-run(`git tag -f ${tag}`);
-console.log(`\n✔ Opublikowano ${tag}: https://github.com/${REPO}/releases/tag/${tag}\n`);
+// ── local gate ─────────────────────────────────────────────────────────────
+step('Typecheck and tests');
+run(NPM, ['run', 'typecheck'], { inherit: true });
+run(NPX, ['vitest', 'run'], { inherit: true });
+
+// ── commit, tag, push ──────────────────────────────────────────────────────
+if (!current) {
+  step(`Bumping the version to ${next}`);
+  run(NPM, ['version', next, '--no-git-tag-version'], { inherit: true });
+}
+run('git', ['add', ...releaseFiles.filter((file) => existsSync(file))]);
+if (out('git', ['diff', '--cached', '--name-only'])) run('git', ['commit', '-m', `release: ${next} with ${title}`], { inherit: true });
+const sha = out('git', ['rev-parse', 'HEAD']);
+run('git', ['tag', tag]);
+step(`Pushing main and ${tag}`);
+run('git', ['push', '--atomic', 'origin', 'main', tag], { inherit: true });
+
+// ── wait for CI on the tag ─────────────────────────────────────────────────
+const json = (cmdArgs) => JSON.parse(out('gh', cmdArgs));
+step('Waiting for CI on the tag (Windows, macOS Apple Silicon, macOS Intel)');
+let ci;
+for (let i = 0; i < 60 && !ci; i++) {
+  ci = json(['run', 'list', '--workflow', 'CI', '--branch', tag, '--limit', '5', '--json', 'databaseId,headSha']).find((r) => r.headSha === sha);
+  if (!ci) await sleep(5000);
+}
+if (!ci) fail(`No CI run appeared for ${tag}. Check https://github.com/${repository}/actions`);
+try { run('gh', ['run', 'watch', String(ci.databaseId), '--exit-status'], { inherit: true }); }
+catch { fail(`CI failed for ${tag}. Fix it in a new commit and release the next patch version; do not move the tag.\nhttps://github.com/${repository}/actions/runs/${ci.databaseId}`); }
+
+// ── publish through the workflow ───────────────────────────────────────────
+step('Publishing through the "Publish release" workflow');
+const started = Date.now();
+run('gh', ['workflow', 'run', 'release.yml', '-f', `tag=${tag}`, '-f', `build_run_id=${ci.databaseId}`]);
+let publish;
+for (let i = 0; i < 40 && !publish; i++) {
+  await sleep(3000);
+  publish = json(['run', 'list', '--workflow', 'release.yml', '--limit', '5', '--json', 'databaseId,createdAt']).find((r) => Date.parse(r.createdAt) >= started - 10000);
+}
+if (!publish) fail('The publish workflow did not start; run it manually from the Actions tab.');
+try { run('gh', ['run', 'watch', String(publish.databaseId), '--exit-status'], { inherit: true }); }
+catch { fail(`Publishing failed: https://github.com/${repository}/actions/runs/${publish.databaseId}`); }
+
+const assets = json(['release', 'view', tag, '--json', 'assets,url']);
+console.log(`\n✔ Published ${tag}: ${assets.url}`);
+console.log(`  ${assets.assets.length} assets: ${assets.assets.map((a) => a.name).join(', ')}\n`);
