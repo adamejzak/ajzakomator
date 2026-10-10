@@ -712,6 +712,7 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 /* ── status bar ────────────────────────────────────────────────────────── */
 .statusbar { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0 8px 0 12px; border-top: 1px solid var(--border); background: var(--bg-1); color: var(--muted); font-size: 11px; user-select: none; }
 .statusbar > * { flex: none; }
+.sb-spacer { flex: 1; }
 .sb-version { color: var(--text-2); font-variant-numeric: tabular-nums; }
 .sb-item { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .sb-btn { display: inline-flex; align-items: center; gap: 6px; height: 18px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); font: inherit; cursor: pointer; }
@@ -739,3 +740,19 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .grid-divider.col::after { left: 2px; right: 2px; top: 0; bottom: 0; }
 .grid-divider.row::after { top: 2px; bottom: 2px; left: 0; right: 0; }
 .grid-divider:hover::after, .grid-divider:focus-visible::after, .grid.resizing .grid-divider:active::after { opacity: 1; }
+
+/* ── changelog ─────────────────────────────────────────────────────────── */
+.modal.changelog { width: 640px; }
+.cl-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--border-2); border-radius: 7px; background: var(--bg-3); color: var(--text-2); }
+.cl-entry { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.cl-entry:last-child { border-bottom: 0; padding-bottom: 0; }
+.cl-entry header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.cl-entry h4 { margin: 0; font-size: 14px; font-weight: 600; color: #f0f0f0; font-variant-numeric: tabular-nums; }
+.cl-date { margin-left: auto; color: var(--muted); font-size: 11px; }
+.cl-badge { padding: 0 6px; border-radius: 9px; font-size: 10.5px; line-height: 17px; background: var(--bg-hover); color: var(--text-2); }
+.cl-badge.new { background: var(--accent-soft); color: var(--accent-text); }
+.cl-badge.current { background: #4ade8018; color: var(--waiting); }
+.cl-entry ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; color: var(--text); line-height: 1.5; }
+.cl-entry p { margin: 0 0 6px; color: var(--text-2); line-height: 1.5; }
+.cl-entry h5 { margin: 8px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+.cl-entry code { padding: 0 4px; border-radius: 4px; background: var(--bg-3); font-family: 'Cascadia Mono', Consolas, monospace; font-size: 11px; }

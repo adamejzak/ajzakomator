@@ -41,6 +41,7 @@ const api: McApi = {
   checkUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
   openReleases: () => ipcRenderer.send('update:open'),
+  getChangelog: (force) => ipcRenderer.invoke('changelog:get', !!force),
   on: (channel: string, cb: (...args: any[]) => void) => {
     const listener = (_e: unknown, ...args: any[]) => cb(...args);
     ipcRenderer.on(channel, listener);

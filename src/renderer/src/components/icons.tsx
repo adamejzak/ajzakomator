@@ -23,6 +23,7 @@ export const ISidebar = () => <Svg><rect x="2" y="3" width="12" height="10" rx="
 export const ISearch = () => <Svg><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></Svg>;
 export const IEdit = () => <Svg size={12}><path d="M10.5 2.5l3 3L6 13H3v-3z" /></Svg>;
 export const IBranch = () => <Svg size={11}><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="5.5" r="1.5" /><path d="M4.5 5v6M11.5 7c0 3-7 2-7 4" /></Svg>;
+export const IChangelog = () => <Svg><path d="M3 3.5h10M3 8h10M3 12.5h6" /><path d="M12 10.5v4M10 12.5h4" /></Svg>;
 export const IChevron = () => <Svg size={10}><path d="M4 6l4 4 4-4" /></Svg>;
 
 /** App mark: flat white tile with a terminal prompt. */

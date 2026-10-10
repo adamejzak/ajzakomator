@@ -3,6 +3,7 @@ import type { CellStatus } from '../shared/status';
 import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
+import type { ChangelogResult } from '../shared/changelog';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
 export type { SessionInfo };
@@ -55,6 +56,7 @@ export interface McApi {
   checkUpdates(): Promise<void>;
   installUpdate(): void;
   openReleases(): void;
+  getChangelog(force?: boolean): Promise<ChangelogResult>;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;

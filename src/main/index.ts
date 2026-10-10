@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -18,6 +18,7 @@ import { claudeProjectDirName, findRecentCodexSession, listSessions } from './se
 import { createSaver, loadState } from './store';
 import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
 import { scheduleUpdateCleanup, signalUpdateReady } from './updateSplash';
+import { createChangelog } from './changelog';
 import type { UpdateStrings } from '../shared/updateProgress';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 import { StateController } from './stateController';
@@ -335,6 +336,15 @@ ipcMain.on('shell:openExternal', (_e, address: string) => {
 });
 ipcMain.on('shell:openPath', (_e, p: string) => shell.openPath(p));
 ipcMain.on('shell:revealPath', (_e, p: string) => shell.showItemInFolder(p));
+const changelog = createChangelog({
+  cacheFile: join(DATA_DIR, 'changelog.json'),
+  fetchJson: async (url) => {
+    const response = await net.fetch(url, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ajzakomator' }, signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error(`GitHub ${response.status}`);
+    return response.json();
+  },
+});
+ipcMain.handle('changelog:get', (_e, force: boolean) => changelog.get(force));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
 ipcMain.on('update:install', () => installNow());

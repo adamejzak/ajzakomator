@@ -10,6 +10,7 @@ export type Modal =
   | { kind: 'grid'; projectId: string }
   | { kind: 'history'; projectId: string }
   | { kind: 'settings' }
+  | { kind: 'changelog' }
   | { kind: 'snippet'; snippetId: string | null; projectId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'file'; projectId: string; relativePath: string };
