@@ -31,7 +31,7 @@ export function UpdateBadge() {
     return () => { mounted = false; unsubscribe(); window.removeEventListener('update:renderer-error', failed); };
   }, []);
   const retry = requestUpdateCheck;
-  if (u.status === 'idle') return null;
+  if (u.status === 'idle' || u.status === 'current' || u.status === 'checking') return null;
   if (u.status === 'downloading') {
     const percent = Math.round(Math.min(100, Math.max(0, Number.isFinite(u.percent) ? u.percent! : 0)));
     return <div className="updater-badge updater-download no-drag" role="status" title={tr('Pobieranie aktualizacji w tle')}>
@@ -40,8 +40,7 @@ export function UpdateBadge() {
       <div className="updater-track" role="progressbar" aria-label={tr('Pobieranie aktualizacji w tle')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></div>
     </div>;
   }
-  if (u.status === 'checking' || u.status === 'installing') return <span className="updater-badge updater-busy no-drag" role="status"><span className="updater-spinner" aria-hidden />{tr(u.status === 'checking' ? 'Sprawdzanie aktualizacji…' : 'Instalowanie aktualizacji…')}</span>;
-  if (u.status === 'current') return <button className="updater-badge updater-current no-drag" onClick={retry} title={tr('Sprawdź aktualizacje')}>✓ {tr('Masz najnowszą wersję')}</button>;
+  if (u.status === 'installing') return <span className="updater-badge updater-busy no-drag" role="status"><span className="updater-spinner" aria-hidden />{tr('Instalowanie aktualizacji…')}</span>;
   if (u.status === 'error') return <div className="updater-badge updater-error no-drag" role="alert"><button onClick={retry}>{tr('Błąd aktualizacji · ponów')}</button><span className="updater-error-message" title={errorText(u.message ?? 'Nie udało się sprawdzić aktualizacji.')}>{errorText(u.message ?? 'Nie udało się sprawdzić aktualizacji.')}</span></div>;
   if (u.status === 'available') return <button className="updater-badge updater-action no-drag" onClick={() => window.mc.openReleases()} title={tr('Otwórz stronę pobierania')}><span className="updater-dot" />{tr('Nowa wersja {version} · pobierz', { version: u.version ?? '' })}</button>;
   return <button className="updater-badge updater-action no-drag" onClick={() => window.mc.installUpdate()} title={tr('Zainstaluj i uruchom ponownie (rozmowy wznowią się same)')}><span className="updater-dot" />{tr('Nowa wersja {version} · uruchom ponownie', { version: u.version ?? '' })}</button>;

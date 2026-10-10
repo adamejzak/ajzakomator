@@ -573,10 +573,11 @@ select option { background: #171717; color: var(--text); }
 .panel-resize:hover::after, .panel-resize:focus-visible::after, .panel-resize.dragging::after { opacity: 1; }
 .panel-resizing, .panel-resizing * { cursor: col-resize !important; user-select: none !important; }
 .sidebar-heading { display: flex; align-items: center; gap: 6px; padding: 0 2px 6px; }
-.sidebar-tabs { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; }
-.sidebar-tabs button { height: 28px; padding: 0 9px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; font-weight: 600; }
-.sidebar-tabs button:hover { background: var(--bg-hover); color: var(--text); }
-.sidebar-tabs button.on { background: var(--bg-3); border-color: var(--border); color: var(--text); }
+.sidebar-tabs { display: flex; align-items: stretch; gap: 0; flex: 1; min-width: 0; border-bottom: 1px solid var(--border-2); }
+.sidebar-tabs button { flex: 1; min-width: 0; height: 32px; margin-bottom: -1px; padding: 0 9px; border: 1px solid var(--border-2); border-top: 2px solid transparent; border-radius: 2px 2px 0 0; background: var(--bg-2); color: var(--muted); cursor: pointer; font-weight: 600; }
+.sidebar-tabs button + button { margin-left: -1px; }
+.sidebar-tabs button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.sidebar-tabs button.on { position: relative; background: var(--bg-1); border-top-color: var(--accent); border-bottom-color: var(--bg-1); color: var(--text); }
 .sidebar-tabs button:disabled { opacity: .4; cursor: default; }
 .sidebar-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .side-list { min-height: 0; display: flex; flex-direction: column; }
