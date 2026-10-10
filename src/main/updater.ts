@@ -14,6 +14,7 @@ let portable = false;
 let pending: Promise<void> | undefined;
 let watchdog: ReturnType<typeof setTimeout> | undefined;
 let getStrings: (() => UpdateStrings) | undefined;
+let autoInstallOnQuit: () => boolean = () => true;
 
 function set(next: UpdateState): void {
   clearTimeout(watchdog);
@@ -54,10 +55,17 @@ export async function checkForUpdates(): Promise<void> {
 
 export function getUpdateState(): UpdateState { return { ...state }; }
 
-/** `strings` localizes the detached update window; without it installation stays invisible as before. */
-export function initUpdater(onChange: (s: UpdateState) => void, strings?: () => UpdateStrings): void {
+export interface UpdaterHooks {
+  /** Localizes the detached update window; without it installation stays invisible as before. */
+  strings?: () => UpdateStrings;
+  /** Whether a downloaded update is installed when the app quits (the "automatic" setting). */
+  autoInstallOnQuit?: () => boolean;
+}
+
+export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHooks = {}): void {
   emit = onChange;
-  getStrings = strings;
+  getStrings = hooks.strings;
+  autoInstallOnQuit = hooks.autoInstallOnQuit ?? (() => true);
   if (initialized) { emit(state); return; }
   initialized = true;
   portable = !!(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE) || process.platform === 'darwin';
@@ -112,7 +120,7 @@ export function installNow(): void {
 }
 
 export async function installOnQuit(): Promise<void> {
-  if (portable || state.status !== 'ready') return;
+  if (portable || state.status !== 'ready' || !autoInstallOnQuit()) return;
   const shown = await showWindow('quit');
   try {
     const installed = (autoUpdater as unknown as { install(silent: boolean, relaunch: boolean): boolean }).install(true, false);

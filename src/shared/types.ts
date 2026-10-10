@@ -103,6 +103,8 @@ export interface Settings {
   notifications: boolean;
   shell: ShellKind;
   lastProfileId: string;
+  /** Install a downloaded update when the app is closed; when off, only the status bar button installs it. */
+  autoInstallUpdates: boolean;
 }
 
 export interface AppState {

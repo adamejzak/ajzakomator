@@ -369,7 +369,7 @@ app.whenReady().then(async () => {
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   createWindow();
-  initUpdater((s) => send('update:state', s), updateStrings);
+  initUpdater((s) => send('update:state', s), { strings: updateStrings, autoInstallOnQuit: () => state.settings.autoInstallUpdates });
   scheduleUpdateCleanup();
 });
 

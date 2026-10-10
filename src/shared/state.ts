@@ -23,7 +23,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude' },
+    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: true },
     sidebarCollapsed: false,
     snippetsOpen: true,
     sidebarWidth: PANEL_LIMITS.sidebar.default,
@@ -295,6 +295,7 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       language: r.settings?.language === undefined ? 'pl' : isLanguage(r.settings.language) ? r.settings.language : null,
       shell: shellsForPlatform(platform).some((shell) => shell.code === r.settings?.shell) ? r.settings!.shell! : d.settings.shell,
       lastProfileId: remap(r.settings?.lastProfileId ?? d.settings.lastProfileId),
+      autoInstallUpdates: typeof r.settings?.autoInstallUpdates === 'boolean' ? r.settings.autoInstallUpdates : d.settings.autoInstallUpdates,
     },
     projects: r.projects.map((p) => ({
       ...p,

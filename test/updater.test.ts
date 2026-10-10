@@ -138,8 +138,20 @@ describe('updater lifecycle', () => {
     expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
   });
 
+  it('installs on quit only while automatic installation is on and keeps the update for the button otherwise', async () => {
+    const api = await import('../src/main/updater');
+    let automatic = false;
+    api.initUpdater(vi.fn(), { autoInstallOnQuit: () => automatic });
+    updater.emit('update-downloaded', { version: '0.6.0' });
+    await api.installOnQuit();
+    expect(mock.install).not.toHaveBeenCalled();
+    expect(api.getUpdateState().status).toBe('ready');
+    automatic = true;
+    await api.installOnQuit();
+    expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
+  });
   describe('update window', () => {
-    const setupWindow = async () => { const api = await import('../src/main/updater'); const changed = vi.fn(); api.initUpdater(changed, () => strings); return { ...api, changed }; };
+    const setupWindow = async () => { const api = await import('../src/main/updater'); const changed = vi.fn(); api.initUpdater(changed, { strings: () => strings }); return { ...api, changed }; };
     it('stages the window runtime in the background once the update is downloaded', async () => {
       await setupWindow();
       updater.emit('update-downloaded', { version: '0.6.0' });

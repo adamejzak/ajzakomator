@@ -1,4 +1,5 @@
 import { useI18n } from '../i18n';
+import { useStore } from '../store';
 import { formatUpdateBytes, requestUpdateCheck, useUpdateState } from './UpdateBadge';
 import './updater.css';
 
@@ -7,6 +8,7 @@ export function StatusBar() {
   const { tr, errorText } = useI18n();
   const { update: u, currentVersion } = useUpdateState();
   const version = u.version ?? '';
+  const autoInstall = useStore((st) => st.s.settings.autoInstallUpdates);
 
   const status = (() => {
     switch (u.status) {
@@ -23,7 +25,10 @@ export function StatusBar() {
         </span>;
       }
       case 'ready':
-        return <button className="sb-btn sb-action" onClick={() => window.mc.installUpdate()} title={tr('Zainstaluj i uruchom ponownie (rozmowy wznowią się same)')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · uruchom ponownie', { version })}</button>;
+        return <span className="sb-item">
+          <button className="sb-btn sb-action" onClick={() => window.mc.installUpdate()} title={tr('Zainstaluj i uruchom ponownie (rozmowy wznowią się same)')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · uruchom ponownie', { version })}</button>
+          {autoInstall && <span className="sb-hint">{tr('lub automatycznie po zamknięciu aplikacji')}</span>}
+        </span>;
       case 'available':
         return <button className="sb-btn sb-action" onClick={() => window.mc.openReleases()} title={tr('Otwórz stronę pobierania')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · pobierz', { version })}</button>;
       case 'installing':

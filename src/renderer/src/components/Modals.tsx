@@ -220,6 +220,16 @@ function SettingsModal() {
             {tr("Powiadomienia, gdy agent czeka na Ciebie")}
           </label>
         </div>
+        <div className="section-title">{tr('Aktualizacje')}</div>
+        <div className="field">
+          <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>
+          <select id="settings-updates" className="select" value={s.settings.autoInstallUpdates ? 'auto' : 'manual'}
+            onChange={(e) => setSetting({ autoInstallUpdates: e.target.value === 'auto' })}>
+            <option value="auto">{tr('Automatycznie — po zamknięciu aplikacji')}</option>
+            <option value="manual">{tr('Ręcznie — dopiero po kliknięciu w stopce')}</option>
+          </select>
+          <span className="muted">{tr('Aktualizacje zawsze pobierają się w tle. Przycisk „uruchom ponownie” w stopce instaluje je od razu.')}</span>
+        </div>
         <div className="section-title">{tr("Profile agentów")}</div>
         <div className="muted" style={{ fontSize: 11.5 }}>
 

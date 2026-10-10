@@ -87,6 +87,16 @@ describe('state', () => {
     expect(s.activeProjectId).toBe(s.projects[0].id);
   });
 
+  it('normalizeState defaults automatic update installation to on and keeps an explicit choice', () => {
+    const raw = JSON.parse(JSON.stringify(defaultState()));
+    delete raw.settings.autoInstallUpdates;
+    expect(normalizeState(raw)!.settings.autoInstallUpdates).toBe(true);
+    raw.settings.autoInstallUpdates = false;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.autoInstallUpdates).toBe(false);
+    raw.settings.autoInstallUpdates = 'no';
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.autoInstallUpdates).toBe(true);
+  });
+
   it('normalizeState folds retired profiles into claude/codex', () => {
     const { s: s0, p } = withProject();
     const old = addTab(s0, p.id, { layout: layoutForCount(2), cells: [{ profileId: 'claude-opus' }, { profileId: 'codex-high' }] });
