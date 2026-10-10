@@ -117,6 +117,9 @@ export function ProjectExplorer({ project }: { project: Project }) {
       if (result.truncated) toast(tr('Rozwinięto pierwsze {count} folderów.', { count: result.paths.length }));
     } catch (error) { toast(String(error), 'error'); }
   };
+  const anyOpen = expanded.size > 0;
+  const toggleAll = () => (anyOpen ? setExpanded(new Set()) : void expandAll());
+  const toggleAllLabel = anyOpen ? tr("Zwiń wszystkie foldery") : tr("Rozwiń wszystkie foldery");
   const findInFiles = () => setUi({ modal: { kind: 'search', projectId: project.id } });
   const menu = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
@@ -126,8 +129,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
       { header: project.name },
       { label: tr("Odśwież pliki"), onClick: reload },
       { label: tr("Znajdź i zamień w plikach…"), onClick: findInFiles },
-      { label: tr("Rozwiń wszystkie foldery"), onClick: () => void expandAll() },
-      { label: tr("Zwiń wszystkie foldery"), onClick: () => setExpanded(new Set()) },
+      { label: toggleAllLabel, onClick: toggleAll },
       { label: tr("Otwórz folder w menedżerze plików"), onClick: () => window.mc.openPath(project.path) },
       { label: tr("Otwórz projekt w edytorze"), onClick: () => window.mc.openInEditor(project.path) },
       { sep: true },
@@ -141,8 +143,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
         <ProjectIconView project={project} />
         <span className="explorer-project" title={project.path}>{project.name}</span>
         <button className="btn ghost icon" title={tr("Znajdź i zamień w plikach…")} aria-label={tr("Znajdź i zamień w plikach…")} onClick={findInFiles}><ISearch /></button>
-        <button className="btn ghost icon" title={tr("Rozwiń wszystkie foldery")} aria-label={tr("Rozwiń wszystkie foldery")} onClick={() => void expandAll()}><IExpandAll /></button>
-        <button className="btn ghost icon" title={tr("Zwiń wszystkie foldery")} aria-label={tr("Zwiń wszystkie foldery")} onClick={() => setExpanded(new Set())}><ICollapseAll /></button>
+        <button className="btn ghost icon" title={toggleAllLabel} aria-label={toggleAllLabel} onClick={toggleAll}>{anyOpen ? <ICollapseAll /> : <IExpandAll />}</button>
         <button className="btn ghost icon" title={tr("Odśwież pliki")} aria-label={tr("Odśwież pliki")} onClick={reload}><RefreshIcon spinning={spinning} /></button>
       </div>
       <div className="explorer-tree">

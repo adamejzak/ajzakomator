@@ -85,7 +85,7 @@ describe('updater lifecycle', () => {
   it('exposes disabled development checks', async () => {
     mock.app.isPackaged = false;
     const api = await setup(); await api.checkForUpdates();
-    expect(api.getUpdateState().status).toBe('error'); expect(mock.check).not.toHaveBeenCalled();
+    expect(api.getUpdateState().status).toBe('unavailable'); expect(mock.check).not.toHaveBeenCalled();
   });
   it('exposes a stalled transfer and recovers when progress resumes', async () => {
     const api = await setup();

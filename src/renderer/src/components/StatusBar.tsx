@@ -39,6 +39,8 @@ export function StatusBar() {
         </span>;
       case 'available':
         return <button className="sb-btn sb-action" onClick={() => window.mc.openReleases()} title={tr('Otwórz stronę pobierania')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · pobierz', { version })}</button>;
+      case 'unavailable':
+        return <span className="sb-item sb-muted" role="status">{errorText(u.message ?? '')}</span>;
       case 'installing':
         return <span className="sb-item" role="status"><RefreshIcon spinning />{tr('Instalowanie aktualizacji…')}</span>;
       case 'error': {
@@ -53,7 +55,7 @@ export function StatusBar() {
     }
   })();
 
-  const shown = checking && !['downloading', 'ready', 'available', 'installing', 'error'].includes(u.status)
+  const shown = checking && !['downloading', 'ready', 'available', 'installing', 'error', 'unavailable'].includes(u.status)
     ? <span className="sb-item" role="status"><RefreshIcon spinning />{tr('Sprawdzanie aktualizacji…')}</span>
     : status;
   return (

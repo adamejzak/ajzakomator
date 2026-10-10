@@ -13,7 +13,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await evaluate('document.querySelector(".brand-trigger").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 20 }))');
   await until(() => evaluate('!!document.querySelector(".menu")'), 'brand menu');
   await click('.menu-item', 'Check for updates');
-  await until(() => evaluate('!!document.querySelector(".sb-error")'), 'visible dev update status');
+  await until(() => evaluate('!!document.querySelector(".sb-muted")'), 'visible dev update status');
   const handle = await evaluate('(() => { const r = document.querySelector(".panel-resize.edge-sidebar").getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+120}; })()');
   assert.ok(await evaluate(`document.elementFromPoint(${handle.x}, ${handle.y})?.classList.contains('panel-resize')`), 'resize hit target');
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...handle });

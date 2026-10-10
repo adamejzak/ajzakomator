@@ -41,7 +41,7 @@ export async function checkForUpdates(): Promise<void> {
     return pending;
   }
   if (!app.isPackaged) {
-    set({ status: 'error', message: 'Aktualizacje są dostępne w zainstalowanej aplikacji.' });
+    set({ status: 'unavailable', message: 'Aktualizacje są dostępne w zainstalowanej aplikacji.' });
     return;
   }
   set({ status: 'checking' });

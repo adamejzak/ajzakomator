@@ -148,7 +148,7 @@ export interface SessionInfo {
 }
 
 export interface UpdateState {
-  status: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'error';
+  status: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'error' | 'unavailable';
   message?: string;
   transferred?: number;
   total?: number;
