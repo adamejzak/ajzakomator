@@ -42,11 +42,13 @@ describe('PtyManager (real PTY)', () => {
   });
 
   it('killAll resolves once all terminals are gone', async () => {
-    const { sink } = collect();
+    const { out, sink } = collect();
     const m = new PtyManager(sink);
     m.spawn({ id: 'x', cwd: process.cwd(), cols: 80, rows: 24, env, shell });
     m.spawn({ id: 'y', cwd: process.cwd(), cols: 80, rows: 24, env, shell: alternateShell });
-    await new Promise((r) => setTimeout(r, 500));
+    // Killing a ConPTY while its shell is still starting can crash the native module; wait until both shells are up.
+    await waitFor(() => out.has('x') && out.has('y'));
+    await new Promise((r) => setTimeout(r, 300));
     const t0 = Date.now();
     await m.killAll(5000);
     expect(Date.now() - t0).toBeLessThan(5000);

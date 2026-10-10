@@ -42,6 +42,12 @@ export class PtyManager {
   private entries = new Map<string, Entry>();
   /** Sizes that arrived before their spawn request (the renderer's port is faster than main). */
   private earlySizes = new Map<string, { cols: number; rows: number }>();
+  /**
+   * node-pty 1.1.0 on Windows removes a finished terminal from one shared list on a thread per terminal, without
+   * a lock. Two terminals ending at the same moment corrupt it and trip a native assertion ("remove_pty_baton"),
+   * which pops up an error dialog. Terminals are therefore killed one at a time, each after the previous exited.
+   */
+  private ending: Promise<void> = Promise.resolve();
 
   constructor(private sink: PtySink) {}
 
@@ -132,18 +138,21 @@ export class PtyManager {
     if (!e) return Promise.resolve();
     this.entries.delete(id);
     if (e.timer) clearTimeout(e.timer);
-    try {
-      e.proc.kill();
-    } catch {
-      // already gone
-    }
-    return Promise.race([e.exited, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
+    const turn = this.ending.then(() => {
+      try {
+        e.proc.kill();
+      } catch {
+        // already gone
+      }
+      return Promise.race([e.exited, new Promise<void>((r) => setTimeout(r, timeoutMs))]);
+    });
+    this.ending = turn.then(() => undefined, () => undefined);
+    return turn;
   }
 
-  /** Kills every terminal and waits (bounded) for their exits — avoids ConPTY teardown crashes. */
+  /** Kills every terminal and waits (bounded) for their exits; they end one after another (see `ending`). */
   async killAll(timeoutMs = 3000): Promise<void> {
-    const waits = [...this.entries.values()].map((e) => e.exited);
-    for (const id of [...this.entries.keys()]) this.kill(id);
-    await Promise.race([Promise.all(waits), new Promise((r) => setTimeout(r, timeoutMs))]);
+    const kills = [...this.entries.keys()].map((id) => this.kill(id));
+    await Promise.race([Promise.all(kills), new Promise((r) => setTimeout(r, timeoutMs))]);
   }
 }
