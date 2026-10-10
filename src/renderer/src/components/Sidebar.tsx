@@ -15,6 +15,7 @@ import { StatusBadges } from './StatusBadges';
 import { PanelResizeHandle, type PanelResizeProps } from './PanelResizeHandle';
 import { ProjectExplorer } from './ProjectExplorer';
 import { ProjectIconView } from './ProjectIcon';
+import { UsagePanel } from './UsagePanel';
 
 const INACTIVE_TABS = 3;
 const PROJECT_MIME = 'application/x-mc-project';
@@ -243,6 +244,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
       )}
       </div>
       )}
+      <UsagePanel />
     </aside>
   );
 }

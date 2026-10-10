@@ -18,6 +18,7 @@ import { FilePreview } from './FilePreview';
 import { isLanguage, LANGUAGES } from '../../../shared/languages';
 import { formatAgo } from '../../../shared/i18n';
 import { shellsForPlatform } from '../../../shared/platform';
+import { USAGE_INTERVALS_MINUTES } from '../../../shared/usage';
 
 export function Modals() {
   const modal = useStore((st) => st.ui.modal);
@@ -233,6 +234,18 @@ function SettingsModal() {
             <option value="manual">{tr('Ręcznie - dopiero po kliknięciu w stopce')}</option>
           </select>
           <span className="muted">{tr('Aktualizacje zawsze pobierają się w tle. Przycisk „uruchom ponownie” w stopce instaluje je od razu.')}</span>
+        </div>
+        <div className="section-title">{tr('Konta AI')}</div>
+        <label className="check">
+          <input type="checkbox" checked={s.settings.showAiUsage} onChange={(e) => setSetting({ showAiUsage: e.target.checked })} />
+          {tr('Pokazuj limity kont AI')}
+        </label>
+        <div className="field">
+          <label htmlFor="settings-usage-interval">{tr('Odświeżanie limitów')}</label>
+          <select id="settings-usage-interval" className="select" style={{ width: 200 }} value={s.settings.usageIntervalMinutes}
+            onChange={(e) => setSetting({ usageIntervalMinutes: Number(e.target.value) })}>
+            {USAGE_INTERVALS_MINUTES.map((minutes) => <option key={minutes} value={minutes}>{tr('co {count} min', { count: minutes })}</option>)}
+          </select>
         </div>
         <div className="section-title">{tr("Profile agentów")}</div>
         <div className="muted" style={{ fontSize: 11.5 }}>

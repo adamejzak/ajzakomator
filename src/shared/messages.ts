@@ -2,10 +2,12 @@
 // Polish uses the source message (the key). Placeholders must match across a row.
 import { automationMessages } from './automationMessages';
 import { updateMessages } from './updateMessages';
+import { usageMessages } from './usageMessages';
 import { uxMessages } from './uxMessages';
 export const messages = {
   ...automationMessages,
   ...updateMessages,
+  ...usageMessages,
   ...uxMessages,
   'Wybierz język': ['Choose your language', 'Sprache wählen', 'Elige tu idioma', 'Choisissez votre langue', 'Escolha o seu idioma'],
   'Witaj w ajzakomatorze': ['Welcome to ajzakomator', 'Willkommen bei ajzakomator', 'Bienvenido a ajzakomator', 'Bienvenue dans ajzakomator', 'Bem-vindo ao ajzakomator'],
