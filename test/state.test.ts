@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { layoutForCount } from '../src/shared/layout';
 import {
-  addCell, addProject, addTab, closeTab, defaultState, findCell, moveProject, moveSnippet, normalizeState, removeCell, removeProject,
+  addCell, addProject, addTab, CELL_COLORS, nextCellColor, closeTab, defaultState, findCell, moveProject, moveSnippet, normalizeState, removeCell, removeProject,
   restoreTab, updateCell, upsertSnippet,
 } from '../src/shared/state';
 
@@ -85,6 +85,30 @@ describe('state', () => {
     const b = s.projects[1];
     s = removeProject(s, b.id);
     expect(s.activeProjectId).toBe(s.projects[0].id);
+  });
+
+  it('gives every new cell its own accent color and repeats the palette only after it is used up', () => {
+    const { s, p } = withProject();
+    let state = addTab(s, p.id, { layout: layoutForCount(4), cells: [{ profileId: 'shell' }] });
+    const tab = state.projects[0].tabs.at(-1)!;
+    expect(tab.cells.map((c) => c.color)).toEqual(CELL_COLORS.slice(0, 4));
+    state = addCell(state, p.id, tab.id, 'shell');
+    expect(state.projects[0].tabs.at(-1)!.cells.map((c) => c.color)).toEqual(CELL_COLORS.slice(0, 5));
+    const big = addTab(s, p.id, { layout: layoutForCount(20), cells: [{ profileId: 'shell' }] }).projects[0].tabs.at(-1)!;
+    expect(new Set(big.cells.map((c) => c.color)).size).toBe(20);
+  });
+
+  it('keeps explicit colors and fills the first free color after a cell was removed', () => {
+    const { s, p } = withProject();
+    let state = addTab(s, p.id, { layout: layoutForCount(3), cells: [{ profileId: 'shell', color: '#123456' }, { profileId: 'shell' }, { profileId: 'shell' }] });
+    const tab = state.projects[0].tabs.at(-1)!;
+    expect(tab.cells.map((c) => c.color)).toEqual(['#123456', CELL_COLORS[0], CELL_COLORS[1]]);
+    state = removeCell(state, p.id, tab.id, tab.cells[1].id);
+    state = addCell(state, p.id, tab.id, 'shell');
+    expect(state.projects[0].tabs.at(-1)!.cells.map((c) => c.color)).toEqual(['#123456', CELL_COLORS[1], CELL_COLORS[0]]);
+    state = addCell(state, p.id, tab.id, 'shell', { color: '#abcdef' });
+    expect(state.projects[0].tabs.at(-1)!.cells.at(-1)!.color).toBe('#abcdef');
+    expect(nextCellColor([...CELL_COLORS, '#111111'])).toBe(CELL_COLORS[21 % CELL_COLORS.length]);
   });
 
   it('normalizeState defaults automatic update installation to on and keeps an explicit choice', () => {

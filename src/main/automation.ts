@@ -1,5 +1,5 @@
 import { automationSchemas, taskPrompt, type AgentMessage, type AgentRuntimeStatus, type AgentTask, type AutomationOperation } from '../shared/automation';
-import { closeTab, addTab, findCell, getProfile, setActiveTab, uid, updateCell, upsertPreset, upsertSnippet } from '../shared/state';
+import { CELL_COLORS, closeTab, addTab, findCell, getProfile, setActiveTab, uid, updateCell, upsertPreset, upsertSnippet } from '../shared/state';
 import { layoutForCount, layoutFromRows } from '../shared/layout';
 import type { AppState, Cell, Tab, Worktree } from '../shared/types';
 import type { StateController } from './stateController';
@@ -17,8 +17,6 @@ export interface AutomationDependencies {
 const READS = new Set<AutomationOperation>(['get_context', 'read_inbox', 'list_agents', 'list_library', 'get_snippet', 'get_tasks', 'get_messages']);
 const UI_ONLY = new Set<AutomationOperation>(['set_paused', 'set_role', 'mark_pasted']);
 const DELIVERY_LIMIT = 500;
-const TEAM_COLORS = ['#60a5fa', '#a78bfa', '#34d399', '#fbbf24', '#fb7185', '#22d3ee', '#c084fc', '#a3e635',
-  '#818cf8', '#2dd4bf', '#f472b6', '#fb923c', '#38bdf8', '#4ade80', '#e879f9', '#facc15', '#93c5fd', '#6ee7b7', '#fda4af', '#d8b4fe'];
 
 export class AutomationService {
   readonly statuses = new Map<string, AgentRuntimeStatus>();
@@ -346,7 +344,7 @@ export class AutomationService {
         const cell = cells[i];
         const worktree = cell.worktree ? await this.deps.createWorktree(project.path, `${a.name || existing?.tab.name}-${uid().slice(0, 8)}-${i + 1}`) : undefined;
         if (worktree) created.push(worktree);
-        specs.push({ profileId: cell.profileId, role: cell.role, name: cell.name, color: cell.color ?? (actorId ? TEAM_COLORS[((existing?.tab.cells.length ?? 0) + i) % TEAM_COLORS.length] : undefined), model: cell.model, worktree });
+        specs.push({ profileId: cell.profileId, role: cell.role, name: cell.name, color: cell.color ?? (actorId ? CELL_COLORS[((existing?.tab.cells.length ?? 0) + i) % CELL_COLORS.length] : undefined), model: cell.model, worktree });
       }
       let gridId = '';
       const cellIds: string[] = [];
@@ -367,7 +365,7 @@ export class AutomationService {
           grid = { ...current, layout, cells: [...current.cells, ...specs.map((spec) => ({ ...spec, id: uid() }))] };
           next = { ...s, projects: s.projects.map((p) => p.id === project.id ? { ...p, tabs: p.tabs.map((t) => t.id === grid.id ? grid : t) } : p) };
         } else {
-          next = addTab(s, project.id, { name: a.name, color: a.color ?? (actorId ? TEAM_COLORS[latest.tabs.length % TEAM_COLORS.length] : undefined), layout, cells: specs });
+          next = addTab(s, project.id, { name: a.name, color: a.color ?? (actorId ? CELL_COLORS[latest.tabs.length % CELL_COLORS.length] : undefined), layout, cells: specs });
           grid = next.projects.find((p) => p.id === project.id)!.tabs.at(-1)!;
         }
         gridId = grid.id;

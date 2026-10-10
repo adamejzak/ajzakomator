@@ -41,10 +41,20 @@ const mapTab = (s: AppState, projectId: string, tabId: string, fn: (t: Tab) => T
 
 type CellInput = { color?: string; model?: string; profileId: string; role?: Cell['role']; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session'] };
 
-const newCell = (c: CellInput): Cell => ({
+/** Accent colors handed out to new cells, in order; also used for agents created by a coordinator. */
+export const CELL_COLORS = ['#60a5fa', '#a78bfa', '#34d399', '#fbbf24', '#fb7185', '#22d3ee', '#c084fc', '#a3e635',
+  '#818cf8', '#2dd4bf', '#f472b6', '#fb923c', '#38bdf8', '#4ade80', '#e879f9', '#facc15', '#93c5fd', '#6ee7b7', '#fda4af', '#d8b4fe'];
+
+/** The first accent color no other cell of the grid uses; once all are taken the palette repeats. */
+export function nextCellColor(used: Array<string | undefined>): string {
+  const taken = new Set(used.map((color) => color?.toLowerCase()));
+  return CELL_COLORS.find((color) => !taken.has(color)) ?? CELL_COLORS[used.length % CELL_COLORS.length];
+}
+
+const newCell = (c: CellInput, color?: string): Cell => ({
   id: uid(),
   profileId: c.profileId,
-  ...(c.color ? { color: c.color } : {}),
+  ...((c.color ?? color) ? { color: c.color ?? color } : {}),
   ...(c.model ? { model: c.model } : {}),
   ...(c.role ? { role: c.role } : {}),
   ...(c.name?.trim() ? { name: c.name.trim() } : {}),
@@ -118,10 +128,11 @@ export function addTab(s: AppState, projectId: string, input: NewTabInput): AppS
   const project = s.projects.find((p) => p.id === projectId);
   if (!project) return s;
   const count = input.layout.areas.length;
-  const cells = Array.from({ length: count }, (_, i) => {
+  const cells: Cell[] = [];
+  for (let i = 0; i < count; i++) {
     const spec = input.cells[i] ?? input.cells[0] ?? { profileId: 'shell' };
-    return newCell(spec);
-  });
+    cells.push(newCell(spec, spec.color ? undefined : nextCellColor(cells.map((cell) => cell.color))));
+  }
   const tab: Tab = { id: uid(), ...(input.color ? { color: input.color } : {}), name: input.name ?? nextTabName(project), layout: input.layout, cells };
   return mapProject(s, projectId, (p) => ({ ...p, tabs: [...p.tabs, tab], activeTabId: tab.id }));
 }
@@ -189,7 +200,7 @@ export function addCell(
   return mapTab(s, projectId, tabId, (t) => {
     const layout = growLayout(t.layout);
     if (!layout) return t;
-    return { ...t, layout, cells: [...t.cells, newCell({ profileId, ...extra })] };
+    return { ...t, layout, cells: [...t.cells, newCell({ profileId, ...extra }, extra.color ? undefined : nextCellColor(t.cells.map((cell) => cell.color)))] };
   });
 }
 
