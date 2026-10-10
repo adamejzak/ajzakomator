@@ -1,4 +1,4 @@
-// npm run release -- [patch|minor|major|x.y.z] --title "short summary" [--current] [--dry-run]
+// npm run publish-release -- [patch|minor|major|x.y.z] --title "short summary" [--current] [--dry-run]
 //
 // Releases through the GitHub workflows, never from this machine:
 //   1. checks the working tree, branch and release notes, runs typecheck and tests
