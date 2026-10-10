@@ -1,7 +1,7 @@
 // win32-input-mode (DECSET ?9001) encoder, as implemented by Windows Terminal.
 // ConPTY requests it on startup; while active, every keydown AND keyup is sent as
 //   ESC [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _
-// so console apps (e.g. crossterm-based Codex) receive real key-release events — this is
+// so console apps (e.g. crossterm-based Codex) receive real key-release events - this is
 // what makes "hold Space to talk" work.
 
 export interface KeyLike {

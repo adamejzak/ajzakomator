@@ -229,8 +229,8 @@ function SettingsModal() {
           <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>
           <select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.autoInstallUpdates ? 'auto' : 'manual'}
             onChange={(e) => setSetting({ autoInstallUpdates: e.target.value === 'auto' })}>
-            <option value="auto">{tr('Automatycznie — po zamknięciu aplikacji')}</option>
-            <option value="manual">{tr('Ręcznie — dopiero po kliknięciu w stopce')}</option>
+            <option value="auto">{tr('Automatycznie - po zamknięciu aplikacji')}</option>
+            <option value="manual">{tr('Ręcznie - dopiero po kliknięciu w stopce')}</option>
           </select>
           <span className="muted">{tr('Aktualizacje zawsze pobierają się w tle. Przycisk „uruchom ponownie” w stopce instaluje je od razu.')}</span>
         </div>

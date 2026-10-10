@@ -133,7 +133,7 @@ try {
   const inbox = await call(backend, 'get_tasks', { status: 'queued' });
   assert.equal(inbox.length, 1);
   await call(backend, 'update_task', { taskId: inbox[0].id, status: 'in_progress' });
-  await call(backend, 'update_task', { taskId: inbox[0].id, status: 'completed', result: { summary: 'Backend sprawdzony — testy przeszły.', files: ['src/backend.ts'], tests: ['smoke: passed'], branch: 'mc/backend' } });
+  await call(backend, 'update_task', { taskId: inbox[0].id, status: 'completed', result: { summary: 'Backend sprawdzony - testy przeszły.', files: ['src/backend.ts'], tests: ['smoke: passed'], branch: 'mc/backend' } });
   const message = await call(coordinator, 'send_message', { toCellId: created.cellIds[0], text: 'Dziękuję, przekazuję do review.' });
   const combined = await call(backend, 'read_inbox', { acknowledge: true });
   assert.equal(combined.messages[0].id, message.id);

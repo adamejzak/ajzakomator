@@ -57,7 +57,7 @@ export function ChangelogModal() {
       <div className="modal-body">
         {result?.error && (
           <div className="cl-note" role="alert">
-            {result.stale ? tr('Brak połączenia z GitHubem — pokazuję zapisaną kopię.') : tr('Nie udało się pobrać listy zmian.')}
+            {result.stale ? tr('Brak połączenia z GitHubem - pokazuję zapisaną kopię.') : tr('Nie udało się pobrać listy zmian.')}
             <button className="btn small" onClick={() => load(true)} disabled={spinning}><RefreshIcon spinning={spinning} />{tr('Ponów')}</button>
           </div>
         )}

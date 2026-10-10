@@ -17,7 +17,7 @@ Przełączaj projekty, gdy terminale nadal pracują w tle.
 
 ## Co potrafi
 
-- **Opcjonalny MCP dla agentów**: role, gridy w tle, zadania z wynikami i wiadomości w panelu AI. Zwykłe gridy domyślnie działają bez MCP — [instrukcja](docs/MCP.md).
+- **Opcjonalny MCP dla agentów**: role, gridy w tle, zadania z wynikami i wiadomości w panelu AI. Zwykłe gridy domyślnie działają bez MCP - [instrukcja](docs/MCP.md).
 - **Projekty po lewej**, a w każdym kilka gridów jako zakładki: od jednego terminala po 5×4, układy rzędami (`3+2`, `2+2+1`) i scalanie komórek
 - **Każda komórka** może mieć nazwę, kolor, prompt startowy i osobny `git worktree`
 - **Statusy na żywo**: ◐ pracuje, ● czeka na Ciebie, plus powiadomienie systemowe, gdy agent w tle skończy
@@ -70,7 +70,7 @@ Język zmienisz w **Ustawienia → Język aplikacji**. Przy pierwszym uruchomien
 
 ## Aktualizacje
 
-Zainstalowana wersja Windows sprawdza GitHub Releases i pobiera aktualizacje w tle. Nagłówek pokazuje postęp, rozmiar i prędkość pobierania. Gdy pobieranie się skończy, wybierz **Nowa wersja … · uruchom ponownie** albo zamknij aplikację normalnie — pobrana aktualizacja zainstaluje się bez ponownego uruchamiania. Przed restartem zapisz zmiany w edytorze. Rozmowy agentów są przywracane przez mechanizm wznowienia ich CLI.
+Zainstalowana wersja Windows sprawdza GitHub Releases i pobiera aktualizacje w tle. Nagłówek pokazuje postęp, rozmiar i prędkość pobierania. Gdy pobieranie się skończy, wybierz **Nowa wersja … · uruchom ponownie** albo zamknij aplikację normalnie - pobrana aktualizacja zainstaluje się bez ponownego uruchamiania. Przed restartem zapisz zmiany w edytorze. Rozmowy agentów są przywracane przez mechanizm wznowienia ich CLI.
 
 Ręczne sprawdzenie: kliknij prawym przyciskiem nazwę i wersję **ajzakomator**, a następnie wybierz **Sprawdź aktualizacje**. Po błędzie nagłówek pokazuje jego treść i pozwala ponowić próbę.
 
@@ -125,7 +125,7 @@ Wydanie wszystkich platform opublikujesz przez **Actions → Publish release**, 
 
 Dane aplikacji są lokalne: `%APPDATA%\ajzakomator\state.json` na Windowsie i `~/Library/Application Support/ajzakomator/state.json` na Macu.
 
-Sprawdzanie aktualizacji łączy się z GitHub Releases. Agenci używają usług skonfigurowanych w ich własnych CLI. Lokalny MCP służy do zarządzania zespołem w aplikacji — [instrukcja po polsku](docs/MCP.md), [English guide](docs/MCP.en.md).
+Sprawdzanie aktualizacji łączy się z GitHub Releases. Agenci używają usług skonfigurowanych w ich własnych CLI. Lokalny MCP służy do zarządzania zespołem w aplikacji - [instrukcja po polsku](docs/MCP.md), [English guide](docs/MCP.en.md).
 
 Zrzuty README odtworzysz po zbudowaniu aplikacji poleceniem `node scripts/capture-readme.mjs`. Skrypt korzysta z osobnych danych tymczasowych i rzeczywistego renderera Electron.
 

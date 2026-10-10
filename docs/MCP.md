@@ -6,9 +6,9 @@ Integracja jest opcjonalna. Nowy grid domyślnie ma **Bez MCP**: uruchamia zwyk�
 
 W oknie „Nowy grid” wybierz rolę dla wybranych komórek:
 
-- **Bez MCP** — zwykły agent, bez połączenia z serwerem Ajzakomatora.
-- **Wykonawca** — własne zadania, raportowanie wyników, wiadomości do agentów projektu i snippety.
-- **Koordynator** — dodatkowo tworzenie gridów, presetów i przydzielanie zadań innym agentom.
+- **Bez MCP** - zwykły agent, bez połączenia z serwerem Ajzakomatora.
+- **Wykonawca** - własne zadania, raportowanie wyników, wiadomości do agentów projektu i snippety.
+- **Koordynator** - dodatkowo tworzenie gridów, presetów i przydzielanie zadań innym agentom.
 
 Można mieszać wszystkie warianty w jednym gridzie. Role zapisują się w presetach. PowerShell i inne zwykłe powłoki nie korzystają z MCP.
 
@@ -20,7 +20,7 @@ Panel rozróżnia wymagany restart, skonfigurowane MCP oczekujące na agenta i f
 
 Przycisk **AI** otwiera panel agentów, zadań, wiadomości i aktywności. Zadania mają statusy kolejki, pracy, blokady, ukończenia i anulowania. Wynik może zawierać podsumowanie, pliki, gałąź, commit i informacje o testach. Wiadomości mają potwierdzenie przeczytania. Dane zapisują się razem ze stanem aplikacji.
 
-Zadania i wiadomości trafiają do trwałej skrzynki MCP. `read_inbox` odczytuje własne zadania i nieprzeczytane wiadomości razem; `acknowledge: true` zbiorczo potwierdza zwrócone wiadomości. Osobne `get_tasks` i `get_messages` nadal są dostępne. Agent powinien sprawdzać skrzynkę przy rozpoczęciu i zakończeniu zadania oraz po powiadomieniu, zamiast stale odpytywać serwer. Sam serwer nie gwarantuje obudzenia modelu. Potwierdzona, uruchomiona sesja Codexa może dodatkowo otrzymać treść przez `codex queue`. Potwierdzenie wymaga wybrania sesji z historii — dopasowanie pliku rozmowy na podstawie czasu nie wystarcza. Wersja Codexa musi obsługiwać tę komendę.
+Zadania i wiadomości trafiają do trwałej skrzynki MCP. `read_inbox` odczytuje własne zadania i nieprzeczytane wiadomości razem; `acknowledge: true` zbiorczo potwierdza zwrócone wiadomości. Osobne `get_tasks` i `get_messages` nadal są dostępne. Agent powinien sprawdzać skrzynkę przy rozpoczęciu i zakończeniu zadania oraz po powiadomieniu, zamiast stale odpytywać serwer. Sam serwer nie gwarantuje obudzenia modelu. Potwierdzona, uruchomiona sesja Codexa może dodatkowo otrzymać treść przez `codex queue`. Potwierdzenie wymaga wybrania sesji z historii - dopasowanie pliku rozmowy na podstawie czasu nie wystarcza. Wersja Codexa musi obsługiwać tę komendę.
 
 Dla Claude oraz niepotwierdzonych sesji Codexa dostępne jest **Kopiuj prompt** i ręczne wklejenie do terminala. Błąd dostarczenia nie usuwa zadania. Można ponowić dostarczenie. Anulowanie zadania zmienia jego stan, ale nie przerywa pracy modelu.
 

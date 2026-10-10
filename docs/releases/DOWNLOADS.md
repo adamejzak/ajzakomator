@@ -7,7 +7,7 @@ Choose from the assets attached to this release. The version number in the file 
 | --- | --- | --- |
 | **Windows 10 / 11 (x64)** | `ajzakomator-Setup-<version>.exe` | **Recommended installer.** Installs the app and creates shortcuts. Installed builds support automatic updates. |
 | **Windows, without installation** | `ajzakomator-Portable-<version>.exe` | **Portable:** run the executable directly, without a setup wizard. Update it manually by downloading a new executable. |
-| **Mac with Apple Silicon** — M1, M2, M3, M4 or newer | `ajzakomator-<version>-mac-arm64.dmg` | **Recommended for Apple Silicon.** Open the DMG and drag ajzakomator into Applications. |
+| **Mac with Apple Silicon** - M1, M2, M3, M4 or newer | `ajzakomator-<version>-mac-arm64.dmg` | **Recommended for Apple Silicon.** Open the DMG and drag ajzakomator into Applications. |
 | **Mac with an Intel processor** | `ajzakomator-<version>-mac-x64.dmg` | **Recommended for Intel Macs.** Open the DMG and drag ajzakomator into Applications. |
 | **Mac, ZIP alternative** | `ajzakomator-<version>-mac-arm64.zip` or `…-mac-x64.zip` | Extract the ZIP and move the app into Applications. Choose the same architecture as above. |
 

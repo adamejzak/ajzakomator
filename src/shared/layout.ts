@@ -23,7 +23,7 @@ export const MAX_COLS = 5;
 export const MAX_ROWS = 4;
 export const MAX_CELLS = MAX_COLS * MAX_ROWS;
 
-// Auto-grow sequence: [cols, capacity] — 1, 2, 2×2, 3×2, 3×3, 4×3, 5×4.
+// Auto-grow sequence: [cols, capacity] - 1, 2, 2×2, 3×2, 3×3, 4×3, 5×4.
 const GROW_STEPS: Array<[number, number]> = [[1, 1], [2, 2], [2, 4], [3, 6], [3, 9], [4, 12], [5, 20]];
 
 const sortAreas = (areas: Area[]) => [...areas].sort((a, b) => a.row - b.row || a.col - b.col);

@@ -34,7 +34,7 @@ function parseLines(text: string): any[] {
     try {
       out.push(JSON.parse(line));
     } catch {
-      // partial line at a slice boundary or garbage — skip
+      // partial line at a slice boundary or garbage - skip
     }
   }
   return out;
@@ -82,7 +82,7 @@ export function listClaudeSessions(home: string, projectPath: string): SessionIn
       const s = readClaudeSession(join(dir, f));
       if (s) out.push(s);
     } catch {
-      // unreadable file — skip
+      // unreadable file - skip
     }
   }
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -183,7 +183,7 @@ export function listCodexSessions(home: string, projectPath: string): SessionInf
 }
 
 /**
- * Codex session for `cwd` written within the last `windowMs` and not bound elsewhere — called right
+ * Codex session for `cwd` written within the last `windowMs` and not bound elsewhere - called right
  * after a Codex cell finished a turn, when its rollout file was just appended to.
  */
 export function findRecentCodexSession(home: string, cwd: string, windowMs: number, exclude: Set<string>): string | null {

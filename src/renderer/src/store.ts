@@ -36,7 +36,7 @@ export interface Ui {
   toast: { text: string; kind: 'info' | 'error' } | null;
   cellErrors: Record<string, string>;
   missingPaths: Record<string, true>;
-  /** Conversation titles by session id (from Claude/Codex transcripts) — default cell labels. */
+  /** Conversation titles by session id (from Claude/Codex transcripts) - default cell labels. */
   sessionTitles: Record<string, string>;
   /** Bumped when every terminal must be (re)started, e.g. after a pty host crash. */
   epoch: number;

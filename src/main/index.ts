@@ -56,7 +56,7 @@ const hooks = new HookServer();
 const alive = new Set<string>();
 /** Codex session ids handed to cells this run (state may lag behind the renderer). */
 const claimedCodex = new Set<string>();
-/** Live notifications — Windows drops click handlers of garbage-collected ones. */
+/** Live notifications - Windows drops click handlers of garbage-collected ones. */
 const notifications = new Set<Notification>();
 /** Only sessions explicitly chosen by the user authorize native message delivery. */
 const verifiedCodex = new Map<string, string>();
@@ -72,7 +72,7 @@ const updateStrings = (): UpdateStrings => ({
     installing: tr('Instalowanie nowej wersji…'),
     launching: tr('Uruchamianie ajzakomatora…'),
   },
-  done: tr('Gotowe — uruchamiam nową wersję'),
+  done: tr('Gotowe - uruchamiam nową wersję'),
   doneQuit: tr('Aktualizacja zainstalowana'),
   slow: tr('Aktualizacja trwa dłużej niż zwykle'),
   slowHint: tr('Możesz uruchomić ajzakomator ręcznie.'),
