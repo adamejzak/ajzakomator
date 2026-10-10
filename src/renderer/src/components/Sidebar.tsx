@@ -9,7 +9,7 @@ import type { Project } from '../../../shared/types';
 import { closeTab, createProject, relocateProject, removeProject, selectTab, switchProject } from '../actions';
 import { askText, setUi, update, useStore } from '../store';
 import { openMenu } from './ContextMenu';
-import { IFolder, IGrid, IHistory, IPlus, ISearch } from './icons';
+import { IFolder, IGrid, IHistory, IPlus } from './icons';
 import { dropEdge, scrollDragList } from './listDrag';
 import { StatusBadges } from './StatusBadges';
 import { PanelResizeHandle, type PanelResizeProps } from './PanelResizeHandle';
@@ -136,6 +136,11 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`} aria-label={tr("Panel projektów")} onContextMenu={backgroundMenu}>
       {!collapsed && <PanelResizeHandle {...resize} />}
       <div className="side-section">
+        {(s.projects.length > 0 || collapsed) && (
+          <button className="btn side-add" onClick={() => void createProject()} title={tr("Dodaj projekt")} aria-label={tr("Dodaj projekt")}>
+            <IFolder />{!collapsed && tr("Dodaj projekt")}
+          </button>
+        )}
         {!collapsed && (
           <div className="sidebar-heading">
             <div className="sidebar-tabs" role="tablist" aria-label={tr("Widok panelu projektów")}>
@@ -187,7 +192,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
               }}
             >
               <div
-                className={`project ${active ? 'active' : ''} ${missing[p.id] ? 'missing' : ''}`}
+                className={`project ${active ? 'active' : ''} ${active && !collapsed ? 'with-path' : ''} ${missing[p.id] ? 'missing' : ''}`}
                 title={`${missing[p.id] ? tr('Folder nie istnieje: {path}', { path: p.path }) : p.path}\n${tr('Przeciągnij, aby zmienić kolejność')}`}
                 onClick={() => switchProject(p.id)}
                 onDoubleClick={() => setUi({ modal: { kind: 'project', projectId: p.id } })}
@@ -206,7 +211,9 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
                 }} onDoubleClick={(e) => e.stopPropagation()} draggable={false}>
                   <ProjectIconView project={p} />
                 </button>
-                {!collapsed && <span className="name">{p.name}</span>}
+                {!collapsed && (active
+                  ? <span className="name-block"><span className="name">{p.name}</span><span className="path">{p.path}</span></span>
+                  : <span className="name">{p.name}</span>)}
                 {!collapsed && <StatusBadges counts={counts} />}
               </div>
               {!collapsed && <TabList project={p} active={active} statuses={statuses} />}
@@ -236,14 +243,6 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
       )}
       </div>
       )}
-      <div className="side-footer">
-        {(s.projects.length > 0 || collapsed) && (
-          <button className="btn" onClick={() => void createProject()} title={tr("Dodaj projekt")}><IFolder />{!collapsed && tr("Dodaj projekt")}</button>
-        )}
-        <button className="btn ghost" onClick={() => setUi({ palette: true })} title={tr("Szukaj wszędzie") + keyLabel(" (Ctrl+K)")}>
-          <ISearch />{!collapsed && <><span style={{ flex: 1, textAlign: 'left' }}>{tr("Szukaj…")}</span><span className="kbd">{keyLabel("Ctrl+K")}</span></>}
-        </button>
-      </div>
     </aside>
   );
 }

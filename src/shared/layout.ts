@@ -7,6 +7,9 @@ export type GridLayout = {
   areas: Area[];
   /** Set for row-based layouts (e.g. [3, 2] = three on top, two below); `cols` is then their LCM. */
   rowCounts?: number[];
+  /** Relative widths of the `cols` tracks / heights of the `rows` tracks; absent means equal. */
+  colSizes?: number[];
+  rowSizes?: number[];
 };
 
 export const MAX_COLS = 5;
@@ -90,4 +93,80 @@ export function describeLayout(layout: GridLayout): string {
   if (n === 1) return '1';
   if (n === layout.cols * layout.rows) return `${layout.cols}×${layout.rows}`;
   return `${n}`;
+}
+
+// ── resizable splits ────────────────────────────────────────────────────────
+
+export type Axis = 'col' | 'row';
+/** No area may shrink below this share of the whole grid while a divider is dragged. */
+export const MIN_AREA_SHARE = 0.1;
+
+const validSizes = (sizes: number[] | undefined, n: number): sizes is number[] =>
+  !!sizes && sizes.length === n && sizes.every((v) => Number.isFinite(v) && v > 0);
+
+/** Track weights of an axis; equal when unset or malformed (e.g. a stale value after the grid changed). */
+export function trackSizes(layout: GridLayout, axis: Axis): number[] {
+  const n = axis === 'col' ? layout.cols : layout.rows;
+  const sizes = axis === 'col' ? layout.colSizes : layout.rowSizes;
+  return validSizes(sizes, n) ? sizes : Array.from({ length: n }, () => 1);
+}
+
+const span = (a: Area, axis: Axis) => (axis === 'col' ? { start: a.col, size: a.colSpan } : { start: a.row, size: a.rowSpan });
+
+/** A divider that exists between areas: grid line `line` (1..n-1), spanning tracks `from`..`to` (inclusive) on the other axis. */
+export interface Divider { axis: Axis; line: number; from: number; to: number }
+
+/** Divider segments; a line is split wherever an area spans across it. */
+export function dividers(layout: GridLayout): Divider[] {
+  const out: Divider[] = [];
+  for (const axis of ['col', 'row'] as const) {
+    const n = axis === 'col' ? layout.cols : layout.rows;
+    const other = axis === 'col' ? layout.rows : layout.cols;
+    for (let line = 1; line < n; line++) {
+      let from = -1;
+      for (let t = 0; t <= other; t++) {
+        const real = t < other && layout.areas.some((a) => {
+          const m = span(a, axis); const o = span(a, axis === 'col' ? 'row' : 'col');
+          return m.start + m.size === line && o.start <= t && t < o.start + o.size;
+        }) && layout.areas.some((a) => {
+          const m = span(a, axis); const o = span(a, axis === 'col' ? 'row' : 'col');
+          return m.start === line && o.start <= t && t < o.start + o.size;
+        });
+        if (real && from < 0) from = t;
+        if (!real && from >= 0) { out.push({ axis, line, from, to: t - 1 }); from = -1; }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Moves grid line `line` by `delta` (in track-weight units, positive = right/down). The two adjacent tracks
+ * change in opposite directions so every other line stays put; the move is clamped so no area gets too small.
+ */
+export function resizeLine(layout: GridLayout, axis: Axis, line: number, delta: number): GridLayout {
+  const sizes = trackSizes(layout, axis);
+  if (line < 1 || line >= sizes.length) return layout;
+  const total = sizes.reduce((a, b) => a + b, 0);
+  const min = MIN_AREA_SHARE * total;
+  let lo = -sizes[line - 1] + 1e-6 * total;
+  let hi = sizes[line] - 1e-6 * total;
+  for (const a of layout.areas) {
+    const { start, size } = span(a, axis);
+    const width = sizes.slice(start, start + size).reduce((x, y) => x + y, 0);
+    if (start + size === line) lo = Math.max(lo, Math.min(0, min - width));
+    else if (start === line) hi = Math.min(hi, Math.max(0, width - min));
+  }
+  const d = Math.min(hi, Math.max(lo, delta));
+  const next = [...sizes];
+  next[line - 1] += d; next[line] -= d;
+  return withSizes(layout, axis, next);
+}
+
+/** Stores `sizes` for an axis, dropping them when they equal the default split. */
+export function withSizes(layout: GridLayout, axis: Axis, sizes: number[] | undefined): GridLayout {
+  const key = axis === 'col' ? 'colSizes' : 'rowSizes';
+  const { [key]: _old, ...rest } = layout;
+  const equal = !sizes || sizes.every((v) => Math.abs(v - sizes[0]) < 1e-6 * sizes[0]);
+  return equal ? rest : { ...rest, [key]: sizes };
 }

@@ -131,6 +131,11 @@ function nextTabName(p: Project): string {
   for (let i = 1; ; i++) if (!used.has(`Grid ${i}`)) return `Grid ${i}`;
 }
 
+/** Replaces a grid's layout (used to persist dragged divider positions). */
+export function setTabLayout(s: AppState, projectId: string, tabId: string, layout: GridLayout): AppState {
+  return mapTab(s, projectId, tabId, (t) => ({ ...t, layout }));
+}
+
 export function renameTab(s: AppState, projectId: string, tabId: string, name: string): AppState {
   return mapTab(s, projectId, tabId, (t) => ({ ...t, name }));
 }

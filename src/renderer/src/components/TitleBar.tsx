@@ -7,9 +7,8 @@ import { aggregate } from '../../../shared/status';
 import { addAgent, closeTab, selectTab } from '../actions';
 import { setUi, update, useStore } from '../store';
 import { openMenu, openMenuAt } from './ContextMenu';
-import { IChevron, IPlusBold, IX, IFile, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
+import { IChevron, IPlusBold, ISearch, IX, IFile, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
 import { StatusBadges } from './StatusBadges';
-import { UpdateBadge } from './UpdateBadge';
 import { Brand } from './Brand';
 import { activateFile, closeFile, useFileStore } from '../files';
 
@@ -24,9 +23,8 @@ export function TitleBar() {
     <div className="titlebar">
       <Brand collapsed={s.sidebarCollapsed} />
       <div className="spacer" />
-      {project && <span className="project-path" title={project.path}>{project.path}</span>}
-      <UpdateBadge />
       <div className="row no-drag" style={{ gap: 2 }}>
+        <button className="tb-btn" title={tr("Szukaj wszędzie") + keyLabel(" (Ctrl+K)")} aria-label={tr("Szukaj wszędzie")} onClick={() => setUi({ palette: true })}><ISearch /></button>
         <button className={`tb-btn team-toggle ${automationOpen ? 'on' : ''}`} title={tr('Zadania i wiadomości agentów')} onClick={() => setUi({ automationOpen: !automationOpen })}>
           AI{pendingTasks > 0 && <span className="team-count">{pendingTasks}</span>}
         </button>

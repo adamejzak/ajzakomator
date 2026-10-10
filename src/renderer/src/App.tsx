@@ -10,6 +10,7 @@ import { LanguageSetup } from './components/LanguageSetup';
 import { Modals } from './components/Modals';
 import { Sidebar } from './components/Sidebar';
 import { SnippetPanel } from './components/SnippetPanel';
+import { StatusBar } from './components/StatusBar';
 import { TitleBar, WorkspaceTabs } from './components/TitleBar';
 import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
@@ -174,6 +175,7 @@ export function App() {
         </div>
         {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
       </div>
+      <StatusBar />
       <CommandPalette />
       <Modals />
       <ContextMenuHost />

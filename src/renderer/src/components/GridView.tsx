@@ -1,9 +1,12 @@
 import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
-import { activeProject, activeTab } from '../../../shared/state';
+import { useState } from 'react';
+import type { GridLayout } from '../../../shared/layout';
+import { activeProject, activeTab, setTabLayout } from '../../../shared/state';
 import { createProject, quickTab } from '../actions';
-import { setUi, useStore } from '../store';
+import { setUi, update, useStore } from '../store';
 import { CellView } from './CellView';
+import { GridDividers, trackTemplate } from './GridDividers';
 import { IHistory, IPlus, Logo } from './icons';
 import { ProjectIconView } from './ProjectIcon';
 
@@ -13,6 +16,7 @@ export function GridView() {
   const maximized = useStore((st) => st.ui.maximizedCellId);
   const project = activeProject(s);
   const tab = activeTab(project);
+  const [preview, setPreview] = useState<{ tabId: string; layout: GridLayout } | null>(null);
 
   if (!project) {
     return (
@@ -61,20 +65,27 @@ export function GridView() {
   }
 
   const maxCell = maximized ? tab.cells.find((c) => c.id === maximized) : undefined;
-  const { cols, rows } = tab.layout;
+  const layout = preview?.tabId === tab.id ? preview.layout : tab.layout;
   return (
     <div
-      className="grid"
-      style={maxCell ? { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' } : { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+      className={`grid ${preview ? 'resizing' : ''}`}
+      style={maxCell ? { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' } : { gridTemplateColumns: trackTemplate(layout, 'col'), gridTemplateRows: trackTemplate(layout, 'row') }}
     >
       {tab.cells.map((cell, i) => {
         if (maxCell && cell.id !== maxCell.id) return null;
-        const a = tab.layout.areas[i] ?? tab.layout.areas[tab.layout.areas.length - 1];
+        const a = layout.areas[i] ?? layout.areas[layout.areas.length - 1];
         const style = maxCell
           ? { gridColumn: '1 / -1', gridRow: '1 / -1' }
           : { gridColumn: `${a.col + 1} / span ${a.colSpan}`, gridRow: `${a.row + 1} / span ${a.rowSpan}` };
         return <CellView key={cell.id} cell={cell} index={i} style={style} maximized={!!maxCell} />;
       })}
+      {!maxCell && tab.cells.length > 1 && (
+        <GridDividers
+          layout={layout}
+          onPreview={(next) => setPreview(next && { tabId: tab.id, layout: next })}
+          onCommit={(next) => update((st) => setTabLayout(st, project.id, tab.id, next))}
+        />
+      )}
     </div>
   );
 }
