@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { claudePlanLabel, readClaudeCredentials, readCodexCredentials, type CredentialSource } from '../src/main/usage/credentials';
+import { claudePlanLabel, readClaudeCredentials, readCodexCredentials, withFailureCache, type CredentialSource } from '../src/main/usage/credentials';
 
 const b64url = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
 const jwt = (claims: unknown) => `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
@@ -92,5 +92,28 @@ describe('Codex credentials', () => {
     expect(await readCodexCredentials(source())).toBeNull();
     put('elsewhere/auth.json', chatgpt('opaque', 'opaque'));
     expect(await readCodexCredentials(source({ env: { CODEX_HOME: join(home, 'elsewhere') } }))).toMatchObject({ mode: 'chatgpt' });
+  });
+});
+
+describe('withFailureCache', () => {
+  it('holds a null result for the hold time and then asks again', async () => {
+    let clock = 1000;
+    const read = vi.fn(async () => null);
+    const cached = withFailureCache(read, 500, () => clock);
+    expect(await cached()).toBeNull();
+    clock += 499;
+    expect(await cached()).toBeNull();
+    expect(read).toHaveBeenCalledOnce();
+    clock += 2;
+    await cached();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a successful read', async () => {
+    const read = vi.fn(async () => 'secret');
+    const cached = withFailureCache(read, 500, () => 0);
+    expect(await cached()).toBe('secret');
+    expect(await cached()).toBe('secret');
+    expect(read).toHaveBeenCalledTimes(2);
   });
 });

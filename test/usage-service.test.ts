@@ -141,9 +141,84 @@ describe('UsageService', () => {
     const first = make();
     await first.service.refresh();
     expect(existsSync(cacheFile)).toBe(true);
-    expect(readFileSync(cacheFile, 'utf8')).not.toMatch(/token/i);
+    expect(readFileSync(cacheFile, 'utf8')).not.toContain('SECRET-123');
     const second = make({ claude: () => new Promise<FetchResult>(() => undefined) });
     expect(second.service.getState().providers.map((p) => [p.provider, p.source, p.status])).toEqual([['claude', 'cache', 'ok'], ['codex', 'cache', 'ok']]);
+  });
+
+  it('never lets unknown fields from a fetcher reach state, listeners or the cache file', async () => {
+    const rogue = async (): Promise<FetchResult> => ({ usage: { ...ok('claude', 40).usage, accessToken: 'SECRET-123' } as ProviderUsage });
+    const { service } = make({ claude: rogue });
+    const heard: string[] = [];
+    service.onChange((state) => heard.push(JSON.stringify(state)));
+    await service.refresh();
+    expect(JSON.stringify(service.getState())).not.toContain('SECRET-123');
+    expect(heard.join('')).not.toContain('SECRET-123');
+    expect(readFileSync(cacheFile, 'utf8')).not.toContain('SECRET-123');
+    expect(service.getState().providers[0].windows[0].usedPercent).toBe(40);
+  });
+
+  it('loads a cache with garbage window entries and keeps only the valid ones', () => {
+    writeFileSync(cacheFile, JSON.stringify({ providers: [
+      null, 'x', { provider: 'claude', status: 'error', source: 'live', fetchedAt: 5, token: 'SECRET-123', windows: [null, 7, { id: '5h', usedPercent: 'a', resetsAt: 1 }, { id: '9h', usedPercent: 1, resetsAt: 1 }, { id: '7d', usedPercent: 250, resetsAt: 10 }] },
+      { provider: 'codex', status: 'ok', source: 'live', fetchedAt: 5, windows: [null] },
+    ] }));
+    const providers = make().service.getState().providers;
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).toMatchObject({ provider: 'claude', status: 'ok', source: 'cache', windows: [{ id: '7d', usedPercent: 100, resetsAt: 10 }] });
+    expect(JSON.stringify(providers)).not.toContain('SECRET-123');
+  });
+
+  it('backs off after a failed read even when another source answered, and clears it on success', async () => {
+    let mode: 'failed' | 'fine' = 'failed';
+    const { service, codex } = make({ codex: async () => (mode === 'failed' ? { ...ok('codex', 30), usage: { ...ok('codex', 30).usage, source: 'log' as const }, failed: true as const, retryAfterMs: 300_000 } : ok('codex', 31)) });
+    await service.refresh();
+    expect(service.getState().providers[1]).toMatchObject({ status: 'ok', source: 'log' });
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(codex).toHaveBeenCalledOnce();
+    mode = 'fine';
+    await vi.advanceTimersByTimeAsync(300_000);
+    await service.refresh();
+    expect(codex).toHaveBeenCalledTimes(2);
+    expect(service.getState().providers[1]).toMatchObject({ status: 'ok', source: 'live' });
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(codex).toHaveBeenCalledTimes(3);
+  });
+
+  it('lets a manual refresh bypass a backoff but not the minimum gap', async () => {
+    const { service, claude } = make({ claude: async () => failing('claude', 'error', 600_000) });
+    await service.refresh();
+    expect(claude).toHaveBeenCalledOnce();
+    await service.refresh(true);
+    expect(claude).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(claude).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh(true);
+    expect(claude).toHaveBeenCalledTimes(2);
+  });
+
+  it('replaces the entry when a login disappears and refreshes numbers when an expired login returns', async () => {
+    let mode: 'ok' | 'out' | 'expired' | 'back' = 'ok';
+    const out = (provider: UsageProvider): FetchResult => ({ usage: { provider, status: 'signedOut', windows: [], fetchedAt: Date.now(), source: 'live' } });
+    const { service } = make({ claude: async () => (mode === 'out' ? out('claude') : ok('claude', 40)), codex: async () => (mode === 'expired' ? failing('codex', 'expired') : mode === 'back' ? ok('codex', 12) : ok('codex', 8)) });
+    await service.refresh();
+    mode = 'out';
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(service.getState().providers[0]).toMatchObject({ status: 'signedOut', windows: [] });
+    mode = 'expired';
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(service.getState().providers[1]).toMatchObject({ status: 'expired', source: 'cache' });
+    mode = 'back';
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh();
+    expect(service.getState().providers[1]).toMatchObject({ status: 'ok', source: 'live' });
+    expect(service.getState().providers[1].windows[0].usedPercent).toBe(12);
   });
 
   it('ignores a corrupt cache file', () => {

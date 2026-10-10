@@ -42,7 +42,7 @@ function Provider({ usage, now, language }: { usage: ProviderUsage; now: number;
   const { tr } = useI18n();
   const name = NAMES[usage.provider];
   const age = formatDuration((now - usage.fetchedAt) / 1000);
-  if (usage.status === 'signedOut') return <p className="usage-note">{tr('{name}: nie zalogowano. Uruchom `{command}` w terminalu.', { name, command: COMMANDS[usage.provider] })}</p>;
+  if (usage.status === 'signedOut') return <p className="usage-note">{tr('{name}: nie zalogowano. Uruchom {command} w terminalu.', { name, command: COMMANDS[usage.provider] })}</p>;
   if (usage.status === 'apiKey') return <p className="usage-note">{tr('Codex: logowanie kluczem API, brak limitów.')}</p>;
   const stale = usage.status === 'expired' || usage.status === 'error';
   if (!usage.windows.length) {

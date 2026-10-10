@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import type { ProviderUsage, UsageProvider, UsageState } from '../../shared/usage';
 import type { FetchResult } from './fetchers';
+import { sanitizeUsage } from './sanitize';
 
 export const MIN_GAP_MS = 20_000;
 const BACKOFF_BASE_MS = 60_000;
@@ -72,11 +73,12 @@ export class UsageService {
     this.schedule();
   }
 
-  refresh(): Promise<UsageState> {
+  /** A manual refresh also reads providers that are in backoff; the minimum gap and the shared request still apply. */
+  refresh(manual = false): Promise<UsageState> {
     if (!this.options.enabled()) return Promise.resolve(this.getState());
     if (this.pending) return this.pending;
     if (this.lastRun && this.now() - this.lastRun < MIN_GAP_MS) return Promise.resolve(this.getState());
-    this.pending = this.run().finally(() => { this.pending = undefined; });
+    this.pending = this.run(manual).finally(() => { this.pending = undefined; });
     return this.pending;
   }
 
@@ -98,10 +100,10 @@ export class UsageService {
     this.timer.unref?.();
   }
 
-  private async run(): Promise<UsageState> {
+  private async run(manual: boolean): Promise<UsageState> {
     const started = this.now();
     this.lastRun = started;
-    await Promise.all(ORDER.map((provider) => this.update(provider, started)));
+    await Promise.all(ORDER.map((provider) => this.update(provider, started, manual)));
     this.saveCache();
     const state = this.getState();
     for (const listener of this.listeners) {
@@ -110,9 +112,9 @@ export class UsageService {
     return state;
   }
 
-  private async update(provider: UsageProvider, now: number): Promise<void> {
+  private async update(provider: UsageProvider, now: number, manual: boolean): Promise<void> {
     const hold = this.backoff.get(provider);
-    if (hold && hold.until > now) return;
+    if (!manual && hold && hold.until > now) return;
     let result: FetchResult;
     const failure = (error: string): FetchResult => ({ usage: { provider, status: 'error', windows: [], fetchedAt: now, source: 'live', error } });
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -121,27 +123,34 @@ export class UsageService {
       result = await Promise.race([this.options.fetchers[provider](), timedOut]);
     } catch { result = failure('network'); }
     finally { clearTimeout(timeout); }
-    const { usage, retryAfterMs } = result;
+    const usage = sanitizeUsage(result.usage) ?? failure('bad-response').usage;
+    const { retryAfterMs } = result;
+    const failed = usage.status === 'error' || result.failed === true;
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
       this.providers.set(provider, usage);
-      this.backoff.delete(provider);
+      if (failed) this.startBackoff(provider, now, hold?.failures, retryAfterMs);
+      else this.backoff.delete(provider);
       return;
     }
     // Expired or failed: keep the last numbers, marked as remembered, so the panel is never blank after a hiccup.
     const previous = this.providers.get(provider);
     this.providers.set(provider, previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);
-    if (usage.status === 'error') {
-      const failures = (hold?.failures ?? 0) + 1;
-      const wait = retryAfterMs ?? Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
-      this.backoff.set(provider, { until: now + wait, failures });
-    } else this.backoff.delete(provider);
+    if (failed) this.startBackoff(provider, now, hold?.failures, retryAfterMs);
+    else this.backoff.delete(provider);
+  }
+
+  private startBackoff(provider: UsageProvider, now: number, previousFailures = 0, retryAfterMs?: number): void {
+    const failures = previousFailures + 1;
+    const wait = retryAfterMs ?? Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
+    this.backoff.set(provider, { until: now + wait, failures });
   }
 
   private loadCache(): void {
     try {
-      const raw = JSON.parse(readFileSync(this.options.cacheFile, 'utf8')) as { providers?: ProviderUsage[] };
-      for (const usage of raw.providers ?? []) {
-        if (usage && ORDER.includes(usage.provider) && Array.isArray(usage.windows) && usage.windows.length) this.providers.set(usage.provider, { ...usage, status: 'ok', source: 'cache' });
+      const raw = JSON.parse(readFileSync(this.options.cacheFile, 'utf8')) as { providers?: unknown };
+      for (const entry of Array.isArray(raw?.providers) ? raw.providers : []) {
+        const usage = sanitizeUsage(entry);
+        if (usage?.windows.length) this.providers.set(usage.provider, { ...usage, status: 'ok', source: 'cache' });
       }
     } catch { /* no usable cache yet */ }
   }

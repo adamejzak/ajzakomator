@@ -56,12 +56,12 @@ const tr = (key: MessageKey, params?: MessageParams) => translate(state.settings
 const saver = createSaver(DATA_DIR);
 const usageDeps: FetcherDeps = {
   credentials: systemCredentialSource(),
-  // net.fetch follows the system proxy settings, like the rest of Chromium.
-  fetch: ((input: RequestInfo | URL, init?: RequestInit) => net.fetch(String(input), init)) as typeof fetch,
+  // net.fetch follows the system proxy settings, like the rest of Chromium. Redirects are refused so a bearer token never follows one.
+  fetch: ((input: RequestInfo | URL, init?: RequestInit) => net.fetch(String(input), { ...init, redirect: 'error' })) as typeof fetch,
   now: () => Date.now(),
   codexHome: () => process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'),
-  claudeUrl: process.env.MC_USAGE_CLAUDE_URL || 'https://api.anthropic.com/api/oauth/usage',
-  codexUrl: process.env.MC_USAGE_CODEX_URL || 'https://chatgpt.com/backend-api/wham/usage',
+  claudeUrl: (!app.isPackaged && process.env.MC_USAGE_CLAUDE_URL) || 'https://api.anthropic.com/api/oauth/usage',
+  codexUrl: (!app.isPackaged && process.env.MC_USAGE_CODEX_URL) || 'https://chatgpt.com/backend-api/wham/usage',
 };
 const usage = new UsageService({
   fetchers: { claude: () => fetchClaude(usageDeps), codex: () => fetchCodex(usageDeps) },
@@ -385,7 +385,7 @@ const changelog = createChangelog({
 });
 ipcMain.handle('changelog:get', (_e, force: boolean) => changelog.get(force));
 ipcMain.handle('usage:get', () => usage.getState());
-ipcMain.handle('usage:refresh', () => usage.refresh());
+ipcMain.handle('usage:refresh', () => usage.refresh(true));
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));

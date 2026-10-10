@@ -16,17 +16,30 @@ export interface CredentialSource {
   keychain(): Promise<string | null>;
 }
 
+/** Remembers a null result (denied, missing, timed out) for `holdMs` so a system prompt is not raised on every poll. */
+export function withFailureCache(read: () => Promise<string | null>, holdMs: number, now: () => number = Date.now): () => Promise<string | null> {
+  let holdUntil = 0;
+  return async () => {
+    if (now() < holdUntil) return null;
+    const value = await read();
+    if (value === null) holdUntil = now() + holdMs;
+    return value;
+  };
+}
+
+const KEYCHAIN_HOLD_MS = 30 * 60_000;
+
 export function systemCredentialSource(): CredentialSource {
   return {
     env: process.env,
     home: homedir(),
     platform: process.platform,
     readFile: (path) => readFile(path, 'utf8').catch(() => null),
-    keychain: () => new Promise((resolve) => {
-      execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { timeout: 5000 }, (error, stdout) => {
+    keychain: withFailureCache(() => new Promise((resolve) => {
+      execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { timeout: 5000, maxBuffer: 64 * 1024, windowsHide: true }, (error, stdout) => {
         resolve(error ? null : stdout.trim() || null);
       });
-    }),
+    }), KEYCHAIN_HOLD_MS),
   };
 }
 

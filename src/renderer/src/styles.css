@@ -803,7 +803,7 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .fr-line ins { background: #4ade8024; color: #bbf7d0; text-decoration: none; border-radius: 2px; }
 
 /* ── AI account limits (docked above the status bar) ───────────────────── */
-.usage-panel { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 8px; border-top: 1px solid var(--border); background: var(--bg-1); font-size: 11px; color: var(--text-2); }
+.usage-panel { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 8px; border-top: 1px solid var(--border); background: var(--bg-1); font-size: 11px; color: var(--text-2); max-height: 40vh; overflow-y: auto; }
 .usage-head { display: flex; align-items: center; gap: 6px; }
 .usage-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 2px 0; border: 0; background: transparent; color: var(--text-2); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .usage-title:hover { color: var(--text); }

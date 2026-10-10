@@ -94,6 +94,14 @@ describe('readCodexLog', () => {
     expect((await readCodexLog(join(home, '.codex')))?.windows[0].usedPercent).toBe(77);
   });
 
+  it('does not find an event that sits only in the unread head of a huge log', async () => {
+    const filler = `${'x'.repeat(2000)}
+`.repeat(2500);
+    put('.codex/sessions/2026/10/10/rollout-2026-10-10T10-00-00-d.jsonl', `${logEvent(66, '2026-10-10T10:00:00Z')}
+${filler}`);
+    expect(await readCodexLog(join(home, '.codex'))).toBeNull();
+  });
+
   it('is null without sessions or without any limits', async () => {
     expect(await readCodexLog(join(home, '.codex'))).toBeNull();
     put('.codex/sessions/2026/10/10/rollout-x.jsonl', 'not json\n{"payload":{}}\n');
@@ -134,6 +142,20 @@ describe('fetchCodex', () => {
     const spy = vi.fn();
     expect((await fetchCodex(deps(spy))).usage).toMatchObject({ status: 'ok', source: 'log' });
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('marks a log answer as failed after a rejected request but not when no request was made', async () => {
+    codexLogin();
+    put('.codex/sessions/2026/10/09/rollout-a.jsonl', `${logEvent(31, '2026-10-09T10:00:00Z')}
+`);
+    const limited = await fetchCodex(deps((async () => reply(429, {}, { 'retry-after': '90' })) as never));
+    expect(limited.usage).toMatchObject({ status: 'ok', source: 'log' });
+    expect(limited.failed).toBe(true);
+    expect(limited.retryAfterMs).toBe(90_000);
+    expect((await fetchCodex(deps((async () => { throw new Error('offline'); }) as never))).failed).toBe(true);
+    expect((await fetchCodex(deps((async () => reply(401, {})) as never))).failed).toBeUndefined();
+    codexLogin(Math.floor(NOW / 1000) - 10);
+    expect((await fetchCodex(deps(vi.fn()))).failed).toBeUndefined();
   });
 
   it('reports the real failure when there is no session log to fall back on', async () => {

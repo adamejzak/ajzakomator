@@ -16,7 +16,12 @@ export interface FetcherDeps {
   codexUrl: string;
 }
 
-export interface FetchResult { usage: ProviderUsage; retryAfterMs?: number }
+export interface FetchResult {
+  usage: ProviderUsage;
+  retryAfterMs?: number;
+  /** The live request failed although another source answered; the service still backs off. */
+  failed?: true;
+}
 
 /** Maps a thrown error to a short stable reason; the message itself may contain secrets and is dropped. */
 function errorKind(error: unknown): string {
@@ -69,7 +74,10 @@ export async function fetchCodex(deps: FetcherDeps): Promise<FetchResult> {
   /** Network-free answer from the last Codex session; the real failure is reported when there is none. */
   const fromLog = async (status: 'expired' | 'error', error?: string, retry?: number): Promise<FetchResult> => {
     const log = await readCodexLog(deps.codexHome());
-    if (log) return { usage: { ...known, plan: log.plan ?? known.plan, status: 'ok', windows: log.windows, fetchedAt: log.at, source: 'log' } };
+    if (log) {
+      const usage: ProviderUsage = { ...known, plan: log.plan ?? known.plan, status: 'ok', windows: log.windows, fetchedAt: log.at, source: 'log' };
+      return error ? { usage, failed: true, retryAfterMs: retry } : { usage };
+    }
     return { usage: { ...known, status, ...(error ? { error } : {}) }, retryAfterMs: retry };
   };
 
