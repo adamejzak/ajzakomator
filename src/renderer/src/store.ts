@@ -11,6 +11,7 @@ export type Modal =
   | { kind: 'history'; projectId: string }
   | { kind: 'settings' }
   | { kind: 'changelog' }
+  | { kind: 'search'; projectId: string }
   | { kind: 'snippet'; snippetId: string | null; projectId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'file'; projectId: string; relativePath: string };

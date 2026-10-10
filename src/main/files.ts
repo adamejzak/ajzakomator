@@ -1,6 +1,7 @@
 import { open, readdir, realpath, rename, unlink } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { isAbsolute, relative, resolve, sep } from 'path';
+import { IGNORED_FOLDERS } from '../shared/search';
 import type { ProjectDirectory, ProjectFilePreview } from '../shared/types';
 
 export const PREVIEW_BYTES = 256 * 1024;
@@ -42,6 +43,33 @@ export async function listProjectDirectory(root: string, path = ''): Promise<Pro
         kind: item.isDirectory() ? 'directory' as const : item.isSymbolicLink() ? 'symlink' as const : 'file' as const,
       }));
     return { ok: true, entries, truncated: items.length > DIRECTORY_LIMIT };
+  } catch (error) {
+    return { ok: false, error: fileError(error) };
+  }
+}
+
+export type ProjectDirectories = { ok: true; paths: string[]; truncated: boolean } | { ok: false; error: string };
+
+/** Every folder of the project (dependency and build folders excluded), breadth first, for "expand all". */
+export async function listProjectDirectories(root: string, limit = 2500): Promise<ProjectDirectories> {
+  try {
+    const base = await projectFilePath(root, '');
+    const paths: string[] = [];
+    const queue = [''];
+    while (queue.length) {
+      const directory = queue.shift()!;
+      let items;
+      try { items = await readdir(resolve(base, directory), { withFileTypes: true }); } catch { continue; }
+      items.sort((a, b) => a.name.localeCompare(b.name, 'pl', { numeric: true, sensitivity: 'base' }));
+      for (const item of items) {
+        if (!item.isDirectory() || IGNORED_FOLDERS.has(item.name)) continue;
+        if (paths.length >= limit) return { ok: true, paths, truncated: true };
+        const path = directory ? `${directory}/${item.name}` : item.name;
+        paths.push(path);
+        queue.push(path);
+      }
+    }
+    return { ok: true, paths, truncated: false };
   } catch (error) {
     return { ok: false, error: fileError(error) };
   }

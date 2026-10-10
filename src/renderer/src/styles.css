@@ -763,3 +763,40 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 @keyframes refresh-turn { to { transform: rotate(360deg); } }
 .statusbar .refresh-icon svg { width: 12px; height: 12px; }
 @media (prefers-reduced-motion: reduce) { .refresh-icon.spinning svg { animation-duration: 2.4s; } }
+
+/* ── find and replace ──────────────────────────────────────────────────── */
+.modal.find-replace { width: 900px; height: min(80vh, 760px); }
+.find-replace .modal-head h3 { display: flex; align-items: baseline; gap: 10px; }
+.fr-project { color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.fr-controls { padding: 0 16px 8px; display: flex; flex-direction: column; gap: 8px; }
+.fr-row { display: flex; gap: 8px; align-items: center; }
+.fr-field { position: relative; flex: 1; min-width: 0; display: flex; }
+.fr-field .input { width: 100%; padding-right: 96px; }
+.fr-row:nth-child(2) .fr-field .input { padding-right: 8px; }
+.fr-toggles { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: flex; gap: 2px; }
+.fr-toggle { min-width: 26px; height: 22px; padding: 0 5px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; font-family: 'Cascadia Mono', Consolas, monospace; }
+.fr-toggle:hover { background: var(--bg-hover); color: var(--text); }
+.fr-toggle.on { background: var(--accent-soft); border-color: #3b82f660; color: var(--accent-text); }
+.fr-filters-toggle { align-self: flex-start; border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; padding: 0; }
+.fr-filters-toggle:hover { color: var(--text); }
+.fr-filters { display: flex; flex-direction: column; gap: 6px; }
+.fr-status { padding: 4px 16px 8px; color: var(--text-2); font-size: 11.5px; border-bottom: 1px solid var(--border); }
+.fr-note { color: var(--muted); }
+.fr-error { color: var(--error); }
+.fr-problems { margin: 0; padding: 8px 16px 8px 32px; color: var(--error); font-size: 11.5px; border-bottom: 1px solid var(--border); background: #f8717110; }
+.fr-results { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 0 12px; }
+.fr-results > .btn { margin: 8px 16px; }
+.fr-file header { display: flex; align-items: center; gap: 6px; padding: 4px 16px 4px 10px; position: sticky; top: 0; background: var(--bg-2); z-index: 1; }
+.fr-file-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-weight: 600; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 4px; border-radius: 5px; }
+.fr-file-name:hover { background: var(--bg-hover); }
+.fr-caret { color: var(--muted); width: 10px; flex: none; }
+.fr-count { margin-left: 6px; padding: 0 6px; border-radius: 9px; background: var(--bg-hover); color: var(--text-2); font-size: 10.5px; font-weight: 400; }
+.fr-match { display: flex; align-items: baseline; gap: 10px; padding: 2px 16px 2px 30px; }
+.fr-match:hover { background: #ffffff08; }
+.fr-match .btn { opacity: 0; flex: none; align-self: center; }
+.fr-match:hover .btn, .fr-match:focus-within .btn { opacity: 1; }
+.fr-lineno { flex: none; width: 38px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 11px; }
+.fr-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 11.5px; color: var(--text-2); }
+.fr-line mark { background: #f5b94238; color: #fde68a; border-radius: 2px; }
+.fr-line del { background: #f8717128; color: #fecaca; text-decoration: line-through; border-radius: 2px; }
+.fr-line ins { background: #4ade8024; color: #bbf7d0; text-decoration: none; border-radius: 2px; }

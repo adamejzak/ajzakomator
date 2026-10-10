@@ -12,7 +12,9 @@ import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
-import { listProjectDirectory, readProjectFile, writeProjectFile } from './files';
+import { listProjectDirectories, listProjectDirectory, readProjectFile, writeProjectFile } from './files';
+import { replaceInProject, searchProject } from './search';
+import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
@@ -298,6 +300,18 @@ ipcMain.handle('fs:exists', (_e, p: string) => existsSync(p));
 ipcMain.handle('fs:listProjectDirectory', (_e, projectId: string, path: string) => {
   const project = state.projects.find((p) => p.id === projectId);
   return project ? listProjectDirectory(project.path, path) : { ok: false, error: 'Projekt już nie istnieje.' };
+});
+ipcMain.handle('fs:listProjectDirectories', (_e, projectId: string) => {
+  const project = state.projects.find((p) => p.id === projectId);
+  return project ? listProjectDirectories(project.path) : { ok: false, error: 'Projekt już nie istnieje.' };
+});
+ipcMain.handle('fs:searchProject', (_e, projectId: string, options: SearchOptions) => {
+  const project = state.projects.find((p) => p.id === projectId);
+  return project ? searchProject(project.path, options) : { ok: false, error: 'Projekt już nie istnieje.' };
+});
+ipcMain.handle('fs:replaceInProject', (_e, projectId: string, request: ReplaceRequest) => {
+  const project = state.projects.find((p) => p.id === projectId);
+  return project ? replaceInProject(project.path, request) : { ok: false, error: 'Projekt już nie istnieje.' };
 });
 ipcMain.handle('fs:readProjectFile', (_e, projectId: string, path: string) => {
   const project = state.projects.find((p) => p.id === projectId);

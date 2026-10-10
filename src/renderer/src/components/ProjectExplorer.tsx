@@ -1,10 +1,10 @@
 import { useI18n } from '../i18n';
 import { useEffect, useState } from 'react';
 import type { Project, ProjectDirectory, ProjectFileEntry } from '../../../shared/types';
-import { setUi } from '../store';
+import { setUi, toast } from '../store';
 import { openFile } from '../files';
 import { openMenu } from './ContextMenu';
-import { IChevron, ICollapse, IFile, IFolder } from './icons';
+import { IChevron, ICollapseAll, IExpandAll, IFile, IFolder, ISearch } from './icons';
 import { RefreshIcon, useHoldBusy } from './Spinner';
 import { ProjectIconView } from './ProjectIcon';
 import { fullProjectPath as projectPath } from '../../../shared/platform';
@@ -109,6 +109,15 @@ export function ProjectExplorer({ project }: { project: Project }) {
     else next.delete(path);
     return next;
   });
+  const expandAll = async () => {
+    try {
+      const result = await window.mc.listProjectDirectories(project.id);
+      if (!result.ok) { toast(result.error, 'error'); return; }
+      setExpanded(new Set(result.paths));
+      if (result.truncated) toast(tr('Rozwinięto pierwsze {count} folderów.', { count: result.paths.length }));
+    } catch (error) { toast(String(error), 'error'); }
+  };
+  const findInFiles = () => setUi({ modal: { kind: 'search', projectId: project.id } });
   const menu = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
     e.preventDefault();
@@ -116,6 +125,8 @@ export function ProjectExplorer({ project }: { project: Project }) {
     openMenu(e.clientX, e.clientY, [
       { header: project.name },
       { label: tr("Odśwież pliki"), onClick: reload },
+      { label: tr("Znajdź i zamień w plikach…"), onClick: findInFiles },
+      { label: tr("Rozwiń wszystkie foldery"), onClick: () => void expandAll() },
       { label: tr("Zwiń wszystkie foldery"), onClick: () => setExpanded(new Set()) },
       { label: tr("Otwórz folder w menedżerze plików"), onClick: () => window.mc.openPath(project.path) },
       { label: tr("Otwórz projekt w edytorze"), onClick: () => window.mc.openInEditor(project.path) },
@@ -129,7 +140,9 @@ export function ProjectExplorer({ project }: { project: Project }) {
       <div className="explorer-heading">
         <ProjectIconView project={project} />
         <span className="explorer-project" title={project.path}>{project.name}</span>
-        <button className="btn ghost icon" title={tr("Zwiń wszystkie foldery")} aria-label={tr("Zwiń wszystkie foldery")} onClick={() => setExpanded(new Set())}><ICollapse /></button>
+        <button className="btn ghost icon" title={tr("Znajdź i zamień w plikach…")} aria-label={tr("Znajdź i zamień w plikach…")} onClick={findInFiles}><ISearch /></button>
+        <button className="btn ghost icon" title={tr("Rozwiń wszystkie foldery")} aria-label={tr("Rozwiń wszystkie foldery")} onClick={() => void expandAll()}><IExpandAll /></button>
+        <button className="btn ghost icon" title={tr("Zwiń wszystkie foldery")} aria-label={tr("Zwiń wszystkie foldery")} onClick={() => setExpanded(new Set())}><ICollapseAll /></button>
         <button className="btn ghost icon" title={tr("Odśwież pliki")} aria-label={tr("Odśwież pliki")} onClick={reload}><RefreshIcon spinning={spinning} /></button>
       </div>
       <div className="explorer-tree">

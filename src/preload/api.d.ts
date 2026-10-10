@@ -4,6 +4,7 @@ import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/au
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
 import type { ChangelogResult } from '../shared/changelog';
+import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
 export type { SessionInfo };
@@ -39,6 +40,9 @@ export interface McApi {
   pathExists(path: string): Promise<boolean>;
   listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;
   readProjectFile(projectId: string, relativePath: string): Promise<ProjectFilePreview>;
+  listProjectDirectories(projectId: string): Promise<{ ok: true; paths: string[]; truncated: boolean } | { ok: false; error: string }>;
+  searchProject(projectId: string, options: SearchOptions): Promise<SearchResult>;
+  replaceInProject(projectId: string, request: ReplaceRequest): Promise<ReplaceResult>;
   writeProjectFile(projectId: string, relativePath: string, text: string, expectedText: string): Promise<{ ok: true } | { ok: false; error: string }>;
   listSessions(projectPath: string): Promise<SessionInfo[]>;
   isGitRepo(path: string): Promise<boolean>;

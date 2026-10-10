@@ -10,6 +10,7 @@ import type { CliKind, ProjectIcon, SessionInfo, ShellKind, Snippet } from '../.
 import { restoreArchived, resumeSession } from '../actions';
 import { closeDialog, closeModal, setUi, update, useStore, type Dialog } from '../store';
 import { ChangelogModal } from './Changelog';
+import { FindReplaceModal } from './FindReplace';
 import { GridDialog } from './GridDialog';
 import { IEdit, IGrip, IX } from './icons';
 import { ProjectIconView } from './ProjectIcon';
@@ -42,6 +43,7 @@ export function Modals() {
           {modal.kind === 'history' && <HistoryModal projectId={modal.projectId} />}
           {modal.kind === 'settings' && <SettingsModal />}
           {modal.kind === 'changelog' && <ChangelogModal />}
+          {modal.kind === 'search' && <FindReplaceModal key={modal.projectId} projectId={modal.projectId} />}
           {modal.kind === 'snippet' && <SnippetEditor key={modal.snippetId ?? modal.projectId ?? 'new'} snippetId={modal.snippetId} projectId={modal.projectId} />}
           {modal.kind === 'project' && <ProjectEditor key={modal.projectId} projectId={modal.projectId} />}
           {modal.kind === 'file' && <FilePreview projectId={modal.projectId} relativePath={modal.relativePath} />}

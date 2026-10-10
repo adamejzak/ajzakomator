@@ -20,6 +20,8 @@ export const ICollapse = () => <Svg><rect x="2" y="5" width="9" height="9" rx="1
 export const IGrip = () => <Svg size={12}><path d="M5 4h.01M10 4h.01M5 8h.01M10 8h.01M5 12h.01M10 12h.01" strokeWidth="2.5" /></Svg>;
 export const ISnippet = () => <Svg><path d="M5 4L1.5 8 5 12M11 4l3.5 4-3.5 4M9.5 3l-3 10" /></Svg>;
 export const ISidebar = () => <Svg><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M6 3v10" /></Svg>;
+export const ICollapseAll = () => <Svg><path d="M4 3.5l4 3.5 4-3.5M4 12.5L8 9l4 3.5" /></Svg>;
+export const IExpandAll = () => <Svg><path d="M4 7l4-3.5L12 7M4 9l4 3.5L12 9" /></Svg>;
 export const ISearch = () => <Svg><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></Svg>;
 export const IEdit = () => <Svg size={12}><path d="M10.5 2.5l3 3L6 13H3v-3z" /></Svg>;
 export const IBranch = () => <Svg size={11}><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="5.5" r="1.5" /><path d="M4.5 5v6M11.5 7c0 3-7 2-7 4" /></Svg>;
