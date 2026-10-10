@@ -1,12 +1,12 @@
 import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
 import { useState } from 'react';
-import type { GridLayout } from '../../../shared/layout';
+import { areaRects, type GridLayout } from '../../../shared/layout';
 import { activeProject, activeTab, setTabLayout } from '../../../shared/state';
 import { createProject, quickTab } from '../actions';
 import { setUi, update, useStore } from '../store';
 import { CellView } from './CellView';
-import { GridDividers, trackTemplate } from './GridDividers';
+import { areaStyle, GridDividers } from './GridDividers';
 import { IHistory, IPlus, Logo } from './icons';
 import { ProjectIconView } from './ProjectIcon';
 
@@ -66,17 +66,13 @@ export function GridView() {
 
   const maxCell = maximized ? tab.cells.find((c) => c.id === maximized) : undefined;
   const layout = preview?.tabId === tab.id ? preview.layout : tab.layout;
+  const rects = areaRects(layout);
   return (
-    <div
-      className={`grid ${preview ? 'resizing' : ''}`}
-      style={maxCell ? { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' } : { gridTemplateColumns: trackTemplate(layout, 'col'), gridTemplateRows: trackTemplate(layout, 'row') }}
-    >
+    <div className={`grid ${preview ? 'resizing' : ''}`}>
       {tab.cells.map((cell, i) => {
         if (maxCell && cell.id !== maxCell.id) return null;
-        const a = layout.areas[i] ?? layout.areas[layout.areas.length - 1];
-        const style = maxCell
-          ? { gridColumn: '1 / -1', gridRow: '1 / -1' }
-          : { gridColumn: `${a.col + 1} / span ${a.colSpan}`, gridRow: `${a.row + 1} / span ${a.rowSpan}` };
+        const rect = rects[i] ?? rects[rects.length - 1];
+        const style = maxCell ? { left: 0, top: 0, width: '100%', height: '100%' } : areaStyle(rect);
         return <CellView key={cell.id} cell={cell} index={i} style={style} maximized={!!maxCell} />;
       })}
       {!maxCell && tab.cells.length > 1 && (

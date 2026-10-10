@@ -223,7 +223,7 @@ function SettingsModal() {
         <div className="section-title">{tr('Aktualizacje')}</div>
         <div className="field">
           <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>
-          <select id="settings-updates" className="select" value={s.settings.autoInstallUpdates ? 'auto' : 'manual'}
+          <select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.autoInstallUpdates ? 'auto' : 'manual'}
             onChange={(e) => setSetting({ autoInstallUpdates: e.target.value === 'auto' })}>
             <option value="auto">{tr('Automatycznie — po zamknięciu aplikacji')}</option>
             <option value="manual">{tr('Ręcznie — dopiero po kliknięciu w stopce')}</option>

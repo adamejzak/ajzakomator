@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { createLayout, describeLayout, dividers, growLayout, layoutForCount, layoutFromRows, mergeRect, MIN_AREA_SHARE, removeArea, resizeLine, rowCountsOf, trackSizes, unmergeAll, withSizes } from '../src/shared/layout';
+import {
+  areaRects, colWeights, createLayout, describeLayout, dividerBox, dividers, growLayout, layoutForCount, layoutFromRows, mergeRect, MIN_AREA_SHARE,
+  removeArea, resetDivider, resizeDivider, rowCountsOf, rowWeights, unmergeAll, type GridLayout,
+} from '../src/shared/layout';
 
 describe('layout', () => {
   it('createLayout makes one area per field, row-major', () => {
@@ -72,71 +75,157 @@ describe('layout', () => {
 });
 
 describe('resizable splits', () => {
-  const total = (sizes: number[]) => sizes.reduce((a, b) => a + b, 0);
+  const grid = (cols: number, rows: number) => createLayout(cols, rows);
+  const find = (layout: GridLayout, axis: 'col' | 'row', line: number, from?: number) =>
+    dividers(layout).find((d) => d.axis === axis && d.line === line && (from === undefined || d.from === from))!;
 
-  it('uses equal tracks until sizes are set and ignores malformed sizes', () => {
-    expect(trackSizes(createLayout(3, 1), 'col')).toEqual([1, 1, 1]);
-    expect(trackSizes({ ...createLayout(2, 2), colSizes: [1, 2, 3] }, 'col')).toEqual([1, 1]);
-    expect(trackSizes({ ...createLayout(2, 2), rowSizes: [1, -1] }, 'row')).toEqual([1, 1]);
+  /** Areas must tile the grid: total area 1 and no two areas overlapping. */
+  const expectTiling = (layout: GridLayout) => {
+    const rects = areaRects(layout);
+    const area = (r: { x0: number; y0: number; x1: number; y1: number }) => (r.x1 - r.x0) * (r.y1 - r.y0);
+    expect(rects.reduce((a, r) => a + area(r), 0)).toBeCloseTo(1, 9);
+    for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
+      const w = Math.min(rects[i].x1, rects[j].x1) - Math.max(rects[i].x0, rects[j].x0);
+      const h = Math.min(rects[i].y1, rects[j].y1) - Math.max(rects[i].y0, rects[j].y0);
+      expect(Math.max(0, w) * Math.max(0, h)).toBeLessThan(1e-9);
+    }
+  };
+
+  it('defaults to equal tracks and ignores malformed sizes', () => {
+    expect(rowWeights(grid(2, 3))).toEqual([1, 1, 1]);
+    expect(colWeights(grid(3, 1), 0)).toEqual([1, 1, 1]);
+    expect(colWeights({ ...grid(2, 2), rowColSizes: [[1, 2, 3], null] }, 0)).toEqual([1, 1]);
+    expect(rowWeights({ ...grid(2, 2), rowSizes: [1, -1] })).toEqual([1, 1]);
+    expect(areaRects(grid(2, 2))[3]).toEqual({ x0: 0.5, y0: 0.5, x1: 1, y1: 1 });
   });
 
-  it('finds every divider of a plain grid as one full-length segment', () => {
-    expect(dividers(createLayout(2, 2))).toEqual([
-      { axis: 'col', line: 1, from: 0, to: 1 },
-      { axis: 'row', line: 1, from: 0, to: 1 },
-    ]);
-    expect(dividers(createLayout(1, 1))).toEqual([]);
-  });
-
-  it('splits a divider where an area spans across it', () => {
-    const merged = mergeRect(createLayout(2, 2), { col: 0, row: 0, colSpan: 2, rowSpan: 1 });
-    expect(dividers(merged)).toEqual([
+  it('cuts vertical dividers at every crossing so each row moves on its own', () => {
+    expect(dividers(grid(2, 2))).toEqual([
+      { axis: 'col', line: 1, from: 0, to: 0 },
       { axis: 'col', line: 1, from: 1, to: 1 },
       { axis: 'row', line: 1, from: 0, to: 1 },
     ]);
+    expect(dividers(grid(1, 1))).toEqual([]);
+    expect(dividers(grid(3, 1))).toEqual([{ axis: 'col', line: 1, from: 0, to: 0 }, { axis: 'col', line: 2, from: 0, to: 0 }]);
+  });
+
+  it('keeps a divider in one piece at a T junction and splits it where an area spans across', () => {
+    const tall = mergeRect(grid(2, 2), { col: 0, row: 0, colSpan: 1, rowSpan: 2 });
+    expect(dividers(tall)).toEqual([{ axis: 'col', line: 1, from: 0, to: 1 }, { axis: 'row', line: 1, from: 1, to: 1 }]);
+    const wide = mergeRect(grid(2, 2), { col: 0, row: 0, colSpan: 2, rowSpan: 1 });
+    expect(dividers(wide)).toEqual([{ axis: 'col', line: 1, from: 1, to: 1 }, { axis: 'row', line: 1, from: 0, to: 1 }]);
   });
 
   it('offers per-row dividers for uneven rows', () => {
-    const l = layoutFromRows([3, 2]);
-    const verticals = dividers(l).filter((d) => d.axis === 'col').map((d) => [d.line, d.from, d.to]);
+    const verticals = dividers(layoutFromRows([3, 2])).filter((d) => d.axis === 'col').map((d) => [d.line, d.from, d.to]);
     expect(verticals).toEqual([[2, 0, 0], [3, 1, 1], [4, 0, 0]]);
   });
 
-  it('moves one line, keeps the total and leaves other lines in place', () => {
-    const moved = resizeLine(createLayout(3, 1), 'col', 1, 0.5);
-    expect(moved.colSizes).toEqual([1.5, 0.5, 1]);
-    expect(total(moved.colSizes!)).toBe(3);
-    const second = resizeLine(moved, 'col', 2, -0.25);
-    expect(second.colSizes![0]).toBe(1.5);
-    expect(total(second.colSizes!)).toBeCloseTo(3);
+  it('moves one row without touching the others', () => {
+    const l = grid(2, 2);
+    const moved = resizeDivider(l, find(l, 'col', 1, 0), 0.2);
+    const rects = areaRects(moved);
+    expect(rects[0].x1).toBeCloseTo(0.7);
+    expect(rects[1].x0).toBeCloseTo(0.7);
+    expect(rects[2].x1).toBeCloseTo(0.5);
+    expect(rects[3].x0).toBeCloseTo(0.5);
+    expectTiling(moved);
+  });
+
+  it('moves a horizontal divider across the whole width', () => {
+    const l = grid(2, 2);
+    const moved = resizeDivider(l, find(l, 'row', 1), 0.25);
+    const rects = areaRects(moved);
+    expect(rects.map((r) => r.y1).slice(0, 2)).toEqual([0.75, 0.75]);
+    expect(rects.map((r) => r.y0).slice(2)).toEqual([0.75, 0.75]);
+    expectTiling(moved);
+  });
+
+  it('moves both sides of a T junction together', () => {
+    const tall = mergeRect(grid(2, 2), { col: 0, row: 0, colSpan: 1, rowSpan: 2 });
+    const moved = resizeDivider(tall, find(tall, 'col', 1), 0.2);
+    const rects = areaRects(moved);
+    expect(rects.map((r) => Math.round(r.x1 * 100) / 100)).toEqual([0.7, 1, 1]);
+    expect(rects[1].x0).toBeCloseTo(0.7);
+    expect(rects[2].x0).toBeCloseTo(0.7);
+    expectTiling(moved);
   });
 
   it('never lets an area shrink below the minimum share', () => {
-    const grid = createLayout(2, 1);
-    const far = resizeLine(grid, 'col', 1, 5);
-    expect(far.colSizes![1] / total(far.colSizes!)).toBeCloseTo(MIN_AREA_SHARE);
-    const back = resizeLine(grid, 'col', 1, -5);
-    expect(back.colSizes![0] / total(back.colSizes!)).toBeCloseTo(MIN_AREA_SHARE);
+    const l = grid(2, 1);
+    const far = areaRects(resizeDivider(l, find(l, 'col', 1), 5));
+    expect(far[1].x1 - far[1].x0).toBeCloseTo(MIN_AREA_SHARE);
+    const back = areaRects(resizeDivider(l, find(l, 'col', 1), -5));
+    expect(back[0].x1 - back[0].x0).toBeCloseTo(MIN_AREA_SHARE);
+    const rows = grid(1, 2);
+    const down = areaRects(resizeDivider(rows, find(rows, 'row', 1), 5));
+    expect(down[1].y1 - down[1].y0).toBeCloseTo(MIN_AREA_SHARE);
   });
 
-  it('respects merged areas when clamping', () => {
-    const merged = mergeRect(createLayout(3, 1), { col: 1, row: 0, colSpan: 2, rowSpan: 1 });
-    const squeezed = resizeLine(merged, 'col', 1, 5);
-    const sizes = squeezed.colSizes!;
-    expect((sizes[1] + sizes[2]) / total(sizes)).toBeGreaterThanOrEqual(MIN_AREA_SHARE - 1e-9);
+  it('keeps the grid gap-free and overlap-free under random drags of every divider', () => {
+    let seed = 7;
+    const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const layouts = [
+      grid(2, 2), grid(3, 3), layoutFromRows([3, 2]), layoutFromRows([1, 2, 3]), layoutForCount(5), layoutForCount(7),
+      mergeRect(grid(3, 3), { col: 0, row: 0, colSpan: 2, rowSpan: 2 }),
+      mergeRect(grid(2, 2), { col: 0, row: 0, colSpan: 1, rowSpan: 2 }),
+      mergeRect(grid(3, 2), { col: 1, row: 0, colSpan: 2, rowSpan: 1 }),
+    ];
+    for (let start of layouts) {
+      for (let step = 0; step < 60; step++) {
+        const all = dividers(start);
+        if (!all.length) break;
+        start = resizeDivider(start, all[Math.floor(random() * all.length)], random() - 0.5);
+        expectTiling(start);
+        for (const r of areaRects(start)) expect(Math.min(r.x1 - r.x0, r.y1 - r.y0)).toBeGreaterThanOrEqual(MIN_AREA_SHARE - 1e-9);
+      }
+    }
   });
 
-  it('drops sizes when they return to an equal split and survives merging', () => {
-    const l = resizeLine(createLayout(2, 2), 'col', 1, 0.4);
-    expect(l.colSizes).toBeDefined();
-    expect(withSizes(l, 'col', undefined).colSizes).toBeUndefined();
-    expect(resizeLine(l, 'col', 1, -0.4).colSizes).toBeUndefined();
-    expect(mergeRect(l, { col: 0, row: 0, colSpan: 1, rowSpan: 2 }).colSizes).toEqual(l.colSizes);
+  it('resets only the rows of one vertical divider, or all heights for a horizontal one', () => {
+    let l = grid(2, 2);
+    l = resizeDivider(l, find(l, 'col', 1, 0), 0.2);
+    l = resizeDivider(l, find(l, 'col', 1, 1), -0.2);
+    l = resizeDivider(l, find(l, 'row', 1), 0.1);
+    const reset = resetDivider(l, find(l, 'col', 1, 0));
+    expect(areaRects(reset)[0].x1).toBeCloseTo(0.5);
+    expect(areaRects(reset)[2].x1).toBeCloseTo(0.3);
+    expect(areaRects(reset)[0].y1).toBeCloseTo(0.6);
+    expect(areaRects(resetDivider(l, find(l, 'row', 1)))[0].y1).toBeCloseTo(0.5);
+    const clean = resetDivider(resetDivider(reset, find(reset, 'col', 1, 1)), find(reset, 'row', 1));
+    expect(clean.rowColSizes).toBeUndefined();
+    expect(clean.rowSizes).toBeUndefined();
+  });
+
+  it('reads grid-wide widths from 0.5.5 as the default of every row', () => {
+    const legacy: GridLayout = { ...grid(2, 2), colSizes: [1.5, 0.5] };
+    expect(areaRects(legacy).map((r) => r.x1)).toEqual([0.75, 1, 0.75, 1]);
+    const moved = resizeDivider(legacy, find(legacy, 'col', 1, 0), -0.1);
+    const rects = areaRects(moved);
+    expect(rects[0].x1).toBeCloseTo(0.65);
+    expect(rects[2].x1).toBeCloseTo(0.75);
+    expectTiling(moved);
+  });
+
+  it('merging areas drops per-row widths because the merged area spans rows', () => {
+    const l = resizeDivider(grid(2, 2), find(grid(2, 2), 'col', 1, 0), 0.2);
+    const merged = mergeRect(l, { col: 0, row: 0, colSpan: 1, rowSpan: 2 });
+    expect(merged.rowColSizes).toBeUndefined();
+    expectTiling(merged);
+  });
+
+  it('places dividers from the geometry', () => {
+    const l = grid(2, 2);
+    expect(dividerBox(l, find(l, 'col', 1, 0))).toEqual({ pos: 0.5, start: 0, end: 0.5 });
+    expect(dividerBox(l, find(l, 'row', 1))).toEqual({ pos: 0.5, start: 0, end: 1 });
+    const moved = resizeDivider(l, find(l, 'col', 1, 1), 0.2);
+    expect(dividerBox(moved, find(moved, 'col', 1, 1)).pos).toBeCloseTo(0.7);
+    expect(dividerBox(moved, find(moved, 'col', 1, 0)).pos).toBeCloseTo(0.5);
   });
 
   it('ignores lines outside the grid', () => {
-    const l = createLayout(2, 1);
-    expect(resizeLine(l, 'col', 0, 1)).toBe(l);
-    expect(resizeLine(l, 'col', 2, 1)).toBe(l);
+    const l = grid(2, 1);
+    expect(resizeDivider(l, { axis: 'col', line: 0, from: 0, to: 0 }, 1)).toBe(l);
+    expect(resizeDivider(l, { axis: 'col', line: 2, from: 0, to: 0 }, 1)).toBe(l);
   });
 });

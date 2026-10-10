@@ -164,9 +164,9 @@ html[data-platform="darwin"] .first-run-titlebar { padding-left: 84px; }
 .titlebar .spacer { flex: 1; align-self: stretch; }
 
 /* ── grid ──────────────────────────────────────────────────────────────── */
-.grid { position: relative; flex: 1; min-height: 0; display: grid; gap: 1px; background: var(--border); }
+.grid { position: relative; flex: 1; min-height: 0; background: var(--border); }
 .grid.resizing { user-select: none; }
-.cell { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.cell { position: absolute; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
 .cell.focused { box-shadow: inset 0 0 0 1px #2c4c7c; }
 .cell.drop { box-shadow: inset 0 0 0 2px var(--accent); }
 .cell.drop::after { content: 'Upuść, aby wkleić'; position: absolute; inset: 26px 0 0 0; display: grid; place-items: center; background: #3b82f610; color: var(--accent-text); font-size: 13px; pointer-events: none; }
