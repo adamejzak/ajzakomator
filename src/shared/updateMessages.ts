@@ -41,4 +41,5 @@ export const updateMessages = {
   'Brak opisu zmian.': ['No description for this release.', 'Keine Beschreibung für diese Version.', 'Esta versión no tiene descripción.', 'Aucune description pour cette version.', 'Sem descrição para esta versão.'],
   'Odśwież': ['Refresh', 'Aktualisieren', 'Actualizar', 'Actualiser', 'Atualizar'],
   'Otwórz na GitHubie': ['Open on GitHub', 'Auf GitHub öffnen', 'Abrir en GitHub', 'Ouvrir sur GitHub', 'Abrir no GitHub'],
+  'Ostatnie sprawdzenie: {time} · najnowsza wersja: {version}': ['Last checked: {time} · latest version: {version}', 'Zuletzt geprüft: {time} · neueste Version: {version}', 'Última comprobación: {time} · última versión: {version}', 'Dernière vérification : {time} · dernière version : {version}', 'Última verificação: {time} · última versão: {version}'],
 } as const;

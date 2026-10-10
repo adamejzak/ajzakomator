@@ -4,7 +4,8 @@ import type { Project, ProjectDirectory, ProjectFileEntry } from '../../../share
 import { setUi } from '../store';
 import { openFile } from '../files';
 import { openMenu } from './ContextMenu';
-import { IChevron, ICollapse, IFile, IFolder, IRestart } from './icons';
+import { IChevron, ICollapse, IFile, IFolder } from './icons';
+import { RefreshIcon, useHoldBusy } from './Spinner';
 import { ProjectIconView } from './ProjectIcon';
 import { fullProjectPath as projectPath } from '../../../shared/platform';
 
@@ -99,6 +100,9 @@ export function ProjectExplorer({ project }: { project: Project }) {
   const { tr } = useI18n();
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [refresh, setRefresh] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const spinning = useHoldBusy(refreshing, 700);
+  const reload = () => { setRefresh((n) => n + 1); setRefreshing(true); setTimeout(() => setRefreshing(false), 50); };
   const toggle = (path: string, open?: boolean) => setExpanded((previous) => {
     const next = new Set(previous);
     if (open ?? !next.has(path)) next.add(path);
@@ -111,7 +115,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
     e.stopPropagation();
     openMenu(e.clientX, e.clientY, [
       { header: project.name },
-      { label: tr("Odśwież pliki"), onClick: () => setRefresh((n) => n + 1) },
+      { label: tr("Odśwież pliki"), onClick: reload },
       { label: tr("Zwiń wszystkie foldery"), onClick: () => setExpanded(new Set()) },
       { label: tr("Otwórz folder w menedżerze plików"), onClick: () => window.mc.openPath(project.path) },
       { label: tr("Otwórz projekt w edytorze"), onClick: () => window.mc.openInEditor(project.path) },
@@ -126,7 +130,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
         <ProjectIconView project={project} />
         <span className="explorer-project" title={project.path}>{project.name}</span>
         <button className="btn ghost icon" title={tr("Zwiń wszystkie foldery")} aria-label={tr("Zwiń wszystkie foldery")} onClick={() => setExpanded(new Set())}><ICollapse /></button>
-        <button className="btn ghost icon" title={tr("Odśwież pliki")} aria-label={tr("Odśwież pliki")} onClick={() => setRefresh((n) => n + 1)}><IRestart /></button>
+        <button className="btn ghost icon" title={tr("Odśwież pliki")} aria-label={tr("Odśwież pliki")} onClick={reload}><RefreshIcon spinning={spinning} /></button>
       </div>
       <div className="explorer-tree">
         <Directory project={project} path="" depth={0} expanded={expanded} toggle={toggle} refresh={refresh} />

@@ -1,22 +1,29 @@
+import { useState } from 'react';
 import { useI18n } from '../i18n';
 import { setUi, useStore } from '../store';
 import { IChangelog } from './icons';
+import { RefreshIcon, useHoldBusy } from './Spinner';
 import { formatUpdateBytes, requestUpdateCheck, useUpdateState } from './UpdateBadge';
 import './updater.css';
 
 /** Full-width bottom bar: running version and live update status, with the update action. */
 export function StatusBar() {
-  const { tr, errorText } = useI18n();
+  const { tr, errorText, language } = useI18n();
   const { update: u, currentVersion } = useUpdateState();
+  const [clicked, setClicked] = useState(false);
+  // Checking is usually instant, so keep the turning arrow visible long enough to notice.
+  const checking = useHoldBusy(u.status === 'checking' || clicked, 800);
+  const check = () => { setClicked(true); requestUpdateCheck(); setTimeout(() => setClicked(false), 50); };
   const version = u.version ?? '';
   const autoInstall = useStore((st) => st.s.settings.autoInstallUpdates);
 
   const status = (() => {
     switch (u.status) {
-      case 'checking':
-        return <span className="sb-item" role="status"><span className="updater-spinner" aria-hidden />{tr('Sprawdzanie aktualizacji…')}</span>;
-      case 'current':
-        return <button className="sb-btn" onClick={requestUpdateCheck} title={tr('Sprawdź aktualizacje')}><span className="sb-dot ok" aria-hidden />{tr('Masz najnowszą wersję')}</button>;
+      case 'current': {
+        const when = u.checkedAt ? new Date(u.checkedAt).toLocaleTimeString(language) : '';
+        const title = when && u.version ? tr('Ostatnie sprawdzenie: {time} · najnowsza wersja: {version}', { time: when, version: u.version }) : tr('Sprawdź aktualizacje');
+        return <button className="sb-btn" onClick={check} title={title}><span className="sb-dot ok" aria-hidden />{tr('Masz najnowszą wersję')}</button>;
+      }
       case 'downloading': {
         const percent = Math.round(Math.min(100, Math.max(0, Number.isFinite(u.percent) ? u.percent! : 0)));
         return <span className="sb-item" role="status" title={tr('Pobieranie aktualizacji w tle')}>
@@ -33,23 +40,26 @@ export function StatusBar() {
       case 'available':
         return <button className="sb-btn sb-action" onClick={() => window.mc.openReleases()} title={tr('Otwórz stronę pobierania')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · pobierz', { version })}</button>;
       case 'installing':
-        return <span className="sb-item" role="status"><span className="updater-spinner" aria-hidden />{tr('Instalowanie aktualizacji…')}</span>;
+        return <span className="sb-item" role="status"><RefreshIcon spinning />{tr('Instalowanie aktualizacji…')}</span>;
       case 'error': {
         const message = errorText(u.message ?? 'Nie udało się sprawdzić aktualizacji.');
         return <span className="sb-item sb-error" role="alert">
-          <button className="sb-btn" onClick={requestUpdateCheck}>{tr('Błąd aktualizacji · ponów')}</button>
+          <button className="sb-btn" onClick={check}>{tr('Błąd aktualizacji · ponów')}</button>
           <span className="sb-message" title={message}>{message}</span>
         </span>;
       }
       default:
-        return <button className="sb-btn" onClick={requestUpdateCheck}>{tr('Sprawdź aktualizacje')}</button>;
+        return <button className="sb-btn" onClick={check}>{tr('Sprawdź aktualizacje')}</button>;
     }
   })();
 
+  const shown = checking && !['downloading', 'ready', 'available', 'installing', 'error'].includes(u.status)
+    ? <span className="sb-item" role="status"><RefreshIcon spinning />{tr('Sprawdzanie aktualizacji…')}</span>
+    : status;
   return (
     <footer className="statusbar">
       {currentVersion && <span className="sb-version" title={tr('Wersja {version}', { version: currentVersion })}>ajzakomator v{currentVersion}</span>}
-      {status}
+      {shown}
       <span className="sb-spacer" />
       <button className="sb-btn" onClick={() => setUi({ modal: { kind: 'changelog' } })} title={tr('Co nowego')} aria-label={tr('Co nowego')}><IChangelog />{tr('Co nowego')}</button>
     </footer>

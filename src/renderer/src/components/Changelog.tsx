@@ -3,6 +3,7 @@ import { compareVersions, parseNotes, type Block, type ChangelogEntry, type Chan
 import { useI18n } from '../i18n';
 import { closeModal } from '../store';
 import { IX } from './icons';
+import { RefreshIcon, useHoldBusy } from './Spinner';
 import { useUpdateState } from './UpdateBadge';
 
 const RELEASES_PAGE = 'https://github.com/adamejzak/ajzakomator/releases';
@@ -26,6 +27,7 @@ export function ChangelogModal() {
   const { currentVersion } = useUpdateState();
   const [result, setResult] = useState<ChangelogResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const spinning = useHoldBusy(loading, 700);
 
   const load = useCallback((force: boolean) => {
     setLoading(true);
@@ -56,7 +58,7 @@ export function ChangelogModal() {
         {result?.error && (
           <div className="cl-note" role="alert">
             {result.stale ? tr('Brak połączenia z GitHubem — pokazuję zapisaną kopię.') : tr('Nie udało się pobrać listy zmian.')}
-            <button className="btn small" onClick={() => load(true)} disabled={loading}>{tr('Ponów')}</button>
+            <button className="btn small" onClick={() => load(true)} disabled={spinning}><RefreshIcon spinning={spinning} />{tr('Ponów')}</button>
           </div>
         )}
         {!result && loading && <div className="muted">{tr('Ładowanie listy zmian…')}</div>}
@@ -73,7 +75,7 @@ export function ChangelogModal() {
         ))}
       </div>
       <div className="modal-foot">
-        <button className="btn" onClick={() => load(true)} disabled={loading}>{tr('Odśwież')}</button>
+        <button className="btn primary" onClick={() => load(true)} disabled={spinning}><RefreshIcon spinning={spinning} />{tr('Odśwież')}</button>
         <button className="btn" onClick={() => window.mc.openExternal(RELEASES_PAGE)}>{tr('Otwórz na GitHubie')}</button>
       </div>
     </div>
