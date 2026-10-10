@@ -8,3 +8,8 @@ spike/
 *.stackdump
 *.tsbuildinfo
 release-next/
+
+# Local-only project notes and tooling (not published)
+CLAUDE.md
+docs/RELEASING.md
+docs/superpowers/
