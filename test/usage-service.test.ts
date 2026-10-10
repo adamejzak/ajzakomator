@@ -178,4 +178,26 @@ describe('UsageService', () => {
     expect(claude).toHaveBeenCalledTimes(2);
     service.stop();
   });
+
+  it('gives up on a read that never settles and keeps polling', async () => {
+    let hang = true;
+    const { service, claude } = make({ intervalMs: () => 60_000, claude: () => (hang ? new Promise<FetchResult>(() => undefined) : Promise.resolve(ok('claude', 12))) });
+    service.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(service.getState().providers[0]).toMatchObject({ provider: 'claude', status: 'error', error: 'timeout' });
+    hang = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(claude).toHaveBeenCalledTimes(2);
+    expect(service.getState().providers[0].status).toBe('ok');
+    service.stop();
+  });
+
+  it('is not disturbed by a listener that throws', async () => {
+    const { service } = make();
+    const heard: number[] = [];
+    service.onChange(() => { throw new Error('bad listener'); });
+    service.onChange((state) => heard.push(state.providers.length));
+    await expect(service.refresh()).resolves.toBeDefined();
+    expect(heard).toEqual([2]);
+  });
 });

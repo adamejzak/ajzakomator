@@ -7,6 +7,7 @@ import type { FetchResult } from './fetchers';
 export const MIN_GAP_MS = 20_000;
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
+const FETCH_TIMEOUT_MS = 30_000;
 const ORDER: UsageProvider[] = ['claude', 'codex'];
 
 export interface UsageServiceOptions {
@@ -47,7 +48,7 @@ export class UsageService {
 
   start(): void {
     this.running = true;
-    void this.refresh();
+    void this.kick();
     this.schedule();
   }
 
@@ -61,13 +62,13 @@ export class UsageService {
     this.active = active;
     if (!active) { this.clearTimer(); return; }
     const interval = this.options.intervalMs();
-    if (this.running && this.options.enabled() && interval > 0 && this.now() - this.lastRun >= interval) void this.refresh();
+    if (this.running && this.options.enabled() && interval > 0 && this.now() - this.lastRun >= interval) void this.kick();
     this.schedule();
   }
 
   /** Call after the enabled flag or the interval changed. */
   reschedule(): void {
-    if (this.running && this.options.enabled()) void this.refresh();
+    if (this.running && this.options.enabled()) void this.kick();
     this.schedule();
   }
 
@@ -79,6 +80,11 @@ export class UsageService {
     return this.pending;
   }
 
+  /** Fire-and-forget refresh that can never reject. */
+  private kick(): Promise<void> {
+    return this.refresh().then(() => undefined, () => undefined);
+  }
+
   private clearTimer(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
@@ -88,7 +94,7 @@ export class UsageService {
     this.clearTimer();
     const interval = this.options.intervalMs();
     if (!this.running || !this.active || !this.options.enabled() || interval <= 0) return;
-    this.timer = setTimeout(() => { void this.refresh().finally(() => this.schedule()); }, interval);
+    this.timer = setTimeout(() => { void this.kick().then(() => this.schedule()); }, interval);
     this.timer.unref?.();
   }
 
@@ -98,7 +104,9 @@ export class UsageService {
     await Promise.all(ORDER.map((provider) => this.update(provider, started)));
     this.saveCache();
     const state = this.getState();
-    for (const listener of this.listeners) listener(state);
+    for (const listener of this.listeners) {
+      try { listener(state); } catch { /* a bad listener must not affect the others or the run */ }
+    }
     return state;
   }
 
@@ -106,8 +114,13 @@ export class UsageService {
     const hold = this.backoff.get(provider);
     if (hold && hold.until > now) return;
     let result: FetchResult;
-    try { result = await this.options.fetchers[provider](); }
-    catch { result = { usage: { provider, status: 'error', windows: [], fetchedAt: now, source: 'live', error: 'network' } }; }
+    const failure = (error: string): FetchResult => ({ usage: { provider, status: 'error', windows: [], fetchedAt: now, source: 'live', error } });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timedOut = new Promise<FetchResult>((resolve) => { timeout = setTimeout(() => resolve(failure('timeout')), FETCH_TIMEOUT_MS); });
+      result = await Promise.race([this.options.fetchers[provider](), timedOut]);
+    } catch { result = failure('network'); }
+    finally { clearTimeout(timeout); }
     const { usage, retryAfterMs } = result;
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
       this.providers.set(provider, usage);
