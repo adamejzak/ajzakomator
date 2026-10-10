@@ -735,11 +735,11 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 
 /* ── grid dividers ─────────────────────────────────────────────────────── */
 .grid-divider { position: absolute; z-index: 6; touch-action: none; outline: none; }
-.grid-divider.col { width: 7px; margin-left: -3px; cursor: col-resize; }
-.grid-divider.row { height: 7px; margin-top: -3px; cursor: row-resize; }
+.grid-divider.col { width: 11px; margin-left: -5px; cursor: col-resize; }
+.grid-divider.row { height: 11px; margin-top: -5px; cursor: row-resize; }
 .grid-divider::after { content: ''; position: absolute; background: var(--accent); opacity: 0; transition: opacity .12s .08s; }
-.grid-divider.col::after { left: 2px; right: 2px; top: 0; bottom: 0; }
-.grid-divider.row::after { top: 2px; bottom: 2px; left: 0; right: 0; }
+.grid-divider.col::after { left: 4px; right: 4px; top: 0; bottom: 0; }
+.grid-divider.row::after { top: 4px; bottom: 4px; left: 0; right: 0; }
 .grid-divider:hover::after, .grid-divider:focus-visible::after, .grid.resizing .grid-divider:active::after { opacity: 1; }
 
 /* ── changelog ─────────────────────────────────────────────────────────── */
