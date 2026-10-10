@@ -105,6 +105,12 @@ export interface Settings {
   lastProfileId: string;
   /** Install a downloaded update when the app is closed; when off, only the status bar button installs it. */
   autoInstallUpdates: boolean;
+  /** Show the docked "AI account limits" section in the sidebar. */
+  showAiUsage: boolean;
+  /** How often the limits are read, in minutes (1, 5 or 15). */
+  usageIntervalMinutes: number;
+  /** The docked section is folded to one line. */
+  usageCollapsed: boolean;
 }
 
 export interface AppState {

@@ -5,6 +5,7 @@ import { isLanguage } from './languages';
 import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
 import { normalizePanelWidth, PANEL_LIMITS } from './panels';
 import { defaultAutomation } from './automation';
+import { USAGE_INTERVALS_MINUTES } from './usage';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
@@ -23,7 +24,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: true },
+    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: true, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false },
     sidebarCollapsed: false,
     snippetsOpen: true,
     sidebarWidth: PANEL_LIMITS.sidebar.default,
@@ -307,6 +308,9 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       shell: shellsForPlatform(platform).some((shell) => shell.code === r.settings?.shell) ? r.settings!.shell! : d.settings.shell,
       lastProfileId: remap(r.settings?.lastProfileId ?? d.settings.lastProfileId),
       autoInstallUpdates: typeof r.settings?.autoInstallUpdates === 'boolean' ? r.settings.autoInstallUpdates : d.settings.autoInstallUpdates,
+      showAiUsage: typeof r.settings?.showAiUsage === 'boolean' ? r.settings.showAiUsage : d.settings.showAiUsage,
+      usageIntervalMinutes: (USAGE_INTERVALS_MINUTES as readonly number[]).includes(r.settings?.usageIntervalMinutes as number) ? r.settings!.usageIntervalMinutes! : d.settings.usageIntervalMinutes,
+      usageCollapsed: typeof r.settings?.usageCollapsed === 'boolean' ? r.settings.usageCollapsed : d.settings.usageCollapsed,
     },
     projects: r.projects.map((p) => ({
       ...p,
