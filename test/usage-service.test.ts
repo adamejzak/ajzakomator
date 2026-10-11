@@ -84,6 +84,22 @@ describe('UsageService', () => {
     expect(claude).toHaveBeenCalledTimes(2);
   });
 
+  it('chains exactly one forced follow-up run after a run in flight', async () => {
+    const releases: Array<(value: FetchResult) => void> = [];
+    const { service, claude } = make({ claude: () => new Promise<FetchResult>((resolve) => { releases.push(resolve); }) });
+    const first = service.refresh();
+    const forcedA = service.refresh(true, true);
+    const forcedB = service.refresh(true, true);
+    expect(claude).toHaveBeenCalledOnce();
+    releases[0](ok('claude', 10));
+    await first;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(claude).toHaveBeenCalledTimes(2);
+    releases[1](ok('claude', 20));
+    await Promise.all([forcedA, forcedB]);
+    expect(claude).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the last numbers when a read fails and backs off exponentially', async () => {
     let step = 0;
     const { service, claude } = make({ claude: async () => (step++ === 0 ? ok('claude', 55) : failing('claude', 'error')) });
@@ -330,7 +346,7 @@ describe('UsageService', () => {
       expect(service.getState().providers.map((p) => p.accountId)).toEqual(['claude:main', 'codex:main', 'claude:abc']);
     });
 
-    it('ignores the minimum gap only when forced, and still shares a request in flight', async () => {
+    it('ignores the minimum gap only when forced, and shares one follow-up run for forced callers during a run', async () => {
       const { service, claude } = make();
       await service.refresh();
       await service.refresh();
@@ -343,7 +359,11 @@ describe('UsageService', () => {
       const b = service.refresh(false, true);
       expect(claude).toHaveBeenCalledTimes(3);
       release(ok('claude', 1));
-      await Promise.all([a, b]);
+      await a;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(claude).toHaveBeenCalledTimes(4);
+      release(ok('claude', 2));
+      await b;
     });
 
     it('backs off per account id', async () => {

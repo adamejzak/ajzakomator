@@ -16,6 +16,8 @@ export interface LoginDeps {
   emit(state: LoginState): void;
   /** Called after a login succeeded so the usage service can refresh. */
   onChanged(): void;
+  /** False where isolated Claude profiles cannot work (macOS keeps Claude tokens in the Keychain). Defaults to true. */
+  profilesSupported?: boolean;
   pollMs?: number;
   settleMs?: number;
   timeoutMs?: number;
@@ -54,6 +56,7 @@ export class LoginManager {
     const target = (request as { target?: { type?: unknown; id?: unknown } } | null)?.target;
     if ((provider !== 'claude' && provider !== 'codex') || typeof target !== 'object' || target === null) return invalid;
     if (provider === 'codex' && target.type !== 'main') return invalid;
+    if (this.deps.profilesSupported === false && (target.type === 'new' || target.type === 'account')) return { ok: false, error: 'unsupported' };
     if (target.type === 'account') {
       if (!isAccountId(target.id) || !this.deps.store.list().some((account) => account.id === target.id)) return invalid;
     } else if (target.type !== 'new' && target.type !== 'main') {
@@ -120,6 +123,16 @@ export class LoginManager {
     this.end(session);
     this.kill(session);
     this.discard(session);
+  }
+
+  /** The pty host died: ends the current session as failed. */
+  failActive(error: 'spawn'): void {
+    const session = this.current;
+    if (!session) return;
+    this.end(session);
+    this.kill(session);
+    this.discard(session);
+    this.deps.emit({ sessionId: session.id, status: 'failed', error });
   }
 
   /** Cancels the active session when it targets this managed account. */

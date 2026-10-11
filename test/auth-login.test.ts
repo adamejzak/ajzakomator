@@ -52,6 +52,27 @@ async function runSuccess(h: ReturnType<typeof setup>, request: Parameters<Login
 const noSecret = (value: unknown) => expect(JSON.stringify(value)).not.toContain(SECRET);
 
 describe('LoginManager', () => {
+  it('rejects profile logins when profiles are unsupported but allows main logins', async () => {
+    const h = setup({ profilesSupported: false });
+    expect(await h.manager.start({ provider: 'claude', target: { type: 'new' } })).toEqual({ ok: false, error: 'unsupported' });
+    expect(await h.manager.start({ provider: 'claude', target: { type: 'account', id: '123e4567-e89b-42d3-a456-426614174000' } })).toEqual({ ok: false, error: 'unsupported' });
+    expect(h.mock.spawnPty).not.toHaveBeenCalled();
+    expect((await h.manager.start({ provider: 'codex', target: { type: 'main' } })).ok).toBe(true);
+  });
+
+  it('failActive ends the session as failed, kills the pty and drops the pending profile', async () => {
+    const h = setup();
+    const res = await h.manager.start({ provider: 'claude', target: { type: 'new' } });
+    if (!res.ok) throw new Error('unreachable');
+    h.manager.failActive('spawn');
+    expect(h.mock.killPty).toHaveBeenCalledWith(res.ptyId);
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
+    expect(h.states[1].error).toBe('spawn');
+    expect(store.list()).toEqual([]);
+    h.manager.failActive('spawn');
+    expect(h.states).toHaveLength(2);
+  });
+
   it('registers a new Claude account after the fingerprint changes', async () => {
     const h = setup();
     const res = await h.manager.start({ provider: 'claude', target: { type: 'new' } });

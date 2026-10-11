@@ -61,6 +61,7 @@ async function boot(): Promise<void> {
   });
 
   terminals.onStatus((cellId, status) => {
+    if (cellId.startsWith('auth:')) return; // login windows are not cells
     window.mc.reportCellStatus(cellId, status);
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
     if (status !== 'waiting') return;

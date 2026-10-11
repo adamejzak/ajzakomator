@@ -29,6 +29,7 @@ export class UsageService {
   private readonly backoff = new Map<string, { until: number; failures: number }>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending: Promise<UsageState> | undefined;
+  private followUp: Promise<UsageState> | undefined;
   private lastRun = 0;
   private running = false;
   private active = true;
@@ -77,7 +78,17 @@ export class UsageService {
   /** A manual refresh also reads accounts that are in backoff; `force` also skips the minimum gap. The shared request still applies. */
   refresh(manual = false, force = false): Promise<UsageState> {
     if (!this.options.enabled()) return Promise.resolve(this.getState());
-    if (this.pending) return this.pending;
+    if (this.pending) {
+      if (!force) return this.pending;
+      // A forced caller (a new account was added) needs a run that starts after the current one; all share one follow-up.
+      if (!this.followUp) {
+        this.followUp = this.pending.catch(() => undefined).then(() => {
+          this.followUp = undefined;
+          return this.refresh(true, true);
+        });
+      }
+      return this.followUp;
+    }
     if (!force && this.lastRun && this.now() - this.lastRun < MIN_GAP_MS) return Promise.resolve(this.getState());
     this.pending = this.run(manual).finally(() => { this.pending = undefined; });
     return this.pending;

@@ -139,6 +139,8 @@ export function UsagePanel() {
   const updated = visible.length ? new Date(Math.max(...visible.map((usage) => usage.fetchedAt))).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' }) : '';
   const claudeCount = visible.filter((usage) => usage.provider === 'claude').length;
   const hasCodex = visible.some((usage) => usage.provider === 'codex');
+  // On macOS Claude keeps its tokens in the Keychain, so isolated profiles cannot work there.
+  const canAddClaude = window.mc.platform !== 'darwin';
 
   if (rail) {
     if (!shown.length) return null;
@@ -161,7 +163,7 @@ export function UsagePanel() {
   const collapsed = settings.usageCollapsed;
   const toggle = () => update((st) => updateSettings(st, { usageCollapsed: !collapsed }));
   const openAddMenu = (el: HTMLElement) => openMenuAt(el, [
-    { label: tr('Dodaj konto Claude'), onClick: () => openAuth('claude', { type: 'new' }) },
+    ...(canAddClaude ? [{ label: tr('Dodaj konto Claude'), onClick: () => openAuth('claude', { type: 'new' }) }] : []),
     ...(hasCodex ? [] : [{ label: tr('Zaloguj się do Codex'), onClick: () => openAuth('codex', { type: 'main' }) }]),
   ]);
   return (
@@ -185,7 +187,7 @@ export function UsagePanel() {
             <div className="usage-empty">
               <p className="usage-note">{tr('Brak podłączonych kont. Dodaj konto, aby zobaczyć limity.')}</p>
               <div className="usage-empty-buttons">
-                <button className="btn small" onClick={() => openAuth('claude', { type: 'new' })}><ProviderIcon provider="claude" size={14} />Claude</button>
+                {canAddClaude && <button className="btn small" onClick={() => openAuth('claude', { type: 'new' })}><ProviderIcon provider="claude" size={14} />Claude</button>}
                 <button className="btn small" onClick={() => openAuth('codex', { type: 'main' })}><ProviderIcon provider="codex" size={14} />Codex</button>
               </div>
             </div>

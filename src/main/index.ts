@@ -84,7 +84,7 @@ const usage = new UsageService({
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
 });
 const execText = (command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string | null> => new Promise((resolve) => {
-  execFile(command, args, { env, timeout: 15000, windowsHide: true, shell: process.platform === 'win32' }, (error, stdout) => resolve(error ? null : stdout));
+  execFile(command, args, { env: cleanEnv(env), timeout: 15000, windowsHide: true, shell: process.platform === 'win32' }, (error, stdout) => resolve(error ? null : stdout));
 });
 let usageKey = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
 const ptyHost = new PtyHostClient();
@@ -120,6 +120,7 @@ const login = new LoginManager({
   },
   emit: (s) => send('auth:state', s),
   onChanged: () => void usage.refresh(true, true),
+  profilesSupported: process.platform !== 'darwin',
 });
 const hooks = new HookServer();
 const alive = new Set<string>();
@@ -238,6 +239,7 @@ function createWindow(): void {
 // ── pty host ────────────────────────────────────────────────────────────────
 
 ptyHost.on('message', (m: HostToMain) => {
+  if ('id' in m && m.id.startsWith('auth:')) return; // login windows are not cells
   if (m.t === 'spawned') { automation.runtimeStarted(m.id); alive.add(m.id); automation.statuses.set(m.id, 'unknown'); }
   else if (m.t === 'exit') {
     alive.delete(m.id);
@@ -252,6 +254,7 @@ ptyHost.on('message', (m: HostToMain) => {
   }
 });
 ptyHost.on('crashed', () => {
+  login.failActive('spawn');
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
   verifiedCodex.clear();
   alive.clear();
