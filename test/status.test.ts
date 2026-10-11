@@ -20,13 +20,13 @@ describe('StatusTracker heuristic', () => {
     expect(t.tick(2300)).toBe('waiting');
   });
 
-  it('typing clears waiting and acknowledge resets it', () => {
+  it('submitting clears waiting', () => {
     const t = new StatusTracker(10);
     t.input(0, true);
     t.output(500);
     t.tick(1000);
     expect(t.status).toBe('waiting');
-    t.acknowledge();
+    t.input(2000, true);
     expect(t.status).toBe('idle');
   });
 });

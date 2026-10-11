@@ -273,7 +273,7 @@ ptyHost.on('fatal', () => {
 });
 
 hooks.on('hook', (cellId: string, event: string) => {
-  automation.statuses.set(cellId, event === 'prompt' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
+  automation.statuses.set(cellId, event === 'prompt' || event === 'busy' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
   send('cell:hook', cellId, event);
 });
 

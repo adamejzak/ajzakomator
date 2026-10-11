@@ -41,7 +41,6 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
 
   const markFocused = () => {
     setUi({ focusedCellId: cell.id });
-    terminals.acknowledge(cell.id);
   };
 
   const label = cell.name ?? sessionTitle;

@@ -6,7 +6,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
-import { StatusTracker, type CellStatus, type HookEvent } from '../../../shared/status';
+import { isUserInput, StatusTracker, type CellStatus, type HookEvent, type StatusCause } from '../../../shared/status';
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
 import { confirmTerminalLink } from '../terminalLinks';
@@ -40,11 +40,13 @@ interface Entry {
   lastSize: { cols: number; rows: number };
 }
 
-type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus) => void;
+type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cause: StatusCause) => void;
 
 export interface EnsureOptions {
   fontSize: number;
   agent: boolean;
+  /** The agent reports its status through hooks (Claude): screen heuristics are off. */
+  preciseHooks?: boolean;
   onFontSize?: (size: number) => void;
 }
 
@@ -114,7 +116,8 @@ class TerminalManager {
       this.writeReplay(e, m.data);
     } else {
       e.term.write(m.data);
-      e.tracker.output(performance.now());
+      // Published right away: output alone can flip the status to "working" (it used to surface only later).
+      this.setStatus(e, () => e.tracker.output(performance.now()));
     }
   }
 
@@ -159,7 +162,7 @@ class TerminalManager {
     term.open(host);
 
     const entry: Entry = {
-      id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
+      id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(2000, opts.preciseHooks), win32: false, agent: opts.agent,
       attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
     };
     this.entries.set(cellId, entry);
@@ -175,17 +178,17 @@ class TerminalManager {
     term.parser.registerOscHandler(9, (payload) => {
       // 9;4;... = progress, 9;9;... = cwd reporting (oh-my-posh etc.) - not notifications.
       if (/^(4|9);/.test(payload)) return true;
-      if (entry.agent) this.setStatus(entry, () => entry.tracker.osc9());
+      if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9());
       return true;
     });
     term.onBell(() => {
-      if (entry.agent) this.setStatus(entry, () => entry.tracker.osc9());
+      if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9());
     });
 
     term.attachCustomKeyEventHandler((ev) => this.handleKey(entry, ev));
     term.onData((d) => {
       if (entry.replaying > 0) return;
-      entry.tracker.input(performance.now(), d.includes('\r'));
+      if (isUserInput(d)) this.userInput(entry, d.includes('\r'));
       this.post({ t: 'write', id: cellId, data: d });
     });
     term.onBinary((d) => entry.replaying === 0 && this.post({ t: 'write', id: cellId, data: d }));
@@ -253,7 +256,7 @@ class TerminalManager {
       const seq = encodeWin32Key(ev);
       if (!seq) return true;
       ev.preventDefault();
-      if (ev.type === 'keydown') entry.tracker.input(performance.now(), ev.code === 'Enter' || ev.code === 'NumpadEnter');
+      if (ev.type === 'keydown') this.userInput(entry, ev.code === 'Enter' || ev.code === 'NumpadEnter');
       this.post({ t: 'write', id: entry.id, data: seq });
       return false;
     }
@@ -272,7 +275,7 @@ class TerminalManager {
     if (submit) {
       // Separate write so TUIs see Enter after the paste block, not inside it.
       setTimeout(() => {
-        e.tracker.input(performance.now(), true);
+        this.userInput(e, true);
         this.post({ t: 'write', id: cellId, data: e.win32 ? '\x1b[13;28;13;1;0;1_\x1b[13;28;13;0;0;1_' : '\r' });
       }, 60);
     }
@@ -392,11 +395,6 @@ class TerminalManager {
     if (e) this.setStatus(e, () => e.tracker.hook(event));
   }
 
-  acknowledge(cellId: string): void {
-    const e = this.entries.get(cellId);
-    if (e) this.setStatus(e, () => e.tracker.acknowledge());
-  }
-
   onStatus(l: StatusListener): () => void {
     this.statusListeners.add(l);
     return () => this.statusListeners.delete(l);
@@ -407,10 +405,15 @@ class TerminalManager {
     return () => this.exitListeners.delete(l);
   }
 
+  /** User keystrokes can change the status (answering a prompt), so listeners must hear about it. */
+  private userInput(e: Entry, submitted: boolean): void {
+    this.setStatus(e, () => e.tracker.input(performance.now(), submitted));
+  }
+
   private setStatus(e: Entry, change: () => void): void {
     const prev = e.tracker.status;
     change();
-    if (e.tracker.status !== prev) this.statusListeners.forEach((l) => l(e.id, e.tracker.status, prev));
+    if (e.tracker.status !== prev) this.statusListeners.forEach((l) => l(e.id, e.tracker.status, prev, e.tracker.lastCause));
   }
 
   private tickStatuses(): void {

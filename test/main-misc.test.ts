@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { HookServer } from '../src/main/hooks';
+import { HookServer, isAttentionNotification } from '../src/main/hooks';
 import { createWorktree, isGitRepo, removeWorktree } from '../src/main/worktree';
 
 describe('HookServer', () => {
@@ -21,13 +21,28 @@ describe('HookServer', () => {
     s.stop();
   });
 
-  it('writes a claude settings file with three hooks', async () => {
+  it('writes a claude settings file with the status hooks', async () => {
     const s = new HookServer();
     await s.start();
     const path = s.writeClaudeSettings(mkdtempSync(join(tmpdir(), 'mc-hooks-')), 'c9');
     const json = JSON.parse(readFileSync(path, 'utf8'));
-    expect(Object.keys(json.hooks)).toEqual(['UserPromptSubmit', 'Stop', 'Notification']);
+    expect(Object.keys(json.hooks)).toEqual(['UserPromptSubmit', 'Stop', 'Notification', 'PreToolUse', 'PostToolUse', 'SubagentStop']);
+    expect(json.hooks.PostToolUse[0].hooks[0].command).toContain(`/h/${s.token}/c9/busy`);
     expect(json.hooks.Stop[0].hooks[0].command).toContain(`/h/${s.token}/c9/stop`);
+    s.stop();
+  });
+
+  it('ignores idle_prompt notifications but reports permission prompts', async () => {
+    const s = new HookServer();
+    await s.start();
+    const got: string[] = [];
+    s.on('hook', (cell, ev) => got.push(`${cell}:${ev}`));
+    const post = (event: 'notify' | 'busy', body: unknown) => fetch(s.url('c1', event), { method: 'POST', body: JSON.stringify(body) });
+    await post('notify', { notification_type: 'idle_prompt' });
+    await post('notify', { notification_type: 'permission_prompt' });
+    await post('busy', {});
+    expect(got).toEqual(['c1:notify', 'c1:busy']);
+    expect(isAttentionNotification('not json')).toBe(true);
     s.stop();
   });
 });

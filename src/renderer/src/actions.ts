@@ -38,6 +38,7 @@ export function ensureTerminal(cellId: string): void {
   terminals.ensure(cellId, {
     fontSize: found.cell.fontSize ?? getS().settings.fontSize,
     agent: profile.cli !== 'shell',
+    preciseHooks: profile.cli === 'claude',
     onFontSize: (size) => update((s) => updateCell(s, cellId, { fontSize: size })),
   });
 }
@@ -185,7 +186,6 @@ export function focusCell(cellId: string): void {
   // Keep a maximized cell only if it is the one being focused; otherwise the target would be hidden.
   setUi((ui) => ({ focusedCellId: cellId, maximizedCellId: ui.maximizedCellId === cellId ? cellId : null }));
   requestAnimationFrame(() => requestAnimationFrame(() => terminals.focus(cellId)));
-  terminals.acknowledge(cellId);
 }
 
 export function moveFocus(dx: number, dy: number): void {

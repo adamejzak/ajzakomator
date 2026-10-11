@@ -2,6 +2,7 @@ import { tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
+import { shouldNotify } from '../../shared/status';
 import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
@@ -60,12 +61,12 @@ async function boot(): Promise<void> {
     resetStarted();
   });
 
-  terminals.onStatus((cellId, status) => {
+  terminals.onStatus((cellId, status, prev, cause) => {
     if (cellId.startsWith('auth:')) return; // login windows are not cells
     window.mc.reportCellStatus(cellId, status);
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
     if (status !== 'waiting') return;
-    maybeNotify(cellId);
+    if (shouldNotify(prev, status, cause)) maybeNotify(cellId);
     bindCodexSession(cellId);
     // A turn finished: the agent may have (re)titled the conversation.
     const found = findCell(getS(), cellId);
@@ -99,10 +100,7 @@ function bindCodexSession(cellId: string): void {
 function maybeNotify(cellId: string): void {
   const s = getS();
   if (!s.settings.notifications) return;
-  if (document.hasFocus() && isVisible(cellId)) {
-    if (terminals.isFocused(cellId)) terminals.acknowledge(cellId);
-    return;
-  }
+  if (document.hasFocus() && isVisible(cellId)) return; // the user is looking at it
   const found = findCell(s, cellId);
   if (!found) return;
   const profile = getProfile(s, found.cell.profileId);
