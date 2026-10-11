@@ -228,6 +228,17 @@ describe('updater lifecycle', () => {
       updater.emit('update-downloaded', { version: '0.7.0' });
       expect(api.getUpdateState()).toMatchObject({ status: 'ready', version: '0.7.0' });
     });
+    it('stops the background check from downloading while a failed version is blocked, and resumes after', async () => {
+      const api = await setupGate();
+      expect(updater.autoDownload).toBe(true);
+      api.blockUpdateVersion('0.6.0');
+      expect(updater.autoDownload).toBe(false);
+      mock.check.mockResolvedValueOnce({ isUpdateAvailable: false, updateInfo: { version: '0.5.8' } });
+      await api.startupCheck();
+      expect(updater.autoDownload).toBe(false);
+      api.blockUpdateVersion(undefined);
+      expect(updater.autoDownload).toBe(true);
+    });
     it('withdraws an already downloaded version once it is blocked', async () => {
       const api = await setupGate();
       updater.emit('update-available', { version: '0.6.0' });
@@ -249,6 +260,14 @@ describe('updater lifecycle', () => {
       vi.resetModules(); vi.stubEnv('PORTABLE_EXECUTABLE_FILE', 'D:/app.exe');
       await setupWindow(); updater.emit('update-downloaded', { version: '0.6.0' });
       expect(splash.stage).not.toHaveBeenCalled();
+    });
+    it('asks for the strings of the mode it is installing in', async () => {
+      const api = await import('../src/main/updater');
+      const forMode = vi.fn(() => strings);
+      api.initUpdater(vi.fn(), { strings: forMode });
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      await api.installOnQuit();
+      expect(forMode).toHaveBeenCalledWith('quit');
     });
     it('shows the window before handing over to the installer, without the artificial pause', async () => {
       const api = await setupWindow();

@@ -15,7 +15,7 @@ let initialized = false;
 let portable = false;
 let pending: Promise<void> | undefined;
 let watchdog: ReturnType<typeof setTimeout> | undefined;
-let getStrings: (() => UpdateStrings) | undefined;
+let getStrings: ((mode: 'relaunch' | 'quit') => UpdateStrings) | undefined;
 let autoInstallOnQuit: () => boolean = () => true;
 let startupAbandoned = false;
 /** Set once an installer was started for this run; nothing may start a second one for the same update. */
@@ -27,6 +27,8 @@ let blockedVersion: string | undefined;
 /** Development only: a generic update feed (for example a local server) lets the updater be exercised from an unpackaged build. */
 const devFeed = !app.isPackaged ? process.env.MC_UPDATE_FEED : undefined;
 const updatesActive = (): boolean => app.isPackaged || !!devFeed;
+/** Background checks download by themselves, except for portable builds and while a failed version is blocked. */
+const autoDownloadWanted = (): boolean => !portable && !blockedVersion;
 
 function set(next: UpdateState): void {
   clearTimeout(watchdog);
@@ -69,8 +71,8 @@ export async function checkForUpdates(): Promise<void> {
 export function getUpdateState(): UpdateState { return { ...state }; }
 
 export interface UpdaterHooks {
-  /** Localizes the detached update window; without it installation stays invisible as before. */
-  strings?: () => UpdateStrings;
+  /** Localizes the detached update window (the footer differs by mode); without it installation stays invisible as before. */
+  strings?: (mode: 'relaunch' | 'quit') => UpdateStrings;
   /** Whether a downloaded update is installed when the app quits (the "automatic" setting). */
   autoInstallOnQuit?: () => boolean;
 }
@@ -85,7 +87,7 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
   state = { ...state, portable };
   if (!updatesActive()) return;
   if (devFeed) { autoUpdater.forceDevUpdateConfig = true; autoUpdater.setFeedURL({ provider: 'generic', url: devFeed }); }
-  autoUpdater.autoDownload = !portable;
+  autoUpdater.autoDownload = autoDownloadWanted();
   autoUpdater.autoInstallOnAppQuit = false;
   // A proxy or CDN in between must not answer with an older copy of the release feed.
   autoUpdater.requestHeaders = { 'Cache-Control': 'no-cache', Pragma: 'no-cache' };
@@ -124,7 +126,7 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
 /** Shows the progress window; false means installation proceeds without it. */
 async function showWindow(mode: 'relaunch' | 'quit'): Promise<boolean> {
   if (!getStrings || !state.version) return false;
-  try { return await showUpdateWindow(state.version, mode, getStrings()); }
+  try { return await showUpdateWindow(state.version, mode, getStrings(mode)); }
   catch (error) { console.error('update window failed', error); return false; }
 }
 
@@ -171,7 +173,7 @@ export async function startupCheck(): Promise<{ version: string } | undefined> {
     if (startupAbandoned && version !== blockedVersion) void autoUpdater.downloadUpdate().catch(fail);
     return { version };
   } finally {
-    autoUpdater.autoDownload = !portable;
+    autoUpdater.autoDownload = autoDownloadWanted();
     startupAbandoned = false;
   }
 }
@@ -179,6 +181,8 @@ export async function startupCheck(): Promise<{ version: string } | undefined> {
 /** Never installs `version` again in this run (it failed before); a finished download of it is ignored. */
 export function blockUpdateVersion(version: string | undefined): void {
   blockedVersion = version;
+  // A version that already failed must not be fetched again by the regular background check on every launch.
+  if (initialized && updatesActive()) autoUpdater.autoDownload = autoDownloadWanted();
   if (version && state.version === version && ['downloading', 'ready', 'idle'].includes(state.status)) set({ status: 'current', checkedAt: Date.now() });
 }
 

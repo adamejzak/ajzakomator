@@ -143,9 +143,12 @@ const verifiedCodex = new Map<string, string>();
 let mcpError: string | undefined;
 
 /** Localized texts for the detached update window (it cannot load the app's catalog). */
-const updateStrings = (): UpdateStrings => ({
+const updateStrings = (mode: 'relaunch' | 'quit'): UpdateStrings => ({
   title: tr('Aktualizacja do wersji {version}', { version: getUpdateState().version ?? '' }),
-  hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
+  // After an install on quit nothing starts the app again, so the footer must not promise it.
+  hint: mode === 'quit'
+    ? tr('Gdy instalacja się zakończy, uruchom ajzakomator ponownie.')
+    : tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
   stages: {
     preparing: tr('Przygotowanie aktualizacji…'),
     closing: tr('Zamykanie ajzakomatora…'),
@@ -159,7 +162,7 @@ const updateStrings = (): UpdateStrings => ({
   open: tr('Uruchom ajzakomator'),
   close: tr('Zamknij'),
   waitingClose: tr('Czekam na zamknięcie ajzakomatora…'),
-  waitingInstaller: tr('Czekam na instalator. Jeśli pojawiło się okno administratora, potwierdź je.'),
+  waitingInstaller: tr('Czekam na instalator. Jeśli Windows poprosi o zgodę, potwierdź ją.'),
   installingLong: tr('Instalacja trwa dłużej niż zwykle - to może jeszcze chwilę potrwać…'),
   background: tr('Aktualizacja trwa dalej w tle'),
 });
