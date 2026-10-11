@@ -745,8 +745,7 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .cell-head.draggable button, .cell-head.draggable .profile { cursor: pointer; }
 body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-select: none !important; }
 .grid.dragging .cell-body, .grid.dragging .grid-divider { pointer-events: none; }
-.cell { transition: opacity .15s; }
-.cell.drag-source { opacity: .4; }
+.cell.drag-source { opacity: .4; transition: opacity .15s; }
 .cell-drop-target {
   position: absolute; z-index: 7; pointer-events: none; display: grid; place-items: center;
   background: #3b82f61f; box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent-text); font-size: 13px;

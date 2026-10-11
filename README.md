@@ -169,6 +169,7 @@ On macOS, replace **Ctrl** with **Cmd** and **Alt** with **Option** in the app s
 | `Ctrl+Shift+H` | History of conversations and grids |
 | `Ctrl+Shift+M` | Maximize or restore the cell (or double click its header) |
 | `Ctrl+Alt+Arrows` | Move between cells |
+| `Ctrl+Alt+Shift+Arrows` | Swap the focused cell with its neighbour (or drag a cell by its header onto another one) |
 | `Ctrl+Tab` | Next grid |
 | `Ctrl+Shift+B` / `Ctrl+Shift+E` | Toggle snippets / projects panel |
 | `Ctrl+Wheel` | Zoom a single cell |

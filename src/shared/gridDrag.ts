@@ -28,3 +28,8 @@ export function neighborSlot(areas: readonly Area[], idx: number, dx: number, dy
   });
   return best;
 }
+
+/** Whether `a` and `b` are two different cells of `tab`; guards every side effect of a swap. */
+export function canSwapCells(tab: { cells: ReadonlyArray<{ id: string }> } | null | undefined, a: string, b: string): boolean {
+  return !!tab && a !== b && tab.cells.some((c) => c.id === a) && tab.cells.some((c) => c.id === b);
+}

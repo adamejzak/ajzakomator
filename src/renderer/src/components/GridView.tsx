@@ -1,6 +1,6 @@
 import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { areaRects, type GridLayout } from '../../../shared/layout';
 import { activeProject, activeTab, getProfile, setTabLayout } from '../../../shared/state';
 import { createProject, quickTab, swapCellSlots } from '../actions';
@@ -21,12 +21,15 @@ export function GridView() {
   const [preview, setPreview] = useState<{ tabId: string; layout: GridLayout } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const cellOrder = tab ? tab.cells.map((c) => c.id).join() : '';
-  const { drag, ghostRef, onHeadPointerDown } = useCellDrag(
+  const { drag, ghostRef, onHeadPointerDown, cancel } = useCellDrag(
     (): DragContext | null => (tab && gridRef.current
       ? { grid: gridRef.current, ids: tab.cells.map((c) => c.id), rects: areaRects(tab.layout) }
       : null),
     swapCellSlots,
   );
+
+  // A drag belongs to one grid: leaving the tab or project, or maximizing a cell, aborts it.
+  useEffect(() => { cancel(); }, [cancel, project?.id, tab?.id, maximized]);
 
   // Cells that changed slots slide from their old position (see gridMotion.ts).
   useLayoutEffect(() => { playCellMotion(); }, [cellOrder]);

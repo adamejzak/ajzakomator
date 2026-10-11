@@ -6,7 +6,7 @@ import { describeLayout } from '../../../shared/layout';
 import { activeProject, activeTab } from '../../../shared/state';
 import type { SessionInfo } from '../../../shared/types';
 import {
-  addAgent, closeTab, createProject, openTab, quickTab, restartCell, restoreArchived, resumeSession, selectTab,
+  addAgent, closeTab, createProject, moveCellBy, openTab, quickTab, restartCell, restoreArchived, resumeSession, selectTab,
   sendSnippet, switchProject, toggleMaximize,
 } from '../actions';
 import { getS, getUi, setUi, update, useStore } from '../store';
@@ -57,6 +57,11 @@ function PaletteInner() {
       out.push({ kind: tr('Akcja'), title: tr("Maksymalizuj / przywróć komórkę"), desc: keyLabel("Ctrl+Shift+M"), run: () => toggleMaximize(focused) });
       out.push({ kind: tr('Akcja'), title: tr("Komórka: wznów rozmowę od nowa (restart)"), run: () => restartCell(focused, 'resume') });
       out.push({ kind: tr('Akcja'), title: tr("Komórka: nowa rozmowa"), run: () => restartCell(focused, 'new') });
+      const moves: Array<[string, string, number, number]> = [
+        [tr('Komórka: przesuń w lewo'), 'Left', -1, 0], [tr('Komórka: przesuń w prawo'), 'Right', 1, 0],
+        [tr('Komórka: przesuń w górę'), 'Up', 0, -1], [tr('Komórka: przesuń w dół'), 'Down', 0, 1],
+      ];
+      for (const [title, arrow, dx, dy] of moves) out.push({ kind: tr('Akcja'), title, desc: keyLabel(`Ctrl+Alt+Shift+${arrow}`), run: () => moveCellBy(dx, dy) });
     }
     out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj snippety"), desc: keyLabel("Ctrl+Shift+B"), run: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) });
     out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj panel projektów"), desc: keyLabel("Ctrl+Shift+E"), run: () => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed })) });

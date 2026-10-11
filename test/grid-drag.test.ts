@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellAtPoint, neighborSlot } from '../src/shared/gridDrag';
+import { canSwapCells, cellAtPoint, neighborSlot } from '../src/shared/gridDrag';
 import { areaRects, layoutForCount, layoutFromRows, resizeDivider, dividers } from '../src/shared/layout';
 import { addProject, addTab, defaultState, normalizeState, setTabLayout, swapCells } from '../src/shared/state';
 
@@ -86,5 +86,28 @@ describe('neighborSlot', () => {
     expect(neighborSlot(layout.areas, 0, -1, 0)).toBe(-1);
     expect(neighborSlot(layout.areas, 0, 0, -1)).toBe(-1);
     expect(neighborSlot(layoutForCount(1).areas, 0, 1, 0)).toBe(-1);
+  });
+});
+
+describe('swapCells with ids from another tab', () => {
+  it('ignores a cell that belongs to a different tab', () => {
+    const { s, projectId, tab } = tabOf();
+    const other = addTab(s, projectId, { layout: layoutForCount(2), cells: [{ profileId: 'shell' }, { profileId: 'shell' }] });
+    const tabs = other.projects[0].tabs;
+    const foreign = tabs.find((t) => t.id !== tab.id)!.cells[0].id;
+    expect(swapCells(other, projectId, tab.id, tab.cells[0].id, foreign)).toBe(other);
+  });
+});
+
+describe('canSwapCells', () => {
+  it('accepts two different cells of the tab and rejects foreign, unknown and identical ids', () => {
+    const { s, projectId, tab } = tabOf();
+    const other = addTab(s, projectId, { layout: layoutForCount(2), cells: [{ profileId: 'shell' }, { profileId: 'shell' }] });
+    const foreign = other.projects[0].tabs.find((x) => x.id !== tab.id)!.cells[0].id;
+    expect(canSwapCells(tab, tab.cells[0].id, tab.cells[1].id)).toBe(true);
+    expect(canSwapCells(tab, tab.cells[0].id, foreign)).toBe(false);
+    expect(canSwapCells(tab, tab.cells[0].id, 'nope')).toBe(false);
+    expect(canSwapCells(tab, tab.cells[0].id, tab.cells[0].id)).toBe(false);
+    expect(canSwapCells(null, 'a', 'b')).toBe(false);
   });
 });

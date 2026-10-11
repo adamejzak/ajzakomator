@@ -8,7 +8,7 @@ import {
   removeCell as removeCellState, removeProject as removeProjectState, restoreTab, setActiveProject, setActiveTab,
   swapCells as swapCellsState, uid, updateCell, updateSettings,
 } from '../../shared/state';
-import { neighborSlot } from '../../shared/gridDrag';
+import { canSwapCells, neighborSlot } from '../../shared/gridDrag';
 import { snapshotCellRects } from './gridMotion';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
@@ -201,10 +201,12 @@ export function moveFocus(dx: number, dy: number): void {
 export function swapCellSlots(a: string, b: string): void {
   const project = activeProject(getS());
   const tab = activeTab(project);
-  if (!project || !tab || a === b) return;
+  if (!project || !tab || !canSwapCells(tab, a, b)) return;
   snapshotCellRects();
   update((s) => swapCellsState(s, project.id, tab.id, a, b));
   setUi({ focusedCellId: a });
+  // The keyed DOM move drops the textarea focus, so give it back once the move is committed.
+  requestAnimationFrame(() => requestAnimationFrame(() => terminals.focus(a)));
 }
 
 /** Moves the focused cell into the neighbouring slot in a direction (swap with whatever sits there). */

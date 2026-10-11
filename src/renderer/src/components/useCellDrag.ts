@@ -24,6 +24,8 @@ export function useCellDrag(getContext: () => DragContext | null, onDrop: (sourc
   latest.current = { getContext, onDrop };
 
   useEffect(() => () => stop.current?.(), []);
+  /** Aborts a drag in progress (the grid or tab it belongs to went away). */
+  const cancel = useCallback(() => stop.current?.(), []);
 
   const place = (el: HTMLElement) => {
     el.style.transform = `translate3d(${pos.current.x + 14}px, ${pos.current.y + 12}px, 0)`;
@@ -60,11 +62,14 @@ export function useCellDrag(getContext: () => DragContext | null, onDrop: (sourc
     };
     const onMove = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return;
+      // A pointerup that never arrived must not leave the drag armed.
+      if (ev.buttons === 0) return finish(false);
       pos.current = { x: ev.clientX, y: ev.clientY };
       if (!dragging) {
         if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < THRESHOLD) return;
         dragging = true;
         try { head.setPointerCapture(pointerId); } catch { /* the pointer is already gone */ }
+        head.addEventListener('lostpointercapture', onCancel);
         window.getSelection()?.removeAllRanges();
         document.body.classList.add('cell-dragging');
         setDrag({ id: cell.id, target: null });
@@ -79,6 +84,7 @@ export function useCellDrag(getContext: () => DragContext | null, onDrop: (sourc
       window.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('blur', onCancel);
+      head.removeEventListener('lostpointercapture', onCancel);
       document.body.classList.remove('cell-dragging');
       if (head.hasPointerCapture?.(pointerId)) head.releasePointerCapture(pointerId);
       stop.current = null;
@@ -112,5 +118,5 @@ export function useCellDrag(getContext: () => DragContext | null, onDrop: (sourc
     window.addEventListener('blur', onCancel);
   }, []);
 
-  return { drag, ghostRef, onHeadPointerDown };
+  return { drag, ghostRef, onHeadPointerDown, cancel };
 }

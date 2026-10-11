@@ -105,6 +105,7 @@ Na macOS w skrótach aplikacji używaj **Cmd** zamiast **Ctrl** oraz **Option** 
 | `Ctrl+Shift+H` | historia czatów i gridów |
 | `Ctrl+Shift+M` | maksymalizuj komórkę |
 | `Ctrl+Alt+strzałki` | przejście między komórkami |
+| `Ctrl+Alt+Shift+strzałki` | zamiana aktywnej komórki z sąsiednią (albo przeciągnij komórkę za pasek na inną) |
 | `Ctrl+Tab` | następny grid |
 | `Ctrl+Shift+B` / `Ctrl+Shift+E` | pokaż lub ukryj snippety / projekty |
 | `Ctrl+kółko myszy` | powiększenie w jednej komórce |
