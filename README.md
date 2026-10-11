@@ -134,7 +134,7 @@ Mac builds use an ad-hoc signature without an Apple Developer certificate and ar
 
 ## Updating
 
-The installed Windows app checks GitHub Releases and downloads updates in the background. The header shows download progress, transferred size and speed. When a download is ready, click **New version … · restart**, or quit normally to apply it without relaunching. Save your editor changes before restarting; agent conversations are restored through their CLI resume support.
+The installed Windows app checks GitHub Releases on start and every 30 minutes. With automatic updates on (Settings), the updater runs first when you start the app: it shows a short "Checking for updates" window, and if a new version exists it downloads and installs it with a progress bar before the app opens; with no update, no network or any error the app simply starts. With manual updates (the default) the app starts normally, and when a new version is ready you click **New version … · restart** in the status bar: the app closes, the updater window shows the progress, and the new version starts. Save your editor changes before restarting; agent conversations are restored through their CLI resume support.
 
 To check manually, right-click the **ajzakomator** name/version and choose **Check for updates**. If checking or downloading fails, the header offers a retry and shows the error.
 
