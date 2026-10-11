@@ -112,7 +112,8 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
   });
   autoUpdater.on('error', fail);
   const check = () => void checkForUpdates();
-  const first = setTimeout(check, 8000);
+  // The start-up check may have just asked the feed; do not repeat it seconds later.
+  const first = setTimeout(() => { if (Date.now() - (state.checkedAt ?? 0) > 60_000) check(); }, 8000);
   const recurring = setInterval(check, CHECK_EVERY_MS);
   first.unref?.();
   recurring.unref?.();
