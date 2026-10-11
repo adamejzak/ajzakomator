@@ -18,6 +18,8 @@ let watchdog: ReturnType<typeof setTimeout> | undefined;
 let getStrings: (() => UpdateStrings) | undefined;
 let autoInstallOnQuit: () => boolean = () => true;
 let startupAbandoned = false;
+/** A version that failed to update; it never becomes "ready", so no quit or button path installs it again. */
+let blockedVersion: string | undefined;
 /** Development only: a generic update feed (for example a local server) lets the updater be exercised from an unpackaged build. */
 const devFeed = !app.isPackaged ? process.env.MC_UPDATE_FEED : undefined;
 const updatesActive = (): boolean => app.isPackaged || !!devFeed;
@@ -87,7 +89,10 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
   autoUpdater.on('update-not-available', (info) => set({ status: 'current', version: info?.version, checkedAt: Date.now() }));
   autoUpdater.on('update-available', (info) => set(portable
     ? { status: 'available', version: info.version, url: RELEASES_URL }
-    : { status: 'downloading', version: info.version, percent: 0 }));
+    // Without auto download (the startup check) nothing is transferring yet, so no stalled-download watchdog may start.
+    : autoUpdater.autoDownload
+      ? { status: 'downloading', version: info.version, percent: 0 }
+      : { status: 'idle', version: info.version }));
   autoUpdater.on('download-progress', (p) => {
     if (!portable && !['ready', 'installing'].includes(state.status)) set({
       status: 'downloading', version: state.version,
@@ -98,6 +103,7 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
   });
   autoUpdater.on('update-downloaded', (info) => {
     if (portable) return;
+    if (info.version === blockedVersion) { set({ status: 'current', checkedAt: Date.now() }); return; }
     set({ status: 'ready', version: info.version });
     if (getStrings) void stageSplashRuntime();
   });
@@ -155,11 +161,18 @@ export async function startupCheck(): Promise<{ version: string } | undefined> {
     if (!result?.isUpdateAvailable) return undefined;
     const version = result.updateInfo.version;
     // The gate gave up while this check was running: continue as a normal background update.
-    if (startupAbandoned) void autoUpdater.downloadUpdate().catch(fail);
+    if (startupAbandoned && version !== blockedVersion) void autoUpdater.downloadUpdate().catch(fail);
     return { version };
   } finally {
     autoUpdater.autoDownload = !portable;
+    startupAbandoned = false;
   }
+}
+
+/** Never installs `version` again in this run (it failed before); a finished download of it is ignored. */
+export function blockUpdateVersion(version: string | undefined): void {
+  blockedVersion = version;
+  if (version && state.version === version && ['downloading', 'ready', 'idle'].includes(state.status)) set({ status: 'current', checkedAt: Date.now() });
 }
 
 /** Marks the startup check as given up, so a late answer is handled like a background check. */
@@ -169,6 +182,7 @@ export function abandonStartupCheck(): void { startupAbandoned = true; }
 export async function startupDownload(onProgress: (percent: number) => void): Promise<void> {
   const listener = (p: { percent: number }) => onProgress(p.percent);
   autoUpdater.on('download-progress', listener);
+  set({ status: 'downloading', version: state.version, percent: 0 });
   try { await autoUpdater.downloadUpdate(); }
   finally { autoUpdater.removeListener('download-progress', listener); }
 }
@@ -182,6 +196,12 @@ export async function startupHandoff(hide: () => void): Promise<boolean> {
   set({ ...state, status: 'installing' });
   const shown = await showWindow('relaunch');
   hide();
-  try { autoUpdater.quitAndInstall(true, true); return true; }
-  catch (error) { fail(error); if (shown) void abortUpdateWindow(); return false; }
+  // install() reports whether the installer started; quitAndInstall would silently do nothing when it did not.
+  try {
+    const installed = (autoUpdater as unknown as { install(silent: boolean, relaunch: boolean): boolean }).install(true, true);
+    if (installed) { app.quit(); return true; }
+    fail(new Error('Nie udało się zainstalować aktualizacji.'));
+  } catch (error) { fail(error); }
+  if (shown) void abortUpdateWindow();
+  return false;
 }

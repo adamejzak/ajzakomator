@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FAILURE_COOLDOWN_MS, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup,
+  FAILURE_COOLDOWN_MS, compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup,
   type GateDeps, type GateEnv, type GateView,
 } from '../src/main/startupGate';
 
@@ -15,6 +15,13 @@ describe('shouldGateOnStartup', () => {
     expect(shouldGateOnStartup({ ...env, portable: true })).toBe(false);
     expect(shouldGateOnStartup({ ...env, autoInstall: false })).toBe(false);
     expect(shouldGateOnStartup({ ...env, recentFailure: true })).toBe(false);
+  });
+
+  it('compares dotted versions numerically', () => {
+    expect(compareVersions('0.5.9', '0.5.10')).toBeLessThan(0);
+    expect(compareVersions('1.0.0', '0.9.9')).toBeGreaterThan(0);
+    expect(compareVersions('0.6', '0.6.0')).toBe(0);
+    expect(compareVersions('0.6.0-beta.1', '0.6.0')).toBe(0);
   });
 
   it('keeps a failure for the cooldown only and ignores malformed records', () => {
@@ -146,7 +153,7 @@ describe('runStartupGate', () => {
       download: vi.fn((onProgress: (p: number) => void) => new Promise<void>((resolve) => { progress = onProgress; finish = resolve; })),
     });
     const result = runStartupGate(deps);
-    for (let i = 0; i < 5; i++) { await vi.advanceTimersByTimeAsync(40_000); progress(i * 10); }
+    for (let i = 0; i < 4; i++) { await vi.advanceTimersByTimeAsync(40_000); progress(i * 10); }
     finish();
     expect(await result).toBe('installing');
     expect(deps.recordFailure).not.toHaveBeenCalled();
@@ -157,6 +164,67 @@ describe('runStartupGate', () => {
     expect(await runStartupGate(deps)).toBe('start-app');
     expect(deps.download).not.toHaveBeenCalled();
     expect(deps.handoff).not.toHaveBeenCalled();
+  });
+
+  it('marks the attempt before the installer starts, so an installer failing outside the app is remembered', async () => {
+    const order: string[] = [];
+    const { deps } = make({
+      check: vi.fn(async () => ({ version: '2.0.0' })),
+      markAttempt: vi.fn(() => { order.push('mark'); }),
+      handoff: vi.fn(async () => { order.push('handoff'); return true; }),
+    });
+    expect(await runStartupGate(deps)).toBe('installing');
+    expect(order).toEqual(['mark', 'handoff']);
+    expect(deps.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('starts the app and records a failure when the hand-over never answers', async () => {
+    const { deps } = make({ check: vi.fn(async () => ({ version: '2.0.0' })), handoff: vi.fn(() => new Promise<boolean>(() => {})) });
+    const result = runStartupGate(deps);
+    await vi.advanceTimersByTimeAsync(20_000 + 2500);
+    expect(await result).toBe('start-app');
+    expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
+  });
+
+  it('starts the app when the hand-over throws or reports that nothing was handed over', async () => {
+    const { deps } = make({ check: vi.fn(async () => ({ version: '2.0.0' })), handoff: vi.fn(async () => { throw new Error('spawn'); }) });
+    const result = runStartupGate(deps);
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(await result).toBe('start-app');
+    expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
+  });
+
+  it('gives up on a download that keeps progressing but never finishes', async () => {
+    let progress!: (p: number) => void;
+    const { deps } = make({
+      check: vi.fn(async () => ({ version: '2.0.0' })),
+      download: vi.fn((onProgress: (p: number) => void) => new Promise<void>(() => { progress = onProgress; })),
+    });
+    const result = runStartupGate(deps);
+    for (let i = 0; i < 5; i++) { await vi.advanceTimersByTimeAsync(40_000); progress(i); }
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(await result).toBe('start-app');
+    expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
+    expect(deps.handoff).not.toHaveBeenCalled();
+  });
+
+  it('abandons the check only on a timeout, not on an ordinary failure', async () => {
+    const { deps } = make({ check: vi.fn(async () => { throw new Error('offline'); }) });
+    await runStartupGate(deps);
+    expect(deps.abandonCheck).not.toHaveBeenCalled();
+  });
+
+  it('closes the window even when showing it threw', async () => {
+    const { deps } = make({ check: vi.fn(() => delayed(undefined, 1000)), show: vi.fn(() => { throw new Error('gpu'); }) });
+    const result = runStartupGate(deps);
+    await vi.advanceTimersByTimeAsync(1000);
+    await result;
+    expect(deps.hide).toHaveBeenCalledTimes(1);
+  });
+
+  it('survives a failing attempt marker', async () => {
+    const { deps } = make({ check: vi.fn(async () => ({ version: '2.0.0' })), markAttempt: vi.fn(() => { throw new Error('read-only'); }) });
+    expect(await runStartupGate(deps)).toBe('installing');
   });
 
   it('still updates to a newer version than the one that failed', async () => {

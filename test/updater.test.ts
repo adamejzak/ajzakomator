@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ app: { isPackaged: true, once: vi.fn() }, check: vi.fn(), quit: vi.fn(), install: vi.fn() }));
+const mock = vi.hoisted(() => ({ app: { isPackaged: true, once: vi.fn(), quit: vi.fn() }, check: vi.fn(), quit: vi.fn(), install: vi.fn() }));
 vi.mock('electron', () => ({ app: mock.app }));
 const splash = vi.hoisted(() => ({ show: vi.fn(), stage: vi.fn(), abort: vi.fn() }));
 vi.mock('../src/main/updateSplash', () => ({ showUpdateWindow: splash.show, stageSplashRuntime: splash.stage, abortUpdateWindow: splash.abort }));
@@ -185,21 +185,55 @@ describe('updater lifecycle', () => {
       expect(await api.startupHandoff(hide)).toBe(false);
       updater.emit('update-available', { version: '0.6.0' });
       updater.emit('update-downloaded', { version: '0.6.0' });
-      mock.quit.mockImplementationOnce(() => expect(hide).toHaveBeenCalledOnce());
+      mock.install.mockImplementationOnce(() => { expect(hide).toHaveBeenCalledOnce(); return true; });
       expect(await api.startupHandoff(hide)).toBe(true);
       expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', 'relaunch', strings);
-      expect(mock.quit).toHaveBeenCalledExactlyOnceWith(true, true);
+      expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, true);
+      expect(mock.app.quit).toHaveBeenCalledOnce();
       expect(api.getUpdateState().status).toBe('installing');
       await api.installOnQuit();
-      expect(mock.install).not.toHaveBeenCalled();
+      expect(mock.install).toHaveBeenCalledTimes(1);
     });
-    it('reports a failed hand-over', async () => {
+    it('does not report a hand-over when the installer did not start', async () => {
       const api = await setupGate();
       updater.emit('update-available', { version: '0.6.0' });
       updater.emit('update-downloaded', { version: '0.6.0' });
-      mock.quit.mockImplementationOnce(() => { throw new Error('installer failed'); });
+      mock.install.mockReturnValueOnce(false);
+      expect(await api.startupHandoff(vi.fn())).toBe(false);
+      expect(mock.app.quit).not.toHaveBeenCalled();
+      expect(splash.abort).toHaveBeenCalledOnce();
+      expect(api.getUpdateState().status).toBe('error');
+    });
+    it('reports a hand-over that throws', async () => {
+      const api = await setupGate();
+      updater.emit('update-available', { version: '0.6.0' });
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      mock.install.mockImplementationOnce(() => { throw new Error('installer failed'); });
       expect(await api.startupHandoff(vi.fn())).toBe(false);
       expect(splash.abort).toHaveBeenCalledOnce();
+    });
+    it('does not start the stalled-download watchdog when an update is only announced', async () => {
+      const api = await setupGate();
+      updater.autoDownload = false;
+      updater.emit('update-available', { version: '0.6.0' });
+      expect(api.getUpdateState().status).toBe('idle');
+    });
+    it('ignores a finished download of a blocked version', async () => {
+      const api = await setupGate();
+      api.blockUpdateVersion('0.6.0');
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      expect(api.getUpdateState().status).toBe('current');
+      await api.installOnQuit();
+      expect(mock.install).not.toHaveBeenCalled();
+      updater.emit('update-downloaded', { version: '0.7.0' });
+      expect(api.getUpdateState()).toMatchObject({ status: 'ready', version: '0.7.0' });
+    });
+    it('withdraws an already downloaded version once it is blocked', async () => {
+      const api = await setupGate();
+      updater.emit('update-available', { version: '0.6.0' });
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      api.blockUpdateVersion('0.6.0');
+      expect(api.getUpdateState().status).toBe('current');
     });
   });
   describe('update window', () => {

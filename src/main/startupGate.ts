@@ -8,6 +8,10 @@ export const CHECK_TIMEOUT_MS = 8000;
 export const SHOW_AFTER_MS = 400;
 /** A download that reports nothing for this long counts as failed. */
 export const DOWNLOAD_STALL_MS = 60 * 1000;
+/** The whole download may not take longer than this, however steadily it progresses. */
+export const DOWNLOAD_TOTAL_MS = 3 * 60 * 1000;
+/** Showing the installing window and starting the installer is expected to take seconds. */
+export const HANDOFF_TIMEOUT_MS = 20 * 1000;
 /** How long the failure notice stays visible before the current version starts. */
 export const ERROR_HOLD_MS = 2500;
 /** After a failed update the gate is skipped for this long, so a broken release cannot delay every launch. */
@@ -36,6 +40,17 @@ export function parseFailure(raw: unknown): FailureRecord | undefined {
   return typeof version === 'string' && typeof at === 'number' && Number.isFinite(at) ? { version, at } : undefined;
 }
 
+/** Numeric comparison of dotted versions; prerelease suffixes are ignored. Negative when `a` is older than `b`. */
+export function compareVersions(a: string, b: string): number {
+  const parts = (value: string) => value.split(/[-+]/)[0].split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const left = parts(a); const right = parts(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 export const isRecentFailure = (failure: FailureRecord | undefined, now: number): boolean =>
   !!failure && now - failure.at >= 0 && now - failure.at < FAILURE_COOLDOWN_MS;
 
@@ -56,12 +71,16 @@ export interface GateDeps {
   hide(): void;
   /** Starts the installing window and installer; calls `hide` once the hand-over is visible. True when it took over. */
   handoff(version: string, hide: () => void): Promise<boolean>;
+  /** Written right before the installer starts, so an installer that fails outside the app still counts as a failure. */
+  markAttempt?(version: string): void;
   recordFailure(version: string): void;
   /** A version that already failed; it is never retried within this launch. */
   skipVersion?: string;
   checkTimeoutMs?: number;
   showAfterMs?: number;
   downloadStallMs?: number;
+  downloadTotalMs?: number;
+  handoffTimeoutMs?: number;
   errorHoldMs?: number;
 }
 
@@ -69,10 +88,12 @@ export type GateResult = 'start-app' | 'installing';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Rejects with `Error(label)` when `promise` has not settled within `ms`; the timer never outlives the race. */
-function within<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+class CheckTimeout extends Error { constructor() { super('update check timed out'); } }
+
+/** Rejects with `timeout()` when `promise` has not settled within `ms`; the timer never outlives the race. */
+function within<T>(promise: Promise<T>, ms: number, timeout: () => Error): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(label)), ms);
+    const timer = setTimeout(() => reject(timeout()), ms);
     promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
   });
 }
@@ -92,8 +113,8 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
     const pending = deps.check();
     // A check that is abandoned later may still reject; that must not become an unhandled rejection.
     pending.catch(() => {});
-    try { found = await within(pending, checkTimeout, 'update check timed out'); }
-    catch (error) { deps.abandonCheck?.(); throw error; }
+    try { found = await within(pending, checkTimeout, () => new CheckTimeout()); }
+    catch (error) { if (error instanceof CheckTimeout) deps.abandonCheck?.(); throw error; }
   } catch {
     clearTimeout(showTimer);
     hide();
@@ -105,9 +126,12 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
   const { version } = found;
   try {
     show({ kind: 'downloading', version, percent: 0 });
-    await downloadWithStall(deps, version, show);
+    await within(downloadWithStall(deps, version, show), deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long'));
     show({ kind: 'installing', version });
-    if (await deps.handoff(version, hide)) return 'installing';
+    try { deps.markAttempt?.(version); } catch { /* the attempt marker is best effort */ }
+    const handedOver = deps.handoff(version, hide);
+    handedOver.catch(() => {});
+    if (await within(handedOver, deps.handoffTimeoutMs ?? HANDOFF_TIMEOUT_MS, () => new Error('installer hand-over timed out'))) return 'installing';
     throw new Error('installer hand-over failed');
   } catch {
     try { deps.recordFailure(version); } catch { /* the cooldown is best effort */ }

@@ -41,6 +41,7 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
   const push = () => { if (win && !win.isDestroyed() && loaded && latest) win.webContents.send('update-splash:state', latest); };
 
   const create = () => {
+    ipcMain.removeHandler('update-splash:init');
     ipcMain.handle('update-splash:init', () => ({
       title: latest?.title ?? '', hint: latest?.hint ?? '', fromVersion: currentVersion, version: '', state: latest, open: '', close: '',
     }));
@@ -48,14 +49,17 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
       width: 440, height: 200, resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
       frame: false, show: false, center: true, alwaysOnTop: true, backgroundColor: '#0d0d0d', title: 'ajzakomator',
       icon: join(app.getAppPath(), 'resources', 'icon.png'),
-      ...(process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
+      ...(!app.isPackaged && process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
       webPreferences: { preload: join(__dirname, '../preload/updatesplash.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
     win.setMenu(null);
     win.webContents.on('will-navigate', (e) => e.preventDefault());
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    // Closed by the user: forget the window so the next update shows a new one.
+    const created = win;
+    created.once('closed', () => { if (win === created) { win = null; loaded = false; } });
     win.webContents.on('did-finish-load', () => { loaded = true; push(); });
-    win.once('ready-to-show', () => { if (process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show(); });
+    win.once('ready-to-show', () => { if (!app.isPackaged && process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show(); });
     void win.loadFile(join(app.getAppPath(), 'resources', 'update-splash', 'index.html'));
   };
 
@@ -68,6 +72,7 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
       ipcMain.removeHandler('update-splash:init');
       if (win && !win.isDestroyed()) win.destroy();
       win = null;
+      loaded = false;
     },
   };
 }
