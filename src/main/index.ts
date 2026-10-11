@@ -24,6 +24,7 @@ import { createChangelog } from './changelog';
 import { systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
+import { MAIN_ACCOUNTS } from '../shared/usage';
 import type { UpdateStrings } from '../shared/updateProgress';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 import { StateController } from './stateController';
@@ -64,7 +65,8 @@ const usageDeps: FetcherDeps = {
   codexUrl: (!app.isPackaged && process.env.MC_USAGE_CODEX_URL) || 'https://chatgpt.com/backend-api/wham/usage',
 };
 const usage = new UsageService({
-  fetchers: { claude: () => fetchClaude(usageDeps), codex: () => fetchCodex(usageDeps) },
+  accounts: () => MAIN_ACCOUNTS,
+  fetchAccount: (ref) => (ref.provider === 'claude' ? fetchClaude(usageDeps, ref) : fetchCodex(usageDeps)),
   cacheFile: join(DATA_DIR, 'usage-cache.json'),
   enabled: () => state.settings.showAiUsage,
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,

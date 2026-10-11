@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { claudePlanLabel, readClaudeCredentials, readCodexCredentials, withFailureCache, type CredentialSource } from '../src/main/usage/credentials';
+import { claudePlanLabel, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, withFailureCache, type CredentialSource } from '../src/main/usage/credentials';
 
 const b64url = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
 const jwt = (claims: unknown) => `${b64url({ alg: 'none' })}.${b64url(claims)}.sig`;
@@ -115,5 +115,44 @@ describe('withFailureCache', () => {
     expect(await cached()).toBe('secret');
     expect(await cached()).toBe('secret');
     expect(read).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('profileSource', () => {
+  it('points at the profile directory, drops the env token and never reaches the Keychain', async () => {
+    const keychain = vi.fn(async () => JSON.stringify({ claudeAiOauth: { accessToken: 'keychain-token' } }));
+    const base = source({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'env-token', CLAUDE_CONFIG_DIR: join(home, 'main'), KEEP: '1' }, platform: 'darwin', keychain });
+    const profile = profileSource(base, join(home, 'profile'));
+    expect(profile.env).toMatchObject({ CLAUDE_CONFIG_DIR: join(home, 'profile'), CLAUDE_CODE_OAUTH_TOKEN: '', KEEP: '1' });
+    expect(profile.platform).not.toBe('darwin');
+    expect(await readClaudeCredentials(profile)).toBeNull();
+    expect(keychain).not.toHaveBeenCalled();
+    put('profile/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'tok-profile' } }));
+    expect(await readClaudeCredentials(profile)).toMatchObject({ accessToken: 'tok-profile' });
+  });
+});
+
+describe('readClaudeIdentity', () => {
+  const account = { oauthAccount: { emailAddress: 'me@example.com', organizationName: 'Acme' } };
+
+  it('reads the email and organization from .claude.json in the home directory', async () => {
+    put('.claude.json', JSON.stringify(account));
+    expect(await readClaudeIdentity(source())).toEqual({ email: 'me@example.com', org: 'Acme' });
+  });
+
+  it('reads .claude.json from CLAUDE_CONFIG_DIR when it is set', async () => {
+    put('.claude.json', JSON.stringify(account));
+    put('profile/.claude.json', JSON.stringify({ oauthAccount: { emailAddress: 'other@example.com' } }));
+    expect(await readClaudeIdentity(source({ env: { CLAUDE_CONFIG_DIR: join(home, 'profile') } }))).toEqual({ email: 'other@example.com', org: undefined });
+  });
+
+  it('returns nothing for a missing, corrupt or non-object file', async () => {
+    expect(await readClaudeIdentity(source())).toEqual({});
+    put('.claude.json', '{broken');
+    expect(await readClaudeIdentity(source())).toEqual({});
+    put('.claude.json', '[1,2]');
+    expect(await readClaudeIdentity(source())).toEqual({});
+    put('.claude.json', JSON.stringify({ oauthAccount: 'x' }));
+    expect(await readClaudeIdentity(source())).toEqual({ email: undefined, org: undefined });
   });
 });

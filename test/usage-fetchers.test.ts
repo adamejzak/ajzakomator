@@ -170,3 +170,38 @@ describe('fetchCodex', () => {
     expect(JSON.stringify(leak)).not.toContain('abc.def.ghi');
   });
 });
+
+describe('account identity', () => {
+  it('tags the main Claude account and reads its identity from .claude.json', async () => {
+    claudeLogin();
+    put('.claude.json', JSON.stringify({ oauthAccount: { emailAddress: 'me@example.com', organizationName: 'Acme' } }));
+    const { usage } = await fetchClaude(deps((async () => reply(200, claudeBody)) as never));
+    expect(usage).toMatchObject({ accountId: 'claude:main', provider: 'claude', status: 'ok', email: 'me@example.com', org: 'Acme' });
+    expect(usage.managed).toBeUndefined();
+  });
+
+  it('reads credentials and identity of a managed profile only', async () => {
+    claudeLogin();
+    put('.claude.json', JSON.stringify({ oauthAccount: { emailAddress: 'main@example.com' } }));
+    put('profiles/abc/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'tok-profile', expiresAt: NOW + 3_600_000 } }));
+    put('profiles/abc/.claude.json', JSON.stringify({ oauthAccount: { emailAddress: 'work@example.com', organizationName: 'Work' } }));
+    const fetchSpy = vi.fn(async () => reply(200, claudeBody));
+    const { usage } = await fetchClaude(deps(fetchSpy as never), { id: 'claude:abc', provider: 'claude', configDir: join(home, 'profiles', 'abc') });
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer tok-profile' });
+    expect(JSON.stringify(init.headers)).not.toContain(SECRET);
+    expect(usage).toMatchObject({ accountId: 'claude:abc', status: 'ok', email: 'work@example.com', org: 'Work', managed: true });
+  });
+
+  it('does not fall back to the main login for a signed-out profile', async () => {
+    claudeLogin();
+    const fetchSpy = vi.fn();
+    const { usage } = await fetchClaude(deps(fetchSpy), { id: 'claude:abc', provider: 'claude', configDir: join(home, 'profiles', 'abc') });
+    expect(usage).toMatchObject({ accountId: 'claude:abc', status: 'signedOut', managed: true });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('tags the Codex account', async () => {
+    expect((await fetchCodex(deps(vi.fn()))).usage.accountId).toBe('codex:main');
+  });
+});

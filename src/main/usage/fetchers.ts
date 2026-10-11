@@ -1,6 +1,6 @@
-import type { ProviderUsage } from '../../shared/usage';
+import { MAIN_ACCOUNTS, type AccountRef, type ProviderUsage } from '../../shared/usage';
 import { readCodexLog } from './codexLog';
-import { readClaudeCredentials, readCodexCredentials, type CredentialSource } from './credentials';
+import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, type CredentialSource } from './credentials';
 import { parseClaudeUsage, parseCodexPlan, parseCodexRateLimits } from './parse';
 
 const REQUEST_TIMEOUT_MS = 5000;
@@ -36,12 +36,14 @@ const retryAfterMs = (response: Response): number | undefined => {
   return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : undefined;
 };
 
-export async function fetchClaude(deps: FetcherDeps): Promise<FetchResult> {
+export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCOUNTS[0]): Promise<FetchResult> {
   const now = deps.now();
-  const base: ProviderUsage = { provider: 'claude', status: 'signedOut', windows: [], fetchedAt: now, source: 'live' };
-  const credentials = await readClaudeCredentials(deps.credentials);
+  const source = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
+  const base: ProviderUsage = { accountId: ref.id, provider: 'claude', status: 'signedOut', windows: [], fetchedAt: now, source: 'live', ...(ref.configDir ? { managed: true } : {}) };
+  const credentials = await readClaudeCredentials(source);
   if (!credentials) return { usage: base };
-  const known: ProviderUsage = { ...base, plan: credentials.plan };
+  const identity = await readClaudeIdentity(source);
+  const known: ProviderUsage = { ...base, plan: credentials.plan, email: identity.email, org: identity.org };
   if (credentials.expiresAt !== undefined && credentials.expiresAt <= now + EXPIRY_MARGIN_MS) return { usage: { ...known, status: 'expired' } };
   try {
     const response = await deps.fetch(deps.claudeUrl, {
@@ -65,7 +67,7 @@ export async function fetchClaude(deps: FetcherDeps): Promise<FetchResult> {
 
 export async function fetchCodex(deps: FetcherDeps): Promise<FetchResult> {
   const now = deps.now();
-  const base: ProviderUsage = { provider: 'codex', status: 'signedOut', windows: [], fetchedAt: now, source: 'live' };
+  const base: ProviderUsage = { accountId: 'codex:main', provider: 'codex', status: 'signedOut', windows: [], fetchedAt: now, source: 'live' };
   const credentials = await readCodexCredentials(deps.credentials);
   if (!credentials) return { usage: base };
   if (credentials.mode === 'apiKey') return { usage: { ...base, status: 'apiKey' } };

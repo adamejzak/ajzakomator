@@ -10,7 +10,8 @@ const text = (value: unknown, max: number): string | undefined => (typeof value 
 /** Rebuilds a usage object from whitelisted fields only, so nothing unknown reaches state, listeners or the cache file. */
 export function sanitizeUsage(raw: unknown): ProviderUsage | null {
   if (!isRecord(raw)) return null;
-  const { provider, status, source, fetchedAt } = raw;
+  const { provider, status, source, fetchedAt, accountId } = raw;
+  if (typeof accountId !== 'string' || !accountId || accountId.length > 80) return null;
   if (provider !== 'claude' && provider !== 'codex') return null;
   if (!STATUSES.includes(status as UsageStatus)) return null;
   if (!SOURCES.includes(source as (typeof SOURCES)[number])) return null;
@@ -25,12 +26,16 @@ export function sanitizeUsage(raw: unknown): ProviderUsage | null {
   }
   const plan = text(raw.plan, 120);
   const email = text(raw.email, 120);
+  const org = text(raw.org, 120);
   const error = text(raw.error, 64);
   return {
+    accountId,
     provider,
     status: status as UsageStatus,
     ...(plan ? { plan } : {}),
     ...(email ? { email } : {}),
+    ...(org ? { org } : {}),
+    ...(typeof raw.managed === 'boolean' ? { managed: raw.managed } : {}),
     windows,
     fetchedAt,
     source: source as (typeof SOURCES)[number],

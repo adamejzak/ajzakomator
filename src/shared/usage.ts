@@ -11,11 +11,27 @@ export interface UsageWindow {
   resetsAt: number;
 }
 
+/** One account whose limits are tracked; `configDir` is set for a managed Claude profile and absent for the main login. */
+export interface AccountRef {
+  id: string;
+  provider: UsageProvider;
+  configDir?: string;
+}
+
+export const MAIN_ACCOUNTS: AccountRef[] = [
+  { id: 'claude:main', provider: 'claude' },
+  { id: 'codex:main', provider: 'codex' },
+];
+
 export interface ProviderUsage {
+  accountId: string;
   provider: UsageProvider;
   status: UsageStatus;
   plan?: string;
   email?: string;
+  org?: string;
+  /** The account lives in an isolated profile managed by this app. */
+  managed?: boolean;
   windows: UsageWindow[];
   /** Epoch milliseconds of the read this data comes from. */
   fetchedAt: number;

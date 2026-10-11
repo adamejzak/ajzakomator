@@ -100,7 +100,7 @@ export function UsagePanel() {
         {signedIn.map((usage) => {
           const percent = worstPercent(usage, now);
           return (
-            <div key={usage.provider} className="usage-rail-item">
+            <div key={usage.accountId} className="usage-rail-item">
               <span>{RAIL[usage.provider]}</span>
               <Bar percent={percent} label={NAMES[usage.provider]} />
               <span>{Math.round(percent)}</span>
@@ -125,7 +125,7 @@ export function UsagePanel() {
       {!collapsed && (
         <>
           {known.length
-            ? providers.map((usage) => <Provider key={usage.provider} usage={usage} now={now} language={language} />)
+            ? providers.map((usage) => <Provider key={usage.accountId} usage={usage} now={now} language={language} />)
             : <p className="usage-note">{tr('Zaloguj się w Claude Code lub Codexie, aby zobaczyć limity.')}</p>}
           {updated && <p className="usage-note">{tr('Zaktualizowano {time}', { time: updated })}</p>}
         </>

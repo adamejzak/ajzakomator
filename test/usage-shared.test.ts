@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultState, normalizeState } from '../src/shared/state';
-import { clampPercent, effectivePercent, formatDuration, usageBand, worstPercent, type ProviderUsage } from '../src/shared/usage';
+import { sanitizeUsage } from '../src/main/usage/sanitize';
+import { MAIN_ACCOUNTS, clampPercent, effectivePercent, formatDuration, usageBand, worstPercent, type ProviderUsage } from '../src/shared/usage';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 
@@ -26,7 +27,7 @@ describe('usage helpers', () => {
 
   it('uses the highest window as the headline', () => {
     const usage: ProviderUsage = {
-      provider: 'claude', status: 'ok', fetchedAt: NOW, source: 'live',
+      accountId: 'claude:main', provider: 'claude', status: 'ok', fetchedAt: NOW, source: 'live',
       windows: [{ id: '5h', usedPercent: 20, resetsAt: Math.floor(NOW / 1000) + 600 }, { id: '7d', usedPercent: 64, resetsAt: Math.floor(NOW / 1000) + 9000 }],
     };
     expect(worstPercent(usage, NOW)).toBe(64);
@@ -57,5 +58,32 @@ describe('usage settings', () => {
     expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings).toMatchObject({ showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false });
     delete raw.settings.showAiUsage; delete raw.settings.usageIntervalMinutes; delete raw.settings.usageCollapsed;
     expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings).toMatchObject({ showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false });
+  });
+});
+
+describe('sanitizeUsage accounts', () => {
+  const valid = { accountId: 'claude:main', provider: 'claude', status: 'ok', fetchedAt: NOW, source: 'live', windows: [] };
+
+  it('lists the main accounts', () => {
+    expect(MAIN_ACCOUNTS).toEqual([{ id: 'claude:main', provider: 'claude' }, { id: 'codex:main', provider: 'codex' }]);
+  });
+
+  it('requires a non-empty account id of at most 80 characters', () => {
+    expect(sanitizeUsage(valid)).toMatchObject({ accountId: 'claude:main' });
+    expect(sanitizeUsage({ ...valid, accountId: undefined })).toBeNull();
+    expect(sanitizeUsage({ ...valid, accountId: '' })).toBeNull();
+    expect(sanitizeUsage({ ...valid, accountId: 5 })).toBeNull();
+    expect(sanitizeUsage({ ...valid, accountId: 'a'.repeat(81) })).toBeNull();
+    expect(sanitizeUsage({ ...valid, accountId: 'a'.repeat(80) })).not.toBeNull();
+  });
+
+  it('keeps org (max 120) and managed (boolean only) and drops unknown fields', () => {
+    const usage = sanitizeUsage({ ...valid, org: 'o'.repeat(200), managed: true, token: 'SECRET' });
+    expect(usage?.org).toHaveLength(120);
+    expect(usage?.managed).toBe(true);
+    expect(usage).not.toHaveProperty('token');
+    expect(sanitizeUsage({ ...valid, managed: 'yes', org: 5 })).not.toHaveProperty('managed');
+    expect(sanitizeUsage({ ...valid, managed: 'yes', org: 5 })).not.toHaveProperty('org');
+    expect(sanitizeUsage({ ...valid, managed: false })?.managed).toBe(false);
   });
 });

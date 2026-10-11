@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FetchResult } from '../src/main/usage/fetchers';
 import { MIN_GAP_MS, UsageService } from '../src/main/usage/service';
-import type { ProviderUsage, UsageProvider } from '../src/shared/usage';
+import { MAIN_ACCOUNTS, type AccountRef, type ProviderUsage, type UsageProvider } from '../src/shared/usage';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
-const ok = (provider: UsageProvider, percent: number): FetchResult => ({
-  usage: { provider, status: 'ok', plan: 'Max 5x', fetchedAt: Date.now(), source: 'live', windows: [{ id: '5h', usedPercent: percent, resetsAt: Math.floor(Date.now() / 1000) + 3600 }] },
+const ok = (provider: UsageProvider, percent: number, accountId = `${provider}:main`): FetchResult => ({
+  usage: { accountId, provider, status: 'ok', plan: 'Max 5x', fetchedAt: Date.now(), source: 'live', windows: [{ id: '5h', usedPercent: percent, resetsAt: Math.floor(Date.now() / 1000) + 3600 }] },
 });
-const failing = (provider: UsageProvider, status: 'error' | 'expired', retryAfterMs?: number): FetchResult => ({
-  usage: { provider, status, fetchedAt: Date.now(), source: 'live', windows: [], ...(status === 'error' ? { error: 'http-500' } : {}) }, retryAfterMs,
+const failing = (provider: UsageProvider, status: 'error' | 'expired', retryAfterMs?: number, accountId = `${provider}:main`): FetchResult => ({
+  usage: { accountId, provider, status, fetchedAt: Date.now(), source: 'live', windows: [], ...(status === 'error' ? { error: 'http-500' } : {}) }, retryAfterMs,
 });
 
 let dir: string;
@@ -20,11 +20,12 @@ let cacheFile: string;
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(NOW); dir = mkdtempSync(join(tmpdir(), 'ajza-usage-')); cacheFile = join(dir, 'usage-cache.json'); });
 afterEach(() => { vi.useRealTimers(); rmSync(dir, { recursive: true, force: true }); });
 
-function make(overrides: { claude?: () => Promise<FetchResult>; codex?: () => Promise<FetchResult>; enabled?: () => boolean; intervalMs?: () => number } = {}) {
+function make(overrides: { claude?: () => Promise<FetchResult>; codex?: () => Promise<FetchResult>; enabled?: () => boolean; intervalMs?: () => number; accounts?: () => AccountRef[]; fetchAccount?: (ref: AccountRef) => Promise<FetchResult> } = {}) {
   const claude = vi.fn(overrides.claude ?? (async () => ok('claude', 40)));
   const codex = vi.fn(overrides.codex ?? (async () => ok('codex', 8)));
-  const service = new UsageService({ fetchers: { claude, codex }, cacheFile, enabled: overrides.enabled ?? (() => true), intervalMs: overrides.intervalMs ?? (() => 300_000) });
-  return { service, claude, codex };
+  const fetchAccount = vi.fn(overrides.fetchAccount ?? ((ref: AccountRef) => (ref.id === 'codex:main' ? codex() : claude())));
+  const service = new UsageService({ accounts: overrides.accounts ?? (() => MAIN_ACCOUNTS), fetchAccount, cacheFile, enabled: overrides.enabled ?? (() => true), intervalMs: overrides.intervalMs ?? (() => 300_000) });
+  return { service, claude, codex, fetchAccount };
 }
 
 describe('UsageService', () => {
@@ -134,7 +135,7 @@ describe('UsageService', () => {
   it('survives a fetcher that throws', async () => {
     const { service } = make({ claude: async () => { throw new Error('unexpected'); } });
     await service.refresh();
-    expect(service.getState().providers[0]).toMatchObject({ provider: 'claude', status: 'error', error: 'network' });
+    expect(service.getState().providers[0]).toMatchObject({ accountId: 'claude:main', provider: 'claude', status: 'error', error: 'network' });
   });
 
   it('remembers the last good result on disk and shows it as cached after a restart', async () => {
@@ -160,8 +161,8 @@ describe('UsageService', () => {
 
   it('loads a cache with garbage window entries and keeps only the valid ones', () => {
     writeFileSync(cacheFile, JSON.stringify({ providers: [
-      null, 'x', { provider: 'claude', status: 'error', source: 'live', fetchedAt: 5, token: 'SECRET-123', windows: [null, 7, { id: '5h', usedPercent: 'a', resetsAt: 1 }, { id: '9h', usedPercent: 1, resetsAt: 1 }, { id: '7d', usedPercent: 250, resetsAt: 10 }] },
-      { provider: 'codex', status: 'ok', source: 'live', fetchedAt: 5, windows: [null] },
+      null, 'x', { accountId: 'claude:main', provider: 'claude', status: 'error', source: 'live', fetchedAt: 5, token: 'SECRET-123', windows: [null, 7, { id: '5h', usedPercent: 'a', resetsAt: 1 }, { id: '9h', usedPercent: 1, resetsAt: 1 }, { id: '7d', usedPercent: 250, resetsAt: 10 }] },
+      { accountId: 'codex:main', provider: 'codex', status: 'ok', source: 'live', fetchedAt: 5, windows: [null] },
     ] }));
     const providers = make().service.getState().providers;
     expect(providers).toHaveLength(1);
@@ -203,7 +204,7 @@ describe('UsageService', () => {
 
   it('replaces the entry when a login disappears and refreshes numbers when an expired login returns', async () => {
     let mode: 'ok' | 'out' | 'expired' | 'back' = 'ok';
-    const out = (provider: UsageProvider): FetchResult => ({ usage: { provider, status: 'signedOut', windows: [], fetchedAt: Date.now(), source: 'live' } });
+    const out = (provider: UsageProvider): FetchResult => ({ usage: { accountId: `${provider}:main`, provider, status: 'signedOut', windows: [], fetchedAt: Date.now(), source: 'live' } });
     const { service } = make({ claude: async () => (mode === 'out' ? out('claude') : ok('claude', 40)), codex: async () => (mode === 'expired' ? failing('codex', 'expired') : mode === 'back' ? ok('codex', 12) : ok('codex', 8)) });
     await service.refresh();
     mode = 'out';
@@ -224,7 +225,7 @@ describe('UsageService', () => {
   it('stores an expired result that carries its own log windows as given and starts no backoff', async () => {
     let step = 0;
     const logWindows = [{ id: '5h' as const, usedPercent: 21, resetsAt: 1781010642 }];
-    const { service, codex } = make({ codex: async () => (step++ === 0 ? ok('codex', 77) : { usage: { provider: 'codex', status: 'expired', fetchedAt: 5, source: 'log', windows: logWindows } }) });
+    const { service, codex } = make({ codex: async () => (step++ === 0 ? ok('codex', 77) : { usage: { accountId: 'codex:main', provider: 'codex', status: 'expired', fetchedAt: 5, source: 'log', windows: logWindows } }) });
     await service.refresh();
     await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
     await service.refresh();
@@ -287,5 +288,78 @@ describe('UsageService', () => {
     service.onChange((state) => heard.push(state.providers.length));
     await expect(service.refresh()).resolves.toBeDefined();
     expect(heard).toEqual([2]);
+  });
+  describe('accounts', () => {
+    const extra: AccountRef = { id: 'claude:abc', provider: 'claude', configDir: '/profiles/abc' };
+
+    it('polls every listed account and returns them in accounts() order', async () => {
+      const list = [extra, ...MAIN_ACCOUNTS];
+      const { service, fetchAccount } = make({ accounts: () => list, fetchAccount: async (ref) => ok(ref.provider, ref.id === 'claude:abc' ? 71 : 5, ref.id) });
+      await service.refresh();
+      expect(fetchAccount).toHaveBeenCalledTimes(3);
+      expect(service.getState().providers.map((p) => [p.accountId, p.windows[0].usedPercent])).toEqual([['claude:abc', 71], ['claude:main', 5], ['codex:main', 5]]);
+    });
+
+    it('drops a removed account from state, the next cache write and a result still in flight', async () => {
+      let list: AccountRef[] = [...MAIN_ACCOUNTS, extra];
+      let release!: (value: FetchResult) => void;
+      const slow = new Promise<FetchResult>((resolve) => { release = resolve; });
+      let first = true;
+      const { service } = make({ accounts: () => list, fetchAccount: (ref) => (ref.id === 'claude:abc' && !first ? slow : Promise.resolve(ok(ref.provider, 9, ref.id))) });
+      await service.refresh();
+      expect(service.getState().providers).toHaveLength(3);
+      expect(readFileSync(cacheFile, 'utf8')).toContain('claude:abc');
+      first = false;
+      await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+      const run = service.refresh();
+      list = MAIN_ACCOUNTS;
+      expect(service.getState().providers.map((p) => p.accountId)).toEqual(['claude:main', 'codex:main']);
+      release(ok('claude', 99, 'claude:abc'));
+      await run;
+      expect(service.getState().providers.map((p) => p.accountId)).toEqual(['claude:main', 'codex:main']);
+      expect(readFileSync(cacheFile, 'utf8')).not.toContain('claude:abc');
+    });
+
+    it('shows a newly added account after the next refresh', async () => {
+      let list: AccountRef[] = MAIN_ACCOUNTS;
+      const { service } = make({ accounts: () => list, fetchAccount: async (ref) => ok(ref.provider, 9, ref.id) });
+      await service.refresh();
+      list = [...MAIN_ACCOUNTS, extra];
+      expect(service.getState().providers).toHaveLength(2);
+      await service.refresh(false, true);
+      expect(service.getState().providers.map((p) => p.accountId)).toEqual(['claude:main', 'codex:main', 'claude:abc']);
+    });
+
+    it('ignores the minimum gap only when forced, and still shares a request in flight', async () => {
+      const { service, claude } = make();
+      await service.refresh();
+      await service.refresh();
+      expect(claude).toHaveBeenCalledOnce();
+      await service.refresh(false, true);
+      expect(claude).toHaveBeenCalledTimes(2);
+      let release!: (value: FetchResult) => void;
+      claude.mockImplementation(() => new Promise<FetchResult>((resolve) => { release = resolve; }));
+      const a = service.refresh(false, true);
+      const b = service.refresh(false, true);
+      expect(claude).toHaveBeenCalledTimes(3);
+      release(ok('claude', 1));
+      await Promise.all([a, b]);
+    });
+
+    it('backs off per account id', async () => {
+      const { service, fetchAccount } = make({ accounts: () => [extra, ...MAIN_ACCOUNTS], fetchAccount: async (ref) => (ref.id === 'claude:abc' ? failing('claude', 'error', 600_000, ref.id) : ok(ref.provider, 9, ref.id)) });
+      await service.refresh();
+      await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+      await service.refresh();
+      const calls = (id: string) => fetchAccount.mock.calls.filter(([ref]) => ref.id === id).length;
+      expect(calls('claude:abc')).toBe(1);
+      expect(calls('claude:main')).toBe(2);
+      expect(calls('codex:main')).toBe(2);
+    });
+
+    it('ignores cache entries from an older file without an account id', () => {
+      writeFileSync(cacheFile, JSON.stringify({ providers: [{ provider: 'claude', status: 'ok', source: 'live', fetchedAt: 5, windows: [{ id: '5h', usedPercent: 3, resetsAt: 10 }] }] }));
+      expect(make().service.getState().providers).toEqual([]);
+    });
   });
 });

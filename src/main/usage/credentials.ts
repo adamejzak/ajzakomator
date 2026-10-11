@@ -45,6 +45,26 @@ export function systemCredentialSource(): CredentialSource {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** The same source seen through an isolated Claude profile: its own config dir, no env token, never the Keychain. */
+export function profileSource(source: CredentialSource, configDir: string): CredentialSource {
+  return { ...source, env: { ...source.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_OAUTH_TOKEN: '' }, platform: 'linux' };
+}
+
+/** Who a Claude login belongs to, from the config file Claude Code keeps next to it (read only). */
+export async function readClaudeIdentity(source: CredentialSource): Promise<{ email?: string; org?: string }> {
+  const directory = source.env.CLAUDE_CONFIG_DIR?.trim();
+  const raw = await source.readFile(directory ? join(directory, '.claude.json') : join(source.home, '.claude.json'));
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const account = isRecord(parsed) && isRecord(parsed.oauthAccount) ? parsed.oauthAccount : undefined;
+    return {
+      email: typeof account?.emailAddress === 'string' ? account.emailAddress : undefined,
+      org: typeof account?.organizationName === 'string' ? account.organizationName : undefined,
+    };
+  } catch { return {}; }
+}
+
 export interface ClaudeCredentials { accessToken: string; expiresAt?: number; plan?: string }
 
 export function claudePlanLabel(subscriptionType?: unknown, rateLimitTier?: unknown): string | undefined {

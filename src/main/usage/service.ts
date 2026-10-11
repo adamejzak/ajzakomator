@@ -1,7 +1,7 @@
 // src/main/usage/service.ts
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
-import type { ProviderUsage, UsageProvider, UsageState } from '../../shared/usage';
+import type { AccountRef, ProviderUsage, UsageState } from '../../shared/usage';
 import type { FetchResult } from './fetchers';
 import { sanitizeUsage } from './sanitize';
 
@@ -9,10 +9,11 @@ export const MIN_GAP_MS = 20_000;
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
 const FETCH_TIMEOUT_MS = 30_000;
-const ORDER: UsageProvider[] = ['claude', 'codex'];
 
 export interface UsageServiceOptions {
-  fetchers: Record<UsageProvider, () => Promise<FetchResult>>;
+  /** The accounts to poll right now; read on every run and every state read, so changes apply without a restart. */
+  accounts(): AccountRef[];
+  fetchAccount(ref: AccountRef): Promise<FetchResult>;
   /** Where the last good result is remembered (no credentials are stored there). */
   cacheFile: string;
   enabled(): boolean;
@@ -23,9 +24,9 @@ export interface UsageServiceOptions {
 
 /** Owns the provider state: polling, minimum gap between reads, backoff after failures, on-disk cache. */
 export class UsageService {
-  private readonly providers = new Map<UsageProvider, ProviderUsage>();
+  private readonly providers = new Map<string, ProviderUsage>();
   private readonly listeners = new Set<(state: UsageState) => void>();
-  private readonly backoff = new Map<UsageProvider, { until: number; failures: number }>();
+  private readonly backoff = new Map<string, { until: number; failures: number }>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending: Promise<UsageState> | undefined;
   private lastRun = 0;
@@ -39,7 +40,7 @@ export class UsageService {
   }
 
   getState(): UsageState {
-    return { providers: ORDER.flatMap((provider) => { const usage = this.providers.get(provider); return usage ? [usage] : []; }) };
+    return { providers: this.options.accounts().flatMap((ref) => { const usage = this.providers.get(ref.id); return usage ? [usage] : []; }) };
   }
 
   onChange(listener: (state: UsageState) => void): () => void {
@@ -73,11 +74,11 @@ export class UsageService {
     this.schedule();
   }
 
-  /** A manual refresh also reads providers that are in backoff; the minimum gap and the shared request still apply. */
-  refresh(manual = false): Promise<UsageState> {
+  /** A manual refresh also reads accounts that are in backoff; `force` also skips the minimum gap. The shared request still applies. */
+  refresh(manual = false, force = false): Promise<UsageState> {
     if (!this.options.enabled()) return Promise.resolve(this.getState());
     if (this.pending) return this.pending;
-    if (this.lastRun && this.now() - this.lastRun < MIN_GAP_MS) return Promise.resolve(this.getState());
+    if (!force && this.lastRun && this.now() - this.lastRun < MIN_GAP_MS) return Promise.resolve(this.getState());
     this.pending = this.run(manual).finally(() => { this.pending = undefined; });
     return this.pending;
   }
@@ -103,7 +104,10 @@ export class UsageService {
   private async run(manual: boolean): Promise<UsageState> {
     const started = this.now();
     this.lastRun = started;
-    await Promise.all(ORDER.map((provider) => this.update(provider, started, manual)));
+    const accounts = this.options.accounts();
+    this.prune(accounts);
+    await Promise.all(accounts.map((ref) => this.update(ref, started, manual)));
+    this.prune(this.options.accounts());
     this.saveCache();
     const state = this.getState();
     for (const listener of this.listeners) {
@@ -112,38 +116,49 @@ export class UsageService {
     return state;
   }
 
-  private async update(provider: UsageProvider, now: number, manual: boolean): Promise<void> {
-    const hold = this.backoff.get(provider);
+  /** Forgets everything about accounts that are no longer listed. */
+  private prune(accounts: AccountRef[]): void {
+    const ids = new Set(accounts.map((ref) => ref.id));
+    for (const id of [...this.providers.keys()]) if (!ids.has(id)) this.providers.delete(id);
+    for (const id of [...this.backoff.keys()]) if (!ids.has(id)) this.backoff.delete(id);
+  }
+
+  private async update(ref: AccountRef, now: number, manual: boolean): Promise<void> {
+    const { id, provider } = ref;
+    const hold = this.backoff.get(id);
     if (!manual && hold && hold.until > now) return;
     let result: FetchResult;
-    const failure = (error: string): FetchResult => ({ usage: { provider, status: 'error', windows: [], fetchedAt: now, source: 'live', error } });
+    const failure = (error: string): FetchResult => ({ usage: { accountId: id, provider, status: 'error', windows: [], fetchedAt: now, source: 'live', error } });
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const timedOut = new Promise<FetchResult>((resolve) => { timeout = setTimeout(() => resolve(failure('timeout')), FETCH_TIMEOUT_MS); });
-      result = await Promise.race([this.options.fetchers[provider](), timedOut]);
+      result = await Promise.race([this.options.fetchAccount(ref), timedOut]);
     } catch { result = failure('network'); }
     finally { clearTimeout(timeout); }
-    const usage = sanitizeUsage(result.usage) ?? failure('bad-response').usage;
+    // A result for an account removed while it was in flight is dropped.
+    if (!this.options.accounts().some((listed) => listed.id === id)) return;
+    const parsed = sanitizeUsage(result.usage);
+    const usage = parsed && parsed.accountId === id ? parsed : failure('bad-response').usage;
     const { retryAfterMs } = result;
     const failed = usage.status === 'error' || result.failed === true;
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
-      this.providers.set(provider, usage);
-      if (failed) this.startBackoff(provider, now, hold?.failures, retryAfterMs);
-      else this.backoff.delete(provider);
+      this.providers.set(id, usage);
+      if (failed) this.startBackoff(id, now, hold?.failures, retryAfterMs);
+      else this.backoff.delete(id);
       return;
     }
     // Expired or failed: keep the last numbers, marked as remembered, so the panel is never blank after a hiccup.
-    const previous = this.providers.get(provider);
+    const previous = this.providers.get(id);
     const own = usage.windows.length > 0;
-    this.providers.set(provider, !own && previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);
-    if (failed) this.startBackoff(provider, now, hold?.failures, retryAfterMs);
-    else this.backoff.delete(provider);
+    this.providers.set(id, !own && previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);
+    if (failed) this.startBackoff(id, now, hold?.failures, retryAfterMs);
+    else this.backoff.delete(id);
   }
 
-  private startBackoff(provider: UsageProvider, now: number, previousFailures = 0, retryAfterMs?: number): void {
+  private startBackoff(id: string, now: number, previousFailures = 0, retryAfterMs?: number): void {
     const failures = previousFailures + 1;
     const wait = retryAfterMs ?? Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
-    this.backoff.set(provider, { until: now + wait, failures });
+    this.backoff.set(id, { until: now + wait, failures });
   }
 
   private loadCache(): void {
@@ -151,7 +166,7 @@ export class UsageService {
       const raw = JSON.parse(readFileSync(this.options.cacheFile, 'utf8')) as { providers?: unknown };
       for (const entry of Array.isArray(raw?.providers) ? raw.providers : []) {
         const usage = sanitizeUsage(entry);
-        if (usage?.windows.length) this.providers.set(usage.provider, { ...usage, status: 'ok', source: 'cache' });
+        if (usage?.windows.length) this.providers.set(usage.accountId, { ...usage, status: 'ok', source: 'cache' });
       }
     } catch { /* no usable cache yet */ }
   }
@@ -159,7 +174,7 @@ export class UsageService {
   private saveCache(): void {
     try {
       mkdirSync(dirname(this.options.cacheFile), { recursive: true });
-      writeFileSync(this.options.cacheFile, JSON.stringify({ providers: [...this.providers.values()].filter((usage) => usage.windows.length) }));
+      writeFileSync(this.options.cacheFile, JSON.stringify({ providers: this.options.accounts().flatMap((ref) => { const usage = this.providers.get(ref.id); return usage?.windows.length ? [usage] : []; }) }));
     } catch { /* the cache is optional */ }
   }
 }
