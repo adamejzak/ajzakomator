@@ -10,7 +10,6 @@ Keep projects, agent conversations, source files and reusable prompts in one wor
 Switch projects while your terminals keep running in the background.
 
 [![Release](https://img.shields.io/github/v/release/adamejzak/ajzakomator?style=flat-square&color=f4f4f5&labelColor=18181b)](https://github.com/adamejzak/ajzakomator/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/adamejzak/ajzakomator/total?style=flat-square&color=f4f4f5&labelColor=18181b)](https://github.com/adamejzak/ajzakomator/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/adamejzak/ajzakomator/ci.yml?branch=main&style=flat-square&label=tests&labelColor=18181b)](https://github.com/adamejzak/ajzakomator/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-f4f4f5?style=flat-square&labelColor=18181b)](#install)
 [![License](https://img.shields.io/github/license/adamejzak/ajzakomator?style=flat-square&color=f4f4f5&labelColor=18181b)](LICENSE)
