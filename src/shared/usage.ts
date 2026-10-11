@@ -69,3 +69,25 @@ export function formatDuration(seconds: number): string {
   if (hours > 0) return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
   return minutes > 0 ? `${minutes} min` : '<1 min';
 }
+
+/** Part of the e-mail before "@", cut to `max` characters; falls back to `fallback` when there is no e-mail. */
+export function shortAccountName(email: string | undefined, fallback: string, max = 12): string {
+  const local = email?.split('@')[0]?.trim();
+  return local ? local.slice(0, max) : fallback;
+}
+
+/** Accounts that show numbers: not expired and either ok or carrying windows. */
+export function summaryAccounts(providers: ProviderUsage[]): ProviderUsage[] {
+  return providers.filter((u) => u.status !== 'signedOut' && u.status !== 'expired' && u.status !== 'apiKey' && (u.status === 'ok' || u.windows.length > 0));
+}
+
+/** "Claude 17% · Claude 40% · Codex 8%"; several Claude accounts are told apart by the e-mail name. Empty when nothing to show. */
+export function usageSummary(providers: ProviderUsage[], nowMs: number): string {
+  const shown = summaryAccounts(providers);
+  const claudeCount = providers.filter((u) => u.provider === 'claude' && u.status !== 'signedOut').length;
+  return shown.map((u) => {
+    const base = u.provider === 'claude' ? 'Claude' : 'Codex';
+    const name = u.provider === 'claude' && claudeCount > 1 ? shortAccountName(u.email, base) : base;
+    return `${name} ${Math.round(worstPercent(u, nowMs))}%`;
+  }).join(' · ');
+}

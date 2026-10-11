@@ -803,16 +803,27 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .fr-line ins { background: #4ade8024; color: #bbf7d0; text-decoration: none; border-radius: 2px; }
 
 /* ── AI account limits (docked above the status bar) ───────────────────── */
-.usage-panel { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 8px; border-top: 1px solid var(--border); background: var(--bg-1); font-size: 11px; color: var(--text-2); max-height: 40vh; overflow-y: auto; }
+.usage-panel { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 4px 10px 6px; border-top: 1px solid var(--border); background: var(--bg-1); font-size: 11px; color: var(--text-2); max-height: 40vh; overflow-y: auto; }
 .usage-head { display: flex; align-items: center; gap: 6px; }
 .usage-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 2px 0; border: 0; background: transparent; color: var(--text-2); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .usage-title:hover { color: var(--text); }
 .usage-chevron { display: inline-grid; transition: transform .15s; }
 .usage-chevron.open { transform: rotate(180deg); }
 .usage-summary { font-weight: 400; color: var(--text-2); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-provider { display: flex; flex-direction: column; gap: 4px; }
-.usage-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; color: var(--text); font-weight: 600; }
-.usage-plan { color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-card { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid var(--border); }
+.usage-card:first-of-type { border-top: 0; padding-top: 2px; }
+.usage-card.expired { opacity: .75; }
+.usage-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text); font-weight: 600; }
+.usage-account { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-chip { flex: none; padding: 0 5px; border-radius: 8px; background: var(--border-2); color: var(--muted); font-size: 10px; font-weight: 400; line-height: 15px; white-space: nowrap; }
+.usage-chip.main { color: var(--text-2); }
+.usage-kebab { flex: none; margin-left: auto; display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.usage-kebab:hover { color: var(--text); background: var(--border-2); }
+.usage-expired { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.usage-empty { display: flex; flex-direction: column; gap: 6px; }
+.usage-empty-buttons { display: flex; gap: 6px; }
+.usage-empty-buttons .btn { display: inline-flex; align-items: center; gap: 5px; }
+.provider-icon { flex: none; }
 .usage-row { display: grid; grid-template-columns: 44px 1fr 32px; align-items: center; column-gap: 6px; row-gap: 1px; }
 .usage-label { color: var(--muted); white-space: nowrap; }
 .usage-bar { height: 4px; border-radius: 3px; background: var(--border-2); overflow: hidden; }
