@@ -4,21 +4,26 @@ import { delimiter, join } from 'path';
 import * as pty from 'node-pty';
 import type { SpawnRequest } from '../shared/ipc';
 import type { ShellKind } from '../shared/types';
+import { coalesceDelay, FLUSH_NOW_CHARS, FlowGate, TailBuffer } from './flow';
 
 export interface PtySink {
   data(id: string, data: string): void;
   exit(id: string, code: number): void;
 }
 
-const COALESCE_MS = 4;
 const REPLAY_LIMIT = 512 * 1024;
+/** A paused pty is resumed anyway when no acknowledgement arrives for this long (renderer gone or stuck). */
+const PAUSE_WATCHDOG_MS = 3000;
 
 interface Entry {
   proc: pty.IPty;
   buf: string;
   timer: NodeJS.Timeout | null;
   /** Tail of the output, replayed when a (reloaded) renderer reconnects. */
-  history: string;
+  history: TailBuffer;
+  gate: FlowGate;
+  watchdog: NodeJS.Timeout | null;
+  lastWrite: number;
   exited: Promise<void>;
 }
 
@@ -48,6 +53,8 @@ export class PtyManager {
    * which pops up an error dialog. Terminals are therefore killed one at a time, each after the previous exited.
    */
   private ending: Promise<void> = Promise.resolve();
+  /** Back-pressure from the renderer (acks) is only active while a renderer is connected. */
+  private flowControl = false;
 
   constructor(private sink: PtySink) {}
 
@@ -73,15 +80,16 @@ export class PtyManager {
       ...(process.platform === 'win32' ? { useConpty: true, useConptyDll: true } : {}),
     });
     let resolveExit!: () => void;
-    const entry: Entry = { proc, buf: '', timer: null, history: '', exited: new Promise((r) => (resolveExit = r)) };
+    const entry: Entry = { proc, buf: '', timer: null, history: new TailBuffer(REPLAY_LIMIT), gate: new FlowGate(), watchdog: null, lastWrite: -Infinity, exited: new Promise((r) => (resolveExit = r)) };
     this.entries.set(req.id, entry);
 
     let pendingCommand = req.command;
     proc.onData((data) => {
       if (this.entries.get(req.id) !== entry) return;
-      entry.history = (entry.history + data).slice(-REPLAY_LIMIT);
+      entry.history.push(data);
       entry.buf += data;
-      if (!entry.timer) entry.timer = setTimeout(() => this.flush(req.id, entry), COALESCE_MS);
+      if (entry.buf.length >= FLUSH_NOW_CHARS) this.flush(req.id, entry);
+      else if (!entry.timer) entry.timer = setTimeout(() => this.flush(req.id, entry), coalesceDelay(Date.now(), entry.lastWrite));
       if (pendingCommand) {
         const cmd = pendingCommand;
         pendingCommand = undefined;
@@ -107,10 +115,47 @@ export class PtyManager {
     const out = entry.buf;
     entry.buf = '';
     this.sink.data(id, out);
+    if (this.flowControl && entry.gate.sent(out.length)) this.pause(entry);
+  }
+
+  private pause(entry: Entry): void {
+    try {
+      entry.proc.pause();
+    } catch {
+      // the pty is going away
+    }
+    if (entry.watchdog) clearTimeout(entry.watchdog);
+    entry.watchdog = setTimeout(() => this.resume(entry, true), PAUSE_WATCHDOG_MS);
+  }
+
+  private resume(entry: Entry, force = false): void {
+    if (entry.watchdog) clearTimeout(entry.watchdog);
+    entry.watchdog = null;
+    if (force) entry.gate.reset();
+    try {
+      entry.proc.resume();
+    } catch {
+      // the pty is going away
+    }
+  }
+
+  /** The renderer parsed `chars` characters of this terminal's output. */
+  ack(id: string, chars: number): void {
+    const e = this.entries.get(id);
+    if (e && e.gate.acked(chars)) this.resume(e);
+  }
+
+  /** Enables back-pressure for a freshly connected renderer; anything counted for the old one is forgotten. */
+  setFlowControl(on: boolean): void {
+    this.flowControl = on;
+    for (const e of this.entries.values()) if (e.gate.reset() || e.watchdog) this.resume(e);
   }
 
   write(id: string, data: string): void {
-    this.entries.get(id)?.proc.write(data);
+    const e = this.entries.get(id);
+    if (!e) return;
+    e.lastWrite = Date.now();
+    e.proc.write(data);
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -129,7 +174,7 @@ export class PtyManager {
 
   /** Output history of every live terminal (for a reconnecting renderer). */
   histories(): Array<{ id: string; data: string }> {
-    return [...this.entries].map(([id, e]) => ({ id, data: e.history }));
+    return [...this.entries].map(([id, e]) => ({ id, data: e.history.toString() }));
   }
 
   /** Kills a terminal; resolves once it exited (bounded), so its cwd can be deleted afterwards. */
@@ -138,6 +183,7 @@ export class PtyManager {
     if (!e) return Promise.resolve();
     this.entries.delete(id);
     if (e.timer) clearTimeout(e.timer);
+    if (e.watchdog) clearTimeout(e.watchdog);
     const turn = this.ending.then(() => {
       try {
         e.proc.kill();

@@ -25,8 +25,10 @@ function attachRenderer(port: MessagePortMain): void {
     const m = e.data as RendererToHost;
     if (m.t === 'write') manager.write(m.id, m.data);
     else if (m.t === 'resize') manager.resize(m.id, m.cols, m.rows);
+    else if (m.t === 'ack') manager.ack(m.id, m.chars);
   });
   port.start();
+  manager.setFlowControl(true);
   for (const h of manager.histories()) toRenderer({ t: 'replay', id: h.id, data: h.data });
 }
 

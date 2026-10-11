@@ -38,6 +38,9 @@ interface Entry {
   /** >0 while replayed history is being parsed: terminal query replies must not reach the pty. */
   replaying: number;
   lastSize: { cols: number; rows: number };
+  /** Selection redraw that arrived while the terminal was parked (see `deferParkedSelection`). */
+  parkedSelection: unknown[] | null;
+  applySelection: ((args: unknown[]) => void) | null;
 }
 
 type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cause: StatusCause) => void;
@@ -58,6 +61,8 @@ class TerminalManager {
   private exitListeners = new Set<(cellId: string) => void>();
   private parking: HTMLDivElement;
   private buildNumber = 0;
+  private acks = new Map<string, number>();
+  private ackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.parking = document.createElement('div');
@@ -99,8 +104,12 @@ class TerminalManager {
     }
     const e = this.entries.get(m.id);
     if (!e) {
-      if (this.disposed.has(m.id)) return; // in-flight output of a closed cell
+      if (this.disposed.has(m.id)) {
+        this.ack(m); // in-flight output of a closed cell
+        return;
+      }
       const q = this.pending.get(m.id) ?? [];
+      this.ack(m); // queued output is bounded below, so the host need not wait for it
       if (m.t === 'replay') q.length = 0;
       q.push({ data: m.data, replay: m.t === 'replay' });
       // Bound memory for busy cells that are never shown: keep roughly the newest PENDING_LIMIT.
@@ -113,10 +122,22 @@ class TerminalManager {
       e.term.reset();
       this.writeReplay(e, m.data);
     } else {
-      e.term.write(m.data);
+      e.term.write(m.data, () => this.ack(m));
       // Published right away: output alone can flip the status to "working" (it used to surface only later).
       this.setStatus(e, () => e.tracker.output(performance.now()));
     }
+  }
+
+  /** Tells the pty host that this output was parsed (or dropped), so it can keep sending (flow control). */
+  private ack(m: HostToRenderer): void {
+    if (m.t !== 'data') return;
+    // One message per cell per tick instead of one per output chunk.
+    this.acks.set(m.id, (this.acks.get(m.id) ?? 0) + m.data.length);
+    this.ackTimer ??= setTimeout(() => {
+      this.ackTimer = null;
+      for (const [id, chars] of this.acks) this.post({ t: 'ack', id, chars });
+      this.acks.clear();
+    }, 8);
   }
 
   private writeReplay(e: Entry, data: string): void {
@@ -162,8 +183,10 @@ class TerminalManager {
     const entry: Entry = {
       id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
       attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
+      parkedSelection: null, applySelection: null,
     };
     this.entries.set(cellId, entry);
+    this.deferParkedSelection(entry);
 
     // ConPTY asks its host terminal for win32-input-mode with CSI ? 9001 h.
     const setW32 = (on: boolean) => (params: (number | number[])[]) => {
@@ -220,6 +243,23 @@ class TerminalManager {
       }
     }
     return entry;
+  }
+
+  /**
+   * xterm's DOM renderer (what a parked terminal falls back to) redraws every row on each selection refresh, which
+   * output triggers on every scroll, and it ignores the "not visible" pause. A parked cell therefore burned CPU
+   * rebuilding invisible DOM. While parked we keep only the newest selection state and apply it on attach.
+   * Relies on xterm internals, so it quietly does nothing if they change.
+   */
+  private deferParkedSelection(entry: Entry): void {
+    const rs = (entry.term as unknown as { _core?: { _renderService?: { handleSelectionChanged?: (...a: unknown[]) => void } } })._core?._renderService;
+    const original = rs?.handleSelectionChanged;
+    if (!rs || typeof original !== 'function') return;
+    entry.applySelection = (args) => original.apply(rs, args);
+    rs.handleSelectionChanged = (...args: unknown[]) => {
+      if (entry.attachedTo) original.apply(rs, args);
+      else entry.parkedSelection = args;
+    };
   }
 
   private handleKey(entry: Entry, ev: KeyboardEvent): boolean {
@@ -299,6 +339,10 @@ class TerminalManager {
       } catch {
         e.webgl = null; // DOM renderer fallback
       }
+    }
+    if (e.parkedSelection) {
+      e.applySelection?.(e.parkedSelection);
+      e.parkedSelection = null;
     }
     e.resizeObs?.disconnect();
     let t: number | undefined;

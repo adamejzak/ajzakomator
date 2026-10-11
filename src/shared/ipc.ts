@@ -26,7 +26,9 @@ export type HostToMain =
 
 export type RendererToHost =
   | { t: 'write'; id: string; data: string }
-  | { t: 'resize'; id: string; cols: number; rows: number };
+  | { t: 'resize'; id: string; cols: number; rows: number }
+  /** The renderer finished parsing `chars` characters of output (flow control). */
+  | { t: 'ack'; id: string; chars: number };
 
 export type HostToRenderer =
   | { t: 'data'; id: string; data: string }
