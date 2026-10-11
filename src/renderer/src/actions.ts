@@ -167,13 +167,17 @@ export function renameCell(cellId: string, name: string): void {
 }
 
 const titlesTimers = new Map<string, number>();
+const titlesRequests = new Map<string, number>();
 /** Refreshes conversation titles for a project and its worktrees (debounced per project); used as default cell labels. */
 export function refreshSessionTitles(projectPath: string | undefined, delay = 0): void {
   if (!projectPath) return;
   clearTimeout(titlesTimers.get(projectPath));
   titlesTimers.set(projectPath, window.setTimeout(async () => {
     titlesTimers.delete(projectPath);
+    const request = (titlesRequests.get(projectPath) ?? 0) + 1;
+    titlesRequests.set(projectPath, request);
     const lists = await Promise.all(sessionSearchPaths(projectPath, getS()).map((p) => window.mc.listSessions(p).catch(() => [])));
+    if (titlesRequests.get(projectPath) !== request) return; // a newer refresh superseded this one
     setUi((ui) => {
       const sessionTitles = { ...ui.sessionTitles };
       for (const list of lists) for (const x of list) sessionTitles[x.id] = x.title;

@@ -44,7 +44,7 @@ import { queueCodexMessage } from './agentDelivery';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
-import { shouldUpdateCellSession } from '../shared/sessionTrack';
+import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadSoundFile } from './waitingSound';
 
@@ -303,7 +303,7 @@ hooks.on('session', (cellId: string, sessionId: string) => {
     currentId: found?.cell.session?.id,
     reportedId: sessionId,
   })) return;
-  send('cell:session', cellId, { cli: 'claude', id: sessionId });
+  send('cell:session', cellId, followedSession(sessionId));
 });
 
 function boundCodexIds(): Set<string> {

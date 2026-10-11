@@ -3,7 +3,7 @@ import type { AppState } from './types';
 // Decision helpers for following a Claude conversation switch (/resume, /clear) reported by the SessionStart hook.
 
 /** Claude session ids are UUIDs; anything else coming from the local hook endpoint is rejected. */
-export const SESSION_ID = /^[A-Za-z0-9_-]{8,100}$/;
+export const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface SessionUpdateInput {
   /** The cell exists in the persisted state. */
@@ -16,6 +16,9 @@ export interface SessionUpdateInput {
   currentId: string | undefined;
   reportedId: string;
 }
+
+/** Session stored for a conversation reported by the live CLI: confirmed, so MCP restarts keep working. */
+export const followedSession = (id: string) => ({ cli: 'claude' as const, id, confirmed: true });
 
 /** True when the cell's stored session id should be replaced by the one the hook reported. */
 export function shouldUpdateCellSession(i: SessionUpdateInput): boolean {

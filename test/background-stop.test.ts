@@ -31,7 +31,7 @@ describe('hook server Stop', () => {
     await s.start();
     const seen: string[] = [];
     s.on('hook', (cell, ev) => seen.push(`${cell}:${ev}`));
-    const url = (ev: string) => `http://127.0.0.1:${s.port}/h/${s.token}/c1/${ev}`;
+    const url = (ev: string) => s.url('c1', ev as never);
     const post = (u: string, b: string) => fetch(u, { method: 'POST', body: b });
     await post(url('stop'), bg({ status: 'running' }));
     await post(url('stop'), bg({ status: 'done' }));
@@ -39,7 +39,7 @@ describe('hook server Stop', () => {
     await post(url('stopbg'), bg({ status: 'running' }));
     await post(url('stop'), 'z'.repeat(600_000)).catch(() => {});
     await post(url('notify'), 'z'.repeat(20_000)).catch(() => {});
-    await post(`http://127.0.0.1:${s.port}/h/bad/c1/stop`, bg({ status: 'running' })).catch(() => {});
+    await post(`http://127.0.0.1:${s.port}/h/bad/c1/stop/x`, bg({ status: 'running' })).catch(() => {});
     await new Promise((r) => setTimeout(r, 80));
     expect(seen).toEqual(['c1:stopbg', 'c1:stop', 'c1:stop']);
     s.stop();

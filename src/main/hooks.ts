@@ -95,6 +95,8 @@ export class HookServer extends EventEmitter {
   readonly token = randomBytes(16).toString('hex');
   private server: Server | null = null;
   port = 0;
+  /** Current spawn nonce per cell; hook URLs carry it. */
+  private nonces = new Map<string, string>();
   /** Set (from MC_HOOK_DEBUG=1) to the user data dir to log Stop payload shapes. */
   debugDir: string | null = null;
 
@@ -117,6 +119,8 @@ export class HookServer extends EventEmitter {
         res.writeHead(400).end();
         return;
       }
+      // Each spawn gets a fresh nonce: late requests of a killed process (or old-format URLs without one) are dropped.
+      const current = this.nonces.get(cellId) === parts[4] && parts[4] !== undefined;
       let body = '';
       const maxBody = event === 'stop' ? MAX_STOP_BODY : MAX_BODY;
       req.setEncoding('utf8');
@@ -127,7 +131,7 @@ export class HookServer extends EventEmitter {
       req.on('end', () => {
         // 204 without a body: hook stdout would otherwise be fed back to Claude as context.
         res.writeHead(204).end();
-        if (!cellId) return;
+        if (!cellId || !current) return;
         if ((event as string) === 'session') {
           const parsed = parseSessionStart(body);
           if (parsed) this.emit('session', cellId, parsed.sessionId, parsed.source);
@@ -153,13 +157,17 @@ export class HookServer extends EventEmitter {
     this.server?.close();
   }
 
+  /** Hook URL for the cell's current spawn (a nonce is created on first use). */
   url(cellId: string, event: HookEvent | 'session'): string {
-    return `http://127.0.0.1:${this.port}/h/${this.token}/${encodeURIComponent(cellId)}/${event}`;
+    let nonce = this.nonces.get(cellId);
+    if (!nonce) this.nonces.set(cellId, (nonce = randomBytes(8).toString('hex')));
+    return `http://127.0.0.1:${this.port}/h/${this.token}/${encodeURIComponent(cellId)}/${event}/${nonce}`;
   }
 
   /** Writes the per-cell Claude settings file and returns its path. */
   writeClaudeSettings(dir: string, cellId: string): string {
     mkdirSync(dir, { recursive: true });
+    this.nonces.set(cellId, randomBytes(8).toString('hex')); // invalidates hooks of the previous process
     // Only Notification, Stop (background_tasks) and SessionStart need their payload (JSON on stdin); tool hooks would upload whole files.
     const hook = (event: HookEvent | 'session') => [
       { hooks: [{ type: 'command', command: `curl -s -m 2 -X POST ${event === 'notify' || event === 'stop' || event === 'session' ? '--data-binary @- ' : ''}${this.url(cellId, event)}` }] },

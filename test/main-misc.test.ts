@@ -15,7 +15,7 @@ describe('HookServer', () => {
     const ok = await fetch(s.url('cell-1', 'stop'), { method: 'POST' });
     expect(ok.status).toBe(204);
     expect(await ok.text()).toBe('');
-    const bad = await fetch(`http://127.0.0.1:${s.port}/h/wrong/cell-1/stop`, { method: 'POST' });
+    const bad = await fetch(`http://127.0.0.1:${s.port}/h/wrong/cell-1/stop/x`, { method: 'POST' });
     expect(bad.status).toBe(403);
     expect(got).toEqual(['cell-1:stop']);
     s.stop();
@@ -27,8 +27,8 @@ describe('HookServer', () => {
     const path = s.writeClaudeSettings(mkdtempSync(join(tmpdir(), 'mc-hooks-')), 'c9');
     const json = JSON.parse(readFileSync(path, 'utf8'));
     expect(Object.keys(json.hooks)).toEqual(['UserPromptSubmit', 'Stop', 'Notification', 'PreToolUse', 'PostToolUse', 'SubagentStop', 'SessionStart']);
-    expect(json.hooks.PostToolUse[0].hooks[0].command).toContain(`/h/${s.token}/c9/busy`);
-    expect(json.hooks.Stop[0].hooks[0].command).toContain(`/h/${s.token}/c9/stop`);
+    expect(json.hooks.PostToolUse[0].hooks[0].command).toContain(`/h/${s.token}/c9/busy/`);
+    expect(json.hooks.Stop[0].hooks[0].command).toContain(`/h/${s.token}/c9/stop/`);
     s.stop();
   });
 
@@ -54,9 +54,9 @@ describe('HookServer', () => {
     const base = `http://127.0.0.1:${s.port}/h/${s.token}`;
     expect((await fetch(`${base}/%E0%A4%A/stop`, { method: 'POST' })).status).toBe(400);
     expect((await fetch(`${base}/a%20b/stop`, { method: 'POST' })).status).toBe(400);
-    await fetch(`${base}/c2/notify`, { method: 'POST', body: 'x'.repeat(200_000) }).catch(() => {});
+    await fetch(s.url('c2', 'notify'), { method: 'POST', body: 'x'.repeat(200_000) }).catch(() => {});
     expect(got).toEqual([]);
-    expect(await (await fetch(`${base}/c2/stop`, { method: 'POST' })).status).toBe(204);
+    expect(await (await fetch(s.url('c2', 'stop'), { method: 'POST' })).status).toBe(204);
     const path = s.writeClaudeSettings(mkdtempSync(join(tmpdir(), 'mc-hooks-')), 'c2');
     const json = JSON.parse(readFileSync(path, 'utf8'));
     expect(json.hooks.Notification[0].hooks[0].command).toContain('--data-binary');
