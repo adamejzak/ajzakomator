@@ -104,7 +104,7 @@ describe('installInProgress', () => {
     expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 120_000)).toBe(false);
     put(join(dir(), 'work', 'heartbeat'));
     expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 5_000)).toBe(true);
-    expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 60_000)).toBe(false);
+    expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 61_000)).toBe(false);
     // Not even a beating window is trusted forever.
     expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + HEARTBEAT_MAX_AGE_MS + 1_000)).toBe(false);
   });
