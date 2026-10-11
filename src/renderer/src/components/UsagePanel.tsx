@@ -183,14 +183,25 @@ export function UsagePanel() {
           {!collapsed ? tr('Limity kont AI') : shown.length ? (
             <span className="usage-chips">
               {shown.map((usage) => {
-                const percent = worstPercent(usage, now);
                 const label = usage.provider === 'claude' && claudeCount > 1 ? shortAccountName(usage.email, NAMES.claude, 7) : '';
                 return (
                   <span key={usage.accountId} className="usage-mini" title={accountDetail(usage, now)}>
-                    <ProviderIcon provider={usage.provider} size={12} />
-                    {label && <span className="usage-mini-name">{label}</span>}
-                    <span className="usage-mini-bar"><Bar percent={percent} label={usage.email || NAMES[usage.provider]} /></span>
-                    <span className="usage-mini-pct">{Math.round(percent)}%</span>
+                    <span className="usage-mini-who">
+                      <ProviderIcon provider={usage.provider} size={12} />
+                      {label && <span className="usage-mini-name">{label}</span>}
+                    </span>
+                    <span className="usage-mini-wins">
+                      {usage.windows.map((window) => {
+                        const percent = effectivePercent(window, now);
+                        return (
+                          <span key={window.id} className="usage-mini-win">
+                            <span className="usage-mini-tag">{window.id === '5h' ? '5h' : '7d'}</span>
+                            <span className="usage-mini-bar"><Bar percent={percent} label={`${usage.email || NAMES[usage.provider]} ${window.id === '5h' ? tr('5 godz.') : tr('7 dni')}`} /></span>
+                            <span className="usage-mini-pct">{Math.round(percent)}%</span>
+                          </span>
+                        );
+                      })}
+                    </span>
                   </span>
                 );
               })}
