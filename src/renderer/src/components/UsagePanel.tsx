@@ -126,7 +126,7 @@ export function UsagePanel() {
         <>
           {known.length
             ? providers.map((usage) => <Provider key={usage.accountId} usage={usage} now={now} language={language} />)
-            : <p className="usage-note">{tr('Zaloguj się w Claude Code lub Codexie, aby zobaczyć limity.')}</p>}
+            : <p className="usage-note">{tr('Brak podłączonych kont. Dodaj konto, aby zobaczyć limity.')}</p>}
           {updated && <p className="usage-note">{tr('Zaktualizowano {time}', { time: updated })}</p>}
         </>
       )}

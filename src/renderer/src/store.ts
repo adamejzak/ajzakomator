@@ -5,6 +5,7 @@ import type { AppState } from '../../shared/types';
 import { OptimisticState } from '../../shared/optimisticState';
 import type { StateSnapshot } from '../../shared/stateEdits';
 import type { McpInfo } from '../../shared/automation';
+import type { LoginTarget } from '../../shared/accounts';
 
 export type Modal =
   | { kind: 'grid'; projectId: string }
@@ -14,7 +15,8 @@ export type Modal =
   | { kind: 'search'; projectId: string }
   | { kind: 'snippet'; snippetId: string | null; projectId?: string }
   | { kind: 'project'; projectId: string }
-  | { kind: 'file'; projectId: string; relativePath: string };
+  | { kind: 'file'; projectId: string; relativePath: string }
+  | { kind: 'auth'; provider: 'claude' | 'codex'; target: LoginTarget };
 
 export type Dialog =
   | { kind: 'prompt'; title: string; value: string; placeholder?: string; onSubmit: (value: string) => void }

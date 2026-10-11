@@ -828,3 +828,11 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .usage-rail-item { width: 34px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 9.5px; line-height: 1.1; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .usage-rail-item .usage-bar { width: 26px; }
 @media (prefers-reduced-motion: reduce) { .usage-bar > span, .usage-chevron { transition: none; } }
+
+.modal.auth { width: 720px; }
+.auth-note { padding: 0 16px 10px; font-size: 12px; line-height: 1.5; }
+.auth-terminal { height: 300px; min-height: 0; margin: 0 16px; border: 1px solid var(--border-2); border-radius: 8px; background: #0d0d0d; padding: 6px; overflow: hidden; }
+.auth-status { display: flex; align-items: center; gap: 8px; padding: 10px 16px 12px; font-size: 12.5px; }
+.auth-status.ok { color: var(--waiting); }
+.auth-status.bad { color: var(--error); }
+.auth-status.wait { color: var(--muted); }

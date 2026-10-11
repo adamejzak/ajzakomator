@@ -9,6 +9,7 @@ import { fuzzyFilter } from '../../../shared/fuzzy';
 import type { CliKind, ProjectIcon, SessionInfo, ShellKind, Snippet } from '../../../shared/types';
 import { restoreArchived, resumeSession } from '../actions';
 import { closeDialog, closeModal, setUi, update, useStore, type Dialog } from '../store';
+import { AuthModal } from './AuthModal';
 import { ChangelogModal } from './Changelog';
 import { FindReplaceModal } from './FindReplace';
 import { GridDialog } from './GridDialog';
@@ -48,6 +49,7 @@ export function Modals() {
           {modal.kind === 'snippet' && <SnippetEditor key={modal.snippetId ?? modal.projectId ?? 'new'} snippetId={modal.snippetId} projectId={modal.projectId} />}
           {modal.kind === 'project' && <ProjectEditor key={modal.projectId} projectId={modal.projectId} />}
           {modal.kind === 'file' && <FilePreview projectId={modal.projectId} relativePath={modal.relativePath} />}
+          {modal.kind === 'auth' && <AuthModal key={`${modal.provider}:${JSON.stringify(modal.target)}`} provider={modal.provider} target={modal.target} />}
         </div>
       )}
       {dialog && (
