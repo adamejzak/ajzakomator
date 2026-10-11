@@ -6,8 +6,12 @@ import { resolve } from 'node:path';
 const mac = process.platform === 'darwin';
 const bundle = resolve('release', mac ? `mac${process.arch === 'arm64' ? '-arm64' : ''}/ajzakomator.app/Contents` : 'win-unpacked');
 const executable = resolve(bundle, mac ? 'MacOS/ajzakomator' : 'ajzakomator.exe');
-const modulePath = resolve(bundle, mac ? 'Resources/app/node_modules/node-pty' : 'resources/app/node_modules/node-pty');
-if (!existsSync(executable) || !existsSync(modulePath)) throw new Error('Packaged Electron or node-pty is missing');
+// The Windows build packs the app into resources/app.asar (node-pty itself stays in app.asar.unpacked), so load it
+// through the archive like the app does; macOS keeps a plain resources/app directory.
+const resources = resolve(bundle, mac ? 'Resources' : 'resources');
+const asar = resolve(resources, 'app.asar');
+const modulePath = existsSync(asar) ? resolve(asar, 'node_modules/node-pty') : resolve(resources, 'app/node_modules/node-pty');
+if (!existsSync(executable) || !(existsSync(asar) || existsSync(modulePath))) throw new Error('Packaged Electron or node-pty is missing');
 
 const script = `
   const pty = require(${JSON.stringify(modulePath)});

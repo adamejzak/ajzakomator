@@ -38,6 +38,12 @@
     "publish-release": "node scripts/release.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "electron-updater": "^6.8.9",
+    "node-pty": "^1.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.12",
@@ -50,21 +56,15 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
     "@lezer/highlight": "^1.2.5",
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "codemirror": "^6.0.2",
-    "electron-updater": "^6.8.9",
-    "node-pty": "^1.1.0",
-    "zod": "3.25.76"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
@@ -106,7 +106,33 @@
           ]
         }
       ],
-      "icon": "resources/icon.png"
+      "icon": "resources/icon.png",
+      "electronLanguages": [
+        "en-US",
+        "pl",
+        "de",
+        "es",
+        "fr",
+        "pt-BR"
+      ],
+      "files": [
+        "out/**",
+        "resources/**",
+        "package.json",
+        "!**/node_modules/node-pty/prebuilds/darwin-*/**",
+        "!**/node_modules/node-pty/prebuilds/win32-arm64/**",
+        "!**/node_modules/node-pty/prebuilds/*/*.pdb",
+        "!**/node_modules/node-pty/{third_party,deps,src,scripts}/**",
+        "!**/node_modules/node-pty/binding.gyp",
+        "!**/node_modules/node-pty/lib/**/*.test.js",
+        "!**/*.pdb",
+        "!**/node_modules/node-pty/build/**",
+        "!**/*.map"
+      ],
+      "asar": true,
+      "asarUnpack": [
+        "**/node_modules/node-pty/**"
+      ]
     },
     "nsis": {
       "oneClick": false,
