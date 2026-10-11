@@ -16,7 +16,7 @@ function fakeInstall(): { installDir: string; appDir: string } {
     'Uninstall ajzakomator.exe', 'locales/en-US.pak', 'locales/pl.pak', 'locales/de.pak', 'resources/elevate.exe', 'resources/app/package.json',
     'resources/app/node_modules/big/index.js']) put(join(installDir, f));
   const appDir = join(installDir, 'resources', 'app');
-  put(join(appDir, 'out/main/updatesplash.js')); put(join(appDir, 'out/preload/updatesplash.js'));
+  put(join(appDir, 'out/main/updatesplash.js')); put(join(appDir, 'out/main/chunks/shared.js'), 'chunk'); put(join(appDir, 'out/preload/updatesplash.js'));
   put(join(appDir, 'resources/update-splash/index.html')); put(join(appDir, 'resources/icon.png'));
   return { installDir, appDir };
 }
@@ -48,7 +48,7 @@ describe('update window runtime', () => {
     expect(existsSync(join(runtimeDir, 'resources', 'app', 'node_modules'))).toBe(false);
     const manifest = JSON.parse(readFileSync(join(runtimeDir, 'resources', 'app', 'package.json'), 'utf8'));
     expect(manifest.main).toBe('main/updatesplash.js');
-    for (const file of ['main/updatesplash.js', 'preload/updatesplash.js', 'ui/index.html', 'ui/icon.png']) expect(existsSync(join(runtimeDir, 'resources', 'app', file))).toBe(true);
+    for (const file of ['main/updatesplash.js', 'main/chunks/shared.js', 'preload/updatesplash.js', 'ui/index.html', 'ui/icon.png']) expect(existsSync(join(runtimeDir, 'resources', 'app', file))).toBe(true);
     expect(existsSync(`${runtimeDir}.partial`)).toBe(false);
   });
 

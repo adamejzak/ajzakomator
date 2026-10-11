@@ -3,7 +3,7 @@
  * against any Electron distribution (the packaged app, or `node_modules/electron/dist` in tests).
  */
 import { spawn } from 'child_process';
-import { cp, copyFile, mkdir, readFile, rename, rm, writeFile } from 'fs/promises';
+import { cp, copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { dirname, join, relative, sep } from 'path';
 import type { UpdateSplashConfig } from '../shared/updateProgress';
@@ -57,15 +57,28 @@ export async function stageRuntime(options: StageOptions): Promise<string> {
   return target;
 }
 
+/**
+ * Plain recursive copy. `appDir` may be an asar archive, where `fs.cp` is not reliable but readdir/stat/readFile
+ * (patched by Electron) are.
+ */
+async function copyTree(source: string, target: string): Promise<void> {
+  if ((await stat(source)).isDirectory()) {
+    await mkdir(target, { recursive: true });
+    for (const name of await readdir(source)) await copyTree(join(source, name), join(target, name));
+  } else {
+    await writeFile(target, await readFile(source));
+  }
+}
+
 /** The splash app itself is tiny, so it is refreshed on every staging. */
 async function writeSplashApp(appDir: string, splashApp: string): Promise<void> {
   await rm(splashApp, { recursive: true, force: true });
   await mkdir(splashApp, { recursive: true });
   await writeFile(join(splashApp, 'package.json'), JSON.stringify({ name: 'ajzakomator-update', version: '1.0.0', main: 'main/updatesplash.js' }));
-  await cp(join(appDir, 'out', 'main'), join(splashApp, 'main'), { recursive: true });
-  await cp(join(appDir, 'out', 'preload'), join(splashApp, 'preload'), { recursive: true });
-  await cp(join(appDir, 'resources', 'update-splash'), join(splashApp, 'ui'), { recursive: true });
-  await copyFile(join(appDir, 'resources', 'icon.png'), join(splashApp, 'ui', 'icon.png'));
+  await copyTree(join(appDir, 'out', 'main'), join(splashApp, 'main'));
+  await copyTree(join(appDir, 'out', 'preload'), join(splashApp, 'preload'));
+  await copyTree(join(appDir, 'resources', 'update-splash'), join(splashApp, 'ui'));
+  await copyTree(join(appDir, 'resources', 'icon.png'), join(splashApp, 'ui', 'icon.png'));
 }
 
 /** Removes signals from earlier attempts, writes the config and starts the window; false if it could not start. */
