@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { LoginTarget } from '../../../shared/accounts';
-import { effectivePercent, formatDuration, shortAccountName, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { useI18n } from '../i18n';
 import { askChoice, setUi, update, useStore } from '../store';
 import { useUsage } from '../usage';
@@ -179,38 +179,42 @@ export function UsagePanel() {
     <section className="usage-panel" aria-label={tr('Limity kont AI')}>
       <div className="usage-head">
         <button className="usage-title" onClick={toggle} aria-expanded={!collapsed} title={collapsed ? tr('Rozwiń limity kont AI') : tr('Zwiń limity kont AI')}>
-          <span className={`usage-chevron ${collapsed ? '' : 'open'}`}><IChevron /></span>
-          {!collapsed ? tr('Limity kont AI') : shown.length ? (
-            <span className="usage-chips">
-              {shown.map((usage) => {
-                const label = usage.provider === 'claude' && claudeCount > 1 ? shortAccountName(usage.email, NAMES.claude, 7) : '';
-                return (
-                  <span key={usage.accountId} className="usage-mini" title={accountDetail(usage, now)}>
-                    <span className="usage-mini-who">
-                      <ProviderIcon provider={usage.provider} size={12} />
-                      {label && <span className="usage-mini-name">{label}</span>}
-                    </span>
-                    <span className="usage-mini-wins">
-                      {usage.windows.map((window) => {
-                        const percent = effectivePercent(window, now);
-                        return (
-                          <span key={window.id} className="usage-mini-win">
-                            <span className="usage-mini-tag">{window.id === '5h' ? '5h' : '7d'}</span>
-                            <span className="usage-mini-bar"><Bar percent={percent} label={`${usage.email || NAMES[usage.provider]} ${window.id === '5h' ? tr('5 godz.') : tr('7 dni')}`} /></span>
-                            <span className="usage-mini-pct">{Math.round(percent)}%</span>
-                          </span>
-                        );
-                      })}
-                    </span>
-                  </span>
-                );
-              })}
-            </span>
-          ) : <span className="usage-summary">{summary}</span>}
+          {/* The chevron points where the panel goes: up to expand, down to collapse. */}
+          <span className={`usage-chevron ${collapsed ? 'up' : ''}`}><IChevron /></span>
+          {tr('Limity kont AI')}
         </button>
         <button className="btn ghost icon" onClick={(e) => openAddMenu(e.currentTarget)} title={tr('Dodaj konto')} aria-label={tr('Dodaj konto')}><IPlus /></button>
         <button className="btn ghost icon" onClick={() => void refresh()} disabled={spinning} title={tr('Odśwież limity')} aria-label={tr('Odśwież limity')}><RefreshIcon spinning={spinning} /></button>
       </div>
+      {collapsed && (shown.length ? (
+        <div className="usage-mini-list">
+          {shown.map((usage) => {
+            const label = usage.provider === 'claude' && claudeCount > 1 ? shortAccountName(usage.email, NAMES.claude, 7) : '';
+            return (
+              <div key={usage.accountId} className="usage-mini" title={accountDetail(usage, now)}>
+                <span className="usage-mini-who">
+                  <ProviderIcon provider={usage.provider} size={12} />
+                  {label && <span className="usage-mini-name">{label}</span>}
+                </span>
+                <span className="usage-mini-wins">
+                  {usage.windows.map((window) => {
+                    const percent = effectivePercent(window, now);
+                    const upcoming = window.resetsAt * 1000 > now;
+                    return (
+                      <span key={window.id} className="usage-mini-win">
+                        <span className="usage-mini-tag">{window.id === '5h' ? '5h' : '7d'}</span>
+                        <span className="usage-mini-bar"><Bar percent={percent} label={`${usage.email || NAMES[usage.provider]} ${window.id === '5h' ? tr('5 godz.') : tr('7 dni')}`} /></span>
+                        <span className="usage-mini-pct">{Math.round(percent)}%</span>
+                        <span className="usage-mini-reset">{upcoming ? shortDuration(window.resetsAt - now / 1000) : ''}</span>
+                      </span>
+                    );
+                  })}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : <p className="usage-note">{summary}</p>)}
       {!collapsed && (
         <>
           {visible.length ? (

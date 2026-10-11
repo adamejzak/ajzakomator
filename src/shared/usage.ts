@@ -70,6 +70,17 @@ export function formatDuration(seconds: number): string {
   return minutes > 0 ? `${minutes} min` : '<1 min';
 }
 
+/** Compact countdown for tight spots: "4h 2m", "5d 13h", "12m", "<1m". */
+export function shortDuration(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (days > 0) return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (hours > 0) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  return minutes > 0 ? `${minutes}m` : '<1m';
+}
+
 /** Part of the e-mail before "@", cut to `max` characters; falls back to `fallback` when there is no e-mail. */
 export function shortAccountName(email: string | undefined, fallback: string, max = 12): string {
   const local = email?.split('@')[0]?.trim();

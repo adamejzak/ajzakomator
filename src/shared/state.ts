@@ -24,7 +24,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: true, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false },
+    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: false, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false },
     sidebarCollapsed: false,
     snippetsOpen: true,
     sidebarWidth: PANEL_LIMITS.sidebar.default,

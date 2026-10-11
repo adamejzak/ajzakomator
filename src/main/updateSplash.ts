@@ -3,11 +3,13 @@ import { existsSync } from 'fs';
 import { rm, writeFile, mkdir } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import type { UpdateSplashConfig, UpdateStrings } from '../shared/updateProgress';
-import { stageRuntime, startSplash, waitForFile } from './updateRuntime';
+import { installInProgress, readUpdateAttempt, stageRuntime, startSplash, waitForFile } from './updateRuntime';
 
 const SHOWN_WAIT_MS = 4000;
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
 const CLEANUP_DELAY_MS = 30 * 1000;
+/** A normal install takes well under this; after it a vanished update window must not lock the app out. */
+export const START_BLOCK_MS = 90 * 1000;
 
 const updateDir = () => join(app.getPath('userData'), 'update');
 const runtimeDir = () => join(updateDir(), 'runtime');
@@ -21,6 +23,9 @@ let staging: Promise<string | undefined> | undefined;
 
 /** The update window only exists for the installed Windows build; elsewhere installation stays as before. */
 const supported = () => process.platform === 'win32' && app.isPackaged;
+
+/** Whether an installer started by the update window may still be running (see `installInProgress`). */
+export const updateInstalling = (maxAgeMs: number): boolean => installInProgress(updateDir(), app.getVersion(), maxAgeMs);
 
 /** Prepares the private runtime in the background so clicking "install" can show the window instantly. */
 export function stageSplashRuntime(): Promise<string | undefined> {
@@ -65,7 +70,8 @@ export async function abortUpdateWindow(): Promise<void> {
 
 /** Called by the new version once its window is up, which completes the update window's last step. */
 export async function signalUpdateReady(): Promise<void> {
-  if (!existsSync(join(updateDir(), 'work', 'config.json'))) return;
+  // An old build started while the installer is still running must not report the update as finished.
+  if (readUpdateAttempt(updateDir())?.version !== app.getVersion()) return;
   try {
     await mkdir(updateDir(), { recursive: true });
     await writeFile(readyFlag(), app.getVersion());
@@ -76,7 +82,7 @@ export async function signalUpdateReady(): Promise<void> {
 export function scheduleUpdateCleanup(): void {
   if (!existsSync(updateDir())) return;
   const timer = setTimeout(() => {
-    if (staging) return;
+    if (staging || updateInstalling(INSTALL_TIMEOUT_MS)) return;
     void rm(updateDir(), { recursive: true, force: true }).catch(() => { /* retried on next start */ });
   }, CLEANUP_DELAY_MS);
   timer.unref?.();

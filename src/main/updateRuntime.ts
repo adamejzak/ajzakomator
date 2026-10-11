@@ -4,7 +4,7 @@
  */
 import { spawn } from 'child_process';
 import { cp, copyFile, mkdir, readFile, rename, rm, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { dirname, join, relative, sep } from 'path';
 import type { UpdateSplashConfig } from '../shared/updateProgress';
 
@@ -83,6 +83,29 @@ export async function startSplash(exe: string, config: UpdateSplashConfig, stale
   } catch {
     return false;
   }
+}
+
+/** Version the last update window was started for, and when; undefined if there was none. */
+export function readUpdateAttempt(updateDir: string): { version: string; startedAt: number } | undefined {
+  try {
+    const file = join(updateDir, 'work', 'config.json');
+    const { version } = JSON.parse(readFileSync(file, 'utf8')) as { version?: unknown };
+    return typeof version === 'string' ? { version, startedAt: statSync(file).mtimeMs } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True while an installer started by an update window is (probably) still replacing the app files:
+ * the attempt targets another version, is younger than `maxAgeMs` and has not signalled completion or abort.
+ * Starting the old build or deleting the update directory in that window breaks the installation.
+ */
+export function installInProgress(updateDir: string, currentVersion: string, maxAgeMs: number, now = Date.now()): boolean {
+  const attempt = readUpdateAttempt(updateDir);
+  if (!attempt || attempt.version === currentVersion || now - attempt.startedAt > maxAgeMs) return false;
+  return !['installer-done', 'ready'].some((name) => existsSync(join(updateDir, name)))
+    && !existsSync(join(updateDir, 'work', 'abort'));
 }
 
 /** Resolves true as soon as `file` exists, false after `timeoutMs`. */

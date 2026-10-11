@@ -20,7 +20,7 @@ import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
 import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
-import { scheduleUpdateCleanup, signalUpdateReady } from './updateSplash';
+import { START_BLOCK_MS, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile } from './accounts/refresh';
 import { AccountsStore } from './accounts/store';
@@ -56,6 +56,8 @@ if (process.platform === 'win32') app.setAppUserModelId('com.ajzakomator.app');
 
 if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
 if (!process.env.MC_DATA_DIR && !app.requestSingleInstanceLock()) app.quit();
+// The installer is replacing this build's files right now (the update window is showing it); starting would crash.
+if (process.platform === 'win32' && app.isPackaged && !process.env.MC_DATA_DIR && updateInstalling(START_BLOCK_MS)) app.exit(0);
 
 let win: BrowserWindow | null = null;
 let state: AppState = loadState(DATA_DIR, appPlatform(process.platform));

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { shouldCopy, SPLASH_EXE, stageRuntime, startSplash, waitForFile } from '../src/main/updateRuntime';
+import { installInProgress, shouldCopy, SPLASH_EXE, stageRuntime, startSplash, waitForFile } from '../src/main/updateRuntime';
 import type { UpdateSplashConfig } from '../src/shared/updateProgress';
 
 let root: string;
@@ -80,5 +80,32 @@ describe('update window runtime', () => {
     setTimeout(() => put(file), 60);
     expect(await waitForFile(file, 1000, 10)).toBe(true);
     expect(await waitForFile(join(root, 'never'), 60, 10)).toBe(false);
+  });
+});
+
+describe('installInProgress', () => {
+  const dir = () => join(root, 'update');
+  const attempt = (version: string) => put(join(dir(), 'work', 'config.json'), JSON.stringify({ version }));
+
+  it('is true for a fresh attempt targeting another version', () => {
+    attempt('0.5.8');
+    expect(installInProgress(dir(), '0.5.7', 60_000)).toBe(true);
+  });
+
+  it('is false without an attempt, for the target version itself and for stale attempts', () => {
+    expect(installInProgress(dir(), '0.5.7', 60_000)).toBe(false);
+    attempt('0.5.8');
+    expect(installInProgress(dir(), '0.5.8', 60_000)).toBe(false);
+    expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 120_000)).toBe(false);
+  });
+
+  it('is false once the installer, the new app or an abort signalled', () => {
+    attempt('0.5.8');
+    for (const flag of [['installer-done'], ['ready'], ['work', 'abort']]) {
+      put(join(dir(), ...flag));
+      expect(installInProgress(dir(), '0.5.7', 60_000)).toBe(false);
+      rmSync(join(dir(), ...flag));
+      expect(installInProgress(dir(), '0.5.7', 60_000)).toBe(true);
+    }
   });
 });

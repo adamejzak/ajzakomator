@@ -111,14 +111,15 @@ describe('state', () => {
     expect(nextCellColor([...CELL_COLORS, '#111111'])).toBe(CELL_COLORS[21 % CELL_COLORS.length]);
   });
 
-  it('normalizeState defaults automatic update installation to on and keeps an explicit choice', () => {
+  it('normalizeState defaults automatic update installation to off and keeps an explicit choice', () => {
     const raw = JSON.parse(JSON.stringify(defaultState()));
     delete raw.settings.autoInstallUpdates;
-    expect(normalizeState(raw)!.settings.autoInstallUpdates).toBe(true);
-    raw.settings.autoInstallUpdates = false;
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.autoInstallUpdates).toBe(false);
-    raw.settings.autoInstallUpdates = 'no';
+    expect(defaultState().settings.autoInstallUpdates).toBe(false);
+    expect(normalizeState(raw)!.settings.autoInstallUpdates).toBe(false);
+    raw.settings.autoInstallUpdates = true;
     expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.autoInstallUpdates).toBe(true);
+    raw.settings.autoInstallUpdates = 'no';
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.autoInstallUpdates).toBe(false);
   });
 
   it('normalizeState folds retired profiles into claude/codex', () => {
