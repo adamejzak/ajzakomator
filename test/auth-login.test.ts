@@ -248,4 +248,73 @@ describe('LoginManager', () => {
     noSecret(res); noSecret(h.states);
     expect(h.deps.fingerprint).toHaveBeenCalled();
   });
+
+  it('fails and cleans up when the store cannot commit, and a later start works', async () => {
+    const failing = Object.create(store) as AccountsStore;
+    failing.commit = () => { throw new Error('disk full'); };
+    const h = setup({ store: failing });
+    await runSuccess(h, { provider: 'claude', target: { type: 'new' } });
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
+    expect(h.states[1].error).toBe('identity');
+    expect(existsSync(h.mock.spawnPty.mock.calls[0][0].env.CLAUDE_CONFIG_DIR)).toBe(false);
+    expect(h.mock.onChanged).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    const again = await h.manager.start({ provider: 'claude', target: { type: 'main' } });
+    expect(again.ok).toBe(true);
+    h.manager.dispose();
+  });
+
+  it('fails the session when the store cannot update an account', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'old@example.com', addedAt: 1 });
+    const failing = Object.create(store) as AccountsStore;
+    failing.update = () => { throw new Error('disk full'); };
+    const h = setup({ store: failing });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
+    expect(existsSync(prepared.dir)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('returns spawn when the profile cannot be prepared', async () => {
+    const failing = Object.create(store) as AccountsStore;
+    failing.prepare = () => { throw new Error('nope'); };
+    const h = setup({ store: failing });
+    expect(await h.manager.start({ provider: 'claude', target: { type: 'new' } })).toEqual({ ok: false, error: 'spawn' });
+    expect(h.mock.spawnPty).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('passes the command and CLAUDE_CONFIG_DIR for a new account', async () => {
+    const h = setup();
+    await h.manager.start({ provider: 'claude', target: { type: 'new' } });
+    const spec = h.mock.spawnPty.mock.calls[0][0];
+    expect(spec.command).toBe('claude auth login --claudeai');
+    expect(Object.keys(spec.env)).toEqual(['CLAUDE_CONFIG_DIR']);
+    expect(existsSync(spec.env.CLAUDE_CONFIG_DIR)).toBe(true);
+    h.manager.dispose();
+  });
+
+  it('cancelling during the initial fingerprint read never spawns', async () => {
+    let release: (value: string | null) => void = () => {};
+    const h = setup({ fingerprint: vi.fn(() => new Promise<string | null>((resolve) => { release = resolve; })) });
+    const pending = h.manager.start({ provider: 'claude', target: { type: 'new' } });
+    h.manager.dispose();
+    release(null);
+    expect((await pending).ok).toBe(false);
+    expect(h.mock.spawnPty).not.toHaveBeenCalled();
+    expect(h.states).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a second start emits nothing for the first session', async () => {
+    const h = setup();
+    const first = await h.manager.start({ provider: 'claude', target: { type: 'main' } });
+    const second = await h.manager.start({ provider: 'claude', target: { type: 'main' } });
+    if (!first.ok || !second.ok) throw new Error('unreachable');
+    h.fp.value = SECRET;
+    await advance(1500 * 2 + 1500);
+    expect(h.states.filter((s) => s.sessionId === first.sessionId).map((s) => s.status)).toEqual(['waiting']);
+    expect(h.states.filter((s) => s.sessionId === second.sessionId).map((s) => s.status)).toEqual(['waiting', 'success']);
+  });
 });

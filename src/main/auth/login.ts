@@ -76,9 +76,13 @@ export class LoginManager {
       sleeps: new Set(),
     };
     if (target.type === 'new') {
-      const pending = this.deps.store.prepare();
-      session.pendingId = pending.id;
-      session.configDir = pending.dir;
+      try {
+        const pending = this.deps.store.prepare();
+        session.pendingId = pending.id;
+        session.configDir = pending.dir;
+      } catch {
+        return { ok: false, error: 'spawn' };
+      }
     } else if (target.type === 'account') {
       session.configDir = this.deps.store.dirOf(target.id as string);
     }
@@ -147,6 +151,15 @@ export class LoginManager {
   }
 
   private async finalize(session: Session): Promise<void> {
+    try {
+      await this.runFinalize(session);
+    } catch {
+      // a store failure must not leave the session half-finished
+      if (!session.ended) this.finish(session, { sessionId: session.id, status: 'failed', error: 'identity' }, true);
+    }
+  }
+
+  private async runFinalize(session: Session): Promise<void> {
     if (session.ended || session.settled) return;
     session.settled = true;
     this.clearTimers(session);
@@ -234,7 +247,12 @@ export class LoginManager {
 
   private discard(session: Session): void {
     if (!session.pendingId) return;
-    this.deps.store.remove(session.pendingId);
+    const id = session.pendingId;
     session.pendingId = undefined;
+    try {
+      this.deps.store.remove(id);
+    } catch {
+      // best effort; the directory is not listed anywhere
+    }
   }
 }
