@@ -18,6 +18,7 @@ const installedFlag = () => join(updateDir(), 'installer-done');
 const readyFlag = () => join(updateDir(), 'ready');
 const shownFlag = () => join(updateDir(), 'work', 'shown');
 const abortFlag = () => join(updateDir(), 'work', 'abort');
+const heartbeatFlag = () => join(updateDir(), 'work', 'heartbeat');
 
 let staging: Promise<string | undefined> | undefined;
 
@@ -53,11 +54,11 @@ export async function showUpdateWindow(version: string, mode: 'relaunch' | 'quit
   const config: UpdateSplashConfig = {
     mode, version, fromVersion: app.getVersion(), oldPid: process.pid,
     installDir: dirname(process.execPath), appExe: process.execPath,
-    installedFlag: installedFlag(), readyFlag: readyFlag(), shownFlag: shownFlag(), abortFlag: abortFlag(),
+    installedFlag: installedFlag(), readyFlag: readyFlag(), shownFlag: shownFlag(), abortFlag: abortFlag(), heartbeatFlag: heartbeatFlag(),
     runtimeDir: runtimeDir(), workDir: join(updateDir(), 'work'),
     timeoutMs: INSTALL_TIMEOUT_MS, strings,
   };
-  const started = await startSplash(exe, config, [installedFlag(), readyFlag(), shownFlag(), abortFlag()]);
+  const started = await startSplash(exe, config, [installedFlag(), readyFlag(), shownFlag(), abortFlag(), heartbeatFlag()]);
   if (!started) return false;
   await waitForFile(shownFlag(), SHOWN_WAIT_MS);
   return true;

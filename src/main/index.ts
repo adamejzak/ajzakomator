@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { execFile, spawn, spawnSync } from 'child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell, type OpenDialogOptions } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -22,6 +22,8 @@ import { createSaver, loadState } from './store';
 import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, isPortableBuild, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
 import { compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup } from './startupGate';
 import { createGateWindow } from './gateWindow';
+import { decideUncaught, isLive, safeSend, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
+import { createUpdaterLogger } from './updaterLog';
 import { START_BLOCK_MS, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile } from './accounts/refresh';
@@ -156,11 +158,13 @@ const updateStrings = (): UpdateStrings => ({
   slowHint: tr('Możesz uruchomić ajzakomator ręcznie.'),
   open: tr('Uruchom ajzakomator'),
   close: tr('Zamknij'),
+  waitingClose: tr('Czekam na zamknięcie ajzakomatora…'),
+  waitingInstaller: tr('Czekam na instalator. Jeśli pojawiło się okno administratora, potwierdź je.'),
+  installingLong: tr('Instalacja trwa dłużej niż zwykle - to może jeszcze chwilę potrwać…'),
+  background: tr('Aktualizacja trwa dalej w tle'),
 });
 
-const send = (channel: string, ...args: unknown[]) => {
-  if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
-};
+const send = (channel: string, ...args: unknown[]) => { safeSend(win, channel, ...args); };
 
 const controller = new StateController(state, (snapshot) => {
   for (const project of state.projects) for (const tab of project.tabs) for (const cell of tab.cells) {
@@ -231,12 +235,15 @@ function createWindow(): void {
     void signalUpdateReady();
     clearGateFailureIfUpdated();
   });
+  const created = win;
+  // Async callbacks outlive the native window (shutdown, update hand-over); they must see "no window", not a destroyed one.
+  created.once('closed', () => { if (win === created) win = null; });
   win.on('minimize', () => usage.setActive(false));
   win.on('hide', () => usage.setActive(false));
   win.on('restore', () => usage.setActive(true));
   win.on('show', () => usage.setActive(true));
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
-  win.webContents.on('did-finish-load', () => win && ptyHost.connectRenderer(win.webContents));
+  win.webContents.on('did-finish-load', () => { if (isLive(win)) ptyHost.connectRenderer(win.webContents); });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -380,12 +387,15 @@ ipcMain.on('cell:runtime', (_e, cellId: string, status: string) => {
   else if (status === 'idle' && automation.statuses.get(cellId) !== 'ready') automation.statuses.set(cellId, 'unknown');
 });
 
+/** Opens the dialog on the main window while it exists, free-standing otherwise. */
+const showOpen = (options: OpenDialogOptions) => (isLive(win) ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options));
+
 ipcMain.handle('dialog:pickFolder', async () => {
-  const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: tr('Wybierz folder projektu') });
+  const r = await showOpen({ properties: ['openDirectory'], title: tr('Wybierz folder projektu') });
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('sound:pick', async () => {
-  const r = await dialog.showOpenDialog(win!, {
+  const r = await showOpen({
     properties: ['openFile'],
     title: tr('Wybierz plik dźwiękowy'),
     filters: [{ name: tr('Pliki dźwiękowe'), extensions: [...SOUND_EXTENSIONS] }],
@@ -435,10 +445,11 @@ ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) =>
   notification.on('failed', forget);
   notification.on('click', () => {
     forget();
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
+    withLiveWindow(win, (w) => {
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+    });
     send('focus-cell', n.cellId);
   });
   notification.show();
@@ -496,9 +507,11 @@ ipcMain.on('shell:openInEditor', (_e, p: string) => {
 // ── lifecycle ───────────────────────────────────────────────────────────────
 
 app.on('second-instance', () => {
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
+  // Also fires while this process is winding down after its window closed; then there is nothing to focus.
+  withLiveWindow(win, (w) => {
+    if (w.isMinimized()) w.restore();
+    w.focus();
+  });
 });
 
 /** True while the startup update check owns the screen: closing its window must not quit the app. */
@@ -538,13 +551,14 @@ async function runUpdateGate(): Promise<boolean> {
       hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
       preparing: tr('Przygotowanie aktualizacji…'),
       failed: tr('Aktualizacja nie powiodła się - uruchamiam obecną wersję'),
+      close: tr('Zamknij'),
     }, version);
     gating = true;
     let handedOver = '';
     const result = await runStartupGate({
       check: startupCheck, abandonCheck: abandonStartupCheck, download: startupDownload,
       handoff: (next, hide) => { handedOver = next; return startupHandoff(hide); },
-      show: window.show, hide: window.hide, skipVersion: failure?.version,
+      show: window.show, hide: window.hide, onCancel: window.onCancel, skipVersion: failure?.version,
       markAttempt: writeGateRecord, recordFailure: recordUpdateFailure,
     });
     if (result !== 'installing') { gating = false; return false; }
@@ -583,12 +597,25 @@ app.whenReady().then(async () => {
 }).catch((error) => console.error('startup failed', error));
 
 let quitting = false;
+
+const crashLog = createUpdaterLogger(join(DATA_DIR, 'updater.log'));
+// Registering a handler replaces Electron's blocking native error dialog; a dialog open during shutdown
+// would keep the process alive while the installer waits for it to exit.
+process.on('uncaughtException', (error) => {
+  const decision = decideUncaught(error, quitting || gating ? 'shutdown' : 'running');
+  crashLog.error(`uncaught exception (${decision}): ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  if (decision !== 'show') return;
+  void dialog.showMessageBox({ type: 'error', title: 'ajzakomator', message: 'A JavaScript error occurred in the main process', detail: error instanceof Error ? error.stack ?? error.message : String(error) }).catch(() => {});
+});
+
 app.on('before-quit', (e) => {
   clearTimeout(handoffWatchdog);
   // The installer took over before anything was started, so there is nothing to wind down.
   if (quitting || gating || superseded) return;
   e.preventDefault();
   quitting = true;
+  // However the wind-down goes (stuck terminals, slow staging), the process must end: a running installer waits for it.
+  setTimeout(() => { crashLog.warn('shutdown overran its limit, exiting'); app.exit(0); }, SHUTDOWN_HARD_LIMIT_MS);
   usage.stop();
   login.dispose();
   send('app:before-quit');
@@ -599,10 +626,14 @@ app.on('before-quit', (e) => {
     } catch (err) {
       console.error('state save failed', err);
     }
-    await ptyHost.shutdown();
-    await mcp.stop();
-    hooks.stop();
-    await installOnQuit();
+    try {
+      await ptyHost.shutdown();
+      await mcp.stop();
+      hooks.stop();
+      await installOnQuit();
+    } catch (err) {
+      crashLog.error(`shutdown failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+    }
     app.exit(0);
   }, 150);
 });

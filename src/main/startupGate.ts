@@ -69,6 +69,11 @@ export interface GateDeps {
   /** Shows (creating if needed) and updates the gate window. */
   show(view: GateView): void;
   hide(): void;
+  /**
+   * Registers the callback the window calls when the user closes it (X, Escape). Cancelling is only honoured
+   * until the installer is being handed over; after that the update must run to the end.
+   */
+  onCancel?(cancel: () => void): void;
   /** Starts the installing window and installer; calls `hide` once the hand-over is visible. True when it took over. */
   handoff(version: string, hide: () => void): Promise<boolean>;
   /** Written right before the installer starts, so an installer that fails outside the app still counts as a failure. */
@@ -89,6 +94,7 @@ export type GateResult = 'start-app' | 'installing';
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 class CheckTimeout extends Error { constructor() { super('update check timed out'); } }
+class GateCancelled extends Error { constructor() { super('update gate cancelled by the user'); } }
 
 /** Rejects with `timeout()` when `promise` has not settled within `ms`; the timer never outlives the race. */
 function within<T>(promise: Promise<T>, ms: number, timeout: () => Error): Promise<T> {
@@ -105,16 +111,23 @@ function within<T>(promise: Promise<T>, ms: number, timeout: () => Error): Promi
 export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
   const checkTimeout = deps.checkTimeoutMs ?? CHECK_TIMEOUT_MS;
   let shown = false;
-  const show = (view: GateView) => { shown = true; try { deps.show(view); } catch { /* the window is optional */ } };
+  let stopped = false;
+  const show = (view: GateView) => { if (stopped) return; shown = true; try { deps.show(view); } catch { /* the window is optional */ } };
   const hide = () => { if (shown) { shown = false; try { deps.hide(); } catch { /* already gone */ } } };
   const showTimer = setTimeout(() => show({ kind: 'checking' }), deps.showAfterMs ?? SHOW_AFTER_MS);
+  // The user may close the window until the installer is handed over; then the app starts as it is.
+  let cancellable = true;
+  let cancel = () => {};
+  const cancelled = new Promise<never>((_, reject) => { cancel = () => { if (cancellable) { stopped = true; reject(new GateCancelled()); } }; });
+  cancelled.catch(() => {});
+  try { deps.onCancel?.(() => cancel()); } catch { /* the window is optional */ }
   let found: { version: string } | undefined;
   try {
     const pending = deps.check();
     // A check that is abandoned later may still reject; that must not become an unhandled rejection.
     pending.catch(() => {});
-    try { found = await within(pending, checkTimeout, () => new CheckTimeout()); }
-    catch (error) { if (error instanceof CheckTimeout) deps.abandonCheck?.(); throw error; }
+    try { found = await Promise.race([within(pending, checkTimeout, () => new CheckTimeout()), cancelled]); }
+    catch (error) { if (error instanceof CheckTimeout || error instanceof GateCancelled) deps.abandonCheck?.(); throw error; }
   } catch {
     clearTimeout(showTimer);
     hide();
@@ -126,14 +139,18 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
   const { version } = found;
   try {
     show({ kind: 'downloading', version, percent: 0 });
-    await within(downloadWithStall(deps, version, show), deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long'));
+    await Promise.race([within(downloadWithStall(deps, version, show), deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long')), cancelled]);
+    cancellable = false;
     show({ kind: 'installing', version });
     try { deps.markAttempt?.(version); } catch { /* the attempt marker is best effort */ }
     const handedOver = deps.handoff(version, hide);
     handedOver.catch(() => {});
     if (await within(handedOver, deps.handoffTimeoutMs ?? HANDOFF_TIMEOUT_MS, () => new Error('installer hand-over timed out'))) return 'installing';
     throw new Error('installer hand-over failed');
-  } catch {
+  } catch (error) {
+    cancellable = false;
+    // A cancelled download simply goes on in the background; it is not a failure and needs no notice.
+    if (error instanceof GateCancelled) { hide(); return 'start-app'; }
     try { deps.recordFailure(version); } catch { /* the cooldown is best effort */ }
     show({ kind: 'failed', version });
     await sleep(deps.errorHoldMs ?? ERROR_HOLD_MS);

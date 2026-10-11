@@ -103,9 +103,24 @@ export function readUpdateAttempt(updateDir: string): { version: string; started
  */
 export function installInProgress(updateDir: string, currentVersion: string, maxAgeMs: number, now = Date.now()): boolean {
   const attempt = readUpdateAttempt(updateDir);
-  if (!attempt || attempt.version === currentVersion || now - attempt.startedAt > maxAgeMs) return false;
-  return !['installer-done', 'ready'].some((name) => existsSync(join(updateDir, name)))
-    && !existsSync(join(updateDir, 'work', 'abort'));
+  if (!attempt || attempt.version === currentVersion) return false;
+  const finished = ['installer-done', 'ready'].some((name) => existsSync(join(updateDir, name)))
+    || existsSync(join(updateDir, 'work', 'abort'));
+  if (finished) return false;
+  const age = now - attempt.startedAt;
+  if (age <= maxAgeMs) return true;
+  // A slow installer (antivirus, slow disk, a late administrator prompt) outlives the usual window; the update window's
+  // heartbeat proves it is still supervising, so starting the half-replaced app is still wrong.
+  return age <= HEARTBEAT_MAX_AGE_MS && heartbeatFresh(join(updateDir, 'work', 'heartbeat'), now);
+}
+
+/** Past this age even a beating update window is no longer trusted. */
+export const HEARTBEAT_MAX_AGE_MS = 15 * 60 * 1000;
+const HEARTBEAT_FRESH_MS = 15 * 1000;
+
+function heartbeatFresh(file: string, now: number): boolean {
+  try { const age = now - statSync(file).mtimeMs; return age >= -HEARTBEAT_FRESH_MS && age <= HEARTBEAT_FRESH_MS; }
+  catch { return false; }
 }
 
 /** Resolves true as soon as `file` exists, false after `timeoutMs`. */

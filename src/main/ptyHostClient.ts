@@ -39,7 +39,7 @@ export class PtyHostClient extends EventEmitter {
   /** Gives the renderer a direct data channel to the host (call again after a renderer reload). */
   connectRenderer(wc: WebContents): void {
     this.renderer = wc;
-    if (!this.child) return;
+    if (!this.child || wc.isDestroyed()) return;
     const { port1, port2 } = new MessageChannelMain();
     this.child.postMessage({ t: 'port' }, [port1]);
     wc.postMessage('pty-port', null, [port2]);

@@ -6,7 +6,8 @@ import { spawn } from 'child_process';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { UpdateProgressModel, type UpdateSplashConfig, type UpdateStage } from '../shared/updateProgress';
+import { safeSend } from '../main/safeWindow';
+import { closeAction, UpdateProgressModel, type UpdateSplashConfig, type UpdateStage } from '../shared/updateProgress';
 
 const configPath = process.argv.find((arg) => arg.startsWith('--update-config='))?.slice('--update-config='.length);
 if (!configPath) app.exit(2);
@@ -47,9 +48,25 @@ function directoryBytes(root: string): number {
 
 let win: BrowserWindow | null = null;
 let finished = false;
+let currentStage: UpdateStage = 'preparing';
+let lastPercent = 0;
+let hideTimer: ReturnType<typeof setTimeout> | undefined;
+const HIDE_NOTE_MS = 2200;
+const HEARTBEAT_EVERY_MS = 1000;
 
 function push(stage: UpdateStage, percent: number, message: string, extra: Record<string, unknown> = {}): void {
-  if (win && !win.isDestroyed()) win.webContents.send('update-splash:state', { stage, percent, message, ...extra });
+  safeSend(win, 'update-splash:state', { stage, percent, message, ...extra });
+}
+
+/**
+ * X, Escape and Alt+F4. The installer is already running independently of this window, so while work is in
+ * flight closing only hides the window (after a short note); it is shown again if the update runs into trouble.
+ */
+function requestClose(): void {
+  if (closeAction(currentStage) === 'exit') { cleanupAndExit(); return; }
+  if (hideTimer || !win || win.isDestroyed()) return;
+  push(currentStage, lastPercent, config.strings.background, { closable: false });
+  hideTimer = setTimeout(() => { hideTimer = undefined; if (!finished && win && !win.isDestroyed()) win.hide(); }, HIDE_NOTE_MS);
 }
 
 function cleanupAndExit(): void {
@@ -70,6 +87,7 @@ function run(): void {
   let sampling = false;
   let lastSample = 0;
   let timedOut = false;
+  let lastBeat = 0;
   const { strings } = config;
 
   const timer = setInterval(() => {
@@ -80,10 +98,16 @@ function run(): void {
       sampling = true; lastSample = elapsedMs;
       setImmediate(() => { dirBytes = directoryBytes(config.installDir); sampling = false; });
     }
+    // The app checks this to know a splash is still supervising an installer, however long that takes.
+    if (elapsedMs - lastBeat >= HEARTBEAT_EVERY_MS) {
+      lastBeat = elapsedMs;
+      try { writeFileSync(config.heartbeatFlag, String(Date.now())); } catch { /* best effort */ }
+    }
     if (existsSync(config.abortFlag)) { finished = true; clearInterval(timer); cleanupAndExit(); return; }
     const installed = existsSync(config.installedFlag);
     const ready = existsSync(config.readyFlag);
-    const { stage, percent } = model.update({ elapsedMs, closed, installed, ready, dirBytes });
+    const { stage, percent, note } = model.update({ elapsedMs, closed, installed, ready, dirBytes });
+    currentStage = stage; lastPercent = percent;
 
     if (stage === 'done') {
       finished = true; clearInterval(timer);
@@ -92,14 +116,22 @@ function run(): void {
       return;
     }
     if (elapsedMs > config.timeoutMs) {
-      if (!timedOut) { timedOut = true; clearInterval(timer); push('error', percent, strings.slow, { detail: strings.slowHint }); }
+      if (!timedOut) {
+        timedOut = true; clearInterval(timer); currentStage = 'error';
+        clearTimeout(hideTimer); hideTimer = undefined;
+        if (win && !win.isDestroyed()) win.show();
+        push('error', percent, strings.slow, { detail: strings.slowHint });
+      }
       return;
     }
-    push(stage, percent, strings.stages[stage as keyof typeof strings.stages] ?? '');
+    // While the close note is up it must not be overwritten by the next tick.
+    if (hideTimer) return;
+    // Say what the stage is really waiting for instead of showing a frozen percentage.
+    push(stage, percent, note ? strings[note] : strings.stages[stage as keyof typeof strings.stages] ?? '');
   }, TICK_MS);
 }
 
-ipcMain.on('update-splash:close', () => cleanupAndExit());
+ipcMain.on('update-splash:close', requestClose);
 ipcMain.on('update-splash:open', () => {
   try { spawn(config.appExe, [], { detached: true, stdio: 'ignore', cwd: config.installDir }).unref(); } catch { /* nothing else to try */ }
   cleanupAndExit();
@@ -117,6 +149,7 @@ app.whenReady().then(() => {
     webPreferences: { preload: join(__dirname, '../preload/updatesplash.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   win.setMenu(null);
+  win.on('close', (e) => { if (!finished && closeAction(currentStage) === 'hide') { e.preventDefault(); requestClose(); } });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.once('ready-to-show', () => {

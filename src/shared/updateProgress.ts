@@ -11,6 +11,14 @@ export interface UpdateStrings {
   slowHint: string;
   open: string;
   close: string;
+  /** Shown instead of the closing stage while the old app has still not exited. */
+  waitingClose: string;
+  /** Shown while the installer has not started replacing files (for example the administrator prompt is open). */
+  waitingInstaller: string;
+  /** Shown when installing takes unusually long. */
+  installingLong: string;
+  /** Shown when the user closes the window while the installer keeps going. */
+  background: string;
 }
 
 /** Everything the detached update window needs; written to disk because the app exits before it starts. */
@@ -29,6 +37,8 @@ export interface UpdateSplashConfig {
   shownFlag: string;
   /** Written by the app when the hand-off to the installer failed. */
   abortFlag: string;
+  /** Rewritten every second by the window for as long as it supervises the installer. */
+  heartbeatFlag: string;
   runtimeDir: string;
   workDir: string;
   timeoutMs: number;
@@ -48,7 +58,29 @@ export interface UpdateSnapshot {
   dirBytes?: number;
 }
 
-export interface UpdateProgress { stage: UpdateStage; percent: number }
+/** Why the stage is taking long, so the window can say what it is really waiting for instead of showing a frozen bar. */
+export type UpdateNote = 'waitingClose' | 'waitingInstaller' | 'installingLong';
+export interface UpdateProgress { stage: UpdateStage; percent: number; note?: UpdateNote }
+
+/** After this long without the old app exiting the window says it is waiting for it. */
+export const WAIT_CLOSE_NOTE_MS = 8000;
+/** After this long with the installer not touching any file the window says it is waiting for the installer. */
+export const WAIT_INSTALLER_NOTE_MS = 15000;
+/** After this long in the installing stage the window adds that it is slower than usual. */
+export const SLOW_INSTALL_NOTE_MS = 60000;
+/** Without any sign that files are being replaced the estimate may not run past this fraction of the stage. */
+const UNCONFIRMED_INSTALL_FRACTION = 0.6;
+
+/** What the close control (X, Escape, Alt+F4) does at each stage of the detached window. */
+export type CloseAction = 'hide' | 'exit';
+
+/**
+ * The installer is started by the time this window exists, so closing it must never end the update:
+ * while work is in flight the window only hides; once it is finished (or has given up) it exits.
+ */
+export function closeAction(stage: UpdateStage): CloseAction {
+  return stage === 'done' || stage === 'error' ? 'exit' : 'hide';
+}
 
 /** Progress ceilings per stage; the bar only moves forward and never shows 100 before the app is ready. */
 const PREPARE_END = 8;
@@ -73,6 +105,7 @@ export class UpdateProgressModel {
   update(s: UpdateSnapshot): UpdateProgress {
     let stage: UpdateStage;
     let percent: number;
+    let note: UpdateNote | undefined;
     if (s.closed) this.closedAt ??= s.elapsedMs;
     if (s.installed) this.installedAt ??= s.elapsedMs;
     if (s.dirBytes !== undefined && s.closed) this.minBytes = Math.min(this.minBytes, s.dirBytes);
@@ -86,17 +119,23 @@ export class UpdateProgressModel {
     } else if (s.closed) {
       stage = 'installing';
       const since = s.elapsedMs - (this.closedAt ?? s.elapsedMs);
-      const frac = Math.max(this.sizeFraction(s.dirBytes), 0.85 * ease(since / 25000));
-      percent = CLOSE_END + (INSTALL_END - CLOSE_END) * Math.min(frac, 0.97);
+      const measured = this.sizeFraction(s.dirBytes);
+      // The estimate by time is only trusted until the installer has demonstrably started removing files.
+      const estimate = Math.min(0.85 * ease(since / 25000), measured > 0 ? 0.85 : UNCONFIRMED_INSTALL_FRACTION);
+      percent = CLOSE_END + (INSTALL_END - CLOSE_END) * Math.min(Math.max(measured, estimate), 0.97);
+      if (measured === 0 && since > WAIT_INSTALLER_NOTE_MS) note = 'waitingInstaller';
+      else if (since > SLOW_INSTALL_NOTE_MS) note = 'installingLong';
     } else if (s.elapsedMs < 1200) {
       stage = 'preparing';
       percent = PREPARE_END * ease(s.elapsedMs / 600);
     } else {
       stage = 'closing';
       percent = PREPARE_END + (CLOSE_END - PREPARE_END) * ease((s.elapsedMs - 1200) / 2500);
+      if (s.elapsedMs > WAIT_CLOSE_NOTE_MS) note = 'waitingClose';
     }
     this.shown = Math.max(this.shown, Math.min(100, percent));
-    return { stage, percent: Math.round(this.shown * 10) / 10 };
+    const shown = Math.round(this.shown * 10) / 10;
+    return note ? { stage, percent: shown, note } : { stage, percent: shown };
   }
 
   /** The installer removes the old files and extracts the new ones: a valley in directory size. */

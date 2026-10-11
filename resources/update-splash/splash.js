@@ -15,9 +15,12 @@ function render(state) {
 
   const failed = state.stage === 'error';
   $('actions').hidden = !failed;
-  $('dismiss').hidden = !failed;
+  // The X is there at every stage; only the app's own startup window withholds it once the installer is being started.
+  $('dismiss').hidden = state.closable === false;
   if (failed && state.detail) $('hint').textContent = state.detail;
 }
+
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') window.updateSplash.close(); });
 
 window.updateSplash.init().then((info) => {
   $('title').textContent = info.title;
@@ -28,6 +31,8 @@ window.updateSplash.init().then((info) => {
   $('open').addEventListener('click', () => window.updateSplash.open());
   $('close').addEventListener('click', () => window.updateSplash.close());
   $('dismiss').addEventListener('click', () => window.updateSplash.close());
+  $('dismiss').title = info.close;
+  $('dismiss').setAttribute('aria-label', info.close);
   render(info.state || { stage: 'preparing', percent: 0, message: '' });
   window.updateSplash.onState(render);
 });

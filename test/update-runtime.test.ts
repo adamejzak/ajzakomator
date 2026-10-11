@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { installInProgress, shouldCopy, SPLASH_EXE, stageRuntime, startSplash, waitForFile } from '../src/main/updateRuntime';
+import { HEARTBEAT_MAX_AGE_MS, installInProgress, shouldCopy, SPLASH_EXE, stageRuntime, startSplash, waitForFile } from '../src/main/updateRuntime';
 import type { UpdateSplashConfig } from '../src/shared/updateProgress';
 
 let root: string;
@@ -97,6 +97,16 @@ describe('installInProgress', () => {
     attempt('0.5.8');
     expect(installInProgress(dir(), '0.5.8', 60_000)).toBe(false);
     expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 120_000)).toBe(false);
+  });
+
+  it('stays true past the usual age while the update window still beats, and is false once the beat stops', () => {
+    attempt('0.5.8');
+    expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 120_000)).toBe(false);
+    put(join(dir(), 'work', 'heartbeat'));
+    expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 5_000)).toBe(true);
+    expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + 60_000)).toBe(false);
+    // Not even a beating window is trusted forever.
+    expect(installInProgress(dir(), '0.5.7', 60_000, Date.now() + HEARTBEAT_MAX_AGE_MS + 1_000)).toBe(false);
   });
 
   it('is false once the installer, the new app or an abort signalled', () => {

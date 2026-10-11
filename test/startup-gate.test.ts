@@ -227,6 +227,58 @@ describe('runStartupGate', () => {
     expect(await runStartupGate(deps)).toBe('installing');
   });
 
+  describe('cancelled by the user', () => {
+    const withCancel = (over: Partial<GateDeps> = {}) => {
+      let cancel = () => {};
+      const made = make({ onCancel: (callback: () => void) => { cancel = callback; }, ...over });
+      return { ...made, cancel: () => cancel() };
+    };
+
+    it('starts the app during the check without recording a failure and abandons the check', async () => {
+      const { deps, cancel } = withCancel({ check: vi.fn(() => new Promise<never>(() => {})), showAfterMs: 0 });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      cancel();
+      expect(await result).toBe('start-app');
+      expect(deps.abandonCheck).toHaveBeenCalled();
+      expect(deps.recordFailure).not.toHaveBeenCalled();
+      expect(deps.hide).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts the app during the download, leaves the window closed and ignores later progress', async () => {
+      let progress: (p: number) => void = () => {};
+      const { deps, views, cancel } = withCancel({
+        check: vi.fn(async () => ({ version: '2.0.0' })),
+        download: vi.fn((report: (p: number) => void) => { progress = report; return new Promise<void>(() => {}); }),
+      });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      cancel();
+      expect(await result).toBe('start-app');
+      const shownBefore = views.length;
+      progress(80);
+      expect(views.length).toBe(shownBefore);
+      expect(deps.handoff).not.toHaveBeenCalled();
+      expect(deps.recordFailure).not.toHaveBeenCalled();
+      expect(deps.hide).toHaveBeenCalledTimes(1);
+    });
+
+    it('is ignored once the installer is being handed over', async () => {
+      let cancel = () => {};
+      let release: (value: boolean) => void = () => {};
+      const { deps } = make({
+        check: vi.fn(async () => ({ version: '2.0.0' })),
+        onCancel: (callback: () => void) => { cancel = callback; },
+        handoff: vi.fn(() => new Promise<boolean>((resolve) => { release = resolve; })),
+      });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      cancel();
+      release(true);
+      expect(await result).toBe('installing');
+    });
+  });
+
   it('still updates to a newer version than the one that failed', async () => {
     const { deps } = make({ check: vi.fn(async () => ({ version: '2.0.1' })), skipVersion: '2.0.0' });
     expect(await runStartupGate(deps)).toBe('installing');
