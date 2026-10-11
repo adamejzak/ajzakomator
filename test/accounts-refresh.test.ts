@@ -76,7 +76,7 @@ describe('refreshClaudeProfile', () => {
     const fetchSpy = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
     const first = refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW });
     const second = refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW });
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
     release(reply(200, { access_token: 'n', refresh_token: 'r2', expires_in: 60 }));
     expect(await first).toEqual({ kind: 'ok' });
     expect(await second).toEqual({ kind: 'ok' });
