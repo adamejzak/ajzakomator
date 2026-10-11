@@ -1,6 +1,7 @@
 import type { GridLayout } from './layout';
 import type { Language } from './languages';
 import type { WaitingSound } from './sound';
+import type { UpdateMode } from './updateMode';
 import type { AgentRole, AutomationState } from './automation';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
@@ -104,8 +105,10 @@ export interface Settings {
   notifications: boolean;
   shell: ShellKind;
   lastProfileId: string;
-  /** Install a downloaded update when the app is closed; when off, only the status bar button installs it. */
-  autoInstallUpdates: boolean;
+  /** Startup update behaviour (see `UpdateMode`); replaces the former boolean `autoInstallUpdates`. */
+  updateMode: UpdateMode;
+  /** Also notify and play the waiting sound while the app window is focused and the cell is visible. */
+  notifyWhenFocused: boolean;
   /** Show the docked "AI account limits" section in the sidebar. */
   showAiUsage: boolean;
   /** How often the limits are read, in minutes (1, 5 or 15). */

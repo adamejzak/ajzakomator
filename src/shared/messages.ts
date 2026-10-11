@@ -1,11 +1,13 @@
 // Each row contains English, German, Spanish, French and Portuguese translations.
 // Polish uses the source message (the key). Placeholders must match across a row.
 import { automationMessages } from './automationMessages';
+import { gridMessages } from './gridMessages';
 import { updateMessages } from './updateMessages';
 import { usageMessages } from './usageMessages';
 import { uxMessages } from './uxMessages';
 export const messages = {
   ...automationMessages,
+  ...gridMessages,
   ...updateMessages,
   ...usageMessages,
   ...uxMessages,

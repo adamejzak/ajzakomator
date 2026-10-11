@@ -111,15 +111,33 @@ describe('state', () => {
     expect(nextCellColor([...CELL_COLORS, '#111111'])).toBe(CELL_COLORS[21 % CELL_COLORS.length]);
   });
 
-  it('normalizeState defaults automatic update installation to off and keeps an explicit choice', () => {
+  it('normalizeState defaults the update mode to manual and migrates the old boolean', () => {
     const raw = JSON.parse(JSON.stringify(defaultState()));
-    delete raw.settings.autoInstallUpdates;
-    expect(defaultState().settings.autoInstallUpdates).toBe(false);
-    expect(normalizeState(raw)!.settings.autoInstallUpdates).toBe(false);
+    delete raw.settings.updateMode;
+    expect(defaultState().settings.updateMode).toBe('manual');
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
     raw.settings.autoInstallUpdates = true;
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.autoInstallUpdates).toBe(true);
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('auto');
+    raw.settings.autoInstallUpdates = false;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
     raw.settings.autoInstallUpdates = 'no';
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.autoInstallUpdates).toBe(false);
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
+    raw.settings.updateMode = 'ask';
+    raw.settings.autoInstallUpdates = true;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('ask');
+    raw.settings.updateMode = 'bogus';
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('auto');
+  });
+
+  it('normalizeState keeps notifyWhenFocused off unless explicitly on', () => {
+    const raw = JSON.parse(JSON.stringify(defaultState()));
+    delete raw.settings.notifyWhenFocused;
+    expect(defaultState().settings.notifyWhenFocused).toBe(false);
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.notifyWhenFocused).toBe(false);
+    raw.settings.notifyWhenFocused = true;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.notifyWhenFocused).toBe(true);
+    raw.settings.notifyWhenFocused = 'yes';
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.notifyWhenFocused).toBe(false);
   });
 
   it('normalizeState folds retired profiles into claude/codex', () => {

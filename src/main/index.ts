@@ -546,10 +546,10 @@ async function runUpdateGate(): Promise<boolean> {
   try {
     const failure = readGateFailure();
     const recent = isRecentFailure(failure, Date.now());
-    if (failure && recent && state.settings.autoInstallUpdates && compareVersions(failure.version, app.getVersion()) > 0) blockUpdateVersion(failure.version);
+    if (failure && recent && state.settings.updateMode !== 'manual' && compareVersions(failure.version, app.getVersion()) > 0) blockUpdateVersion(failure.version);
     if (!shouldGateOnStartup({
       platform: process.platform, packaged: updatesEnabled(), portable: isPortableBuild(),
-      autoInstall: state.settings.autoInstallUpdates, recentFailure: recent,
+      mode: state.settings.updateMode, recentFailure: recent,
     })) return false;
     const version = app.getVersion();
     window = createGateWindow({
@@ -560,13 +560,19 @@ async function runUpdateGate(): Promise<boolean> {
       preparing: tr('Przygotowanie aktualizacji…'),
       failed: tr('Aktualizacja nie powiodła się - uruchamiam obecną wersję'),
       close: tr('Zamknij'),
+      available: (next) => tr('Dostępna nowa wersja {version}', { version: next }),
+      askMessage: tr('Zainstalować ją teraz?'),
+      askHint: tr('„Później” uruchamia obecną wersję. Zainstalujesz ją przyciskiem w stopce.'),
+      install: tr('Zainstaluj teraz'),
+      later: tr('Później'),
     }, version);
     gating = true;
     let handedOver = '';
     const result = await runStartupGate({
       check: startupCheck, abandonCheck: abandonStartupCheck, download: startupDownload,
       handoff: (next, hide) => { handedOver = next; return startupHandoff(hide); },
-      show: window.show, hide: window.hide, onCancel: window.onCancel, skipVersion: failure?.version,
+      show: window.show, hide: window.hide, onCancel: window.onCancel, onInstall: window.onInstall,
+      mode: state.settings.updateMode === 'ask' ? 'ask' : 'auto', skipVersion: failure?.version,
       markAttempt: writeGateRecord, recordFailure: recordUpdateFailure,
     });
     if (result !== 'installing') { gating = false; return false; }
@@ -607,7 +613,7 @@ app.whenReady().then(async () => {
   if (superseded) return;
   // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
   Menu.setApplicationMenu(null);
-  initUpdater((s) => send('update:state', s), { strings: updateStrings, autoInstallOnQuit: () => state.settings.autoInstallUpdates });
+  initUpdater((s) => send('update:state', s), { strings: updateStrings, autoInstallOnQuit: () => state.settings.updateMode === 'auto' });
   if (await runUpdateGate()) return;
   await startMainApp();
 }).catch((error) => console.error('startup failed', error));

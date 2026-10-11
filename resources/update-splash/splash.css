@@ -36,6 +36,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .card[data-stage='checking'] .fill { width: 35% !important; animation: slide 1.2s ease-in-out infinite alternate; }
 @keyframes slide { from { transform: translateX(0); } to { transform: translateX(185%); } }
+.card[data-stage='ask'] .track, .card[data-stage='ask'] .percent { visibility: hidden; }
 .card[data-stage='failed'] .fill { background: var(--error); }
 .card[data-stage='failed'] .status { color: var(--error); }
 .card[data-stage='done'] .fill { background: var(--waiting); }

@@ -14,7 +14,10 @@ function render(state) {
   $('percent').hidden = state.stage === 'checking';
 
   const failed = state.stage === 'error';
-  $('actions').hidden = !failed;
+  const asking = state.stage === 'ask';
+  $('actions').hidden = !failed && !asking;
+  // The startup prompt brings its own button labels; the update window's error state keeps the ones from init().
+  if (asking && state.primary) { $('open').textContent = state.primary; $('close').textContent = state.secondary || ''; $('open').focus(); }
   // The X is there at every stage; only the app's own startup window withholds it once the installer is being started.
   $('dismiss').hidden = state.closable === false;
   if (failed && state.detail) $('hint').textContent = state.detail;

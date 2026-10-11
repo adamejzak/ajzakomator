@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { shouldNotify } from '../src/shared/status';
 import {
-  createSoundThrottle, isSoundFile, normalizeWaitingSound, normalizeWaitingSoundVolume, shouldPlayWaitingSound, SOUND_THROTTLE_MS,
+  createSoundThrottle, isSoundFile, normalizeWaitingSound, normalizeWaitingSoundVolume, shouldAlertUser, shouldPlayWaitingSound, SOUND_THROTTLE_MS,
 } from '../src/shared/sound';
 
 describe('shouldPlayWaitingSound', () => {
@@ -21,6 +21,20 @@ describe('shouldPlayWaitingSound', () => {
 
   it('never plays without a transition', () => {
     expect(shouldPlayWaitingSound('custom', false, false)).toBe(false);
+    expect(shouldPlayWaitingSound('custom', false, true, true)).toBe(false);
+  });
+
+  it('plays while the user looks at the cell only when alerting in the active window is on', () => {
+    expect(shouldPlayWaitingSound('system', true, true, true)).toBe(true);
+    expect(shouldPlayWaitingSound('system', true, false, true)).toBe(true);
+    expect(shouldPlayWaitingSound('off', true, true, true)).toBe(false);
+  });
+
+  it('shouldAlertUser is the shared gate of the notification and the sound', () => {
+    expect(shouldAlertUser(true, false, false)).toBe(true);
+    expect(shouldAlertUser(true, true, false)).toBe(false);
+    expect(shouldAlertUser(true, true, true)).toBe(true);
+    expect(shouldAlertUser(false, false, true)).toBe(false);
   });
 
   it('follows the notification gate: restored or launch state never plays', () => {

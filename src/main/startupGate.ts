@@ -3,9 +3,13 @@
  * imports: every side effect is injected, so the fail-open rules can be tested without an app.
  */
 
+import type { UpdateMode } from '../shared/updateMode';
+
 export const CHECK_TIMEOUT_MS = 8000;
 /** The window stays hidden for this long, so a quick "no update" answer never flashes it. */
 export const SHOW_AFTER_MS = 400;
+/** Once the checking window has appeared it stays at least this long, so a quick answer does not flash it. */
+export const MIN_SHOW_MS = 700;
 /** A download that reports nothing for this long counts as failed. */
 export const DOWNLOAD_STALL_MS = 60 * 1000;
 /** The whole download may not take longer than this, however steadily it progresses. */
@@ -21,14 +25,14 @@ export interface GateEnv {
   platform: string;
   packaged: boolean;
   portable: boolean;
-  autoInstall: boolean;
+  mode: UpdateMode;
   /** An update failed less than `FAILURE_COOLDOWN_MS` ago. */
   recentFailure: boolean;
 }
 
-/** The gate exists only for the installed Windows build with automatic updates. */
+/** The gate exists only for the installed Windows build in the 'ask' and 'auto' modes ('manual' starts the app at once). */
 export function shouldGateOnStartup(env: GateEnv): boolean {
-  return env.platform === 'win32' && env.packaged && !env.portable && env.autoInstall && !env.recentFailure;
+  return env.platform === 'win32' && env.packaged && !env.portable && env.mode !== 'manual' && !env.recentFailure;
 }
 
 export interface FailureRecord { version: string; at: number }
@@ -56,6 +60,7 @@ export const isRecentFailure = (failure: FailureRecord | undefined, now: number)
 
 export type GateView =
   | { kind: 'checking' }
+  | { kind: 'ask'; version: string }
   | { kind: 'downloading'; version: string; percent: number }
   | { kind: 'installing'; version: string }
   | { kind: 'failed'; version: string };
@@ -74,6 +79,10 @@ export interface GateDeps {
    * until the installer is being handed over; after that the update must run to the end.
    */
   onCancel?(cancel: () => void): void;
+  /** Registers the callback the window calls when the user picks "Install now" in the 'ask' prompt. */
+  onInstall?(install: () => void): void;
+  /** 'ask' offers the update and waits for the answer; 'auto' (default) installs without asking. */
+  mode?: 'ask' | 'auto';
   /** Starts the installing window and installer; calls `hide` once the hand-over is visible. True when it took over. */
   handoff(version: string, hide: () => void): Promise<boolean>;
   /** Written right before the installer starts, so an installer that fails outside the app still counts as a failure. */
@@ -83,6 +92,7 @@ export interface GateDeps {
   skipVersion?: string;
   checkTimeoutMs?: number;
   showAfterMs?: number;
+  minShowMs?: number;
   downloadStallMs?: number;
   downloadTotalMs?: number;
   handoffTimeoutMs?: number;
@@ -114,13 +124,22 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
   let stopped = false;
   const show = (view: GateView) => { if (stopped) return; shown = true; try { deps.show(view); } catch { /* the window is optional */ } };
   const hide = () => { if (shown) { shown = false; try { deps.hide(); } catch { /* already gone */ } } };
-  const showTimer = setTimeout(() => show({ kind: 'checking' }), deps.showAfterMs ?? SHOW_AFTER_MS);
+  let shownAt = 0;
+  const showTimer = setTimeout(() => { shownAt = Date.now(); show({ kind: 'checking' }); }, deps.showAfterMs ?? SHOW_AFTER_MS);
+  /** Keeps a window that only just appeared up for `minShowMs`, unless the user already dismissed it. */
+  const holdChecking = async () => {
+    const left = shownAt ? shownAt + (deps.minShowMs ?? MIN_SHOW_MS) - Date.now() : 0;
+    if (shown && !stopped && left > 0) await sleep(left);
+  };
   // The user may close the window until the installer is handed over; then the app starts as it is.
   let cancellable = true;
   let cancel = () => {};
   const cancelled = new Promise<never>((_, reject) => { cancel = () => { if (cancellable) { stopped = true; reject(new GateCancelled()); } }; });
   cancelled.catch(() => {});
   try { deps.onCancel?.(() => cancel()); } catch { /* the window is optional */ }
+  let install = () => {};
+  const installChosen = new Promise<void>((resolve) => { install = resolve; });
+  try { deps.onInstall?.(() => install()); } catch { /* the window is optional */ }
   let found: { version: string } | undefined;
   try {
     const pending = deps.check();
@@ -130,14 +149,20 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
     catch (error) { if (error instanceof CheckTimeout || error instanceof GateCancelled) deps.abandonCheck?.(); throw error; }
   } catch {
     clearTimeout(showTimer);
+    await holdChecking();
     hide();
     return 'start-app';
   }
   clearTimeout(showTimer);
-  if (!found || found.version === deps.skipVersion) { hide(); return 'start-app'; }
+  if (!found || found.version === deps.skipVersion) { await holdChecking(); hide(); return 'start-app'; }
 
   const { version } = found;
   try {
+    if (deps.mode === 'ask') {
+      // "Later" (the button, X or Escape) rejects with GateCancelled below and starts the current version.
+      show({ kind: 'ask', version });
+      await Promise.race([installChosen, cancelled]);
+    }
     show({ kind: 'downloading', version, percent: 0 });
     await Promise.race([within(downloadWithStall(deps, version, show), deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long')), cancelled]);
     cancellable = false;

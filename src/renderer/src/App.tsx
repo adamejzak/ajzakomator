@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { shouldNotify } from '../../shared/status';
-import { createSoundThrottle, shouldPlayWaitingSound } from '../../shared/sound';
+import { createSoundThrottle, shouldAlertUser, shouldPlayWaitingSound } from '../../shared/sound';
 import { playWaitingSound } from './waitingSound';
 import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
@@ -107,7 +107,7 @@ const allowSound = createSoundThrottle();
 /** Same rules as the notification, but independent of the notifications setting. */
 function maybePlaySound(cellId: string): void {
   const s = getS();
-  if (!shouldPlayWaitingSound(s.settings.waitingSound, true, document.hasFocus() && isVisible(cellId))) return;
+  if (!shouldPlayWaitingSound(s.settings.waitingSound, true, document.hasFocus() && isVisible(cellId), s.settings.notifyWhenFocused)) return;
   const found = findCell(s, cellId);
   if (!found || getProfile(s, found.cell.profileId).cli === 'shell') return;
   if (allowSound(Date.now())) void playWaitingSound();
@@ -116,7 +116,8 @@ function maybePlaySound(cellId: string): void {
 function maybeNotify(cellId: string): void {
   const s = getS();
   if (!s.settings.notifications) return;
-  if (document.hasFocus() && isVisible(cellId)) return; // the user is looking at it
+  // The user is looking at it: silent unless alerting in the active window is on.
+  if (!shouldAlertUser(true, document.hasFocus() && isVisible(cellId), s.settings.notifyWhenFocused)) return;
   const found = findCell(s, cellId);
   if (!found) return;
   const profile = getProfile(s, found.cell.profileId);

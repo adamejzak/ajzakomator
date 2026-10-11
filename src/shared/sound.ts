@@ -23,9 +23,17 @@ export function isSoundFile(path: string): boolean {
   return !!match && (SOUND_EXTENSIONS as readonly string[]).includes(match[1].toLowerCase());
 }
 
+/**
+ * The shared alert gate: by default nothing is signalled while the user is looking at the cell
+ * (`userLooking` = window focused and the cell visible); `alertWhenFocused` signals that case too.
+ */
+export function shouldAlertUser(transition: boolean, userLooking: boolean, alertWhenFocused: boolean): boolean {
+  return transition && (!userLooking || alertWhenFocused);
+}
+
 /** `transition` is the shouldNotify result; `userLooking` = window focused and the cell visible. */
-export function shouldPlayWaitingSound(mode: WaitingSound, transition: boolean, userLooking: boolean): boolean {
-  return mode !== 'off' && transition && !userLooking;
+export function shouldPlayWaitingSound(mode: WaitingSound, transition: boolean, userLooking: boolean, alertWhenFocused = false): boolean {
+  return mode !== 'off' && shouldAlertUser(transition, userLooking, alertWhenFocused);
 }
 
 /** Returns a function that says whether a sound may play now; allowed calls open a new quiet window. */

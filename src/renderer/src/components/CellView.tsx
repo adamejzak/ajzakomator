@@ -16,7 +16,13 @@ export const SNIPPET_MIME = 'application/x-mc-snippet';
 
 
 
-export function CellView({ cell, index, style, maximized }: { cell: Cell; index: number; style: CSSProperties; maximized: boolean }) {
+export function CellView({ cell, index, style, maximized, dragSource, onHeadPointerDown }: {
+  cell: Cell; index: number; style: CSSProperties; maximized: boolean;
+  /** This cell is being dragged to another slot. */
+  dragSource?: boolean;
+  /** Present when the header may start a drag (more than one cell, not maximized). */
+  onHeadPointerDown?: (e: React.PointerEvent<HTMLElement>, cell: Cell) => void;
+}) {
   const { tr, errorText } = useI18n();
   const bodyRef = useRef<HTMLDivElement>(null);
   const profiles = useStore((st) => st.s.profiles);
@@ -81,7 +87,8 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
 
   return (
     <div
-      className={`cell ${focused ? 'focused' : ''} ${drop ? 'drop' : ''} ${cell.color ? 'colored' : ''}`}
+      data-cell-id={cell.id}
+      className={`cell ${focused ? 'focused' : ''} ${drop ? 'drop' : ''} ${cell.color ? 'colored' : ''} ${dragSource ? 'drag-source' : ''}`}
       style={cell.color ? { ...style, ['--cc' as string]: cell.color } : style}
       onMouseDownCapture={markFocused}
       onFocusCapture={markFocused}
@@ -101,7 +108,9 @@ export function CellView({ cell, index, style, maximized }: { cell: Cell; index:
       }}
     >
       <div
-        className="cell-head"
+        className={`cell-head ${onHeadPointerDown ? 'draggable' : ''}`}
+        title={onHeadPointerDown ? tr('Przeciągnij za pasek, aby zamienić komórki miejscami') : undefined}
+        onPointerDown={onHeadPointerDown && ((e) => onHeadPointerDown(e, cell))}
         onContextMenu={headerMenu}
         onDoubleClick={(e) => (e.target as HTMLElement).closest('button,.cell-name,input') || toggleMaximize(cell.id)}
       >

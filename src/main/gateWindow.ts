@@ -13,15 +13,27 @@ export interface GateTexts {
   preparing: string;
   failed: string;
   close: string;
+  /** Title of the 'ask' prompt, with the new version filled in. */
+  available: (version: string) => string;
+  askMessage: string;
+  askHint: string;
+  install: string;
+  later: string;
 }
 
-interface SplashState { stage: UpdateStage; percent: number; message: string; title?: string; versions?: string; hint?: string; closable?: boolean }
+interface SplashState {
+  stage: UpdateStage; percent: number; message: string; title?: string; versions?: string; hint?: string; closable?: boolean;
+  /** Labels of the two buttons of the 'ask' prompt. */
+  primary?: string; secondary?: string;
+}
 
 /** Maps what the startup check is doing to what the update window shows. */
 export function gateState(view: GateView, texts: GateTexts, currentVersion: string): SplashState {
   switch (view.kind) {
     case 'checking':
       return { stage: 'checking', percent: 0, message: '', title: texts.checking, versions: currentVersion, hint: '', closable: true };
+    case 'ask':
+      return { stage: 'ask', percent: 0, message: texts.askMessage, title: texts.available(view.version), versions: `${currentVersion} → ${view.version}`, hint: texts.askHint, closable: true, primary: texts.install, secondary: texts.later };
     case 'downloading':
       return { stage: 'downloading', percent: view.percent, message: texts.downloading, title: texts.updating(view.version), versions: `${currentVersion} → ${view.version}`, hint: texts.hint, closable: true };
     // From here the installer is being started and the window cannot be cancelled any more.
@@ -36,15 +48,18 @@ export function gateState(view: GateView, texts: GateTexts, currentVersion: stri
  * The update window shown inside the app process while the startup check runs. It reuses the page of the
  * detached update window; the detached one takes over (same size and place) when the installer starts.
  */
-export function createGateWindow(texts: GateTexts, currentVersion: string): { show(view: GateView): void; hide(): void; onCancel(cancel: () => void): void } {
+export function createGateWindow(texts: GateTexts, currentVersion: string): { show(view: GateView): void; hide(): void; onCancel(cancel: () => void): void; onInstall(install: () => void): void } {
   let win: BrowserWindow | null = null;
   let latest: SplashState | undefined;
   let loaded = false;
 
   let cancel: (() => void) | undefined;
+  let install: (() => void) | undefined;
   const push = () => { if (loaded && latest) safeSend(win, 'update-splash:state', latest); };
   /** The user closed the window (X, Escape, Alt+F4); the gate decides whether that is still allowed. */
   const requestClose = () => { if (latest?.closable) cancel?.(); };
+  /** "Install now" of the 'ask' prompt; ignored at any other stage. */
+  const requestInstall = () => { if (latest?.stage === 'ask') install?.(); };
 
   const create = () => {
     ipcMain.removeHandler('update-splash:init');
@@ -61,6 +76,8 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
     win.setMenu(null);
     ipcMain.removeAllListeners('update-splash:close');
     ipcMain.on('update-splash:close', requestClose);
+    ipcMain.removeAllListeners('update-splash:open');
+    ipcMain.on('update-splash:open', requestInstall);
     win.on('close', (e) => { if (latest?.closable) { e.preventDefault(); requestClose(); } });
     win.webContents.on('will-navigate', (e) => e.preventDefault());
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -78,9 +95,11 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
       if (!win) create(); else push();
     },
     onCancel(callback) { cancel = callback; },
+    onInstall(callback) { install = callback; },
     hide() {
       ipcMain.removeHandler('update-splash:init');
       ipcMain.removeAllListeners('update-splash:close');
+      ipcMain.removeAllListeners('update-splash:open');
       if (win && !win.isDestroyed()) win.destroy();
       win = null;
       loaded = false;

@@ -73,7 +73,7 @@ export function getUpdateState(): UpdateState { return { ...state }; }
 export interface UpdaterHooks {
   /** Localizes the detached update window (the footer differs by mode); without it installation stays invisible as before. */
   strings?: (mode: 'relaunch' | 'quit') => UpdateStrings;
-  /** Whether a downloaded update is installed when the app quits (the "automatic" setting). */
+  /** Whether a downloaded update is installed when the app quits (the 'auto' update mode). */
   autoInstallOnQuit?: () => boolean;
 }
 
@@ -194,6 +194,8 @@ export async function startupDownload(onProgress: (percent: number) => void): Pr
   const listener = (p: { percent: number }) => onProgress(p.percent);
   autoUpdater.on('download-progress', listener);
   set({ status: 'downloading', version: state.version, percent: 0 });
+  // The private runtime of the update window is copied while the download runs, not after it (saves the copy time at hand-over).
+  if (getStrings) void stageSplashRuntime();
   try { await autoUpdater.downloadUpdate(); }
   finally { autoUpdater.removeListener('download-progress', listener); }
 }

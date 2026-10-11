@@ -2,7 +2,7 @@
 // Chosen to avoid keys Claude/Codex use themselves (Ctrl+T, Ctrl+B, Ctrl+W, Alt+arrows …).
 import { useEffect } from 'react';
 import { activeProject, activeTab } from '../../shared/state';
-import { addAgent, closeTab, cycleTab, moveFocus, quickTab, toggleMaximize } from './actions';
+import { addAgent, closeTab, cycleTab, moveCellBy, moveFocus, quickTab, toggleMaximize } from './actions';
 import { getS, getUi, setUi, update } from './store';
 import { hasPrimaryModifier } from './platform';
 
@@ -35,10 +35,11 @@ export function useShortcuts(): void {
       if (ctrlShift && e.code === 'KeyE') return stop(e, () => update((s) => ({ ...s, sidebarCollapsed: !s.sidebarCollapsed })));
       if (ctrlShift && e.code === 'KeyM') return stop(e, () => toggleMaximize());
       if (ctrl && e.code === 'Tab') return stop(e, () => cycleTab(e.shiftKey ? -1 : 1));
-      if (primary && e.altKey && !e.shiftKey && !e.getModifierState('AltGraph')) {
+      if (primary && e.altKey && !e.getModifierState('AltGraph')) {
         const dir: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
         const d = dir[e.code];
-        if (d) return stop(e, () => moveFocus(d[0], d[1]));
+        // Ctrl+Alt+Shift+arrows move the focused cell, Ctrl+Alt+arrows only the focus.
+        if (d) return stop(e, () => (e.shiftKey ? moveCellBy(d[0], d[1]) : moveFocus(d[0], d[1])));
       }
     };
     window.addEventListener('keydown', onKey, true);

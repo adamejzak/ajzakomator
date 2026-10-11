@@ -10,6 +10,7 @@ import type { CliKind, ProjectIcon, SessionInfo, ShellKind, Snippet } from '../.
 import { restoreArchived, resumeSession } from '../actions';
 import { closeDialog, closeModal, setUi, toast, update, useStore, type Dialog } from '../store';
 import { normalizeWaitingSound, normalizeWaitingSoundVolume } from '../../../shared/sound';
+import { normalizeUpdateMode } from '../../../shared/updateMode';
 import { playWaitingSound } from '../waitingSound';
 import { AuthModal } from './AuthModal';
 import { ChangelogModal } from './Changelog';
@@ -265,15 +266,27 @@ function SettingsModal() {
           )}
           <span className="muted">{tr('Gra w tym samym momencie co powiadomienie, także dla agentów Codex. Dźwięk systemowy ignoruje głośność.')}</span>
         </div>
+        <div className="field">
+          <label className="check">
+            <input type="checkbox" checked={s.settings.notifyWhenFocused} onChange={(e) => setSetting({ notifyWhenFocused: e.target.checked })} />
+            {tr('Powiadamiaj i graj dźwięk także w aktywnym oknie')}
+          </label>
+          <span className="muted">{tr('Domyślnie, gdy patrzysz na komórkę w aktywnym oknie aplikacji, nie dostajesz ani powiadomienia, ani dźwięku. Po włączeniu dostaniesz je zawsze, gdy agent skończy pracę i czeka na Ciebie.')}</span>
+        </div>
         <div className="section-title">{tr('Aktualizacje')}</div>
         <div className="field">
           <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>
-          <select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.autoInstallUpdates ? 'auto' : 'manual'}
-            onChange={(e) => setSetting({ autoInstallUpdates: e.target.value === 'auto' })}>
-            <option value="auto">{tr('Automatycznie - po zamknięciu aplikacji')}</option>
-            <option value="manual">{tr('Ręcznie - dopiero po kliknięciu w stopce')}</option>
+          <select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.updateMode}
+            onChange={(e) => setSetting({ updateMode: normalizeUpdateMode(e.target.value) })}>
+            <option value="manual">{tr('Ręcznie - przyciskiem w stopce (domyślnie)')}</option>
+            <option value="ask">{tr('Pytaj przy starcie')}</option>
+            <option value="auto">{tr('Automatycznie - instaluj przy starcie')}</option>
           </select>
-          <span className="muted">{tr('Aktualizacje zawsze pobierają się w tle. Przycisk „uruchom ponownie” w stopce instaluje je od razu.')}</span>
+          <span className="muted">{{
+            manual: tr('Aplikacja startuje od razu. Aktualizacje pobierają się w tle, a przycisk w stopce zainstaluje je, gdy zechcesz.'),
+            ask: tr('Przy starcie aplikacja sprawdza aktualizacje i pyta, czy zainstalować od razu. „Później” uruchamia obecną wersję, a przycisk w stopce zainstaluje aktualizację.'),
+            auto: tr('Przy starcie aplikacja sprawdza aktualizacje, pobiera je i instaluje bez pytania. Pobrana aktualizacja instaluje się też przy zamknięciu aplikacji.'),
+          }[s.settings.updateMode]}</span>
         </div>
         <div className="section-title">{tr('Konta AI')}</div>
         <label className="check">

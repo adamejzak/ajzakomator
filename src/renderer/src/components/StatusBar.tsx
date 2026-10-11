@@ -15,7 +15,7 @@ export function StatusBar() {
   const checking = useHoldBusy(u.status === 'checking' || clicked, 800);
   const check = () => { setClicked(true); requestUpdateCheck(); setTimeout(() => setClicked(false), 50); };
   const version = u.version ?? '';
-  const autoInstall = useStore((st) => st.s.settings.autoInstallUpdates);
+  const autoInstall = useStore((st) => st.s.settings.updateMode === 'auto');
 
   const status = (() => {
     switch (u.status) {

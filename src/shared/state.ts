@@ -7,6 +7,7 @@ import { normalizePanelWidth, PANEL_LIMITS } from './panels';
 import { defaultAutomation } from './automation';
 import { USAGE_INTERVALS_MINUTES } from './usage';
 import { DEFAULT_SOUND_VOLUME, normalizeWaitingSound, normalizeWaitingSoundVolume } from './sound';
+import { DEFAULT_UPDATE_MODE, normalizeUpdateMode } from './updateMode';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
@@ -25,7 +26,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: false, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, waitingSound: 'off', waitingSoundFile: '', waitingSoundVolume: DEFAULT_SOUND_VOLUME },
+    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', updateMode: DEFAULT_UPDATE_MODE, notifyWhenFocused: false, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, waitingSound: 'off', waitingSoundFile: '', waitingSoundVolume: DEFAULT_SOUND_VOLUME },
     sidebarCollapsed: false,
     snippetsOpen: true,
     sidebarWidth: PANEL_LIMITS.sidebar.default,
@@ -220,7 +221,10 @@ export function removeCell(s: AppState, projectId: string, tabId: string, cellId
   }));
 }
 
+/** Exchanges the area slots of two cells; the layout (sizes, dividers) stays as it is. */
 export function swapCells(s: AppState, projectId: string, tabId: string, a: string, b: string): AppState {
+  const tab = s.projects.find((p) => p.id === projectId)?.tabs.find((t) => t.id === tabId);
+  if (!tab || a === b || !tab.cells.some((c) => c.id === a) || !tab.cells.some((c) => c.id === b)) return s;
   return mapTab(s, projectId, tabId, (t) => {
     const i = t.cells.findIndex((c) => c.id === a);
     const j = t.cells.findIndex((c) => c.id === b);
@@ -308,7 +312,9 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       language: r.settings?.language === undefined ? 'pl' : isLanguage(r.settings.language) ? r.settings.language : null,
       shell: shellsForPlatform(platform).some((shell) => shell.code === r.settings?.shell) ? r.settings!.shell! : d.settings.shell,
       lastProfileId: remap(r.settings?.lastProfileId ?? d.settings.lastProfileId),
-      autoInstallUpdates: typeof r.settings?.autoInstallUpdates === 'boolean' ? r.settings.autoInstallUpdates : d.settings.autoInstallUpdates,
+      // The retired boolean `autoInstallUpdates` only seeds the mode when none is saved yet.
+      updateMode: normalizeUpdateMode(r.settings?.updateMode, (r.settings as Record<string, unknown> | undefined)?.autoInstallUpdates),
+      notifyWhenFocused: typeof r.settings?.notifyWhenFocused === 'boolean' ? r.settings.notifyWhenFocused : d.settings.notifyWhenFocused,
       showAiUsage: typeof r.settings?.showAiUsage === 'boolean' ? r.settings.showAiUsage : d.settings.showAiUsage,
       usageIntervalMinutes: (USAGE_INTERVALS_MINUTES as readonly number[]).includes(r.settings?.usageIntervalMinutes as number) ? r.settings!.usageIntervalMinutes! : d.settings.usageIntervalMinutes,
       usageCollapsed: typeof r.settings?.usageCollapsed === 'boolean' ? r.settings.usageCollapsed : d.settings.usageCollapsed,

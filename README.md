@@ -48,6 +48,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 - Live status per cell, tab and project: ◐ working, ● waiting for you
 - Desktop notification when a background agent finishes or asks for permission; click it to jump there
 - Optional sound at the same moment (Settings: off, system sound or your own file with volume); works for Codex cells too
+- Alerts stay silent while you look at the cell in the active window; **Alert also when the app is the active window** (Settings) turns notification and sound on for that case too
 - Cells are named after the conversation automatically
 - Optional local **MCP** gives selected Claude Code and Codex cells coordinator or worker roles, tracked tasks, structured results and messages. Ordinary grids start with **No MCP**. See the [English guide](docs/MCP.en.md) or [Polish guide](docs/MCP.md).
 
@@ -135,7 +136,7 @@ Mac builds use an ad-hoc signature without an Apple Developer certificate and ar
 
 ## Updating
 
-The installed Windows app checks GitHub Releases on start and every 30 minutes. With automatic updates on (Settings), the updater runs first when you start the app: it shows a short "Checking for updates" window, and if a new version exists it downloads and installs it with a progress bar before the app opens; with no update, no network or any error the app simply starts. With manual updates (the default) the app starts normally, and when a new version is ready you click **New version … · restart** in the status bar: the app closes, the updater window shows the progress, and the new version starts. Save your editor changes before restarting; agent conversations are restored through their CLI resume support.
+The installed Windows app checks GitHub Releases on start and every 30 minutes. **Settings → Updates** has three modes. **Manual** (the default): the app starts normally, downloads updates in the background, and when a new version is ready you click **New version … · restart** in the status bar: the app closes, the updater window shows the progress, and the new version starts. **Ask at start**: the app first shows a short "Checking for updates" window; if a new version exists it asks "Install now" or "Later" ("Later", the close button and Escape start the current version, and the status bar button installs the update afterwards). **Automatic**: the same check runs at start, but the update is downloaded and installed with a progress bar without asking, and a downloaded update is also installed when you close the app. With no update, no network or any error the app simply starts. Save your editor changes before an update; agent conversations are restored through their CLI resume support.
 
 To check manually, right-click the **ajzakomator** name/version and choose **Check for updates**. If checking or downloading fails, the header offers a retry and shows the error.
 

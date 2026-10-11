@@ -6,8 +6,10 @@ import { layoutForCount } from '../../shared/layout';
 import {
   activeProject, activeTab, addCell, addProject, addTab, closeTab as closeTabState, findCell, getProfile,
   removeCell as removeCellState, removeProject as removeProjectState, restoreTab, setActiveProject, setActiveTab,
-  uid, updateCell, updateSettings,
+  swapCells as swapCellsState, uid, updateCell, updateSettings,
 } from '../../shared/state';
+import { neighborSlot } from '../../shared/gridDrag';
+import { snapshotCellRects } from './gridMotion';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
 import { showTerminalTabs } from './files';
@@ -191,26 +193,28 @@ export function moveFocus(dx: number, dy: number): void {
   const tab = activeTab(activeProject(getS()));
   if (!tab) return;
   const idx = Math.max(0, tab.cells.findIndex((c) => c.id === getUi().focusedCellId));
-  const cur = tab.layout.areas[idx];
-  if (!cur) return;
-  const cx = cur.col + cur.colSpan / 2;
-  const cy = cur.row + cur.rowSpan / 2;
-  let best = -1;
-  let bestDist = Infinity;
-  tab.layout.areas.forEach((a, i) => {
-    if (i === idx) return;
-    const ax = a.col + a.colSpan / 2;
-    const ay = a.row + a.rowSpan / 2;
-    const ddx = ax - cx;
-    const ddy = ay - cy;
-    if ((dx && Math.sign(ddx) !== dx) || (dy && Math.sign(ddy) !== dy)) return;
-    const dist = Math.abs(ddx) * (dx ? 1 : 3) + Math.abs(ddy) * (dy ? 1 : 3);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = i;
-    }
-  });
+  const best = neighborSlot(tab.layout.areas, idx, dx, dy);
   if (best >= 0 && tab.cells[best]) focusCell(tab.cells[best].id);
+}
+
+/** Swaps two cells of the active tab (drag and drop, keyboard); their ptys are untouched. */
+export function swapCellSlots(a: string, b: string): void {
+  const project = activeProject(getS());
+  const tab = activeTab(project);
+  if (!project || !tab || a === b) return;
+  snapshotCellRects();
+  update((s) => swapCellsState(s, project.id, tab.id, a, b));
+  setUi({ focusedCellId: a });
+}
+
+/** Moves the focused cell into the neighbouring slot in a direction (swap with whatever sits there). */
+export function moveCellBy(dx: number, dy: number): void {
+  const tab = activeTab(activeProject(getS()));
+  const id = getUi().focusedCellId;
+  if (!tab || !id || getUi().maximizedCellId) return;
+  const idx = tab.cells.findIndex((c) => c.id === id);
+  const to = idx < 0 ? -1 : neighborSlot(tab.layout.areas, idx, dx, dy);
+  if (to >= 0 && tab.cells[to]) swapCellSlots(id, tab.cells[to].id);
 }
 
 export function toggleMaximize(cellId?: string): void {
