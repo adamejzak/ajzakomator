@@ -18,6 +18,10 @@ let watchdog: ReturnType<typeof setTimeout> | undefined;
 let getStrings: (() => UpdateStrings) | undefined;
 let autoInstallOnQuit: () => boolean = () => true;
 let startupAbandoned = false;
+/** Set once an installer was started for this run; nothing may start a second one for the same update. */
+let installStarted = false;
+/** Whether an installer has been started in this run (and has not failed to start). */
+export const updateHandoffStarted = (): boolean => installStarted;
 /** A version that failed to update; it never becomes "ready", so no quit or button path installs it again. */
 let blockedVersion: string | undefined;
 /** Development only: a generic update feed (for example a local server) lets the updater be exercised from an unpackaged build. */
@@ -35,6 +39,7 @@ function set(next: UpdateState): void {
 }
 
 function fail(error: unknown): void {
+  installStarted = false;
   console.error('auto-update failed', error);
   const message = error instanceof Error ? error.message : String(error);
   set({ status: 'error', version: state.version, message: message || 'Nie udało się sprawdzić aktualizacji.' });
@@ -124,7 +129,8 @@ async function showWindow(mode: 'relaunch' | 'quit'): Promise<boolean> {
 }
 
 export function installNow(): void {
-  if (portable || state.status !== 'ready') return;
+  if (portable || state.status !== 'ready' || installStarted) return;
+  installStarted = true;
   set({ ...state, status: 'installing' });
   void (async () => {
     const shown = await showWindow('relaunch');
@@ -136,7 +142,8 @@ export function installNow(): void {
 }
 
 export async function installOnQuit(): Promise<void> {
-  if (portable || state.status !== 'ready' || !autoInstallOnQuit()) return;
+  if (portable || state.status !== 'ready' || !autoInstallOnQuit() || installStarted) return;
+  installStarted = true;
   const shown = await showWindow('quit');
   try {
     const installed = (autoUpdater as unknown as { install(silent: boolean, relaunch: boolean): boolean }).install(true, false);
@@ -192,7 +199,8 @@ export async function startupDownload(onProgress: (percent: number) => void): Pr
  * startup window once the installing window is visible. False means nothing was handed over.
  */
 export async function startupHandoff(hide: () => void): Promise<boolean> {
-  if (portable || state.status !== 'ready') return false;
+  if (portable || state.status !== 'ready' || installStarted) return false;
+  installStarted = true;
   set({ ...state, status: 'installing' });
   const shown = await showWindow('relaunch');
   hide();

@@ -19,12 +19,12 @@ import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
-import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, isPortableBuild, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
+import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, isPortableBuild, updateHandoffStarted, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
 import { compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup } from './startupGate';
 import { createGateWindow } from './gateWindow';
-import { decideUncaught, isLive, safeSend, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
+import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, QUIT_HANDOFF_LIMIT_MS, raceTimeout, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
 import { createUpdaterLogger } from './updaterLog';
-import { START_BLOCK_MS, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
+import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile } from './accounts/refresh';
 import { AccountsStore } from './accounts/store';
@@ -506,12 +506,17 @@ ipcMain.on('shell:openInEditor', (_e, p: string) => {
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
 
+/** A launch that arrived while this process was winding down; the new instance already exited, so it is repeated at exit. */
+let relaunchRequested = false;
+
 app.on('second-instance', () => {
   // Also fires while this process is winding down after its window closed; then there is nothing to focus.
-  withLiveWindow(win, (w) => {
+  const focused = withLiveWindow(win, (w) => {
     if (w.isMinimized()) w.restore();
     w.focus();
+    return true;
   });
+  if (!focused && quitting) relaunchRequested = true;
 });
 
 /** True while the startup update check owns the screen: closing its window must not quit the app. */
@@ -563,12 +568,20 @@ async function runUpdateGate(): Promise<boolean> {
     });
     if (result !== 'installing') { gating = false; return false; }
     // After a hand-over `gating` stays on: the app is quitting for the installer and must not wind anything down.
-    handoffWatchdog = setTimeout(() => {
+    const armedAt = Date.now();
+    const watch = () => {
+      // The update window still supervising means the installer is only slow (late administrator prompt): keep waiting.
+      if (handoffWatchdogAction(updateInstalling(START_BLOCK_MS), Date.now() - armedAt) === 'wait') {
+        handoffWatchdog = setTimeout(watch, HANDOFF_QUIT_WATCHDOG_MS / 3);
+        return;
+      }
       console.error('the installer did not quit the app, starting normally');
       recordUpdateFailure(handedOver);
+      void abortUpdateWindow();
       gating = false;
       void startMainApp().catch((error) => console.error('startup failed', error));
-    }, HANDOFF_QUIT_WATCHDOG_MS);
+    };
+    handoffWatchdog = setTimeout(watch, HANDOFF_QUIT_WATCHDOG_MS);
     return true;
   } catch (error) {
     console.error('startup update gate failed', error);
@@ -598,15 +611,28 @@ app.whenReady().then(async () => {
 
 let quitting = false;
 
-const crashLog = createUpdaterLogger(join(DATA_DIR, 'updater.log'));
+const updaterLog = createUpdaterLogger(join(DATA_DIR, 'updater.log'));
+/** Logging must never throw out of a crash or shutdown handler. */
+const crashLog = {
+  error: (message: string) => { try { updaterLog.error(message); } catch { /* nothing else to do */ } },
+  warn: (message: string) => { try { updaterLog.warn(message); } catch { /* nothing else to do */ } },
+};
+const allowErrorDialog = createDialogLimiter();
 // Registering a handler replaces Electron's blocking native error dialog; a dialog open during shutdown
 // would keep the process alive while the installer waits for it to exit.
 process.on('uncaughtException', (error) => {
-  const decision = decideUncaught(error, quitting || gating ? 'shutdown' : 'running');
-  crashLog.error(`uncaught exception (${decision}): ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
-  if (decision !== 'show') return;
-  void dialog.showMessageBox({ type: 'error', title: 'ajzakomator', message: 'A JavaScript error occurred in the main process', detail: error instanceof Error ? error.stack ?? error.message : String(error) }).catch(() => {});
+  const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+  const decision = decideUncaught(error, quitting || gating ? 'quiet' : 'running');
+  crashLog.error(`uncaught exception (${decision}): ${detail}`);
+  if (decision !== 'show' || !allowErrorDialog(Date.now())) return;
+  void dialog.showMessageBox({ type: 'error', title: 'ajzakomator', message: tr('Wystąpił nieoczekiwany błąd w głównym procesie'), detail }).catch(() => {});
 });
+
+/** Ends the process; a launch that was swallowed during the wind-down is repeated, unless an update took over. */
+function exitNow(): void {
+  if (shouldRelaunchAfterQuit(relaunchRequested, updateHandoffStarted())) { try { app.relaunch(); } catch { /* nothing else to do */ } }
+  app.exit(0);
+}
 
 app.on('before-quit', (e) => {
   clearTimeout(handoffWatchdog);
@@ -614,8 +640,9 @@ app.on('before-quit', (e) => {
   if (quitting || gating || superseded) return;
   e.preventDefault();
   quitting = true;
-  // However the wind-down goes (stuck terminals, slow staging), the process must end: a running installer waits for it.
-  setTimeout(() => { crashLog.warn('shutdown overran its limit, exiting'); app.exit(0); }, SHUTDOWN_HARD_LIMIT_MS);
+  // However the wind-down goes (stuck terminals), the process must end: a running installer waits for it.
+  // This limit covers the terminals and servers only; the update hand-over has its own, below.
+  const shutdownLimit = setTimeout(() => { crashLog.warn('shutdown overran its limit, exiting'); ptyHost.forceKill(); exitNow(); }, SHUTDOWN_HARD_LIMIT_MS);
   usage.stop();
   login.dispose();
   send('app:before-quit');
@@ -630,11 +657,20 @@ app.on('before-quit', (e) => {
       await ptyHost.shutdown();
       await mcp.stop();
       hooks.stop();
-      await installOnQuit();
     } catch (err) {
       crashLog.error(`shutdown failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
     }
-    app.exit(0);
+    clearTimeout(shutdownLimit);
+    try {
+      // A hand-over that cannot finish in time is aborted so the update window does not wait for an installer that never starts.
+      if (await raceTimeout(installOnQuit(), QUIT_HANDOFF_LIMIT_MS) === 'timeout') {
+        crashLog.warn('update hand-over overran its limit, aborting it');
+        await abortUpdateWindow();
+      }
+    } catch (err) {
+      crashLog.error(`update hand-over failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+    }
+    exitNow();
   }, 150);
 });
 app.on('window-all-closed', () => { if (!gating) app.quit(); });

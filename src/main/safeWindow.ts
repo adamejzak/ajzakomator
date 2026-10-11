@@ -26,7 +26,8 @@ export function withLiveWindow<W extends { isDestroyed(): boolean }, R>(win: W |
   try { return win && !win.isDestroyed() ? action(win) : undefined; } catch { return undefined; }
 }
 
-export type UncaughtPhase = 'running' | 'shutdown';
+/** 'quiet' covers shutdown, the update hand-over and the startup check: nothing may open a dialog there. */
+export type UncaughtPhase = 'running' | 'quiet';
 export type UncaughtDecision = 'ignore' | 'log' | 'show';
 
 /**
@@ -38,8 +39,46 @@ export type UncaughtDecision = 'ignore' | 'log' | 'show';
 export function decideUncaught(error: unknown, phase: UncaughtPhase): UncaughtDecision {
   const message = error instanceof Error ? error.message : String(error);
   if (/Object has been destroyed/i.test(message)) return 'log';
-  return phase === 'shutdown' ? 'log' : 'show';
+  return phase === 'quiet' ? 'log' : 'show';
 }
 
 /** Longest time the process may spend winding down before it exits anyway, so an installer is never kept waiting. */
 export const SHUTDOWN_HARD_LIMIT_MS = 20 * 1000;
+
+/** Allows at most `max` error dialogs, no closer together than `minGapMs`, so a recurring error cannot bury the screen. */
+export function createDialogLimiter(minGapMs = 10_000, max = 3): (now: number) => boolean {
+  let shown = 0;
+  let last = -Infinity;
+  return (now) => {
+    if (shown >= max || now - last < minGapMs) return false;
+    shown++; last = now;
+    return true;
+  };
+}
+
+/** Longest the hand-over to the update installer may take while quitting (staging the window, waiting for it to show). */
+export const QUIT_HANDOFF_LIMIT_MS = 30 * 1000;
+
+/** Resolves 'done' when `promise` settles first, 'timeout' when `ms` pass first; a rejection counts as 'done'. */
+export function raceTimeout(promise: Promise<unknown>, ms: number): Promise<'done' | 'timeout'> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('timeout'), ms);
+    const finish = () => { clearTimeout(timer); resolve('done'); };
+    promise.then(finish, finish);
+  });
+}
+
+/** How long the app keeps waiting for the installer to quit it, while the update window still supervises, before starting anyway. */
+export const HANDOFF_QUIT_WAIT_MAX_MS = 75 * 1000;
+
+/**
+ * After the hand-over the installer is expected to quit the app. If it has not, starting the full app next to a
+ * waiting installer (late administrator prompt) is wrong while the update window is still supervising; give up
+ * waiting only once it is not, or the wait has run out.
+ */
+export function handoffWatchdogAction(installing: boolean, waitedMs: number): 'wait' | 'start' {
+  return installing && waitedMs < HANDOFF_QUIT_WAIT_MAX_MS ? 'wait' : 'start';
+}
+
+/** A launch that arrived while the app was winding down is repeated afterwards, unless an update took over. */
+export const shouldRelaunchAfterQuit = (launchRequested: boolean, updateStarted: boolean): boolean => launchRequested && !updateStarted;

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { decideUncaught, isLive, safeSend, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from '../src/main/safeWindow';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createDialogLimiter, decideUncaught, handoffWatchdogAction, HANDOFF_QUIT_WAIT_MAX_MS, isLive, QUIT_HANDOFF_LIMIT_MS, raceTimeout, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from '../src/main/safeWindow';
 
 const fakeWindow = (state: { win?: boolean; contents?: boolean } = {}) => {
   const send = vi.fn((_channel: string, ..._args: unknown[]) => {
@@ -50,17 +50,59 @@ describe('isLive and withLiveWindow', () => {
 describe('decideUncaught', () => {
   it('only logs "Object has been destroyed" in any phase', () => {
     expect(decideUncaught(new TypeError('Object has been destroyed'), 'running')).toBe('log');
-    expect(decideUncaught(new TypeError('Object has been destroyed'), 'shutdown')).toBe('log');
+    expect(decideUncaught(new TypeError('Object has been destroyed'), 'quiet')).toBe('log');
   });
 
   it('keeps showing real errors in normal operation but never opens a dialog while shutting down', () => {
     expect(decideUncaught(new Error('boom'), 'running')).toBe('show');
     expect(decideUncaught('boom', 'running')).toBe('show');
-    expect(decideUncaught(new Error('boom'), 'shutdown')).toBe('log');
+    expect(decideUncaught(new Error('boom'), 'quiet')).toBe('log');
   });
 
   it('leaves the wind-down a bounded time', () => {
     expect(SHUTDOWN_HARD_LIMIT_MS).toBeGreaterThan(10_000);
     expect(SHUTDOWN_HARD_LIMIT_MS).toBeLessThanOrEqual(30_000);
+  });
+});
+
+describe('error dialog limiter', () => {
+  it('allows a few dialogs, spaced apart, then none', () => {
+    const allow = createDialogLimiter(10_000, 3);
+    expect(allow(0)).toBe(true);
+    expect(allow(5_000)).toBe(false);
+    expect(allow(10_000)).toBe(true);
+    expect(allow(20_000)).toBe(true);
+    expect(allow(40_000)).toBe(false);
+  });
+});
+
+describe('quit hand-over limit', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('reports a hand-over that outlives its limit and one that finishes (or fails) in time', async () => {
+    vi.useFakeTimers();
+    const slow = raceTimeout(new Promise<void>(() => {}), QUIT_HANDOFF_LIMIT_MS);
+    await vi.advanceTimersByTimeAsync(QUIT_HANDOFF_LIMIT_MS);
+    expect(await slow).toBe('timeout');
+    expect(await raceTimeout(Promise.resolve(), 1000)).toBe('done');
+    expect(await raceTimeout(Promise.reject(new Error('x')), 1000)).toBe('done');
+  });
+
+  it('keeps the hand-over limit separate from, and longer than, the terminal shutdown', () => {
+    expect(QUIT_HANDOFF_LIMIT_MS).toBeGreaterThan(SHUTDOWN_HARD_LIMIT_MS / 2);
+  });
+});
+
+describe('hand-over watchdog and relaunch', () => {
+  it('waits while the update window supervises, starts when it does not or the wait ran out', () => {
+    expect(handoffWatchdogAction(true, 15_000)).toBe('wait');
+    expect(handoffWatchdogAction(false, 15_000)).toBe('start');
+    expect(handoffWatchdogAction(true, HANDOFF_QUIT_WAIT_MAX_MS)).toBe('start');
+  });
+
+  it('repeats a swallowed launch after quitting unless an update took over', () => {
+    expect(shouldRelaunchAfterQuit(true, false)).toBe(true);
+    expect(shouldRelaunchAfterQuit(true, true)).toBe(false);
+    expect(shouldRelaunchAfterQuit(false, false)).toBe(false);
   });
 });

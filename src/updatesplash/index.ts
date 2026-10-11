@@ -4,7 +4,7 @@
  */
 import { spawn } from 'child_process';
 import { app, BrowserWindow, ipcMain } from 'electron';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { safeSend } from '../main/safeWindow';
 import { closeAction, UpdateProgressModel, type UpdateSplashConfig, type UpdateStage } from '../shared/updateProgress';
@@ -50,6 +50,7 @@ let win: BrowserWindow | null = null;
 let finished = false;
 let currentStage: UpdateStage = 'preparing';
 let lastPercent = 0;
+let ending = false;
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
 const HIDE_NOTE_MS = 2200;
 const HEARTBEAT_EVERY_MS = 1000;
@@ -69,7 +70,13 @@ function requestClose(): void {
   hideTimer = setTimeout(() => { hideTimer = undefined; if (!finished && win && !win.isDestroyed()) win.hide(); }, HIDE_NOTE_MS);
 }
 
+/** Once this window stops supervising (error, open, exit) the app must not treat the update as still running. */
+function dropHeartbeat(): void {
+  try { rmSync(config.heartbeatFlag, { force: true }); } catch { /* it goes stale within seconds anyway */ }
+}
+
 function cleanupAndExit(): void {
+  dropHeartbeat();
   // The runtime copy is locked while this process lives. A GUI-subsystem Electron in node mode removes it
   // afterwards without ever creating a console window (no shell involved).
   try {
@@ -117,7 +124,7 @@ function run(): void {
     }
     if (elapsedMs > config.timeoutMs) {
       if (!timedOut) {
-        timedOut = true; clearInterval(timer); currentStage = 'error';
+        timedOut = true; clearInterval(timer); currentStage = 'error'; dropHeartbeat();
         clearTimeout(hideTimer); hideTimer = undefined;
         if (win && !win.isDestroyed()) win.show();
         push('error', percent, strings.slow, { detail: strings.slowHint });
@@ -133,6 +140,7 @@ function run(): void {
 
 ipcMain.on('update-splash:close', requestClose);
 ipcMain.on('update-splash:open', () => {
+  dropHeartbeat();
   try { spawn(config.appExe, [], { detached: true, stdio: 'ignore', cwd: config.installDir }).unref(); } catch { /* nothing else to try */ }
   cleanupAndExit();
 });
@@ -149,7 +157,9 @@ app.whenReady().then(() => {
     webPreferences: { preload: join(__dirname, '../preload/updatesplash.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   win.setMenu(null);
-  win.on('close', (e) => { if (!finished && closeAction(currentStage) === 'hide') { e.preventDefault(); requestClose(); } });
+  // A closing session (logout, shutdown) must be able to close this window.
+  win.on('session-end', () => { ending = true; });
+  win.on('close', (e) => { if (!finished && !ending && closeAction(currentStage) === 'hide') { e.preventDefault(); requestClose(); } });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.once('ready-to-show', () => {
@@ -159,4 +169,5 @@ app.whenReady().then(() => {
   });
   void win.loadFile(join(__dirname, '../ui/index.html'));
 });
+app.on('before-quit', () => { ending = true; });
 app.on('window-all-closed', () => { if (!finished) cleanupAndExit(); });

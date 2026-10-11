@@ -74,6 +74,12 @@ export class PtyHostClient extends EventEmitter {
     });
   }
 
+  /** Stops the host at once, without waiting for terminals (used when shutdown overran its limit). */
+  forceKill(): void {
+    this.shuttingDown = true;
+    try { this.child?.kill(); } catch { /* already gone */ }
+  }
+
   /** Kills all terminals (waiting for ConPTY to wind down), then stops the host. */
   async shutdown(timeoutMs = 4000): Promise<void> {
     this.shuttingDown = true;

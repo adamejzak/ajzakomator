@@ -57,7 +57,8 @@ describe('update window honesty', () => {
     model.update(snap({ elapsedMs: 5000, closed: true, dirBytes: 300 * MB }));
     expect(model.update(snap({ elapsedMs: 30000, closed: true, dirBytes: 300 * MB }))).toMatchObject({ stage: 'installing', note: 'waitingInstaller' });
     const much = model.update(snap({ elapsedMs: 200000, closed: true, dirBytes: 300 * MB }));
-    expect(much.percent).toBeLessThanOrEqual(61);
+    // Closing ends at 16%, installing at 90%; without a confirmed file change the stage may fill only 60% of that span.
+    expect(much.percent).toBeCloseTo(16 + (90 - 16) * 0.6, 1);
     expect(much.note).toBe('waitingInstaller');
   });
 
