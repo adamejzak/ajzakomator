@@ -474,9 +474,8 @@ select option { background: #171717; color: var(--text); }
 /* sidebar: grids under projects */
 .tab-item { gap: 7px; padding-right: 6px; }
 .tab-item .tname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-item .tsize { font-size: 10.5px; color: #4f4f4f; }
+.tab-item .badges { display: flex; gap: 4px; flex: none; }
 .tab-item.on { color: #ececec; background: var(--bg-2); }
-.tab-item.on .tsize { color: var(--muted); }
 .tab-item svg { width: 12px; height: 12px; flex: none; opacity: .8; }
 .tab-item .dot { width: 6px; height: 6px; }
 .sub-item.more { font-size: 11px; color: #4f4f4f; }
@@ -880,3 +879,4 @@ body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-sel
 .auth-status.ok { color: var(--waiting); }
 .auth-status.bad { color: var(--error); }
 .auth-status.wait { color: var(--muted); }
+.grid-tab .badges { display: inline-flex; gap: 3px; margin-left: 4px; }

@@ -2,7 +2,7 @@ import { useI18n } from '../i18n';
 import type { StatusCounts } from '../../../shared/status';
 
 /** ◐ working · ● waiting for you · ✕ exited */
-export function StatusBadges({ counts, compact }: { counts: StatusCounts; compact?: boolean }) {
+export function StatusBadges({ counts }: { counts: StatusCounts }) {
   const { tr } = useI18n();
   const items: Array<[keyof StatusCounts, string, string]> = [
     ['working', '◐', tr("pracuje")],
@@ -16,7 +16,7 @@ export function StatusBadges({ counts, compact }: { counts: StatusCounts; compac
       {shown.map(([k, icon, label]) => (
         <span key={k} className={`badge ${k}`} title={`${counts[k]} ${label}`}>
           {icon}
-          {(!compact || counts[k] > 1) && <span>{counts[k]}</span>}
+          <span>{counts[k]}</span>
         </span>
       ))}
     </span>

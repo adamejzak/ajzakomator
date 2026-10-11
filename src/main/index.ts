@@ -134,6 +134,7 @@ const login = new LoginManager({
   profilesSupported: process.platform !== 'darwin',
 });
 const hooks = new HookServer();
+if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();
 /** Codex session ids handed to cells this run (state may lag behind the renderer). */
 const claimedCodex = new Set<string>();
@@ -287,7 +288,7 @@ ptyHost.on('fatal', () => {
 
 hooks.on('hook', (cellId: string, event: string) => {
   if (!findCell(state, cellId)) return; // stale or foreign id
-  automation.statuses.set(cellId, event === 'prompt' || event === 'busy' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
+  automation.statuses.set(cellId, event === 'prompt' || event === 'busy' || event === 'stopbg' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
   send('cell:hook', cellId, event);
 });
 

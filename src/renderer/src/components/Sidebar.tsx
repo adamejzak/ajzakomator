@@ -30,7 +30,6 @@ function TabList({ project, active, statuses }: { project: Project; active: bool
     <>
       {tabs.map((t) => {
         const counts = aggregate(t.cells.map((c) => statuses[c.id] ?? 'idle'));
-        const dot = counts.waiting ? 'waiting' : counts.working ? 'working' : counts.exited ? 'exited' : '';
         const on = active && project.activeTabId === t.id;
         return (
           <div
@@ -56,10 +55,9 @@ function TabList({ project, active, statuses }: { project: Project; active: bool
               selectTab(project.id, t);
             }}
           >
-            {dot ? <span className={`dot ${dot}`} /> : <IGrid />}
+            <IGrid />
             <span className="tname">{t.name}</span>
-            <StatusBadges counts={counts} compact />
-            <span className="tsize">{describeLayout(t.layout)}</span>
+            <StatusBadges counts={counts} />
           </div>
         );
       })}

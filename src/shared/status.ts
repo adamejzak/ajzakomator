@@ -5,8 +5,8 @@
 // observed in this session, so restored/resumed agents never start out as "waiting".
 
 export type CellStatus = 'idle' | 'working' | 'waiting' | 'exited';
-/** prompt = UserPromptSubmit, stop = Stop, notify = permission/question, busy = tool or subagent activity. */
-export type HookEvent = 'prompt' | 'stop' | 'notify' | 'busy';
+/** prompt = UserPromptSubmit, stop = Stop, stopbg = Stop while background tasks still run, notify = permission/question, busy = tool or subagent activity. */
+export type HookEvent = 'prompt' | 'stop' | 'stopbg' | 'notify' | 'busy';
 export type StatusCause = 'heuristic' | 'hook';
 
 export const ECHO_MS = 250;
@@ -18,6 +18,8 @@ export const SUSTAIN_MS = 3000;
 export const SUSPEND_MS = 10_000;
 /** A hooked agent that is silent this long while "working" lost its Stop (killed subagent, crash). */
 export const STALL_MS = 30_000;
+/** Silence net while Claude reported background tasks at its last Stop (it starts a new turn itself when they finish). */
+export const BG_STALL_MS = 20 * 60_000;
 /** Silence after the user pressed Esc / Ctrl-C on a hooked, working agent. */
 export const INTERRUPT_QUIET_MS = 4000;
 
@@ -45,6 +47,7 @@ export class StatusTracker {
   private hooked = false;
   private turnObserved = false;
   private waitingFromNotify = false;
+  private background = false;
 
   constructor(private readonly quietMs = 2000) {}
 
@@ -72,7 +75,7 @@ export class StatusTracker {
 
   /** Esc / Ctrl-C while a hooked agent works: Claude sends no Stop for an interrupt, so check for silence soon. */
   interrupt(now: number): void {
-    if (this.status === 'working' && this.hooked) this.interruptAt = now;
+    if (this.status === 'working' && this.hooked && !this.background) this.interruptAt = now;
   }
 
   output(now: number): void {
@@ -105,7 +108,9 @@ export class StatusTracker {
     this.waitingFromNotify = event === 'notify';
     this.lastOutput = now;
     if (event === 'prompt') this.interruptAt = -Infinity;
-    this.set(event === 'prompt' || event === 'busy' ? 'working' : 'waiting', 'hook');
+    if (event === 'stopbg') this.background = true;
+    else if (event !== 'busy') this.background = false;
+    this.set(event === 'prompt' || event === 'busy' || event === 'stopbg' ? 'working' : 'waiting', 'hook');
   }
 
   /** Terminal notification (OSC 9 / bell). Ignored once precise hooks drive the status. */
@@ -117,6 +122,7 @@ export class StatusTracker {
 
   exited(): void {
     this.status = 'exited';
+    this.background = false;
   }
 
   reset(): void {
@@ -125,6 +131,7 @@ export class StatusTracker {
     this.hooked = false;
     this.turnObserved = false;
     this.waitingFromNotify = false;
+    this.background = false;
     this.lastInput = this.lastOutput = this.activityStart = this.lastTick = this.interruptAt = -Infinity;
   }
 
@@ -137,7 +144,7 @@ export class StatusTracker {
     this.lastTick = now;
     if (this.status === 'working') {
       // Hooked agents get a long net (lost Stop, killed subagent) and a short one after Esc/Ctrl-C.
-      const quiet = !this.hooked ? this.quietMs : this.interruptAt > -Infinity ? INTERRUPT_QUIET_MS : STALL_MS;
+      const quiet = !this.hooked ? this.quietMs : this.background ? BG_STALL_MS : this.interruptAt > -Infinity ? INTERRUPT_QUIET_MS : STALL_MS;
       const since = this.hooked ? Math.max(this.lastOutput, this.interruptAt) : this.lastOutput;
       if (now - since >= quiet) {
         this.armed = false;

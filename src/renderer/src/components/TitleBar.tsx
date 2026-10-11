@@ -103,7 +103,7 @@ export function WorkspaceTabs() {
                   <span className="label">{t.name}</span>
                 )}
                 <span className="size">{describeLayout(t.layout)}</span>
-                <StatusBadges counts={counts} compact />
+                <StatusBadges counts={counts} />
                 <span className="x" onMouseDown={(e) => e.stopPropagation()} onClick={() => closeTab(project.id, t.id)}><IX /></span>
               </div>
             );
