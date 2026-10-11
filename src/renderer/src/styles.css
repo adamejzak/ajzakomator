@@ -723,7 +723,6 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .sb-track { width: 110px; height: 3px; border-radius: 3px; background: var(--border-2); overflow: hidden; }
 .sb-track > span { display: block; height: 100%; background: var(--accent); transition: width .25s ease-out; }
 .sb-transfer { color: var(--muted); font-variant-numeric: tabular-nums; }
-.sb-hint { color: var(--muted); }
 .sb-muted { color: var(--muted); }
 .sb-error { color: var(--error); }
 .sb-error .sb-btn { color: var(--error); }

@@ -89,7 +89,7 @@ function cleanupAndExit(): void {
 function run(): void {
   const started = Date.now();
   const baseline = directoryBytes(config.installDir);
-  const model = new UpdateProgressModel(baseline, config.mode);
+  const model = new UpdateProgressModel(baseline);
   let dirBytes: number | undefined;
   let sampling = false;
   let lastSample = 0;
@@ -118,7 +118,7 @@ function run(): void {
 
     if (stage === 'done') {
       finished = true; clearInterval(timer);
-      push('done', 100, config.mode === 'quit' ? strings.doneQuit : strings.done);
+      push('done', 100, strings.done);
       setTimeout(cleanupAndExit, FINISH_DELAY_MS);
       return;
     }
@@ -145,7 +145,8 @@ ipcMain.on('update-splash:open', () => {
   cleanupAndExit();
 });
 ipcMain.handle('update-splash:init', () => ({
-  title: config.strings.title, hint: config.strings.hint, fromVersion: config.fromVersion, version: config.version,
+  title: config.strings.title, hint: config.strings.hint, fromVersion: config.fromVersion, version: config.version,
+
   open: config.strings.open, close: config.strings.close,
 }));
 

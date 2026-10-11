@@ -70,7 +70,7 @@ Język zmienisz w **Ustawienia → Język aplikacji**. Przy pierwszym uruchomien
 
 ## Aktualizacje
 
-Zainstalowana wersja Windows sprawdza GitHub Releases i pobiera aktualizacje w tle. Nagłówek pokazuje postęp, rozmiar i prędkość pobierania. Gdy pobieranie się skończy, wybierz **Nowa wersja … · uruchom ponownie** albo zamknij aplikację normalnie - pobrana aktualizacja zainstaluje się bez ponownego uruchamiania. Przed restartem zapisz zmiany w edytorze. Rozmowy agentów są przywracane przez mechanizm wznowienia ich CLI.
+Zainstalowana wersja Windows sprawdza GitHub Releases. **Ustawienia → Aktualizacje** mają dwa tryby, a aktualizacja nigdy nie instaluje się bez Twojego kliknięcia. **Automatycznie**: przy starcie aplikacja sprawdza aktualizacje (okno pojawia się tylko, gdy sprawdzanie trwa dłużej) i gdy jest nowa wersja, pyta „Zainstaluj teraz” albo „Później”; pobieranie rusza w tle już podczas pytania, więc „Zainstaluj teraz” przechodzi od razu do instalatora („Później”, przycisk zamknięcia i Escape uruchamiają obecną wersję, a przycisk w stopce zainstaluje aktualizację później). **Ręcznie** (domyślnie): przy starcie nic się nie dzieje; aplikacja pobiera aktualizacje w tle, a nagłówek pokazuje postęp, rozmiar i prędkość pobierania. Gdy pobieranie się skończy, kliknij w stopce **Nowa wersja … · uruchom ponownie**. Przed restartem zapisz zmiany w edytorze. Rozmowy agentów są przywracane przez mechanizm wznowienia ich CLI.
 
 Ręczne sprawdzenie: kliknij prawym przyciskiem nazwę i wersję **ajzakomator**, a następnie wybierz **Sprawdź aktualizacje**. Po błędzie nagłówek pokazuje jego treść i pozwala ponowić próbę.
 

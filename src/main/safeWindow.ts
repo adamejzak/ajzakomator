@@ -56,18 +56,6 @@ export function createDialogLimiter(minGapMs = 10_000, max = 3): (now: number) =
   };
 }
 
-/** Longest the hand-over to the update installer may take while quitting (staging the window, waiting for it to show). */
-export const QUIT_HANDOFF_LIMIT_MS = 30 * 1000;
-
-/** Resolves 'done' when `promise` settles first, 'timeout' when `ms` pass first; a rejection counts as 'done'. */
-export function raceTimeout(promise: Promise<unknown>, ms: number): Promise<'done' | 'timeout'> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve('timeout'), ms);
-    const finish = () => { clearTimeout(timer); resolve('done'); };
-    promise.then(finish, finish);
-  });
-}
-
 /** How long the app keeps waiting for the installer to quit it, while the update window still supervises, before starting anyway. */
 export const HANDOFF_QUIT_WAIT_MAX_MS = 75 * 1000;
 

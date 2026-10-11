@@ -278,14 +278,12 @@ function SettingsModal() {
           <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>
           <select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.updateMode}
             onChange={(e) => setSetting({ updateMode: normalizeUpdateMode(e.target.value) })}>
-            <option value="manual">{tr('Ręcznie - przyciskiem w stopce (domyślnie)')}</option>
-            <option value="ask">{tr('Pytaj przy starcie')}</option>
-            <option value="auto">{tr('Automatycznie - instaluj przy starcie')}</option>
+            <option value="ask">{tr('Automatycznie (sprawdzaj przy starcie, pytaj przed instalacją)')}</option>
+            <option value="manual">{tr('Ręcznie (przycisk w stopce)')}</option>
           </select>
           <span className="muted">{{
             manual: tr('Aplikacja startuje od razu. Aktualizacje pobierają się w tle, a przycisk w stopce zainstaluje je, gdy zechcesz.'),
-            ask: tr('Przy starcie aplikacja sprawdza aktualizacje i pyta, czy zainstalować od razu. „Później” uruchamia obecną wersję, a przycisk w stopce zainstaluje aktualizację.'),
-            auto: tr('Przy starcie aplikacja sprawdza aktualizacje, pobiera je i instaluje bez pytania. Pobrana aktualizacja instaluje się też przy zamknięciu aplikacji.'),
+            ask: tr('Przy starcie aplikacja sprawdza aktualizacje i pyta, czy zainstalować od razu. Pobieranie rusza w tle już podczas pytania. „Później” uruchamia obecną wersję, a przycisk w stopce zainstaluje aktualizację.'),
           }[s.settings.updateMode]}</span>
         </div>
         <div className="section-title">{tr('Konta AI')}</div>

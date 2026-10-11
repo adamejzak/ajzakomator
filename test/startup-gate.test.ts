@@ -4,17 +4,16 @@ import {
   type GateDeps, type GateEnv, type GateView,
 } from '../src/main/startupGate';
 
-const env: GateEnv = { platform: 'win32', packaged: true, portable: false, mode: 'auto', recentFailure: false };
+const env: GateEnv = { platform: 'win32', packaged: true, portable: false, mode: 'ask', recentFailure: false };
 
 describe('shouldGateOnStartup', () => {
-  it('gates only the installed Windows build in the ask and auto modes', () => {
+  it('gates only the installed Windows build in the Automatic (ask) mode', () => {
     expect(shouldGateOnStartup(env)).toBe(true);
     expect(shouldGateOnStartup({ ...env, platform: 'darwin' })).toBe(false);
     expect(shouldGateOnStartup({ ...env, platform: 'linux' })).toBe(false);
     expect(shouldGateOnStartup({ ...env, packaged: false })).toBe(false);
     expect(shouldGateOnStartup({ ...env, portable: true })).toBe(false);
     expect(shouldGateOnStartup({ ...env, mode: 'manual' })).toBe(false);
-    expect(shouldGateOnStartup({ ...env, mode: 'ask' })).toBe(true);
     expect(shouldGateOnStartup({ ...env, recentFailure: true })).toBe(false);
   });
 
@@ -49,6 +48,8 @@ describe('runStartupGate', () => {
       download: vi.fn(async (progress: (p: number) => void) => { progress(50); }),
       show: vi.fn((view: GateView) => { views.push(view); }),
       hide: vi.fn(),
+      // By default the user answers "Install now" at once; the ask-mode tests below answer by hand.
+      onInstall: (install: () => void) => { install(); },
       handoff: vi.fn(async (_version: string, hide: () => void) => { hide(); return true; }),
       recordFailure: vi.fn(),
       ...over,
@@ -76,37 +77,20 @@ describe('runStartupGate', () => {
     expect(deps.hide).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a checking window that has just appeared up for the minimum time', async () => {
-    const { deps, views } = make({ check: vi.fn(() => delayed(undefined, 500)) });
+  it('closes a checking window the moment the answer arrives, without holding it on screen', async () => {
+    const { deps, views } = make({ check: vi.fn(() => delayed(undefined, 900)) });
     const result = runStartupGate(deps);
-    let settled = false;
-    void result.then(() => { settled = true; });
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(900);
+    expect(await result).toBe('start-app');
     expect(views).toEqual([{ kind: 'checking' }]);
-    await vi.advanceTimersByTimeAsync(599);
-    expect(settled).toBe(false);
-    expect(deps.hide).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(await result).toBe('start-app');
     expect(deps.hide).toHaveBeenCalledTimes(1);
   });
 
-  it('ends the minimum-time hold at once when the user cancels during it', async () => {
-    let cancel!: () => void;
-    const { deps } = make({ check: vi.fn(() => delayed(undefined, 500)), onCancel: (cb) => { cancel = cb; } });
-    const result = runStartupGate(deps);
-    await vi.advanceTimersByTimeAsync(500);
-    cancel();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(await result).toBe('start-app');
-    expect(deps.hide).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not hold a window the user already closed', async () => {
+  it('returns at once when the user closes the checking window', async () => {
     let cancel!: () => void;
     const { deps } = make({ check: vi.fn(() => new Promise<never>(() => {})), onCancel: (cb) => { cancel = cb; } });
     const result = runStartupGate(deps);
-    await vi.advanceTimersByTimeAsync(450);
+    await vi.advanceTimersByTimeAsync(850);
     cancel();
     expect(await result).toBe('start-app');
     expect(deps.hide).toHaveBeenCalledTimes(1);
@@ -143,14 +127,10 @@ describe('runStartupGate', () => {
     expect(await result).toBe('start-app');
   });
 
-  it('downloads, reports progress and hands over to the installer without starting the app', async () => {
+  it('offers the update, downloads and hands over to the installer without starting the app', async () => {
     const { deps, views } = make({ check: vi.fn(async () => ({ version: '2.0.0' })) });
     expect(await runStartupGate(deps)).toBe('installing');
-    expect(views).toEqual([
-      { kind: 'downloading', version: '2.0.0', percent: 0 },
-      { kind: 'downloading', version: '2.0.0', percent: 50 },
-      { kind: 'installing', version: '2.0.0' },
-    ]);
+    expect(views).toEqual([{ kind: 'ask', version: '2.0.0' }, { kind: 'installing', version: '2.0.0' }]);
     expect(deps.handoff).toHaveBeenCalledWith('2.0.0', expect.any(Function));
     expect(deps.hide).toHaveBeenCalledTimes(1);
     expect(deps.recordFailure).not.toHaveBeenCalled();
@@ -325,18 +305,22 @@ describe('runStartupGate', () => {
     const asking = (over: Partial<GateDeps> = {}) => {
       let install!: () => void; let cancel!: () => void;
       const made = make({
-        check: vi.fn(async () => ({ version: '2.0.0' })), mode: 'ask',
+        check: vi.fn(async () => ({ version: '2.0.0' })),
         onInstall: (cb) => { install = cb; }, onCancel: (cb) => { cancel = cb; }, ...over,
       });
       return { ...made, install: () => install(), cancel: () => cancel() };
     };
 
-    it('offers the update and waits without downloading', async () => {
-      const { deps, views, cancel } = asking();
+    it('offers the update, starts downloading at once and keeps the prompt on screen while it runs', async () => {
+      let progress!: (p: number) => void;
+      const { deps, views, cancel } = asking({ download: vi.fn((onProgress: (p: number) => void) => { progress = onProgress; return new Promise<void>(() => {}); }) });
       const result = runStartupGate(deps);
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(deps.download).toHaveBeenCalledTimes(1);
+      progress(30);
+      await vi.advanceTimersByTimeAsync(30_000);
+      progress(60);
       expect(views).toEqual([{ kind: 'ask', version: '2.0.0' }]);
-      expect(deps.download).not.toHaveBeenCalled();
       // A window that crashed or failed to load answers "Later" through the same cancel path.
       cancel();
       expect(await result).toBe('start-app');
@@ -366,42 +350,88 @@ describe('runStartupGate', () => {
       expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
     });
 
-    it('"Install now" runs the normal download and hand-over', async () => {
+    it('"Install now" while the download is still running shows its progress, then hands over', async () => {
+      let progress!: (p: number) => void; let finish!: () => void;
+      const { deps, views, install } = asking({ download: vi.fn((onProgress: (p: number) => void) => new Promise<void>((resolve) => { progress = onProgress; finish = resolve; })) });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      progress(20);
+      install();
+      await vi.advanceTimersByTimeAsync(10);
+      progress(70);
+      finish();
+      expect(await result).toBe('installing');
+      expect(views).toEqual([
+        { kind: 'ask', version: '2.0.0' },
+        { kind: 'downloading', version: '2.0.0', percent: 20 },
+        { kind: 'downloading', version: '2.0.0', percent: 70 },
+        { kind: 'installing', version: '2.0.0' },
+      ]);
+      expect(deps.download).toHaveBeenCalledTimes(1);
+      expect(deps.handoff).toHaveBeenCalledWith('2.0.0', expect.any(Function));
+      expect(deps.recordFailure).not.toHaveBeenCalled();
+    });
+
+    it('"Install now" after the download finished goes straight to the hand-over', async () => {
       const { deps, views, install } = asking();
       const result = runStartupGate(deps);
       await vi.advanceTimersByTimeAsync(10);
       install();
       expect(await result).toBe('installing');
-      expect(views.map((v) => v.kind)).toEqual(['ask', 'downloading', 'downloading', 'installing']);
-      expect(deps.handoff).toHaveBeenCalledWith('2.0.0', expect.any(Function));
-      expect(deps.recordFailure).not.toHaveBeenCalled();
+      expect(views.map((v) => v.kind)).toEqual(['ask', 'installing']);
+      expect(deps.download).toHaveBeenCalledTimes(1);
     });
 
-    it('"Later" (or X, Escape) starts the app without downloading, installing or recording a failure', async () => {
-      const { deps, cancel } = asking();
+    it('a download that failed while the prompt was open fails when "Install now" is chosen', async () => {
+      const { deps, install } = asking({ download: vi.fn(async () => { throw new Error('disk full'); }) });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      install();
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(await result).toBe('start-app');
+      expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
+      expect(deps.handoff).not.toHaveBeenCalled();
+    });
+
+    it('"Later" after a failed download starts the app quietly, without a failure record or prompt loop', async () => {
+      const { deps, cancel } = asking({ download: vi.fn(async () => { throw new Error('disk full'); }) });
       const result = runStartupGate(deps);
       await vi.advanceTimersByTimeAsync(10);
       cancel();
       expect(await result).toBe('start-app');
-      expect(deps.download).not.toHaveBeenCalled();
+      expect(deps.recordFailure).not.toHaveBeenCalled();
+      expect(deps.download).toHaveBeenCalledTimes(1);
+    });
+
+    it('a stalled download is still a failure when "Install now" is chosen after the stall', async () => {
+      const { deps, install } = asking({ download: vi.fn(() => new Promise<void>(() => {})) });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(61_000);
+      install();
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(await result).toBe('start-app');
+      expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
+    });
+
+    it('"Later" (or X, Escape) starts the app without installing or recording a failure and leaves the download running', async () => {
+      const { deps, cancel } = asking({ download: vi.fn(() => new Promise<void>(() => {})) });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      cancel();
+      expect(await result).toBe('start-app');
       expect(deps.handoff).not.toHaveBeenCalled();
+      expect(deps.markAttempt).toBeUndefined();
       expect(deps.recordFailure).not.toHaveBeenCalled();
       expect(deps.hide).toHaveBeenCalledTimes(1);
     });
 
-    it('asks nothing when there is no update, and never retries a failed version', async () => {
+    it('never prompts or downloads when there is no update, and never retries a failed version', async () => {
       const none = asking({ check: vi.fn(async () => undefined) });
       expect(await runStartupGate(none.deps)).toBe('start-app');
       expect(none.views).toEqual([]);
       const skipped = asking({ skipVersion: '2.0.0' });
       expect(await runStartupGate(skipped.deps)).toBe('start-app');
       expect(skipped.views).toEqual([]);
-    });
-
-    it('the auto mode never asks', async () => {
-      const { deps, views } = make({ check: vi.fn(async () => ({ version: '2.0.0' })), mode: 'auto' });
-      expect(await runStartupGate(deps)).toBe('installing');
-      expect(views.some((v) => v.kind === 'ask')).toBe(false);
     });
 
     it('closing during the download after "Install now" still starts the app without a failure record', async () => {

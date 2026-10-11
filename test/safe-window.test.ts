@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDialogLimiter, decideUncaught, handoffWatchdogAction, HANDOFF_QUIT_WAIT_MAX_MS, isLive, QUIT_HANDOFF_LIMIT_MS, raceTimeout, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from '../src/main/safeWindow';
+import { createDialogLimiter, decideUncaught, handoffWatchdogAction, HANDOFF_QUIT_WAIT_MAX_MS, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from '../src/main/safeWindow';
 
 const fakeWindow = (state: { win?: boolean; contents?: boolean } = {}) => {
   const send = vi.fn((_channel: string, ..._args: unknown[]) => {
@@ -73,23 +73,6 @@ describe('error dialog limiter', () => {
     expect(allow(10_000)).toBe(true);
     expect(allow(20_000)).toBe(true);
     expect(allow(40_000)).toBe(false);
-  });
-});
-
-describe('quit hand-over limit', () => {
-  afterEach(() => vi.useRealTimers());
-
-  it('reports a hand-over that outlives its limit and one that finishes (or fails) in time', async () => {
-    vi.useFakeTimers();
-    const slow = raceTimeout(new Promise<void>(() => {}), QUIT_HANDOFF_LIMIT_MS);
-    await vi.advanceTimersByTimeAsync(QUIT_HANDOFF_LIMIT_MS);
-    expect(await slow).toBe('timeout');
-    expect(await raceTimeout(Promise.resolve(), 1000)).toBe('done');
-    expect(await raceTimeout(Promise.reject(new Error('x')), 1000)).toBe('done');
-  });
-
-  it('keeps the hand-over limit separate from, and longer than, the terminal shutdown', () => {
-    expect(QUIT_HANDOFF_LIMIT_MS).toBeGreaterThan(SHUTDOWN_HARD_LIMIT_MS / 2);
   });
 });
 

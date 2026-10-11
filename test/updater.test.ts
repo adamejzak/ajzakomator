@@ -68,7 +68,7 @@ describe('updater lifecycle', () => {
     updater.emit('update-available', { version: '0.5.0' });
     expect(api.getUpdateState()).toMatchObject({ status: 'available', portable: true, url: api.RELEASES_URL });
     updater.emit('update-downloaded', { version: '0.5.0' });
-    api.installNow(); api.installOnQuit();
+    api.installNow();
     expect(mock.quit).not.toHaveBeenCalled(); expect(mock.install).not.toHaveBeenCalled();
   });
   it('uses manual updates on macOS without requiring portable environment flags', async () => {
@@ -79,7 +79,7 @@ describe('updater lifecycle', () => {
     updater.emit('download-progress', { percent: 50, transferred: 50, total: 100, bytesPerSecond: 10 });
     updater.emit('update-downloaded', { version: '0.5.0' });
     expect(api.getUpdateState()).toMatchObject({ status: 'available', portable: true, url: api.RELEASES_URL });
-    api.installNow(); api.installOnQuit();
+    api.installNow();
     expect(mock.quit).not.toHaveBeenCalled(); expect(mock.install).not.toHaveBeenCalled();
   });
   it('exposes disabled development checks', async () => {
@@ -127,15 +127,11 @@ describe('updater lifecycle', () => {
     await api.checkForUpdates();
     expect(api.getUpdateState()).toMatchObject({ status: 'error', message: 'download interrupted', version: '0.5.0' });
   });
-  it('reports silent-install failure and returns a defensive state snapshot', async () => {
+  it('returns a defensive state snapshot', async () => {
     const api = await setup();
     updater.emit('update-downloaded', { version: '0.5.0' });
     const snapshot = api.getUpdateState(); snapshot.status = 'idle';
     expect(api.getUpdateState().status).toBe('ready');
-    mock.install.mockReturnValueOnce(false);
-    await api.installOnQuit();
-    expect(api.getUpdateState().status).toBe('error');
-    expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
   });
 
   it('asks for fresh release data and remembers when the last check found nothing', async () => {
@@ -144,18 +140,6 @@ describe('updater lifecycle', () => {
     expect(updater.requestHeaders).toMatchObject({ 'Cache-Control': 'no-cache' });
     updater.emit('update-not-available', { version: '0.5.5' });
     expect(api.getUpdateState()).toMatchObject({ status: 'current', version: '0.5.5', checkedAt: Date.parse('2026-10-11T10:00:00Z') });
-  });
-  it('installs on quit only while automatic installation is on and keeps the update for the button otherwise', async () => {
-    const api = await import('../src/main/updater');
-    let automatic = false;
-    api.initUpdater(vi.fn(), { autoInstallOnQuit: () => automatic });
-    updater.emit('update-downloaded', { version: '0.6.0' });
-    await api.installOnQuit();
-    expect(mock.install).not.toHaveBeenCalled();
-    expect(api.getUpdateState().status).toBe('ready');
-    automatic = true;
-    await api.installOnQuit();
-    expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
   });
   describe('startup gate helpers', () => {
     const setupGate = async () => { const api = await import('../src/main/updater'); api.initUpdater(vi.fn(), { strings: () => strings }); return api; };
@@ -179,6 +163,33 @@ describe('updater lifecycle', () => {
       await api.startupCheck();
       expect(download).toHaveBeenCalledOnce();
     });
+    it('never installs on quit by itself, whatever the update state', async () => {
+      await setupGate();
+      expect(updater.autoInstallOnAppQuit).toBe(false);
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      expect(updater.autoInstallOnAppQuit).toBe(false);
+      expect(mock.install).not.toHaveBeenCalled(); expect(mock.quit).not.toHaveBeenCalled();
+    });
+    it('keeps a download started for the prompt running as a background download that ends ready', async () => {
+      const api = await setupGate();
+      let finish!: () => void;
+      Object.assign(updater, { downloadUpdate: vi.fn(() => new Promise<void>((resolve) => { finish = resolve; })) });
+      updater.emit('update-available', { version: '0.6.0' });
+      const progress = vi.fn();
+      const running = api.startupDownload(progress);
+      updater.emit('download-progress', { percent: 40, transferred: 4, total: 10, bytesPerSecond: 1 });
+      expect(progress).toHaveBeenCalledWith(40);
+      expect(api.getUpdateState()).toMatchObject({ status: 'downloading', percent: 40 });
+      finish(); await running;
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      expect(api.getUpdateState().status).toBe('ready');
+    });
+    it('reports a failed startup download as an update error', async () => {
+      const api = await setupGate();
+      Object.assign(updater, { downloadUpdate: vi.fn().mockRejectedValue(new Error('disk full')) });
+      await expect(api.startupDownload(vi.fn())).rejects.toThrow('disk full');
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', message: 'disk full' });
+    });
     it('hands over to the installer only for a downloaded update, hiding the startup window first', async () => {
       const api = await setupGate();
       const hide = vi.fn();
@@ -187,11 +198,11 @@ describe('updater lifecycle', () => {
       updater.emit('update-downloaded', { version: '0.6.0' });
       mock.install.mockImplementationOnce(() => { expect(hide).toHaveBeenCalledOnce(); return true; });
       expect(await api.startupHandoff(hide)).toBe(true);
-      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', 'relaunch', strings);
+      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', strings);
       expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, true);
       expect(mock.app.quit).toHaveBeenCalledOnce();
       expect(api.getUpdateState().status).toBe('installing');
-      await api.installOnQuit();
+      await api.startupHandoff(vi.fn());
       expect(mock.install).toHaveBeenCalledTimes(1);
     });
     it('does not report a hand-over when the installer did not start', async () => {
@@ -223,8 +234,8 @@ describe('updater lifecycle', () => {
       api.blockUpdateVersion('0.6.0');
       updater.emit('update-downloaded', { version: '0.6.0' });
       expect(api.getUpdateState().status).toBe('current');
-      await api.installOnQuit();
-      expect(mock.install).not.toHaveBeenCalled();
+      api.installNow();
+      expect(mock.quit).not.toHaveBeenCalled();
       updater.emit('update-downloaded', { version: '0.7.0' });
       expect(api.getUpdateState()).toMatchObject({ status: 'ready', version: '0.7.0' });
     });
@@ -261,20 +272,12 @@ describe('updater lifecycle', () => {
       await setupWindow(); updater.emit('update-downloaded', { version: '0.6.0' });
       expect(splash.stage).not.toHaveBeenCalled();
     });
-    it('asks for the strings of the mode it is installing in', async () => {
-      const api = await import('../src/main/updater');
-      const forMode = vi.fn(() => strings);
-      api.initUpdater(vi.fn(), { strings: forMode });
-      updater.emit('update-downloaded', { version: '0.6.0' });
-      await api.installOnQuit();
-      expect(forMode).toHaveBeenCalledWith('quit');
-    });
     it('shows the window before handing over to the installer, without the artificial pause', async () => {
       const api = await setupWindow();
       updater.emit('update-downloaded', { version: '0.6.0' });
       api.installNow();
       await vi.advanceTimersByTimeAsync(0);
-      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', 'relaunch', strings);
+      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', strings);
       expect(mock.quit).toHaveBeenCalledExactlyOnceWith(true, true);
     });
     it('installs after the short pause when the window cannot be shown', async () => {
@@ -301,13 +304,6 @@ describe('updater lifecycle', () => {
       updater.emit('update-downloaded', { version: '0.6.0' });
       api.installNow(); await vi.advanceTimersByTimeAsync(400);
       expect(mock.quit).toHaveBeenCalledExactlyOnceWith(true, true);
-    });
-    it('shows the window for installation on quit as well', async () => {
-      const api = await setupWindow();
-      updater.emit('update-downloaded', { version: '0.6.0' });
-      await api.installOnQuit();
-      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', 'quit', strings);
-      expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
     });
   });
 });

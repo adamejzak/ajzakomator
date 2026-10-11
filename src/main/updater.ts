@@ -15,8 +15,7 @@ let initialized = false;
 let portable = false;
 let pending: Promise<void> | undefined;
 let watchdog: ReturnType<typeof setTimeout> | undefined;
-let getStrings: ((mode: 'relaunch' | 'quit') => UpdateStrings) | undefined;
-let autoInstallOnQuit: () => boolean = () => true;
+let getStrings: (() => UpdateStrings) | undefined;
 let startupAbandoned = false;
 /** Set once an installer was started for this run; nothing may start a second one for the same update. */
 let installStarted = false;
@@ -72,15 +71,12 @@ export function getUpdateState(): UpdateState { return { ...state }; }
 
 export interface UpdaterHooks {
   /** Localizes the detached update window (the footer differs by mode); without it installation stays invisible as before. */
-  strings?: (mode: 'relaunch' | 'quit') => UpdateStrings;
-  /** Whether a downloaded update is installed when the app quits (the 'auto' update mode). */
-  autoInstallOnQuit?: () => boolean;
+  strings?: () => UpdateStrings;
 }
 
 export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHooks = {}): void {
   emit = onChange;
   getStrings = hooks.strings;
-  autoInstallOnQuit = hooks.autoInstallOnQuit ?? (() => true);
   if (initialized) { emit(state); return; }
   initialized = true;
   portable = !!(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE) || process.platform === 'darwin';
@@ -124,9 +120,9 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
 }
 
 /** Shows the progress window; false means installation proceeds without it. */
-async function showWindow(mode: 'relaunch' | 'quit'): Promise<boolean> {
+async function showWindow(): Promise<boolean> {
   if (!getStrings || !state.version) return false;
-  try { return await showUpdateWindow(state.version, mode, getStrings(mode)); }
+  try { return await showUpdateWindow(state.version, getStrings()); }
   catch (error) { console.error('update window failed', error); return false; }
 }
 
@@ -135,22 +131,12 @@ export function installNow(): void {
   installStarted = true;
   set({ ...state, status: 'installing' });
   void (async () => {
-    const shown = await showWindow('relaunch');
+    const shown = await showWindow();
     // Without the window, keep the short pause that lets the renderer paint the installing state.
     if (!shown) await new Promise((resolve) => setTimeout(resolve, 400));
     try { autoUpdater.quitAndInstall(true, true); }
     catch (error) { fail(error); if (shown) void abortUpdateWindow(); }
   })();
-}
-
-export async function installOnQuit(): Promise<void> {
-  if (portable || state.status !== 'ready' || !autoInstallOnQuit() || installStarted) return;
-  installStarted = true;
-  const shown = await showWindow('quit');
-  try {
-    const installed = (autoUpdater as unknown as { install(silent: boolean, relaunch: boolean): boolean }).install(true, false);
-    if (!installed) { fail(new Error('Nie udało się zainstalować aktualizacji.')); if (shown) void abortUpdateWindow(); }
-  } catch (error) { fail(error); if (shown) void abortUpdateWindow(); }
 }
 
 // ── startup gate: the same updater, driven before the main window exists ─────────────────────────
@@ -189,7 +175,10 @@ export function blockUpdateVersion(version: string | undefined): void {
 /** Marks the startup check as given up, so a late answer is handled like a background check. */
 export function abandonStartupCheck(): void { startupAbandoned = true; }
 
-/** Downloads the update found by `startupCheck`, reporting percentages. */
+/**
+ * Downloads the update found by `startupCheck`, reporting percentages. The gate starts it as soon as the
+ * update is offered, so it may keep running as an ordinary background download after the user chose "Later".
+ */
 export async function startupDownload(onProgress: (percent: number) => void): Promise<void> {
   const listener = (p: { percent: number }) => onProgress(p.percent);
   autoUpdater.on('download-progress', listener);
@@ -197,6 +186,7 @@ export async function startupDownload(onProgress: (percent: number) => void): Pr
   // The private runtime of the update window is copied while the download runs, not after it (saves the copy time at hand-over).
   if (getStrings) void stageSplashRuntime();
   try { await autoUpdater.downloadUpdate(); }
+  catch (error) { fail(error); throw error; }
   finally { autoUpdater.removeListener('download-progress', listener); }
 }
 
@@ -208,7 +198,7 @@ export async function startupHandoff(hide: () => void): Promise<boolean> {
   if (portable || state.status !== 'ready' || installStarted) return false;
   installStarted = true;
   set({ ...state, status: 'installing' });
-  const shown = await showWindow('relaunch');
+  const shown = await showWindow();
   hide();
   // install() reports whether the installer started; quitAndInstall would silently do nothing when it did not.
   try {

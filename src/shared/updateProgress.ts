@@ -6,7 +6,6 @@ export interface UpdateStrings {
   hint: string;
   stages: Record<'preparing' | 'closing' | 'installing' | 'launching', string>;
   done: string;
-  doneQuit: string;
   slow: string;
   slowHint: string;
   open: string;
@@ -23,7 +22,6 @@ export interface UpdateStrings {
 
 /** Everything the detached update window needs; written to disk because the app exits before it starts. */
 export interface UpdateSplashConfig {
-  mode: 'relaunch' | 'quit';
   fromVersion: string;
   version: string;
   oldPid: number;
@@ -100,7 +98,7 @@ export class UpdateProgressModel {
   private closedAt?: number;
   private installedAt?: number;
 
-  constructor(private readonly baselineBytes: number, private readonly mode: 'relaunch' | 'quit' = 'relaunch') {}
+  constructor(private readonly baselineBytes: number) {}
 
   update(s: UpdateSnapshot): UpdateProgress {
     let stage: UpdateStage;
@@ -110,7 +108,7 @@ export class UpdateProgressModel {
     if (s.installed) this.installedAt ??= s.elapsedMs;
     if (s.dirBytes !== undefined && s.closed) this.minBytes = Math.min(this.minBytes, s.dirBytes);
 
-    if (s.ready || (this.mode === 'quit' && s.installed)) {
+    if (s.ready) {
       stage = 'done';
       percent = 100;
     } else if (s.installed) {

@@ -19,10 +19,10 @@ import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from './sessions';
 import { createSaver, loadState } from './store';
-import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, isPortableBuild, updateHandoffStarted, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
+import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, isPortableBuild, updateHandoffStarted, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
 import { compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup } from './startupGate';
 import { createGateWindow } from './gateWindow';
-import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, QUIT_HANDOFF_LIMIT_MS, raceTimeout, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
+import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
 import { createUpdaterLogger } from './updaterLog';
 import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
@@ -145,12 +145,9 @@ const verifiedCodex = new Map<string, string>();
 let mcpError: string | undefined;
 
 /** Localized texts for the detached update window (it cannot load the app's catalog). */
-const updateStrings = (mode: 'relaunch' | 'quit'): UpdateStrings => ({
+const updateStrings = (): UpdateStrings => ({
   title: tr('Aktualizacja do wersji {version}', { version: getUpdateState().version ?? '' }),
-  // After an install on quit nothing starts the app again, so the footer must not promise it.
-  hint: mode === 'quit'
-    ? tr('Gdy instalacja się zakończy, uruchom ajzakomator ponownie.')
-    : tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
+  hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
   stages: {
     preparing: tr('Przygotowanie aktualizacji…'),
     closing: tr('Zamykanie ajzakomatora…'),
@@ -158,7 +155,6 @@ const updateStrings = (mode: 'relaunch' | 'quit'): UpdateStrings => ({
     launching: tr('Uruchamianie ajzakomatora…'),
   },
   done: tr('Gotowe - uruchamiam nową wersję'),
-  doneQuit: tr('Aktualizacja zainstalowana'),
   slow: tr('Aktualizacja trwa dłużej niż zwykle'),
   slowHint: tr('Możesz uruchomić ajzakomator ręcznie.'),
   open: tr('Uruchom ajzakomator'),
@@ -588,7 +584,7 @@ async function runUpdateGate(): Promise<boolean> {
       check: startupCheck, abandonCheck: abandonStartupCheck, download: startupDownload,
       handoff: (next, hide) => { handedOver = next; return startupHandoff(hide); },
       show: window.show, hide: window.hide, onCancel: window.onCancel, onInstall: window.onInstall,
-      mode: state.settings.updateMode === 'ask' ? 'ask' : 'auto', skipVersion: failure?.version,
+      skipVersion: failure?.version,
       markAttempt: writeGateRecord, recordFailure: recordUpdateFailure,
     });
     if (result !== 'installing') { gating = false; return false; }
@@ -629,7 +625,7 @@ app.whenReady().then(async () => {
   if (superseded) return;
   // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
   Menu.setApplicationMenu(null);
-  initUpdater((s) => send('update:state', s), { strings: updateStrings, autoInstallOnQuit: () => state.settings.updateMode === 'auto' });
+  initUpdater((s) => send('update:state', s), { strings: updateStrings });
   if (await runUpdateGate()) return;
   await startMainApp();
 }).catch((error) => console.error('startup failed', error));
@@ -666,7 +662,6 @@ app.on('before-quit', (e) => {
   e.preventDefault();
   quitting = true;
   // However the wind-down goes (stuck terminals), the process must end: a running installer waits for it.
-  // This limit covers the terminals and servers only; the update hand-over has its own, below.
   const shutdownLimit = setTimeout(() => { crashLog.warn('shutdown overran its limit, exiting'); ptyHost.forceKill(); exitNow(); }, SHUTDOWN_HARD_LIMIT_MS);
   usage.stop();
   login.dispose();
@@ -686,15 +681,6 @@ app.on('before-quit', (e) => {
       crashLog.error(`shutdown failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
     }
     clearTimeout(shutdownLimit);
-    try {
-      // A hand-over that cannot finish in time is aborted so the update window does not wait for an installer that never starts.
-      if (await raceTimeout(installOnQuit(), QUIT_HANDOFF_LIMIT_MS) === 'timeout') {
-        crashLog.warn('update hand-over overran its limit, aborting it');
-        await abortUpdateWindow();
-      }
-    } catch (err) {
-      crashLog.error(`update hand-over failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
-    }
     exitNow();
   }, 150);
 });

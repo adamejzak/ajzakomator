@@ -6,10 +6,11 @@
 import type { UpdateMode } from '../shared/updateMode';
 
 export const CHECK_TIMEOUT_MS = 8000;
-/** The window stays hidden for this long, so a quick "no update" answer never flashes it. */
-export const SHOW_AFTER_MS = 400;
-/** Once the checking window has appeared it stays at least this long, so a quick answer does not flash it. */
-export const MIN_SHOW_MS = 700;
+/**
+ * The window stays hidden for this long, so a quick "no update" answer never flashes it. A window that did
+ * appear closes the moment the answer is in: no answer is ever held back to keep a window on screen.
+ */
+export const SHOW_AFTER_MS = 800;
 /** A download that reports nothing for this long counts as failed. */
 export const DOWNLOAD_STALL_MS = 60 * 1000;
 /** The whole download may not take longer than this, however steadily it progresses. */
@@ -30,9 +31,9 @@ export interface GateEnv {
   recentFailure: boolean;
 }
 
-/** The gate exists only for the installed Windows build in the 'ask' and 'auto' modes ('manual' starts the app at once). */
+/** The gate exists only for the installed Windows build in the 'ask' (Automatic) mode; 'manual' starts the app at once. */
 export function shouldGateOnStartup(env: GateEnv): boolean {
-  return env.platform === 'win32' && env.packaged && !env.portable && env.mode !== 'manual' && !env.recentFailure;
+  return env.platform === 'win32' && env.packaged && !env.portable && env.mode === 'ask' && !env.recentFailure;
 }
 
 export interface FailureRecord { version: string; at: number }
@@ -70,6 +71,11 @@ export interface GateDeps {
   check(): Promise<{ version: string } | undefined>;
   /** Called when the check outlived its timeout; the late answer must not be used by the gate. */
   abandonCheck?(): void;
+  /**
+   * Starts downloading the offered update; called as soon as the prompt is shown, so "Install now" can go straight
+   * to the hand-over. When the user chooses "Later" the download is left running (it becomes an ordinary background
+   * download), so it may still settle after the gate has returned.
+   */
   download(onProgress: (percent: number) => void): Promise<void>;
   /** Shows (creating if needed) and updates the gate window. */
   show(view: GateView): void;
@@ -79,10 +85,8 @@ export interface GateDeps {
    * until the installer is being handed over; after that the update must run to the end.
    */
   onCancel?(cancel: () => void): void;
-  /** Registers the callback the window calls when the user picks "Install now" in the 'ask' prompt. */
+  /** Registers the callback the window calls when the user picks "Install now" in the prompt. */
   onInstall?(install: () => void): void;
-  /** 'ask' offers the update and waits for the answer; 'auto' (default) installs without asking. */
-  mode?: 'ask' | 'auto';
   /** Starts the installing window and installer; calls `hide` once the hand-over is visible. True when it took over. */
   handoff(version: string, hide: () => void): Promise<boolean>;
   /** Written right before the installer starts, so an installer that fails outside the app still counts as a failure. */
@@ -92,7 +96,6 @@ export interface GateDeps {
   skipVersion?: string;
   checkTimeoutMs?: number;
   showAfterMs?: number;
-  minShowMs?: number;
   downloadStallMs?: number;
   downloadTotalMs?: number;
   handoffTimeoutMs?: number;
@@ -124,14 +127,7 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
   let stopped = false;
   const show = (view: GateView) => { if (stopped) return; shown = true; try { deps.show(view); } catch { /* the window is optional */ } };
   const hide = () => { if (shown) { shown = false; try { deps.hide(); } catch { /* already gone */ } } };
-  let shownAt = 0;
-  const showTimer = setTimeout(() => { shownAt = Date.now(); show({ kind: 'checking' }); }, deps.showAfterMs ?? SHOW_AFTER_MS);
-  /** Keeps a window that only just appeared up for `minShowMs`, unless the user already dismissed it. */
-  const holdChecking = async () => {
-    const left = shownAt ? shownAt + (deps.minShowMs ?? MIN_SHOW_MS) - Date.now() : 0;
-    // X / Escape must be effective at once, so the wait ends as soon as the user cancels.
-    if (shown && !stopped && left > 0) await Promise.race([sleep(left), cancelled.then(() => {}, () => {})]);
-  };
+  const showTimer = setTimeout(() => show({ kind: 'checking' }), deps.showAfterMs ?? SHOW_AFTER_MS);
   // The user may close the window until the installer is handed over; then the app starts as it is.
   let cancellable = true;
   let cancel = () => {};
@@ -150,22 +146,33 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
     catch (error) { if (error instanceof CheckTimeout || error instanceof GateCancelled) deps.abandonCheck?.(); throw error; }
   } catch {
     clearTimeout(showTimer);
-    await holdChecking();
     hide();
     return 'start-app';
   }
   clearTimeout(showTimer);
-  if (!found || found.version === deps.skipVersion) { await holdChecking(); hide(); return 'start-app'; }
+  if (!found || found.version === deps.skipVersion) { hide(); return 'start-app'; }
 
   const { version } = found;
   try {
-    if (deps.mode === 'ask') {
-      // "Later" (the button, X or Escape) rejects with GateCancelled below and starts the current version.
-      show({ kind: 'ask', version });
-      await Promise.race([installChosen, cancelled]);
+    // The download starts together with the prompt: the offer is already an explicit statement that an update
+    // exists, and downloading is not installing. Its progress only reaches the window once "Install now" was chosen.
+    let chosen = false;
+    let percent = 0;
+    let downloaded = false;
+    const download = downloadWithStall(deps, (next) => {
+      percent = next;
+      if (chosen) show({ kind: 'downloading', version, percent });
+    });
+    // A download nobody waits for any more (the user chose "Later") may still fail; the updater reports that itself.
+    download.then(() => { downloaded = true; }, () => {});
+    // "Later" (the button, X or Escape) rejects with GateCancelled below and starts the current version.
+    show({ kind: 'ask', version });
+    await Promise.race([installChosen, cancelled]);
+    chosen = true;
+    if (!downloaded) {
+      show({ kind: 'downloading', version, percent });
+      await Promise.race([within(download, deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long')), cancelled]);
     }
-    show({ kind: 'downloading', version, percent: 0 });
-    await Promise.race([within(downloadWithStall(deps, version, show), deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long')), cancelled]);
     cancellable = false;
     show({ kind: 'installing', version });
     try { deps.markAttempt?.(version); } catch { /* the attempt marker is best effort */ }
@@ -178,7 +185,7 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
     if (error instanceof GateCancelled) { cancellable = false; hide(); return 'start-app'; }
     // An offer that stood for a long time may be gone (a newer release replaced it): look once more before
     // calling it a failure, and never block a version that was merely not found any more.
-    if (deps.mode === 'ask' && beforeHandoff) {
+    if (beforeHandoff) {
       try {
         const again = await Promise.race([within(deps.check(), deps.checkTimeoutMs ?? CHECK_TIMEOUT_MS, () => new CheckTimeout()), cancelled]);
         if (!again || again.version !== version) { cancellable = false; hide(); return 'start-app'; }
@@ -197,7 +204,7 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
 }
 
 /** Downloads with a stall watchdog that restarts on every progress report. */
-function downloadWithStall(deps: GateDeps, version: string, show: (view: GateView) => void): Promise<void> {
+function downloadWithStall(deps: GateDeps, onPercent: (percent: number) => void): Promise<void> {
   const stallMs = deps.downloadStallMs ?? DOWNLOAD_STALL_MS;
   return new Promise<void>((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout>;
@@ -206,7 +213,7 @@ function downloadWithStall(deps: GateDeps, version: string, show: (view: GateVie
     arm();
     deps.download((percent) => {
       arm();
-      show({ kind: 'downloading', version, percent: Math.min(100, Math.max(0, Number.isFinite(percent) ? percent : 0)) });
+      onPercent(Math.min(100, Math.max(0, Number.isFinite(percent) ? percent : 0)));
     }).then(() => { settled = true; clearTimeout(timer); resolve(); }, (error) => { settled = true; clearTimeout(timer); reject(error); });
   });
 }

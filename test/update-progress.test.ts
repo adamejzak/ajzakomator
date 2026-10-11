@@ -38,11 +38,6 @@ describe('update window progress', () => {
     expect(late).toBeGreaterThan(early + 20);
     expect(late).toBeLessThan(90);
   });
-
-  it('completes right after the installer in quit mode, where no new app starts', () => {
-    const model = new UpdateProgressModel(300 * MB, 'quit');
-    expect(model.update(snap({ elapsedMs: 20000, closed: true, installed: true }))).toEqual({ stage: 'done', percent: 100 });
-  });
 });
 
 describe('update window honesty', () => {

@@ -117,7 +117,7 @@ describe('state', () => {
     expect(defaultState().settings.updateMode).toBe('manual');
     expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
     raw.settings.autoInstallUpdates = true;
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('auto');
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('ask');
     raw.settings.autoInstallUpdates = false;
     expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
     raw.settings.autoInstallUpdates = 'no';
@@ -125,8 +125,17 @@ describe('state', () => {
     raw.settings.updateMode = 'ask';
     raw.settings.autoInstallUpdates = true;
     expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('ask');
+    // The retired silent 'auto' mode wanted automatic updates, which now ask first.
+    raw.settings.updateMode = 'auto';
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('ask');
+    raw.settings.updateMode = 'manual';
+    raw.settings.autoInstallUpdates = true;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
     raw.settings.updateMode = 'bogus';
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('auto');
+    raw.settings.autoInstallUpdates = true;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('ask');
+    raw.settings.autoInstallUpdates = false;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
   });
 
   it('normalizeState keeps notifyWhenFocused off unless explicitly on', () => {

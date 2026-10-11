@@ -48,11 +48,11 @@ export function stageSplashRuntime(): Promise<string | undefined> {
  * Starts the detached update window and waits briefly until it is visible. Resolves false when the
  * window is unavailable, in which case the caller installs exactly as it did before.
  */
-export async function showUpdateWindow(version: string, mode: 'relaunch' | 'quit', strings: UpdateStrings): Promise<boolean> {
+export async function showUpdateWindow(version: string, strings: UpdateStrings): Promise<boolean> {
   const exe = await stageSplashRuntime();
   if (!exe) return false;
   const config: UpdateSplashConfig = {
-    mode, version, fromVersion: app.getVersion(), oldPid: process.pid,
+    version, fromVersion: app.getVersion(), oldPid: process.pid,
     installDir: dirname(process.execPath), appExe: process.execPath,
     installedFlag: installedFlag(), readyFlag: readyFlag(), shownFlag: shownFlag(), abortFlag: abortFlag(), heartbeatFlag: heartbeatFlag(),
     runtimeDir: runtimeDir(), workDir: join(updateDir(), 'work'),
