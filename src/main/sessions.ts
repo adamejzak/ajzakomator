@@ -1,6 +1,7 @@
 // Index of past Claude Code / Codex conversations for a project folder.
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'fs';
-import { join } from 'path';
+import { open, readdir, stat } from 'fs/promises';
+import { join, sep } from 'path';
 import type { SessionInfo } from '../shared/types';
 import { normalizeProjectPath } from '../shared/platform';
 
@@ -52,10 +53,23 @@ function claudeText(entry: any): string | null {
   return text && !isInjected(text) ? text : null;
 }
 
-function readClaudeSession(file: string): SessionInfo | null {
-  const st = statSync(file);
-  const head = parseLines(readSlice(file, 0, HEAD_BYTES));
-  const tail = st.size > HEAD_BYTES ? parseLines(readSlice(file, Math.max(0, st.size - TAIL_BYTES), TAIL_BYTES)) : [];
+interface FileStat { size: number; mtimeMs: number; birthtimeMs: number }
+
+async function readSliceAsync(file: string, start: number, length: number): Promise<string> {
+  const fh = await open(file, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const { bytesRead } = await fh.read(buf, 0, length, start);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await fh.close();
+  }
+}
+
+/** Parses a Claude session file from its head (and tail when the file is larger than the head slice). */
+function parseClaudeSession(headText: string, tailText: string, st: FileStat): SessionInfo | null {
+  const head = parseLines(headText);
+  const tail = parseLines(tailText);
   const all = [...head, ...tail];
   const id = all.find((e) => typeof e?.sessionId === 'string')?.sessionId;
   if (!id) return null;
@@ -72,19 +86,105 @@ function readClaudeSession(file: string): SessionInfo | null {
   };
 }
 
+const tailStart = (st: FileStat) => Math.max(0, st.size - TAIL_BYTES);
+
+function readClaudeSession(file: string, st: FileStat): SessionInfo | null {
+  claudeParses++;
+  const tail = st.size > HEAD_BYTES ? readSlice(file, tailStart(st), TAIL_BYTES) : '';
+  return parseClaudeSession(readSlice(file, 0, HEAD_BYTES), tail, st);
+}
+
+async function readClaudeSessionAsync(file: string, st: FileStat): Promise<SessionInfo | null> {
+  claudeParses++;
+  const [head, tail] = await Promise.all([
+    readSliceAsync(file, 0, HEAD_BYTES),
+    st.size > HEAD_BYTES ? readSliceAsync(file, tailStart(st), TAIL_BYTES) : Promise.resolve(''),
+  ]);
+  return parseClaudeSession(head, tail, st);
+}
+
+// Parsed sessions keyed by file; reused while mtime and size are unchanged. Pruned per listed folder.
+const claudeCache = new Map<string, { mtimeMs: number; size: number; info: SessionInfo | null }>();
+let claudeParses = 0;
+
+/** Test hook: how many files were parsed since start and how many are cached. */
+export const claudeCacheStats = () => ({ parses: claudeParses, cached: claudeCache.size });
+export const clearClaudeCache = () => { claudeCache.clear(); claudeParses = 0; };
+
+const claudeDir = (home: string, projectPath: string) => join(home, '.claude', 'projects', claudeProjectDirName(projectPath));
+const cachedClaude = (file: string, st: FileStat) => {
+  const hit = claudeCache.get(file);
+  return hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size ? hit : undefined;
+};
+
+/** Drops cache entries of `dir` whose files were not seen in the latest listing. */
+function pruneClaudeCache(dir: string, seen: Set<string>): void {
+  const prefix = dir + sep;
+  for (const key of claudeCache.keys()) if (key.startsWith(prefix) && !seen.has(key)) claudeCache.delete(key);
+}
+
 export function listClaudeSessions(home: string, projectPath: string): SessionInfo[] {
-  const dir = join(home, '.claude', 'projects', claudeProjectDirName(projectPath));
-  if (!existsSync(dir)) return [];
+  const dir = claudeDir(home, projectPath);
+  if (!existsSync(dir)) {
+    pruneClaudeCache(dir, new Set());
+    return [];
+  }
   const out: SessionInfo[] = [];
+  const seen = new Set<string>();
   for (const f of readdirSync(dir)) {
     if (!f.endsWith('.jsonl')) continue;
+    const file = join(dir, f);
     try {
-      const s = readClaudeSession(join(dir, f));
-      if (s) out.push(s);
+      const st = statSync(file);
+      seen.add(file);
+      let entry = cachedClaude(file, st);
+      if (!entry) {
+        entry = { mtimeMs: st.mtimeMs, size: st.size, info: readClaudeSession(file, st) };
+        claudeCache.set(file, entry);
+      }
+      if (entry.info) out.push(entry.info);
     } catch {
       // unreadable file - skip
     }
   }
+  pruneClaudeCache(dir, seen);
+  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+const CONCURRENCY = 4;
+
+/** Same result as listClaudeSessions, but never blocks the event loop on file IO. */
+export async function listClaudeSessionsAsync(home: string, projectPath: string): Promise<SessionInfo[]> {
+  const dir = claudeDir(home, projectPath);
+  let names: string[];
+  try {
+    names = (await readdir(dir)).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    pruneClaudeCache(dir, new Set());
+    return [];
+  }
+  const out: SessionInfo[] = [];
+  const seen = new Set<string>();
+  let next = 0;
+  const worker = async () => {
+    while (next < names.length) {
+      const file = join(dir, names[next++]);
+      try {
+        const st = await stat(file);
+        seen.add(file);
+        let entry = cachedClaude(file, st);
+        if (!entry) {
+          entry = { mtimeMs: st.mtimeMs, size: st.size, info: await readClaudeSessionAsync(file, st) };
+          claudeCache.set(file, entry);
+        }
+        if (entry.info) out.push(entry.info);
+      } catch {
+        // unreadable file - skip
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, names.length) }, worker));
+  pruneClaudeCache(dir, seen);
   return out.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
@@ -206,4 +306,10 @@ export function listSessions(home: string, projectPath: string): SessionInfo[] {
   return [...listClaudeSessions(home, projectPath), ...listCodexSessions(home, projectPath)].sort(
     (a, b) => b.updatedAt - a.updatedAt,
   );
+}
+
+/** Non-blocking variant for the IPC handler (Codex listing is cached and only stats files). */
+export async function listSessionsAsync(home: string, projectPath: string): Promise<SessionInfo[]> {
+  const claude = await listClaudeSessionsAsync(home, projectPath);
+  return [...claude, ...listCodexSessions(home, projectPath)].sort((a, b) => b.updatedAt - a.updatedAt);
 }

@@ -10,6 +10,7 @@ import {
 } from '../../shared/state';
 import { canSwapCells, neighborSlot } from '../../shared/gridDrag';
 import { snapshotCellRects } from './gridMotion';
+import { sessionSearchPaths } from '../../shared/sessionTrack';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
 import { showTerminalTabs } from './files';
@@ -165,19 +166,20 @@ export function renameCell(cellId: string, name: string): void {
   update((s) => updateCell(s, cellId, { name: name.trim() || undefined }));
 }
 
-let titlesTimer: number | undefined;
-/** Refreshes conversation titles for a project (debounced); used as default cell labels. */
+const titlesTimers = new Map<string, number>();
+/** Refreshes conversation titles for a project and its worktrees (debounced per project); used as default cell labels. */
 export function refreshSessionTitles(projectPath: string | undefined, delay = 0): void {
   if (!projectPath) return;
-  clearTimeout(titlesTimer);
-  titlesTimer = window.setTimeout(async () => {
-    const list = await window.mc.listSessions(projectPath);
+  clearTimeout(titlesTimers.get(projectPath));
+  titlesTimers.set(projectPath, window.setTimeout(async () => {
+    titlesTimers.delete(projectPath);
+    const lists = await Promise.all(sessionSearchPaths(projectPath, getS()).map((p) => window.mc.listSessions(p).catch(() => [])));
     setUi((ui) => {
       const sessionTitles = { ...ui.sessionTitles };
-      for (const x of list) sessionTitles[x.id] = x.title;
+      for (const list of lists) for (const x of list) sessionTitles[x.id] = x.title;
       return { sessionTitles };
     });
-  }, delay);
+  }, delay));
 }
 
 export function focusCell(cellId: string): void {

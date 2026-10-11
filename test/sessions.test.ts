@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { claudeProjectDirName, findRecentCodexSession, listClaudeSessions, listCodexSessions } from '../src/main/sessions';
+import { claudeCacheStats, claudeProjectDirName, clearClaudeCache, findRecentCodexSession, listClaudeSessions, listClaudeSessionsAsync, listCodexSessions } from '../src/main/sessions';
 
 const PROJECT = 'D:\\Projekty\\bot-discord';
 const jsonl = (rows: unknown[]) => rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
@@ -45,6 +45,46 @@ describe('sessions', () => {
     expect(list.map((s) => s.id).sort()).toEqual(['aaa', 'bbb']);
     expect(list.find((s) => s.id === 'aaa')!.title).toBe('napraw logowanie w bocie');
     expect(list.find((s) => s.id === 'bbb')!.title).toBe('Refaktor sidebaru');
+  });
+
+  it('encodes worktree paths like the project dir', () => {
+    expect(claudeProjectDirName('D:\\Projekty\\bot\\.claude\\worktrees\\x_1')).toBe('D--Projekty-bot--claude-worktrees-x-1');
+    expect(claudeProjectDirName('/Users/a/proj/.worktrees/feat')).toBe('-Users-a-proj--worktrees-feat');
+  });
+
+  it('caches claude sessions by mtime+size, re-parses changes and prunes deleted files', async () => {
+    clearClaudeCache();
+    const home = fakeHome();
+    const cdir = join(home, '.claude', 'projects', claudeProjectDirName(PROJECT));
+    const first = listClaudeSessions(home, PROJECT);
+    const parsed = claudeCacheStats().parses;
+    expect(parsed).toBe(3);
+    expect(listClaudeSessions(home, PROJECT)).toEqual(first);
+    expect(await listClaudeSessionsAsync(home, PROJECT)).toEqual(first);
+    expect(claudeCacheStats().parses).toBe(parsed); // cache hits: no rereads
+
+    const file = join(cdir, 'bbb.jsonl');
+    writeFileSync(file, jsonl([{ type: 'user', message: { content: 'nowy' }, sessionId: 'bbb', cwd: PROJECT }]));
+    const future = new Date(Date.now() + 10_000);
+    utimesSync(file, future, future);
+    const after = listClaudeSessions(home, PROJECT);
+    expect(claudeCacheStats().parses).toBe(parsed + 1);
+    expect(after.find((s) => s.id === 'bbb')!.title).toBe('nowy');
+
+    rmSync(join(cdir, 'aaa.jsonl'));
+    expect(listClaudeSessions(home, PROJECT).map((s) => s.id)).toEqual(['bbb']);
+    expect(claudeCacheStats().cached).toBe(2); // bbb + empty
+    rmSync(cdir, { recursive: true });
+    expect(await listClaudeSessionsAsync(home, PROJECT)).toEqual([]);
+    expect(claudeCacheStats().cached).toBe(0);
+  });
+
+  it('async listing equals the sync listing on a cold cache', async () => {
+    const home = fakeHome();
+    clearClaudeCache();
+    const sync = listClaudeSessions(home, PROJECT);
+    clearClaudeCache();
+    expect(await listClaudeSessionsAsync(home, PROJECT)).toEqual(sync);
   });
 
   it('lists codex sessions for the project only, skipping injected context', () => {

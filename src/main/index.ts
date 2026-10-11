@@ -17,7 +17,7 @@ import { listProjectDirectories, listProjectDirectory, readProjectFile, writePro
 import { replaceInProject, searchProject } from './search';
 import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
-import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
+import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from './sessions';
 import { createSaver, loadState } from './store';
 import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, isPortableBuild, updateHandoffStarted, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
 import { compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup } from './startupGate';
@@ -449,7 +449,7 @@ ipcMain.handle('fs:writeProjectFile', (_e, projectId: string, path: string, text
   const project = state.projects.find((p) => p.id === projectId);
   return project ? writeProjectFile(project.path, path, text, expectedText) : { ok: false, error: 'Projekt już nie istnieje.' };
 });
-ipcMain.handle('sessions:list', (_e, projectPath: string) => listSessions(homedir(), projectPath));
+ipcMain.handle('sessions:list', (_e, projectPath: string) => listSessionsAsync(homedir(), projectPath));
 ipcMain.handle('git:isRepo', (_e, p: string) => isGitRepo(p));
 ipcMain.handle('git:createWorktree', (_e, p: string, name: string) => createWorktree(p, name));
 ipcMain.handle('git:removeWorktree', (_e, p: string, wt: Worktree, del: boolean) => removeWorktree(p, wt, del));

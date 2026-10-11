@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { HookServer, parseSessionStart } from '../src/main/hooks';
-import { shouldUpdateCellSession } from '../src/shared/sessionTrack';
+import { sessionSearchPaths, shouldUpdateCellSession } from '../src/shared/sessionTrack';
 
 const ID = '3f2b8c1e-0d4a-4b7e-9c11-2a5d6e7f8091';
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) });
@@ -70,5 +70,14 @@ describe('shouldUpdateCellSession', () => {
     expect(shouldUpdateCellSession({ ...base, alive: false })).toBe(false);
     expect(shouldUpdateCellSession({ ...base, currentId: ID })).toBe(false);
     expect(shouldUpdateCellSession({ ...base, reportedId: 'bad id' })).toBe(false);
+  });
+});
+
+describe('sessionSearchPaths', () => {
+  it('returns the project path plus distinct worktree paths of its cells', () => {
+    const cell = (id: string, wt?: string) => ({ id, worktree: wt ? { path: wt } : undefined });
+    const state = { projects: [{ path: 'P', archive: [{ cells: [cell('d', 'W2')] }], tabs: [{ cells: [cell('a'), cell('b', 'W1'), cell('c', 'W1')] }] }] };
+    expect(sessionSearchPaths('P', state as never)).toEqual(['P', 'W1', 'W2']);
+    expect(sessionSearchPaths('other', state as never)).toEqual(['other']);
   });
 });

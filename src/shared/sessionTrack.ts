@@ -1,3 +1,5 @@
+import type { AppState } from './types';
+
 // Decision helpers for following a Claude conversation switch (/resume, /clear) reported by the SessionStart hook.
 
 /** Claude session ids are UUIDs; anything else coming from the local hook endpoint is rejected. */
@@ -19,3 +21,13 @@ export interface SessionUpdateInput {
 export function shouldUpdateCellSession(i: SessionUpdateInput): boolean {
   return i.known && i.isClaude && i.alive && SESSION_ID.test(i.reportedId) && i.currentId !== i.reportedId;
 }
+
+/** Project folder plus every distinct worktree folder of its cells (their conversations live there). */
+export function sessionSearchPaths(projectPath: string, state: AppState): string[] {
+  const paths = [projectPath];
+  const project = state.projects.find((p) => p.path === projectPath);
+  for (const t of project ? [...project.tabs, ...project.archive] : [])
+    for (const c of t.cells) if (c.worktree?.path && !paths.includes(c.worktree.path)) paths.push(c.worktree.path);
+  return paths;
+}
+
