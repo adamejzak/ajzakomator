@@ -12,6 +12,17 @@ function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value.length <= MAX_TEXT ? value : undefined;
 }
 
+/** The same field rules `list` applies, so a stored entry always survives a reload. */
+function sanitize(account: ManagedAccount): ManagedAccount {
+  const { email, org, ...rest } = account;
+  const clean: ManagedAccount = { ...rest };
+  const e = optionalText(email);
+  const o = optionalText(org);
+  if (e !== undefined) clean.email = e;
+  if (o !== undefined) clean.org = o;
+  return clean;
+}
+
 function parseAccount(value: unknown): ManagedAccount | null {
   if (!isRecord(value) || !isAccountId(value.id)) return null;
   if (typeof value.addedAt !== 'number' || !Number.isFinite(value.addedAt)) return null;
@@ -54,9 +65,10 @@ export class AccountsStore {
 
   commit(account: ManagedAccount): void {
     const accounts = this.list();
-    const index = accounts.findIndex((entry) => entry.id === account.id);
-    if (index >= 0) accounts[index] = account;
-    else accounts.push(account);
+    const clean = sanitize(account);
+    const index = accounts.findIndex((entry) => entry.id === clean.id);
+    if (index >= 0) accounts[index] = clean;
+    else accounts.push(clean);
     this.write(accounts);
   }
 
@@ -64,7 +76,7 @@ export class AccountsStore {
     const accounts = this.list();
     const index = accounts.findIndex((entry) => entry.id === id);
     if (index < 0) return;
-    accounts[index] = { ...accounts[index], ...patch };
+    accounts[index] = sanitize({ ...accounts[index], ...patch });
     this.write(accounts);
   }
 
@@ -78,8 +90,23 @@ export class AccountsStore {
 
   private write(accounts: ManagedAccount[]): void {
     mkdirSync(this.root, { recursive: true });
+    this.backUpCorrupt();
     const temp = `${this.file}.${process.pid}.tmp`;
-    writeFileSync(temp, JSON.stringify({ claude: accounts }, null, 2));
-    renameSync(temp, this.file);
+    try {
+      writeFileSync(temp, JSON.stringify({ claude: accounts }, null, 2));
+      renameSync(temp, this.file);
+    } catch (error) {
+      rmSync(temp, { force: true });
+      throw error;
+    }
+  }
+
+  /** An unparsable accounts.json is kept as accounts.json.bak instead of being silently overwritten. */
+  private backUpCorrupt(): void {
+    let text: string;
+    try { text = readFileSync(this.file, 'utf8'); } catch { return; }
+    try { JSON.parse(text); } catch {
+      try { renameSync(this.file, `${this.file}.bak`); } catch { /* best effort */ }
+    }
   }
 }

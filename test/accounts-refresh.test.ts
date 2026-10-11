@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,18 @@ const reply = (status: number, body: unknown) => new Response(JSON.stringify(bod
 const profile = () => ({ claudeAiOauth: { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: 1, scopes: ['a'], subscriptionType: 'max' }, mcpOAuth: { keep: 'me' } });
 
 describe('refreshClaudeProfile', () => {
+  it('leaves no temp file and reports transient when the final rename fails', async () => {
+    write(profile());
+    const fetchSpy = vi.fn(async () => {
+      // Replace the file with a directory after it was read, so the rename onto it fails.
+      rmSync(join(dir, '.credentials.json'));
+      mkdirSync(join(dir, '.credentials.json'));
+      return reply(200, { access_token: 'n', expires_in: 60 });
+    });
+    expect(await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
   it('renews the tokens, rotates the refresh token and keeps every other key', async () => {
     write(profile());
     const fetchSpy = vi.fn(async () => reply(200, { access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600, scope: 'user:inference user:profile' }));

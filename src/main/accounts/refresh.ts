@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
-import { readFile, rename, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { readFile, rename, rm, writeFile } from 'fs/promises';
+import { join, resolve } from 'path';
 
 export const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 /** Public client id of Claude Code's OAuth flow (the same value claude-swap uses). */
@@ -20,10 +20,11 @@ const inflight = new Map<string, Promise<RefreshOutcome>>();
  * is used once.
  */
 export function refreshClaudeProfile(dir: string, deps: RefreshDeps): Promise<RefreshOutcome> {
-  const running = inflight.get(dir);
+  const key = resolve(dir);
+  const running = inflight.get(key);
   if (running) return running;
-  const promise = run(dir, deps).finally(() => { inflight.delete(dir); });
-  inflight.set(dir, promise);
+  const promise = run(dir, deps).finally(() => { inflight.delete(key); });
+  inflight.set(key, promise);
   return promise;
 }
 
@@ -61,6 +62,9 @@ async function run(dir: string, deps: RefreshDeps): Promise<RefreshOutcome> {
   try {
     await writeFile(temporary, JSON.stringify(data), { mode: 0o600 });
     await rename(temporary, file);
-  } catch { return { kind: 'transient' }; }
+  } catch {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    return { kind: 'transient' };
+  }
   return { kind: 'ok' };
 }

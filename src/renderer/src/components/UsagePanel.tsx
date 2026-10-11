@@ -61,7 +61,8 @@ function AccountCard({ usage, now, language, showMain }: { usage: ProviderUsage;
       tr('Logowanie zostanie usunięte z aplikacji. Samo konto pozostaje bez zmian.'),
       [{ label: tr('Usuń konto'), value: 'yes', danger: true }],
     );
-    if (choice === 'yes') await window.mc.removeAccount(usage.accountId.replace(/^claude:/, ''));
+    if (choice !== 'yes') return;
+    try { await window.mc.removeAccount(usage.accountId.replace(/^claude:/, '')); } catch { /* the next usage refresh shows the real state */ }
   };
 
   let body;
@@ -78,13 +79,13 @@ function AccountCard({ usage, now, language, showMain }: { usage: ProviderUsage;
     body = <p className="usage-note warn">{tr('{name}: nie udało się odczytać limitów.', { name: providerName })}</p>;
   } else {
     const failed = usage.status === 'error';
-    const hint = failed ? tr('{name}: nie udało się odczytać limitów.', { name: providerName })
-      : usage.source === 'log' ? tr('stan z ostatniej sesji, sprzed {age}', { age })
+    const ageNote = usage.source === 'log' ? tr('stan z ostatniej sesji, sprzed {age}', { age })
       : usage.source === 'cache' ? tr('dane sprzed {age}', { age }) : '';
+    const hint = failed ? tr('{name}: nie udało się odczytać limitów.', { name: providerName }) : ageNote;
     body = (
       <>
         {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
-        {hint && <p className={`usage-note ${failed ? 'warn' : ''}`}>{failed && usage.source !== 'live' ? `${hint} (${tr('dane sprzed {age}', { age })})` : hint}</p>}
+        {hint && <p className={`usage-note ${failed ? 'warn' : ''}`}>{failed && ageNote ? `${hint} (${ageNote})` : hint}</p>}
       </>
     );
   }
@@ -99,6 +100,7 @@ function AccountCard({ usage, now, language, showMain }: { usage: ProviderUsage;
         {usage.managed && (
           <button
             className="usage-kebab"
+            aria-haspopup="menu"
             aria-label={tr('Usuń konto')}
             title={tr('Usuń konto')}
             onClick={(e) => openMenuAt(e.currentTarget, [{ label: tr('Usuń konto'), danger: true, onClick: () => void removeAccount() }])}

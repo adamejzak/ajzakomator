@@ -1,5 +1,5 @@
 // test/accounts-store.test.ts
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,7 +11,7 @@ let root: string;
 beforeEach(() => { base = mkdtempSync(join(tmpdir(), 'ajza-acc-')); root = join(base, 'accounts'); });
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
-const BAD_IDS = ['', '../x', 'a/b', 'not-a-uuid', '..', '00000000-0000-0000-0000-00000000000G', '../../00000000-0000-0000-0000-000000000000'];
+const BAD_IDS = ['', '../x', 'a/b', 'not-a-uuid', '..', '00000000-0000-0000-0000-00000000000G', '../../00000000-0000-0000-0000-000000000000', '123E4567-E89B-42D3-A456-426614174000', '123e4567-e89b-42d3-a456-426614174000\n'];
 
 describe('isAccountId', () => {
   it('accepts uuids only', () => {
@@ -49,6 +49,35 @@ describe('AccountsStore', () => {
     store.commit({ id, email: 'old@x.com', addedAt: 1 });
     store.commit({ id, email: 'new@x.com', addedAt: 3 });
     expect(store.list()).toEqual([{ id, email: 'new@x.com', addedAt: 3 }]);
+  });
+
+  it('drops over-long email and org on commit and update like list does', () => {
+    const store = new AccountsStore(root);
+    const { id } = store.prepare();
+    store.commit({ id, email: 'x'.repeat(121), org: 'Org', addedAt: 1 });
+    expect(store.list()).toEqual([{ id, org: 'Org', addedAt: 1 }]);
+    store.update(id, { email: 'y'.repeat(200), org: 'o'.repeat(121) });
+    expect(store.list()).toEqual([{ id, addedAt: 1 }]);
+    store.update(id, { email: 'ok@x.com' });
+    expect(store.list()).toEqual([{ id, email: 'ok@x.com', addedAt: 1 }]);
+  });
+
+  it('keeps a corrupt accounts.json as .bak before overwriting it', () => {
+    const store = new AccountsStore(root);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'accounts.json'), '{not json');
+    const { id } = store.prepare();
+    store.commit({ id, addedAt: 1 });
+    expect(readFileSync(join(root, 'accounts.json.bak'), 'utf8')).toBe('{not json');
+    expect(store.list()).toEqual([{ id, addedAt: 1 }]);
+  });
+
+  it('removes the temp file when the write cannot be completed', () => {
+    const store = new AccountsStore(root);
+    const { id } = store.prepare();
+    mkdirSync(join(root, 'accounts.json'));
+    expect(() => store.commit({ id, addedAt: 1 })).toThrow();
+    expect(readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('tolerates missing and corrupt files', () => {

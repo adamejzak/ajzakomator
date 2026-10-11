@@ -245,6 +245,15 @@ describe('managed token renewal', () => {
     expect((fetchSpy.mock.calls[1] as unknown as [string, RequestInit])[1].headers).toMatchObject({ Authorization: 'Bearer new-tok' });
   });
 
+  it('does not renew after a 403', async () => {
+    profileLogin('old-tok', NOW + 3_600_000);
+    const refresh = vi.fn(async () => ({ kind: 'ok' as const }));
+    const fetchSpy = vi.fn(async () => reply(403, {}));
+    expect((await fetchClaude(withRefresh(fetchSpy as never, refresh), ref())).usage.status).toBe('expired');
+    expect(refresh).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('gives expired after a second 401', async () => {
     profileLogin('old-tok', NOW + 3_600_000);
     const refresh = vi.fn(async () => ({ kind: 'ok' as const }));

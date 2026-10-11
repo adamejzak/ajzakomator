@@ -17,36 +17,36 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   // The latest state may arrive before startLogin resolves, so it is matched to the session at render time.
   const [state, setState] = useState<LoginState | null>(null);
   const container = useRef<HTMLDivElement>(null);
-  const cancelled = useRef(false);
-  const session = useRef<string | null>(null);
-  const pty = useRef<string | null>(null);
 
   useEffect(() => {
-    cancelled.current = false;
+    // Per-effect locals: a StrictMode re-run must not share them with the cleaned-up run.
+    let cancelled = false;
+    let session: string | null = null;
+    let pty: string | null = null;
     const off = window.mc.on('auth:state', (s) => setState(s));
     void window.mc.startLogin({ provider, target }).then((res) => {
       if (!res.ok) {
-        if (!cancelled.current) setStartFailed(true);
+        if (!cancelled) setStartFailed(true);
         return;
       }
-      if (cancelled.current) {
+      if (cancelled) {
         // Closed before the session was created: cancel it as soon as it exists.
         window.mc.cancelLogin(res.sessionId);
         return;
       }
-      session.current = res.sessionId;
-      pty.current = res.ptyId;
+      session = res.sessionId;
+      pty = res.ptyId;
       terminals.ensure(res.ptyId, { fontSize: 13, agent: false });
       setSessionId(res.sessionId);
       setPtyId(res.ptyId);
     }).catch(() => {
-      if (!cancelled.current) setStartFailed(true);
+      if (!cancelled) setStartFailed(true);
     });
     return () => {
-      cancelled.current = true;
+      cancelled = true;
       off();
-      if (session.current) window.mc.cancelLogin(session.current); // harmless after success
-      if (pty.current) terminals.dispose(pty.current);
+      if (session) window.mc.cancelLogin(session); // harmless after success
+      if (pty) terminals.dispose(pty);
     };
   }, [provider, target]);
 
@@ -75,8 +75,8 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
 
   let line: string;
   if (status === 'success') line = email ? tr('Zalogowano jako {email}', { email }) : tr('Zalogowano.');
-  else if (status === 'duplicate') line = tr('To konto jest już dodane ({email}).', { email });
-  else if (status === 'failed') {
+  else if (status === 'duplicate' && email) line = tr('To konto jest już dodane ({email}).', { email });
+  else if (status === 'failed' || status === 'duplicate') {
     line = current?.error === 'timeout' ? tr('Upłynął czas na logowanie.')
       : current?.error === 'identity' ? tr('Nie udało się odczytać konta po zalogowaniu.')
         : tr('Logowanie nie powiodło się.');

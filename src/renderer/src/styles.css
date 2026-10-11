@@ -811,7 +811,7 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .usage-chevron.open { transform: rotate(180deg); }
 .usage-summary { font-weight: 400; color: var(--text-2); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-card { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid var(--border); }
-.usage-card:first-of-type { border-top: 0; padding-top: 2px; }
+.usage-head + .usage-card { border-top: 0; padding-top: 2px; }
 .usage-card.expired { opacity: .75; }
 .usage-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text); font-weight: 600; }
 .usage-account { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

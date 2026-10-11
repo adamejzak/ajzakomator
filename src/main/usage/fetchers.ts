@@ -78,7 +78,7 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
   });
   try {
     let response = await request();
-    if (refresh && (response.status === 401 || response.status === 403)) {
+    if (refresh && response.status === 401) {
       const failure = await renew();
       if (failure) return failure;
       response = await request();

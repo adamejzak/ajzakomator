@@ -71,6 +71,7 @@ async function boot(): Promise<void> {
     if (found && !found.cell.name) refreshSessionTitles(found.project.path, 3000);
   });
   terminals.onExit((cellId) => {
+    if (cellId.startsWith('auth:')) return; // login windows are not cells
     // Shell exited (e.g. user typed `exit`) - keep the cell, offer a restart from its header.
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: 'exited' } }));
   });
