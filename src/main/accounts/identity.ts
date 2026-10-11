@@ -13,7 +13,7 @@ export async function readManagedIdentity(dir: string, deps: IdentityDeps): Prom
   const fromFile = await readClaudeIdentity(profileSource(deps.source, dir));
   if (fromFile.email) return fromFile;
   try {
-    const raw = await deps.exec('claude', ['auth', 'status', '--json'], { ...deps.source.env, CLAUDE_CONFIG_DIR: dir });
+    const raw = await deps.exec('claude', ['auth', 'status', '--json'], { ...deps.source.env, CLAUDE_CONFIG_DIR: dir, CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' });
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || (parsed as { loggedIn?: unknown }).loggedIn !== true) return {};

@@ -86,7 +86,7 @@ const usage = new UsageService({
 const execText = (command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string | null> => new Promise((resolve) => {
   execFile(command, args, { env, timeout: 15000, windowsHide: true, shell: process.platform === 'win32' }, (error, stdout) => resolve(error ? null : stdout));
 });
-let usageKey =`${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
+let usageKey = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
 const ptyHost = new PtyHostClient();
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const login = new LoginManager({
@@ -443,6 +443,7 @@ ipcMain.handle('auth:start', (_e, request: unknown) => {
 ipcMain.on('auth:cancel', (_e, id: unknown) => { if (typeof id === 'string') login.cancel(id); });
 ipcMain.handle('accounts:remove', (_e, id: unknown) => {
   if (!isAccountId(id)) return { ok: false };
+  login.cancelFor(id);
   accounts.remove(id);
   void usage.refresh(true, true);
   return { ok: true };

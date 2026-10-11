@@ -139,7 +139,7 @@ describe('LoginManager', () => {
     await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
     expect(h.mock.spawnPty).toHaveBeenCalledWith({
       id: expect.stringMatching(/^auth:/),
-      env: { CLAUDE_CONFIG_DIR: prepared.dir },
+      env: { CLAUDE_CONFIG_DIR: prepared.dir, CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' },
       command: 'claude auth login --claudeai',
     });
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'success']);
@@ -290,7 +290,9 @@ describe('LoginManager', () => {
     await h.manager.start({ provider: 'claude', target: { type: 'new' } });
     const spec = h.mock.spawnPty.mock.calls[0][0];
     expect(spec.command).toBe('claude auth login --claudeai');
-    expect(Object.keys(spec.env)).toEqual(['CLAUDE_CONFIG_DIR']);
+    expect(Object.keys(spec.env)).toEqual(['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
+    expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+    expect(spec.env.ANTHROPIC_API_KEY).toBe('');
     expect(existsSync(spec.env.CLAUDE_CONFIG_DIR)).toBe(true);
     h.manager.dispose();
   });

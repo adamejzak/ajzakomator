@@ -35,6 +35,8 @@ describe('readManagedIdentity', () => {
     expect(args).toEqual(['auth', 'status', '--json']);
     expect(env.CLAUDE_CONFIG_DIR).toBe(dir);
     expect(env.PATH).toBe('p');
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+    expect(env.ANTHROPIC_API_KEY).toBe('');
   });
 
   it('gives {} for logged out, bad JSON, null and throwing exec', async () => {

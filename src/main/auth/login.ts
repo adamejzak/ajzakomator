@@ -98,7 +98,8 @@ export class LoginManager {
     try {
       this.deps.spawnPty({
         id: session.ptyId,
-        env: session.configDir ? { CLAUDE_CONFIG_DIR: session.configDir } : {},
+        // A user-level token or API key must not override the profile's own login.
+        env: session.configDir ? { CLAUDE_CONFIG_DIR: session.configDir, CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' } : {},
         command: provider === 'claude' ? 'claude auth login --claudeai' : 'codex login',
       });
     } catch {
@@ -119,6 +120,12 @@ export class LoginManager {
     this.end(session);
     this.kill(session);
     this.discard(session);
+  }
+
+  /** Cancels the active session when it targets this managed account. */
+  cancelFor(accountId: string): void {
+    const session = this.current;
+    if (session && session.target.type === 'account' && session.target.id === accountId) this.cancel(session.id);
   }
 
   dispose(): void {
