@@ -129,7 +129,8 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
   /** Keeps a window that only just appeared up for `minShowMs`, unless the user already dismissed it. */
   const holdChecking = async () => {
     const left = shownAt ? shownAt + (deps.minShowMs ?? MIN_SHOW_MS) - Date.now() : 0;
-    if (shown && !stopped && left > 0) await sleep(left);
+    // X / Escape must be effective at once, so the wait ends as soon as the user cancels.
+    if (shown && !stopped && left > 0) await Promise.race([sleep(left), cancelled.then(() => {}, () => {})]);
   };
   // The user may close the window until the installer is handed over; then the app starts as it is.
   let cancellable = true;
@@ -173,9 +174,20 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
     if (await within(handedOver, deps.handoffTimeoutMs ?? HANDOFF_TIMEOUT_MS, () => new Error('installer hand-over timed out'))) return 'installing';
     throw new Error('installer hand-over failed');
   } catch (error) {
+    const beforeHandoff = cancellable;
+    if (error instanceof GateCancelled) { cancellable = false; hide(); return 'start-app'; }
+    // An offer that stood for a long time may be gone (a newer release replaced it): look once more before
+    // calling it a failure, and never block a version that was merely not found any more.
+    if (deps.mode === 'ask' && beforeHandoff) {
+      try {
+        const again = await Promise.race([within(deps.check(), deps.checkTimeoutMs ?? CHECK_TIMEOUT_MS, () => new CheckTimeout()), cancelled]);
+        if (!again || again.version !== version) { cancellable = false; hide(); return 'start-app'; }
+      } catch (second) {
+        if (second instanceof GateCancelled) { cancellable = false; hide(); return 'start-app'; }
+        /* the second look failed too: treat the original error as it is */
+      }
+    }
     cancellable = false;
-    // A cancelled download simply goes on in the background; it is not a failure and needs no notice.
-    if (error instanceof GateCancelled) { hide(); return 'start-app'; }
     try { deps.recordFailure(version); } catch { /* the cooldown is best effort */ }
     show({ kind: 'failed', version });
     await sleep(deps.errorHoldMs ?? ERROR_HOLD_MS);

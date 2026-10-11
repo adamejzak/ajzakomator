@@ -55,6 +55,8 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
 
   let cancel: (() => void) | undefined;
   let install: (() => void) | undefined;
+  /** True while `hide()` destroys the window itself, so its 'closed' event is not mistaken for a crash. */
+  let closing = false;
   const push = () => { if (loaded && latest) safeSend(win, 'update-splash:state', latest); };
   /** The user closed the window (X, Escape, Alt+F4); the gate decides whether that is still allowed. */
   const requestClose = () => { if (latest?.closable) cancel?.(); };
@@ -83,7 +85,15 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     // Closed by the user: forget the window so the next update shows a new one.
     const created = win;
-    created.once('closed', () => { if (win === created) { win = null; loaded = false; } });
+    created.once('closed', () => {
+      if (win !== created) return;
+      win = null; loaded = false;
+      // Gone without `hide()` (crashed or destroyed): nobody could answer the prompt, so start the current version.
+      if (!closing) cancel?.();
+    });
+    // A window that cannot render must never leave the app waiting for an answer nobody can give.
+    win.webContents.on('render-process-gone', () => cancel?.());
+    win.webContents.on('did-fail-load', (_e, code, _d, _u, isMainFrame) => { if (isMainFrame && code !== -3) cancel?.(); });
     win.webContents.on('did-finish-load', () => { loaded = true; push(); });
     win.once('ready-to-show', () => { if (!app.isPackaged && process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show(); });
     void win.loadFile(join(app.getAppPath(), 'resources', 'update-splash', 'index.html'));
@@ -100,7 +110,8 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
       ipcMain.removeHandler('update-splash:init');
       ipcMain.removeAllListeners('update-splash:close');
       ipcMain.removeAllListeners('update-splash:open');
-      if (win && !win.isDestroyed()) win.destroy();
+      closing = true;
+      try { if (win && !win.isDestroyed()) win.destroy(); } finally { closing = false; }
       win = null;
       loaded = false;
     },

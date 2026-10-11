@@ -91,6 +91,17 @@ describe('runStartupGate', () => {
     expect(deps.hide).toHaveBeenCalledTimes(1);
   });
 
+  it('ends the minimum-time hold at once when the user cancels during it', async () => {
+    let cancel!: () => void;
+    const { deps } = make({ check: vi.fn(() => delayed(undefined, 500)), onCancel: (cb) => { cancel = cb; } });
+    const result = runStartupGate(deps);
+    await vi.advanceTimersByTimeAsync(500);
+    cancel();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toBe('start-app');
+    expect(deps.hide).toHaveBeenCalledTimes(1);
+  });
+
   it('does not hold a window the user already closed', async () => {
     let cancel!: () => void;
     const { deps } = make({ check: vi.fn(() => new Promise<never>(() => {})), onCancel: (cb) => { cancel = cb; } });
@@ -321,12 +332,38 @@ describe('runStartupGate', () => {
     };
 
     it('offers the update and waits without downloading', async () => {
-      const { deps, views } = asking();
+      const { deps, views, cancel } = asking();
       const result = runStartupGate(deps);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(views).toEqual([{ kind: 'ask', version: '2.0.0' }]);
       expect(deps.download).not.toHaveBeenCalled();
-      void result;
+      // A window that crashed or failed to load answers "Later" through the same cancel path.
+      cancel();
+      expect(await result).toBe('start-app');
+      expect(deps.hide).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-checks once when "Install now" fails and does not record a failure for a vanished version', async () => {
+      const check = vi.fn().mockResolvedValueOnce({ version: '2.0.0' }).mockResolvedValueOnce(undefined);
+      const { deps, install } = asking({ check, download: vi.fn(async () => { throw new Error('404'); }) });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      install();
+      expect(await result).toBe('start-app');
+      expect(check).toHaveBeenCalledTimes(2);
+      expect(deps.recordFailure).not.toHaveBeenCalled();
+    });
+
+    it('still records the failure when the re-check finds the same version', async () => {
+      const check = vi.fn(async () => ({ version: '2.0.0' }));
+      const { deps, install } = asking({ check, download: vi.fn(async () => { throw new Error('disk full'); }) });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(10);
+      install();
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(await result).toBe('start-app');
+      expect(check).toHaveBeenCalledTimes(2);
+      expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
     });
 
     it('"Install now" runs the normal download and hand-over', async () => {
