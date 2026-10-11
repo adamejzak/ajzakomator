@@ -5,6 +5,7 @@ import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
 import type { ChangelogResult } from '../shared/changelog';
 import type { UsageState } from '../shared/usage';
+import type { LoginRequest, LoginState } from '../shared/accounts';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
@@ -64,6 +65,10 @@ export interface McApi {
   getChangelog(force?: boolean): Promise<ChangelogResult>;
   getUsage(): Promise<UsageState>;
   refreshUsage(): Promise<UsageState>;
+  startLogin(request: LoginRequest): Promise<{ ok: true; sessionId: string; ptyId: string } | { ok: false; error: string }>;
+  cancelLogin(sessionId: string): void;
+  removeAccount(id: string): Promise<{ ok: boolean }>;
+  on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;

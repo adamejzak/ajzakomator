@@ -1,4 +1,5 @@
-import { spawn, spawnSync } from 'child_process';
+import { createHash } from 'crypto';
+import { execFile, spawn, spawnSync } from 'child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
@@ -22,7 +23,11 @@ import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit
 import { scheduleUpdateCleanup, signalUpdateReady } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile } from './accounts/refresh';
-import { systemCredentialSource } from './usage/credentials';
+import { AccountsStore } from './accounts/store';
+import { readManagedIdentity } from './accounts/identity';
+import { LoginManager } from './auth/login';
+import { isAccountId, type LoginRequest } from '../shared/accounts';
+import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
 import { MAIN_ACCOUNTS } from '../shared/usage';
@@ -66,15 +71,56 @@ const usageDeps: FetcherDeps = {
   codexUrl: (!app.isPackaged && process.env.MC_USAGE_CODEX_URL) || 'https://chatgpt.com/backend-api/wham/usage',
 };
 usageDeps.refreshClaude = (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL });
+const accounts = new AccountsStore(join(DATA_DIR, 'accounts'));
 const usage = new UsageService({
-  accounts: () => MAIN_ACCOUNTS,
+  accounts: () => [
+    MAIN_ACCOUNTS[0],
+    ...accounts.list().map((a) => ({ id: `claude:${a.id}`, provider: 'claude' as const, configDir: accounts.dirOf(a.id) })),
+    MAIN_ACCOUNTS[1],
+  ],
   fetchAccount: (ref) => (ref.provider === 'claude' ? fetchClaude(usageDeps, ref) : fetchCodex(usageDeps)),
   cacheFile: join(DATA_DIR, 'usage-cache.json'),
   enabled: () => state.settings.showAiUsage,
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
 });
-let usageKey = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
+const execText = (command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string | null> => new Promise((resolve) => {
+  execFile(command, args, { env, timeout: 15000, windowsHide: true, shell: process.platform === 'win32' }, (error, stdout) => resolve(error ? null : stdout));
+});
+let usageKey =`${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
 const ptyHost = new PtyHostClient();
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+const login = new LoginManager({
+  store: accounts,
+  spawnPty: (spec) => ptyHost.spawn({
+    id: spec.id, cwd: homedir(), cols: 100, rows: 28,
+    env: { ...cleanEnv(process.env), ...spec.env }, shell: state.settings.shell, command: spec.command,
+  }),
+  killPty: (id) => ptyHost.kill(id),
+  fingerprint: async (provider, configDir) => {
+    if (provider === 'claude') {
+      const credentials = await readClaudeCredentials(configDir ? profileSource(usageDeps.credentials, configDir) : usageDeps.credentials);
+      return credentials ? sha256(credentials.accessToken) : null;
+    }
+    const credentials = await readCodexCredentials(usageDeps.credentials);
+    return credentials?.accessToken ? sha256(credentials.accessToken) : null;
+  },
+  identity: async (provider, configDir) => {
+    if (provider === 'codex') {
+      const credentials = await readCodexCredentials(usageDeps.credentials);
+      return credentials?.email ? { email: credentials.email } : {};
+    }
+    if (configDir) return readManagedIdentity(configDir, { source: usageDeps.credentials, exec: execText });
+    return readClaudeIdentity(usageDeps.credentials);
+  },
+  knownEmails: async () => {
+    const main = await readClaudeIdentity(usageDeps.credentials);
+    return [main.email, ...accounts.list().map((a) => a.email)]
+      .filter((email): email is string => typeof email === 'string' && email !== '')
+      .map((email) => email.toLowerCase());
+  },
+  emit: (s) => send('auth:state', s),
+  onChanged: () => void usage.refresh(true, true),
+});
 const hooks = new HookServer();
 const alive = new Set<string>();
 /** Codex session ids handed to cells this run (state may lag behind the renderer). */
@@ -390,6 +436,17 @@ const changelog = createChangelog({
 ipcMain.handle('changelog:get', (_e, force: boolean) => changelog.get(force));
 ipcMain.handle('usage:get', () => usage.getState());
 ipcMain.handle('usage:refresh', () => usage.refresh(true));
+ipcMain.handle('auth:start', (_e, request: unknown) => {
+  if (typeof request !== 'object' || request === null || Array.isArray(request)) return { ok: false, error: 'invalid request' };
+  return login.start(request as LoginRequest);
+});
+ipcMain.on('auth:cancel', (_e, id: unknown) => { if (typeof id === 'string') login.cancel(id); });
+ipcMain.handle('accounts:remove', (_e, id: unknown) => {
+  if (!isAccountId(id)) return { ok: false };
+  accounts.remove(id);
+  void usage.refresh(true, true);
+  return { ok: true };
+});
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
@@ -436,6 +493,7 @@ app.on('before-quit', (e) => {
   e.preventDefault();
   quitting = true;
   usage.stop();
+  login.dispose();
   send('app:before-quit');
   // Give the renderer a moment to push its final state, then wind down terminals cleanly.
   setTimeout(async () => {

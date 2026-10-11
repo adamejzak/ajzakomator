@@ -47,6 +47,9 @@ const api: McApi = {
   getChangelog: (force) => ipcRenderer.invoke('changelog:get', !!force),
   getUsage: () => ipcRenderer.invoke('usage:get'),
   refreshUsage: () => ipcRenderer.invoke('usage:refresh'),
+  startLogin: (request) => ipcRenderer.invoke('auth:start', request),
+  cancelLogin: (id) => ipcRenderer.send('auth:cancel', id),
+  removeAccount: (id) => ipcRenderer.invoke('accounts:remove', id),
   on: (channel: string, cb: (...args: any[]) => void) => {
     const listener = (_e: unknown, ...args: any[]) => cb(...args);
     ipcRenderer.on(channel, listener);
