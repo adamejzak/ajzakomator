@@ -3,6 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { shouldNotify } from '../../shared/status';
+import { createSoundThrottle, shouldPlayWaitingSound } from '../../shared/sound';
+import { playWaitingSound } from './waitingSound';
 import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
@@ -66,7 +68,10 @@ async function boot(): Promise<void> {
     window.mc.reportCellStatus(cellId, status);
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
     if (status !== 'waiting') return;
-    if (shouldNotify(prev, status, cause)) maybeNotify(cellId);
+    if (shouldNotify(prev, status, cause)) {
+      maybeNotify(cellId);
+      maybePlaySound(cellId);
+    }
     bindCodexSession(cellId);
     // A turn finished: the agent may have (re)titled the conversation.
     const found = findCell(getS(), cellId);
@@ -95,6 +100,17 @@ function bindCodexSession(cellId: string): void {
   const found = findCell(getS(), cellId);
   if (!found || found.cell.session || getProfile(getS(), found.cell.profileId).cli !== 'codex') return;
   void window.mc.bindCodexSession(cellId, found.cell.worktree?.path ?? found.project.path);
+}
+
+const allowSound = createSoundThrottle();
+
+/** Same rules as the notification, but independent of the notifications setting. */
+function maybePlaySound(cellId: string): void {
+  const s = getS();
+  if (!shouldPlayWaitingSound(s.settings.waitingSound, true, document.hasFocus() && isVisible(cellId))) return;
+  const found = findCell(s, cellId);
+  if (!found || getProfile(s, found.cell.profileId).cli === 'shell') return;
+  if (allowSound(Date.now())) void playWaitingSound();
 }
 
 function maybeNotify(cellId: string): void {

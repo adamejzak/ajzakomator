@@ -1,5 +1,6 @@
 import type { GridLayout } from './layout';
 import type { Language } from './languages';
+import type { WaitingSound } from './sound';
 import type { AgentRole, AutomationState } from './automation';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
@@ -111,6 +112,12 @@ export interface Settings {
   usageIntervalMinutes: number;
   /** The docked section is folded to one line. */
   usageCollapsed: boolean;
+  /** Sound when a cell starts waiting for the user (same moment as the OS notification). */
+  waitingSound: WaitingSound;
+  /** Path of the own sound file, chosen with the native dialog. */
+  waitingSoundFile: string;
+  /** 0-100, applies to the own sound file. */
+  waitingSoundVolume: number;
 }
 
 export interface AppState {

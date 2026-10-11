@@ -47,6 +47,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 - Profiles for **Claude Code**, **Codex** and a shell: **PowerShell** on Windows, **zsh / bash** on macOS, with your own CLI flags
 - Live status per cell, tab and project: ◐ working, ● waiting for you
 - Desktop notification when a background agent finishes or asks for permission; click it to jump there
+- Optional sound at the same moment (Settings: off, system sound or your own file with volume); works for Codex cells too
 - Cells are named after the conversation automatically
 - Optional local **MCP** gives selected Claude Code and Codex cells coordinator or worker roles, tracked tasks, structured results and messages. Ordinary grids start with **No MCP**. See the [English guide](docs/MCP.en.md) or [Polish guide](docs/MCP.md).
 

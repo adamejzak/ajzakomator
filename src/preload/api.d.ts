@@ -39,6 +39,11 @@ export interface McApi {
   aliveCells(): Promise<string[]>;
   reportCellStatus(cellId: string, status: CellStatus): void;
   pickFolder(): Promise<string | null>;
+  /** Native dialog for the own waiting sound; null when cancelled. */
+  pickSoundFile(): Promise<string | null>;
+  /** Bytes of the saved own sound (main reads the path from settings); `data` is null when `knownKey` is still current. */
+  loadWaitingSound(knownKey?: string): Promise<{ ok: true; key: string; data: Uint8Array | null } | { ok: false }>;
+  systemBeep(): void;
   pathExists(path: string): Promise<boolean>;
   listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;
   readProjectFile(projectId: string, relativePath: string): Promise<ProjectFilePreview>;

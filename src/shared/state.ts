@@ -6,6 +6,7 @@ import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
 import { normalizePanelWidth, PANEL_LIMITS } from './panels';
 import { defaultAutomation } from './automation';
 import { USAGE_INTERVALS_MINUTES } from './usage';
+import { DEFAULT_SOUND_VOLUME, normalizeWaitingSound, normalizeWaitingSoundVolume } from './sound';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
@@ -24,7 +25,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: false, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false },
+    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', autoInstallUpdates: false, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, waitingSound: 'off', waitingSoundFile: '', waitingSoundVolume: DEFAULT_SOUND_VOLUME },
     sidebarCollapsed: false,
     snippetsOpen: true,
     sidebarWidth: PANEL_LIMITS.sidebar.default,
@@ -311,6 +312,9 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       showAiUsage: typeof r.settings?.showAiUsage === 'boolean' ? r.settings.showAiUsage : d.settings.showAiUsage,
       usageIntervalMinutes: (USAGE_INTERVALS_MINUTES as readonly number[]).includes(r.settings?.usageIntervalMinutes as number) ? r.settings!.usageIntervalMinutes! : d.settings.usageIntervalMinutes,
       usageCollapsed: typeof r.settings?.usageCollapsed === 'boolean' ? r.settings.usageCollapsed : d.settings.usageCollapsed,
+      waitingSound: normalizeWaitingSound(r.settings?.waitingSound),
+      waitingSoundFile: typeof r.settings?.waitingSoundFile === 'string' ? r.settings.waitingSoundFile : d.settings.waitingSoundFile,
+      waitingSoundVolume: normalizeWaitingSoundVolume(r.settings?.waitingSoundVolume),
     },
     projects: r.projects.map((p) => ({
       ...p,

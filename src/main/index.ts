@@ -42,6 +42,8 @@ import { queueCodexMessage } from './agentDelivery';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
+import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
+import { loadSoundFile } from './waitingSound';
 
 const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
 // Carry over state from the app's previous name.
@@ -382,7 +384,19 @@ ipcMain.handle('dialog:pickFolder', async () => {
   const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'], title: tr('Wybierz folder projektu') });
   return r.canceled ? null : r.filePaths[0];
 });
-ipcMain.handle('fs:exists', (_e, p: string) => existsSync(p));
+ipcMain.handle('sound:pick', async () => {
+  const r = await dialog.showOpenDialog(win!, {
+    properties: ['openFile'],
+    title: tr('Wybierz plik dźwiękowy'),
+    filters: [{ name: tr('Pliki dźwiękowe'), extensions: [...SOUND_EXTENSIONS] }],
+  });
+  return r.canceled || !isSoundFile(r.filePaths[0]) ? null : r.filePaths[0];
+});
+// The path is never taken from the renderer: only the saved setting (set from the dialog result) is read.
+ipcMain.handle('sound:load', (_e, knownKey?: unknown) =>
+  loadSoundFile(state.settings.waitingSoundFile, typeof knownKey === 'string' ? knownKey : undefined));
+ipcMain.on('sound:beep', () => shell.beep());
+ipcMain.handle('fs:exists',(_e, p: string) => existsSync(p));
 ipcMain.handle('fs:listProjectDirectory', (_e, projectId: string, path: string) => {
   const project = state.projects.find((p) => p.id === projectId);
   return project ? listProjectDirectory(project.path, path) : { ok: false, error: 'Projekt już nie istnieje.' };

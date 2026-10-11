@@ -8,7 +8,9 @@ import {
 import { fuzzyFilter } from '../../../shared/fuzzy';
 import type { CliKind, ProjectIcon, SessionInfo, ShellKind, Snippet } from '../../../shared/types';
 import { restoreArchived, resumeSession } from '../actions';
-import { closeDialog, closeModal, setUi, update, useStore, type Dialog } from '../store';
+import { closeDialog, closeModal, setUi, toast, update, useStore, type Dialog } from '../store';
+import { normalizeWaitingSound, normalizeWaitingSoundVolume } from '../../../shared/sound';
+import { playWaitingSound } from '../waitingSound';
 import { AuthModal } from './AuthModal';
 import { ChangelogModal } from './Changelog';
 import { FindReplaceModal } from './FindReplace';
@@ -226,6 +228,42 @@ function SettingsModal() {
 
             {tr("Powiadomienia, gdy agent czeka na Ciebie")}
           </label>
+        </div>
+        <div className="field">
+          <label htmlFor="settings-waiting-sound">{tr('Dźwięk przy oczekiwaniu na Ciebie')}</label>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            <select id="settings-waiting-sound" className="select" style={{ width: 200 }} value={s.settings.waitingSound}
+              onChange={(e) => setSetting({ waitingSound: normalizeWaitingSound(e.target.value) })}>
+              <option value="off">{tr('Wyłączony')}</option>
+              <option value="system">{tr('Dźwięk systemowy')}</option>
+              <option value="custom">{tr('Własny plik')}</option>
+            </select>
+            {s.settings.waitingSound === 'custom' && (
+              <>
+                <button className="btn" onClick={async () => {
+                  const file = await window.mc.pickSoundFile();
+                  if (file) setSetting({ waitingSoundFile: file });
+                }}>{tr('Wybierz plik...')}</button>
+                <span className="muted" title={s.settings.waitingSoundFile}>
+                  {s.settings.waitingSoundFile ? s.settings.waitingSoundFile.split(/[\\/]/).pop() : tr('Nie wybrano pliku')}
+                </span>
+              </>
+            )}
+            {s.settings.waitingSound !== 'off' && (
+              <button className="btn" onClick={async () => {
+                if (!(await playWaitingSound())) toast(tr('Nie udało się odtworzyć pliku, użyto dźwięku systemowego.'), 'error');
+              }}>{tr('Test')}</button>
+            )}
+          </div>
+          {s.settings.waitingSound === 'custom' && (
+            <div className="row">
+              <label htmlFor="settings-waiting-volume">{tr('Głośność')}</label>
+              <input id="settings-waiting-volume" type="range" min={0} max={100} value={s.settings.waitingSoundVolume}
+                onChange={(e) => setSetting({ waitingSoundVolume: normalizeWaitingSoundVolume(Number(e.target.value)) })} />
+              <span className="muted">{s.settings.waitingSoundVolume}%</span>
+            </div>
+          )}
+          <span className="muted">{tr('Gra w tym samym momencie co powiadomienie, także dla agentów Codex. Dźwięk systemowy ignoruje głośność.')}</span>
         </div>
         <div className="section-title">{tr('Aktualizacje')}</div>
         <div className="field">
