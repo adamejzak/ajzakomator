@@ -1,5 +1,5 @@
-/** Stages shown by the update window while the installer replaces the running app. */
-export type UpdateStage = 'preparing' | 'closing' | 'installing' | 'launching' | 'done' | 'error';
+/** Stages shown by the update window; the first three belong to the startup check that runs in the app itself. */
+export type UpdateStage = 'checking' | 'downloading' | 'failed' | 'preparing' | 'closing' | 'installing' | 'launching' | 'done' | 'error';
 
 export interface UpdateStrings {
   title: string;

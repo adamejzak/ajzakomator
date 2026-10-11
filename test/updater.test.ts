@@ -157,6 +157,51 @@ describe('updater lifecycle', () => {
     await api.installOnQuit();
     expect(mock.install).toHaveBeenCalledExactlyOnceWith(true, false);
   });
+  describe('startup gate helpers', () => {
+    const setupGate = async () => { const api = await import('../src/main/updater'); api.initUpdater(vi.fn(), { strings: () => strings }); return api; };
+    it('checks without downloading and restores automatic download afterwards', async () => {
+      const api = await setupGate();
+      mock.check.mockImplementationOnce(async () => { expect(updater.autoDownload).toBe(false); return { isUpdateAvailable: true, updateInfo: { version: '0.6.0' } }; });
+      expect(await api.startupCheck()).toEqual({ version: '0.6.0' });
+      expect(updater.autoDownload).toBe(true);
+      mock.check.mockResolvedValueOnce({ isUpdateAvailable: false, updateInfo: { version: '0.5.8' } });
+      expect(await api.startupCheck()).toBeUndefined();
+      mock.check.mockRejectedValueOnce(new Error('offline'));
+      await expect(api.startupCheck()).rejects.toThrow('offline');
+      expect(updater.autoDownload).toBe(true);
+    });
+    it('downloads late answers of an abandoned check in the background', async () => {
+      const api = await setupGate();
+      const download = vi.fn().mockResolvedValue([]);
+      Object.assign(updater, { downloadUpdate: download });
+      api.abandonStartupCheck();
+      mock.check.mockResolvedValueOnce({ isUpdateAvailable: true, updateInfo: { version: '0.6.0' } });
+      await api.startupCheck();
+      expect(download).toHaveBeenCalledOnce();
+    });
+    it('hands over to the installer only for a downloaded update, hiding the startup window first', async () => {
+      const api = await setupGate();
+      const hide = vi.fn();
+      expect(await api.startupHandoff(hide)).toBe(false);
+      updater.emit('update-available', { version: '0.6.0' });
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      mock.quit.mockImplementationOnce(() => expect(hide).toHaveBeenCalledOnce());
+      expect(await api.startupHandoff(hide)).toBe(true);
+      expect(splash.show).toHaveBeenCalledExactlyOnceWith('0.6.0', 'relaunch', strings);
+      expect(mock.quit).toHaveBeenCalledExactlyOnceWith(true, true);
+      expect(api.getUpdateState().status).toBe('installing');
+      await api.installOnQuit();
+      expect(mock.install).not.toHaveBeenCalled();
+    });
+    it('reports a failed hand-over', async () => {
+      const api = await setupGate();
+      updater.emit('update-available', { version: '0.6.0' });
+      updater.emit('update-downloaded', { version: '0.6.0' });
+      mock.quit.mockImplementationOnce(() => { throw new Error('installer failed'); });
+      expect(await api.startupHandoff(vi.fn())).toBe(false);
+      expect(splash.abort).toHaveBeenCalledOnce();
+    });
+  });
   describe('update window', () => {
     const setupWindow = async () => { const api = await import('../src/main/updater'); const changed = vi.fn(); api.initUpdater(changed, { strings: () => strings }); return { ...api, changed }; };
     it('stages the window runtime in the background once the update is downloaded', async () => {

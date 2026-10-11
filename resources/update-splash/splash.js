@@ -8,6 +8,10 @@ function render(state) {
   $('percent').textContent = percent + '%';
   $('meter').setAttribute('aria-valuenow', String(percent));
   $('status').textContent = state.message || '';
+  if (state.title) $('title').textContent = state.title;
+  if (state.versions) $('versions').textContent = state.versions;
+  if (state.hint) $('hint').textContent = state.hint;
+  $('percent').hidden = state.stage === 'checking';
 
   const failed = state.stage === 'error';
   $('actions').hidden = !failed;
@@ -24,6 +28,6 @@ window.updateSplash.init().then((info) => {
   $('open').addEventListener('click', () => window.updateSplash.open());
   $('close').addEventListener('click', () => window.updateSplash.close());
   $('dismiss').addEventListener('click', () => window.updateSplash.close());
-  render({ stage: 'preparing', percent: 0, message: '' });
+  render(info.state || { stage: 'preparing', percent: 0, message: '' });
   window.updateSplash.onState(render);
 });

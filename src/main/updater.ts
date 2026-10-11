@@ -17,6 +17,10 @@ let pending: Promise<void> | undefined;
 let watchdog: ReturnType<typeof setTimeout> | undefined;
 let getStrings: (() => UpdateStrings) | undefined;
 let autoInstallOnQuit: () => boolean = () => true;
+let startupAbandoned = false;
+/** Development only: a generic update feed (for example a local server) lets the updater be exercised from an unpackaged build. */
+const devFeed = !app.isPackaged ? process.env.MC_UPDATE_FEED : undefined;
+const updatesActive = (): boolean => app.isPackaged || !!devFeed;
 
 function set(next: UpdateState): void {
   clearTimeout(watchdog);
@@ -40,7 +44,7 @@ export async function checkForUpdates(): Promise<void> {
     emit(state);
     return pending;
   }
-  if (!app.isPackaged) {
+  if (!updatesActive()) {
     set({ status: 'unavailable', message: 'Aktualizacje są dostępne w zainstalowanej aplikacji.' });
     return;
   }
@@ -72,7 +76,8 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
   initialized = true;
   portable = !!(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE) || process.platform === 'darwin';
   state = { ...state, portable };
-  if (!app.isPackaged) return;
+  if (!updatesActive()) return;
+  if (devFeed) { autoUpdater.forceDevUpdateConfig = true; autoUpdater.setFeedURL({ provider: 'generic', url: devFeed }); }
   autoUpdater.autoDownload = !portable;
   autoUpdater.autoInstallOnAppQuit = false;
   // A proxy or CDN in between must not answer with an older copy of the release feed.
@@ -131,4 +136,52 @@ export async function installOnQuit(): Promise<void> {
     const installed = (autoUpdater as unknown as { install(silent: boolean, relaunch: boolean): boolean }).install(true, false);
     if (!installed) { fail(new Error('Nie udało się zainstalować aktualizacji.')); if (shown) void abortUpdateWindow(); }
   } catch (error) { fail(error); if (shown) void abortUpdateWindow(); }
+}
+
+// ── startup gate: the same updater, driven before the main window exists ─────────────────────────
+
+/** Whether updates can run at all (installed build, or a development feed). */
+export const updatesEnabled = updatesActive;
+
+/** True for portable and macOS builds, which never install on their own. */
+export const isPortableBuild = (): boolean => portable;
+
+/** Looks for an update without downloading it; the caller decides whether to wait for the download. */
+export async function startupCheck(): Promise<{ version: string } | undefined> {
+  if (!updatesActive() || portable) return undefined;
+  autoUpdater.autoDownload = false;
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (!result?.isUpdateAvailable) return undefined;
+    const version = result.updateInfo.version;
+    // The gate gave up while this check was running: continue as a normal background update.
+    if (startupAbandoned) void autoUpdater.downloadUpdate().catch(fail);
+    return { version };
+  } finally {
+    autoUpdater.autoDownload = !portable;
+  }
+}
+
+/** Marks the startup check as given up, so a late answer is handled like a background check. */
+export function abandonStartupCheck(): void { startupAbandoned = true; }
+
+/** Downloads the update found by `startupCheck`, reporting percentages. */
+export async function startupDownload(onProgress: (percent: number) => void): Promise<void> {
+  const listener = (p: { percent: number }) => onProgress(p.percent);
+  autoUpdater.on('download-progress', listener);
+  try { await autoUpdater.downloadUpdate(); }
+  finally { autoUpdater.removeListener('download-progress', listener); }
+}
+
+/**
+ * Starts the detached installing window and the installer for a downloaded update. `hide` closes the
+ * startup window once the installing window is visible. False means nothing was handed over.
+ */
+export async function startupHandoff(hide: () => void): Promise<boolean> {
+  if (portable || state.status !== 'ready') return false;
+  set({ ...state, status: 'installing' });
+  const shown = await showWindow('relaunch');
+  hide();
+  try { autoUpdater.quitAndInstall(true, true); return true; }
+  catch (error) { fail(error); if (shown) void abortUpdateWindow(); return false; }
 }

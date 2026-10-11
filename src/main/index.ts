@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { execFile, spawn, spawnSync } from 'child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell } from 'electron';
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { SpawnCellRequest } from '../preload/api';
@@ -19,7 +19,9 @@ import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessions } from './sessions';
 import { createSaver, loadState } from './store';
-import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
+import { abandonStartupCheck, checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, isPortableBuild, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
+import { isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup } from './startupGate';
+import { createGateWindow } from './gateWindow';
 import { START_BLOCK_MS, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile } from './accounts/refresh';
@@ -55,9 +57,11 @@ app.setPath('userData', DATA_DIR);
 if (process.platform === 'win32') app.setAppUserModelId('com.ajzakomator.app');
 
 if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
-if (!process.env.MC_DATA_DIR && !app.requestSingleInstanceLock()) app.quit();
+// Module code keeps running after app.quit(), so every later step checks `superseded` instead of assuming the exit is immediate.
+let superseded = !process.env.MC_DATA_DIR && !app.requestSingleInstanceLock();
 // The installer is replacing this build's files right now (the update window is showing it); starting would crash.
-if (process.platform === 'win32' && app.isPackaged && !process.env.MC_DATA_DIR && updateInstalling(START_BLOCK_MS)) app.exit(0);
+if (!superseded && process.platform === 'win32' && app.isPackaged && !process.env.MC_DATA_DIR && updateInstalling(START_BLOCK_MS)) superseded = true;
+if (superseded) app.exit(0);
 
 let win: BrowserWindow | null = null;
 let state: AppState = loadState(DATA_DIR, appPlatform(process.platform));
@@ -481,21 +485,63 @@ app.on('second-instance', () => {
   win.focus();
 });
 
+/** True while the startup update check owns the screen: closing its window must not quit the app. */
+let gating = false;
+const GATE_FILE = join(DATA_DIR, 'update-gate.json');
+const readGateFailure = () => { try { return parseFailure(JSON.parse(readFileSync(GATE_FILE, 'utf8'))); } catch { return undefined; } };
+
+/** Runs the updater before the main window exists; resolves true when the installer took over and the app must not start. */
+async function runUpdateGate(): Promise<boolean> {
+  const failure = readGateFailure();
+  if (!shouldGateOnStartup({
+    platform: process.platform, packaged: updatesEnabled(), portable: isPortableBuild(),
+    autoInstall: state.settings.autoInstallUpdates, recentFailure: isRecentFailure(failure, Date.now()),
+  })) return false;
+  const version = app.getVersion();
+  const window = createGateWindow({
+    checking: tr('Sprawdzanie aktualizacji…'),
+    downloading: tr('Pobieranie aktualizacji…'),
+    updating: (next) => tr('Aktualizacja do wersji {version}', { version: next }),
+    hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
+    preparing: tr('Przygotowanie aktualizacji…'),
+    failed: tr('Aktualizacja nie powiodła się - uruchamiam obecną wersję'),
+  }, version);
+  gating = true;
+  try {
+    const result = await runStartupGate({
+      check: startupCheck, abandonCheck: abandonStartupCheck, download: startupDownload, handoff: (_next, hide) => startupHandoff(hide),
+      show: window.show, hide: window.hide, skipVersion: failure?.version,
+      recordFailure: (failed) => { try { writeFileSync(GATE_FILE, JSON.stringify({ version: failed, at: Date.now() })); } catch { /* best effort */ } },
+    });
+    // After a hand-over `gating` stays on: the app is quitting for the installer and must not wind anything down.
+    if (result !== 'installing') gating = false;
+    return result === 'installing';
+  } catch (error) {
+    console.error('startup update gate failed', error);
+    window.hide();
+    gating = false;
+    return false;
+  }
+}
+
 app.whenReady().then(async () => {
+  if (superseded) return;
   // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
   Menu.setApplicationMenu(null);
+  initUpdater((s) => send('update:state', s), { strings: updateStrings, autoInstallOnQuit: () => state.settings.autoInstallUpdates });
+  if (await runUpdateGate()) return;
   await hooks.start();
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   createWindow();
   usage.start();
-  initUpdater((s) => send('update:state', s), { strings: updateStrings, autoInstallOnQuit: () => state.settings.autoInstallUpdates });
   scheduleUpdateCleanup();
 });
 
 let quitting = false;
 app.on('before-quit', (e) => {
-  if (quitting) return;
+  // The installer took over before anything was started, so there is nothing to wind down.
+  if (quitting || gating || superseded) return;
   e.preventDefault();
   quitting = true;
   usage.stop();
@@ -515,4 +561,4 @@ app.on('before-quit', (e) => {
     app.exit(0);
   }, 150);
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { if (!gating) app.quit(); });
