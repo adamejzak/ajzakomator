@@ -26,7 +26,7 @@ describe('HookServer', () => {
     await s.start();
     const path = s.writeClaudeSettings(mkdtempSync(join(tmpdir(), 'mc-hooks-')), 'c9');
     const json = JSON.parse(readFileSync(path, 'utf8'));
-    expect(Object.keys(json.hooks)).toEqual(['UserPromptSubmit', 'Stop', 'Notification', 'PreToolUse', 'PostToolUse', 'SubagentStop']);
+    expect(Object.keys(json.hooks)).toEqual(['UserPromptSubmit', 'Stop', 'Notification', 'PreToolUse', 'PostToolUse', 'SubagentStop', 'SessionStart']);
     expect(json.hooks.PostToolUse[0].hooks[0].command).toContain(`/h/${s.token}/c9/busy`);
     expect(json.hooks.Stop[0].hooks[0].command).toContain(`/h/${s.token}/c9/stop`);
     s.stop();

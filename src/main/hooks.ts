@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync } from 'fs';
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 import { join } from 'path';
+import { SESSION_ID } from '../shared/sessionTrack';
 import type { HookEvent } from '../shared/status';
 
 const EVENTS: HookEvent[] = ['prompt', 'stop', 'notify', 'busy'];
@@ -21,6 +22,20 @@ export function isAttentionNotification(body: string): boolean {
     return typeof type !== 'string' || !IGNORED_NOTIFICATIONS.has(type);
   } catch {
     return true; // unknown payload: err on the side of telling the user
+  }
+}
+
+const SESSION_SOURCES = new Set(['startup', 'resume', 'clear', 'compact']);
+
+/** Extracts the conversation id from a SessionStart payload; null for anything malformed. Never logs the body. */
+export function parseSessionStart(body: string): { sessionId: string; source: string | undefined } | null {
+  try {
+    const p = JSON.parse(body) as { session_id?: unknown; source?: unknown };
+    if (typeof p?.session_id !== 'string' || !SESSION_ID.test(p.session_id)) return null;
+    const source = typeof p.source === 'string' && SESSION_SOURCES.has(p.source) ? p.source : undefined;
+    return { sessionId: p.session_id, source };
+  } catch {
+    return null;
   }
 }
 
@@ -57,7 +72,13 @@ export class HookServer extends EventEmitter {
       req.on('end', () => {
         // 204 without a body: hook stdout would otherwise be fed back to Claude as context.
         res.writeHead(204).end();
-        if (!cellId || !EVENTS.includes(event)) return;
+        if (!cellId) return;
+        if ((event as string) === 'session') {
+          const parsed = parseSessionStart(body);
+          if (parsed) this.emit('session', cellId, parsed.sessionId, parsed.source);
+          return;
+        }
+        if (!EVENTS.includes(event)) return;
         if (event === 'notify' && !isAttentionNotification(body)) return;
         this.emit('hook', cellId, event);
       });
@@ -71,7 +92,7 @@ export class HookServer extends EventEmitter {
     this.server?.close();
   }
 
-  url(cellId: string, event: HookEvent): string {
+  url(cellId: string, event: HookEvent | 'session'): string {
     return `http://127.0.0.1:${this.port}/h/${this.token}/${encodeURIComponent(cellId)}/${event}`;
   }
 
@@ -79,14 +100,16 @@ export class HookServer extends EventEmitter {
   writeClaudeSettings(dir: string, cellId: string): string {
     mkdirSync(dir, { recursive: true });
     // Only Notification needs its payload (JSON on stdin, for the type); tool hooks would upload whole files.
-    const hook = (event: HookEvent) => [
-      { hooks: [{ type: 'command', command: `curl -s -m 2 -X POST ${event === 'notify' ? '--data-binary @- ' : ''}${this.url(cellId, event)}` }] },
+    const hook = (event: HookEvent | 'session') => [
+      { hooks: [{ type: 'command', command: `curl -s -m 2 -X POST ${event === 'notify' || event === 'session' ? '--data-binary @- ' : ''}${this.url(cellId, event)}` }] },
     ];
     // PreToolUse/PostToolUse/SubagentStop mark "still busy": the agent keeps working after a Stop
     // that only ended a turn (background tasks) or after a permission prompt was answered.
     const settings = { hooks: {
       UserPromptSubmit: hook('prompt'), Stop: hook('stop'), Notification: hook('notify'),
       PreToolUse: hook('busy'), PostToolUse: hook('busy'), SubagentStop: hook('busy'),
+      // /resume and /clear start a different conversation; the payload carries its session_id.
+      SessionStart: hook('session'),
     } };
     const path = join(dir, `claude-${cellId}.json`);
     writeFileSync(path, JSON.stringify(settings, null, 2));

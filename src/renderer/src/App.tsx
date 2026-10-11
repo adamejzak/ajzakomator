@@ -55,7 +55,12 @@ async function boot(): Promise<void> {
 
   window.mc.on('cell:restarted', (cellId) => { terminals.prepareSpawn(cellId); terminals.syncSize(cellId); });
   window.mc.on('cell:hook', (cellId, event) => terminals.hook(cellId, event));
-  window.mc.on('cell:session', (cellId, session) => update((s) => updateCell(s, cellId, { session })));
+  window.mc.on('cell:session', (cellId, session) => {
+    update((s) => updateCell(s, cellId, { session }));
+    // A different conversation: its title may not be indexed yet.
+    const found = findCell(getS(), cellId);
+    if (found && session.cli === 'claude') refreshSessionTitles(found.project.path, 1500);
+  });
   window.mc.on('cell:spawnError', (cellId, message) => setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: message } })));
   window.mc.on('focus-cell', (cellId) => focusCell(cellId));
   window.mc.on('ptyhost:crashed', () => {

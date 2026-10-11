@@ -44,6 +44,7 @@ import { queueCodexMessage } from './agentDelivery';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
+import { shouldUpdateCellSession } from '../shared/sessionTrack';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadSoundFile } from './waitingSound';
 
@@ -288,6 +289,20 @@ hooks.on('hook', (cellId: string, event: string) => {
   if (!findCell(state, cellId)) return; // stale or foreign id
   automation.statuses.set(cellId, event === 'prompt' || event === 'busy' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
   send('cell:hook', cellId, event);
+});
+
+// The user switched conversation inside a running Claude (/resume, /clear): follow it so a restart
+// resumes the right one. Events for cells that are not alive are dropped (late hook of an old process).
+hooks.on('session', (cellId: string, sessionId: string) => {
+  const found = findCell(state, cellId);
+  if (!shouldUpdateCellSession({
+    known: !!found,
+    isClaude: !!found && getProfile(state, found.cell.profileId).cli === 'claude',
+    alive: alive.has(cellId),
+    currentId: found?.cell.session?.id,
+    reportedId: sessionId,
+  })) return;
+  send('cell:session', cellId, { cli: 'claude', id: sessionId });
 });
 
 function boundCodexIds(): Set<string> {
