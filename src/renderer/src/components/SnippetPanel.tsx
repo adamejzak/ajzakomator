@@ -84,7 +84,7 @@ export function SnippetPanel({ resize }: { resize: PanelResizeProps }) {
           <div className="es-icon"><ISnippet /></div>
           <div className="es-title">{tr("Brak snippetów")}</div>
           <div className="es-text">{tr("Zapisz prompty, których często używasz, i wklejaj je do terminali jednym kliknięciem.")}</div>
-          <button className="btn white lg" onClick={() => create()}><IPlus />  {tr("Nowy snippet")}</button>
+          <button className="btn ghost" onClick={() => create()}><IPlus />  {tr("Nowy snippet")}</button>
         </div>
       ) : (
       <>
@@ -170,7 +170,6 @@ export function SnippetPanel({ resize }: { resize: PanelResizeProps }) {
       </div>
       </>
       )}
-      {snippets.length > 0 && <div className="side-footer"><button className="btn" onClick={() => create()}><IPlus />  {tr("Nowy snippet")}</button></div>}
     </aside>
   );
 }

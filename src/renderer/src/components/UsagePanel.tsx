@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { LoginTarget } from '../../../shared/accounts';
-import { effectivePercent, formatDuration, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { effectivePercent, formatDuration, shortAccountName, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { useI18n } from '../i18n';
 import { askChoice, setUi, update, useStore } from '../store';
 import { useUsage } from '../usage';
@@ -136,6 +136,11 @@ export function UsagePanel() {
     try { await window.mc.refreshUsage(); } catch { /* the next scheduled refresh retries */ } finally { if (alive.current) setRefreshing(false); }
   };
   const summary = usageSummary(providers, now) || tr('Konta AI');
+  // Tooltip of one account: name plus every window, e.g. "Claude · 5 h 12% · 7 days 40%".
+  const accountDetail = (usage: ProviderUsage, nowMs: number) => [
+    usage.email || NAMES[usage.provider],
+    ...usage.windows.map((window) => `${window.id === '5h' ? tr('5 godz.') : tr('7 dni')} ${Math.round(effectivePercent(window, nowMs))}%`),
+  ].join(' · ');
   const updated = visible.length ? new Date(Math.max(...visible.map((usage) => usage.fetchedAt))).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' }) : '';
   const claudeCount = visible.filter((usage) => usage.provider === 'claude').length;
   const hasCodex = visible.some((usage) => usage.provider === 'codex');
@@ -146,16 +151,20 @@ export function UsagePanel() {
     if (!shown.length) return null;
     return (
       <div className="usage-panel usage-rail" title={summary}>
-        {shown.map((usage) => {
-          const percent = worstPercent(usage, now);
-          return (
-            <div key={usage.accountId} className="usage-rail-item">
-              <ProviderIcon provider={usage.provider} size={14} />
-              <Bar percent={percent} label={usage.email || NAMES[usage.provider]} />
-              <span>{Math.round(percent)}</span>
-            </div>
-          );
-        })}
+        {shown.map((usage) => (
+          <div key={usage.accountId} className="usage-rail-item" title={accountDetail(usage, now)}>
+            <ProviderIcon provider={usage.provider} size={14} />
+            {usage.windows.map((window) => {
+              const percent = effectivePercent(window, now);
+              return (
+                <div key={window.id} className="usage-rail-win">
+                  <span className="usage-rail-line"><span>{window.id === '5h' ? '5h' : '7d'}</span><span>{Math.round(percent)}</span></span>
+                  <Bar percent={percent} label={`${usage.email || NAMES[usage.provider]} ${window.id === '5h' ? tr('5 godz.') : tr('7 dni')}`} />
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
     );
   }
@@ -171,7 +180,22 @@ export function UsagePanel() {
       <div className="usage-head">
         <button className="usage-title" onClick={toggle} aria-expanded={!collapsed} title={collapsed ? tr('Rozwiń limity kont AI') : tr('Zwiń limity kont AI')}>
           <span className={`usage-chevron ${collapsed ? '' : 'open'}`}><IChevron /></span>
-          {collapsed ? <span className="usage-summary">{summary}</span> : tr('Limity kont AI')}
+          {!collapsed ? tr('Limity kont AI') : shown.length ? (
+            <span className="usage-chips">
+              {shown.map((usage) => {
+                const percent = worstPercent(usage, now);
+                const label = usage.provider === 'claude' && claudeCount > 1 ? shortAccountName(usage.email, NAMES.claude, 7) : '';
+                return (
+                  <span key={usage.accountId} className="usage-mini" title={accountDetail(usage, now)}>
+                    <ProviderIcon provider={usage.provider} size={12} />
+                    {label && <span className="usage-mini-name">{label}</span>}
+                    <span className="usage-mini-bar"><Bar percent={percent} label={usage.email || NAMES[usage.provider]} /></span>
+                    <span className="usage-mini-pct">{Math.round(percent)}%</span>
+                  </span>
+                );
+              })}
+            </span>
+          ) : <span className="usage-summary">{summary}</span>}
         </button>
         <button className="btn ghost icon" onClick={(e) => openAddMenu(e.currentTarget)} title={tr('Dodaj konto')} aria-label={tr('Dodaj konto')}><IPlus /></button>
         <button className="btn ghost icon" onClick={() => void refresh()} disabled={spinning} title={tr('Odśwież limity')} aria-label={tr('Odśwież limity')}><RefreshIcon spinning={spinning} /></button>
