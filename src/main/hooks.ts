@@ -124,9 +124,16 @@ export class HookServer extends EventEmitter {
       let body = '';
       const maxBody = event === 'stop' ? MAX_STOP_BODY : MAX_BODY;
       req.setEncoding('utf8');
+      let oversized = false;
       req.on('data', (chunk: string) => {
+        if (oversized) return;
         body += chunk;
-        if (body.length > maxBody) req.destroy(); // only Stop may carry a large payload (last message)
+        if (body.length <= maxBody) return;
+        // Only Stop may carry a large payload (last message). A Stop must never be lost: an oversized one counts as a
+        // plain Stop; any other oversized request is dropped.
+        oversized = true;
+        body = '';
+        if (event !== 'stop') req.destroy();
       });
       req.on('end', () => {
         // 204 without a body: hook stdout would otherwise be fed back to Claude as context.

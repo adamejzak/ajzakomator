@@ -41,7 +41,7 @@ describe('hook server Stop', () => {
     await post(url('notify'), 'z'.repeat(20_000)).catch(() => {});
     await post(`http://127.0.0.1:${s.port}/h/bad/c1/stop/x`, bg({ status: 'running' })).catch(() => {});
     await new Promise((r) => setTimeout(r, 80));
-    expect(seen).toEqual(['c1:stopbg', 'c1:stop', 'c1:stop']);
+    expect(seen).toEqual(['c1:stopbg', 'c1:stop', 'c1:stop', 'c1:stop']); // the oversized Stop still counts as a plain Stop
     s.stop();
   });
 
@@ -78,6 +78,15 @@ describe('StatusTracker background work', () => {
     expect(run(t, 1000, 1000 + STALL_MS + 5000)).toBe('working');
     expect(run(t, 1000, 1000 + BG_STALL_MS - 5)).toBe('working');
     expect(t.tick(1000 + BG_STALL_MS)).toBe('waiting');
+  });
+
+  it('leaves background mode once the long net expired, so a later lost Stop uses the short net', () => {
+    const t = new StatusTracker();
+    t.hook('stopbg', 0);
+    expect(t.tick(BG_STALL_MS)).toBe('waiting');
+    t.hook('busy', BG_STALL_MS + 10);
+    t.hook('prompt', BG_STALL_MS + 20);
+    expect(run(t, BG_STALL_MS + 20, BG_STALL_MS + 20 + STALL_MS + 1000)).toBe('waiting');
   });
 
   it('ignores Esc while background work runs', () => {

@@ -148,6 +148,7 @@ export class StatusTracker {
       const since = this.hooked ? Math.max(this.lastOutput, this.interruptAt) : this.lastOutput;
       if (now - since >= quiet) {
         this.armed = false;
+        this.background = false;
         this.interruptAt = -Infinity;
         this.set('waiting', 'heuristic');
       }
