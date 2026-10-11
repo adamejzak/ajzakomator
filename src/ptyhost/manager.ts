@@ -7,13 +7,16 @@ import type { ShellKind } from '../shared/types';
 import { coalesceDelay, FLUSH_NOW_CHARS, FlowGate, TailBuffer } from './flow';
 
 export interface PtySink {
-  data(id: string, data: string): void;
+  /** Returns false when nobody received the data (no renderer connected). */
+  data(id: string, data: string): unknown;
   exit(id: string, code: number): void;
 }
 
 const REPLAY_LIMIT = 512 * 1024;
 /** A paused pty is resumed anyway when no acknowledgement arrives for this long (renderer gone or stuck). */
 const PAUSE_WATCHDOG_MS = 3000;
+/** How long the last output of a paused pty that exited may still arrive. */
+const EXIT_DRAIN_MS = 80;
 
 interface Entry {
   proc: pty.IPty;
@@ -24,6 +27,8 @@ interface Entry {
   gate: FlowGate;
   watchdog: NodeJS.Timeout | null;
   lastWrite: number;
+  /** The process exited and its last output is being drained: never pause it again. */
+  exiting: boolean;
   exited: Promise<void>;
 }
 
@@ -80,7 +85,7 @@ export class PtyManager {
       ...(process.platform === 'win32' ? { useConpty: true, useConptyDll: true } : {}),
     });
     let resolveExit!: () => void;
-    const entry: Entry = { proc, buf: '', timer: null, history: new TailBuffer(REPLAY_LIMIT), gate: new FlowGate(), watchdog: null, lastWrite: -Infinity, exited: new Promise((r) => (resolveExit = r)) };
+    const entry: Entry = { proc, buf: '', timer: null, history: new TailBuffer(REPLAY_LIMIT), gate: new FlowGate(), watchdog: null, lastWrite: -Infinity, exiting: false, exited: new Promise((r) => (resolveExit = r)) };
     this.entries.set(req.id, entry);
 
     let pendingCommand = req.command;
@@ -98,12 +103,26 @@ export class PtyManager {
       }
     });
     proc.onExit(({ exitCode }) => {
-      if (this.entries.get(req.id) === entry) {
-        this.flush(req.id, entry);
-        this.entries.delete(req.id);
-        this.sink.exit(req.id, exitCode);
+      if (this.entries.get(req.id) !== entry) {
+        resolveExit();
+        return;
       }
-      resolveExit();
+      const finish = () => {
+        if (this.entries.get(req.id) === entry) {
+          this.flush(req.id, entry);
+          this.entries.delete(req.id);
+          this.sink.exit(req.id, exitCode);
+        }
+        resolveExit();
+      };
+      if (entry.gate.paused || entry.watchdog) {
+        // A paused pty still holds unread output: let it drain before reporting the exit.
+        entry.exiting = true;
+        this.resume(entry);
+        setTimeout(finish, EXIT_DRAIN_MS);
+      } else {
+        finish();
+      }
     });
     return proc.pid;
   }
@@ -114,8 +133,8 @@ export class PtyManager {
     if (!entry.buf) return;
     const out = entry.buf;
     entry.buf = '';
-    this.sink.data(id, out);
-    if (this.flowControl && entry.gate.sent(out.length)) this.pause(entry);
+    const delivered = this.sink.data(id, out) !== false;
+    if (delivered && this.flowControl && !entry.exiting && entry.gate.sent(out.length)) this.pause(entry);
   }
 
   private pause(entry: Entry): void {
@@ -131,7 +150,7 @@ export class PtyManager {
   private resume(entry: Entry, force = false): void {
     if (entry.watchdog) clearTimeout(entry.watchdog);
     entry.watchdog = null;
-    if (force) entry.gate.reset();
+    if (force) entry.gate.release();
     try {
       entry.proc.resume();
     } catch {
@@ -142,7 +161,13 @@ export class PtyManager {
   /** The renderer parsed `chars` characters of this terminal's output. */
   ack(id: string, chars: number): void {
     const e = this.entries.get(id);
-    if (e && e.gate.acked(chars)) this.resume(e);
+    if (!e) return;
+    if (e.gate.acked(chars)) this.resume(e);
+    else if (e.watchdog) {
+      // Slow but alive: progress renews the watchdog.
+      clearTimeout(e.watchdog);
+      e.watchdog = setTimeout(() => this.resume(e, true), PAUSE_WATCHDOG_MS);
+    }
   }
 
   /** Enables back-pressure for a freshly connected renderer; anything counted for the old one is forgotten. */

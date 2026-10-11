@@ -81,6 +81,10 @@ class TerminalManager {
   private setPort(port: MessagePort): void {
     this.port?.close();
     this.port = port;
+    // Acks owed to the previous host/port are meaningless for the new one.
+    this.acks.clear();
+    if (this.ackTimer) clearTimeout(this.ackTimer);
+    this.ackTimer = null;
     port.onmessage = (e) => this.onHostMessage(e.data as HostToRenderer);
     port.start();
     // Tell the host about the sizes we already know (e.g. after a host restart).

@@ -54,7 +54,18 @@ describe('FlowGate', () => {
   it('never lets pending go negative and ignores acks while running', () => {
     const g = new FlowGate();
     expect(g.acked(10_000)).toBe(false);
+    expect(g.inFlight).toBe(0);
     expect(g.sent(10)).toBe(false);
+    expect(g.inFlight).toBe(10);
+  });
+
+  it('release lifts a pause but keeps the in-flight count', () => {
+    const g = new FlowGate();
+    g.sent(HIGH_WATER);
+    g.release();
+    expect(g.paused).toBe(false);
+    expect(g.inFlight).toBe(HIGH_WATER);
+    expect(g.sent(1)).toBe(true);
   });
 
   it('reset reports a pause that has to be lifted', () => {

@@ -34,6 +34,11 @@ export class FlowGate {
   private pending = 0;
   paused = false;
 
+  /** Characters sent but not acknowledged yet. */
+  get inFlight(): number {
+    return this.pending;
+  }
+
   /** Returns true when the pty has to be paused now. */
   sent(n: number): boolean {
     this.pending += n;
@@ -52,6 +57,11 @@ export class FlowGate {
       return true;
     }
     return false;
+  }
+
+  /** Lifts a pause without forgetting what is in flight (the renderer is slow, not gone). */
+  release(): void {
+    this.paused = false;
   }
 
   /** Forgets everything in flight (renderer reconnected). Returns true when a pause has to be lifted. */
