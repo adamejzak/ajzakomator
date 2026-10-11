@@ -1,4 +1,5 @@
 import { MAIN_ACCOUNTS, type AccountRef, type ProviderUsage } from '../../shared/usage';
+import type { RefreshOutcome } from '../accounts/refresh';
 import { readCodexLog } from './codexLog';
 import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, type CredentialSource } from './credentials';
 import { parseClaudeUsage, parseCodexPlan, parseCodexRateLimits } from './parse';
@@ -14,6 +15,8 @@ export interface FetcherDeps {
   codexHome(): string;
   claudeUrl: string;
   codexUrl: string;
+  /** Renews the tokens of a managed Claude profile directory; absent in tests that do not need it. */
+  refreshClaude?: (dir: string) => Promise<RefreshOutcome>;
 }
 
 export interface FetchResult {
@@ -40,21 +43,46 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
   const now = deps.now();
   const source = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
   const base: ProviderUsage = { accountId: ref.id, provider: 'claude', status: 'signedOut', windows: [], fetchedAt: now, source: 'live', ...(ref.configDir ? { managed: true } : {}) };
-  const credentials = await readClaudeCredentials(source);
+  let credentials = await readClaudeCredentials(source);
   if (!credentials) return { usage: base };
   const identity = await readClaudeIdentity(source);
   const known: ProviderUsage = { ...base, plan: credentials.plan, email: identity.email, org: identity.org };
-  if (credentials.expiresAt !== undefined && credentials.expiresAt <= now + EXPIRY_MARGIN_MS) return { usage: { ...known, status: 'expired' } };
+  // Only profiles owned by the app are renewed; the main login belongs to Claude Code.
+  const refresh = ref.configDir ? deps.refreshClaude : undefined;
+  const configDir = ref.configDir ?? '';
+  /** Renews the profile and re-reads its credentials; returns the failure result instead when that did not work. */
+  const renew = async (): Promise<FetchResult | undefined> => {
+    const outcome = await refresh!(configDir);
+    if (outcome.kind === 'dead') return { usage: { ...known, status: 'expired' } };
+    if (outcome.kind === 'transient') return { usage: { ...known, status: 'error', error: 'network' } };
+    const renewed = await readClaudeCredentials(source);
+    if (!renewed) return { usage: { ...known, status: 'expired' } };
+    credentials = renewed;
+    return undefined;
+  };
+  const expired = (): boolean => credentials!.expiresAt !== undefined && credentials!.expiresAt <= now + EXPIRY_MARGIN_MS;
+  if (expired()) {
+    if (!refresh) return { usage: { ...known, status: 'expired' } };
+    const failure = await renew();
+    if (failure) return failure;
+    if (expired()) return { usage: { ...known, status: 'expired' } };
+  }
+  const request = () => deps.fetch(deps.claudeUrl, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${credentials!.accessToken}`,
+      'anthropic-beta': 'oauth-2025-04-20',
+      'User-Agent': 'claude-code/2.1.34',
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
   try {
-    const response = await deps.fetch(deps.claudeUrl, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${credentials.accessToken}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': 'claude-code/2.1.34',
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    let response = await request();
+    if (refresh && (response.status === 401 || response.status === 403)) {
+      const failure = await renew();
+      if (failure) return failure;
+      response = await request();
+    }
     if (response.status === 401 || response.status === 403) return { usage: { ...known, status: 'expired' } };
     if (!response.ok) return { usage: { ...known, status: 'error', error: `http-${response.status}` }, retryAfterMs: retryAfterMs(response) };
     const windows = parseClaudeUsage(await response.json());

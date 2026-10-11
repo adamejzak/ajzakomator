@@ -21,6 +21,7 @@ import { createSaver, loadState } from './store';
 import { checkForUpdates, getUpdateState, initUpdater, installNow, installOnQuit, RELEASES_URL } from './updater';
 import { scheduleUpdateCleanup, signalUpdateReady } from './updateSplash';
 import { createChangelog } from './changelog';
+import { refreshClaudeProfile } from './accounts/refresh';
 import { systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
@@ -64,6 +65,7 @@ const usageDeps: FetcherDeps = {
   claudeUrl: (!app.isPackaged && process.env.MC_USAGE_CLAUDE_URL) || 'https://api.anthropic.com/api/oauth/usage',
   codexUrl: (!app.isPackaged && process.env.MC_USAGE_CODEX_URL) || 'https://chatgpt.com/backend-api/wham/usage',
 };
+usageDeps.refreshClaude = (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL });
 const usage = new UsageService({
   accounts: () => MAIN_ACCOUNTS,
   fetchAccount: (ref) => (ref.provider === 'claude' ? fetchClaude(usageDeps, ref) : fetchCodex(usageDeps)),

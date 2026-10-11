@@ -205,3 +205,62 @@ describe('account identity', () => {
     expect((await fetchCodex(deps(vi.fn()))).usage.accountId).toBe('codex:main');
   });
 });
+
+describe('managed token renewal', () => {
+  const ref = () => ({ id: 'claude:abc', provider: 'claude' as const, configDir: join(home, 'profiles', 'abc') });
+  const profileLogin = (token: string, expiresAt: number) => put('profiles/abc/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt } }));
+  const withRefresh = (fetchImpl: FetcherDeps['fetch'], refreshClaude: FetcherDeps['refreshClaude']): FetcherDeps => ({ ...deps(fetchImpl), refreshClaude });
+
+  it('renews an expired token first and requests the usage with the new one', async () => {
+    profileLogin('old-tok', NOW - 1000);
+    const refresh = vi.fn(async (dir: string) => { put('profiles/abc/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'new-tok', expiresAt: NOW + 3_600_000 } })); return { kind: 'ok' as const }; });
+    const fetchSpy = vi.fn(async () => reply(200, claudeBody));
+    const { usage } = await fetchClaude(withRefresh(fetchSpy as never, refresh), ref());
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith(ref().configDir);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer new-tok' });
+    expect(usage.status).toBe('ok');
+  });
+
+  it('reports expired for a dead login and error for a transient failure without requesting usage', async () => {
+    profileLogin('old-tok', NOW - 1000);
+    const fetchSpy = vi.fn();
+    expect((await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'dead' })), ref())).usage.status).toBe('expired');
+    const transient = await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'transient' })), ref());
+    expect(transient.usage).toMatchObject({ status: 'error', error: 'network' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('renews once and retries once after a 401', async () => {
+    profileLogin('old-tok', NOW + 3_600_000);
+    const refresh = vi.fn(async () => { put('profiles/abc/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'new-tok', expiresAt: NOW + 3_600_000 } })); return { kind: 'ok' as const }; });
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(reply(401, {}))
+      .mockResolvedValueOnce(reply(200, claudeBody));
+    expect((await fetchClaude(withRefresh(fetchSpy as never, refresh), ref())).usage.status).toBe('ok');
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect((fetchSpy.mock.calls[1] as unknown as [string, RequestInit])[1].headers).toMatchObject({ Authorization: 'Bearer new-tok' });
+  });
+
+  it('gives expired after a second 401', async () => {
+    profileLogin('old-tok', NOW + 3_600_000);
+    const refresh = vi.fn(async () => ({ kind: 'ok' as const }));
+    const fetchSpy = vi.fn(async () => reply(401, {}));
+    expect((await fetchClaude(withRefresh(fetchSpy as never, refresh), ref())).usage.status).toBe('expired');
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('never renews the main account', async () => {
+    claudeLogin({ expiresAt: NOW - 1000 });
+    const refresh = vi.fn();
+    const fetchSpy = vi.fn();
+    expect((await fetchClaude(withRefresh(fetchSpy, refresh))).usage.status).toBe('expired');
+    claudeLogin();
+    expect((await fetchClaude(withRefresh((async () => reply(401, {})) as never, refresh))).usage.status).toBe('expired');
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});

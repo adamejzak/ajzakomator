@@ -1,0 +1,83 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OAUTH_CLIENT_ID, refreshClaudeProfile } from '../src/main/accounts/refresh';
+
+const NOW = Date.parse('2026-10-11T12:00:00Z');
+let dir: string;
+beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ajza-refresh-')); });
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+const write = (data: unknown) => writeFileSync(join(dir, '.credentials.json'), JSON.stringify(data));
+const read = () => JSON.parse(readFileSync(join(dir, '.credentials.json'), 'utf8'));
+const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+const profile = () => ({ claudeAiOauth: { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: 1, scopes: ['a'], subscriptionType: 'max' }, mcpOAuth: { keep: 'me' } });
+
+describe('refreshClaudeProfile', () => {
+  it('renews the tokens, rotates the refresh token and keeps every other key', async () => {
+    write(profile());
+    const fetchSpy = vi.fn(async () => reply(200, { access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600, scope: 'user:inference user:profile' }));
+    expect(await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW })).toEqual({ kind: 'ok' });
+    expect(read()).toEqual({
+      claudeAiOauth: { accessToken: 'new-access', refreshToken: 'new-refresh', expiresAt: NOW + 3_600_000, scopes: ['user:inference', 'user:profile'], subscriptionType: 'max' },
+      mcpOAuth: { keep: 'me' },
+    });
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://platform.claude.com/v1/oauth/token');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ grant_type: 'refresh_token', refresh_token: 'old-refresh', client_id: OAUTH_CLIENT_ID });
+    expect(init.redirect).toBe('error');
+  });
+
+  it('keeps the old refresh token when the server does not rotate it', async () => {
+    write(profile());
+    await refreshClaudeProfile(dir, { fetch: (async () => reply(200, { access_token: 'n', expires_in: 60 })) as never, now: () => NOW });
+    expect(read().claudeAiOauth).toMatchObject({ accessToken: 'n', refreshToken: 'old-refresh', scopes: ['a'] });
+  });
+
+  it('reports a dead login only for an explicit grant rejection', async () => {
+    write(profile());
+    const dead = (status: number, error: string) => refreshClaudeProfile(dir, { fetch: (async () => reply(status, { error })) as never, now: () => NOW });
+    expect(await dead(400, 'invalid_grant')).toEqual({ kind: 'dead' });
+    expect(await dead(401, 'invalid_client')).toEqual({ kind: 'dead' });
+    expect(await dead(403, 'unauthorized_client')).toEqual({ kind: 'dead' });
+    expect(await dead(400, 'something_else')).toEqual({ kind: 'transient' });
+    expect(await dead(500, 'invalid_grant')).toEqual({ kind: 'transient' });
+    expect(read().claudeAiOauth.accessToken).toBe('old-access');
+  });
+
+  it('treats network errors, garbage bodies and missing files as transient and a missing refresh token as dead', async () => {
+    write(profile());
+    expect(await refreshClaudeProfile(dir, { fetch: (async () => { throw new Error('offline Bearer old-refresh'); }) as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    expect(await refreshClaudeProfile(dir, { fetch: (async () => new Response('<html>', { status: 200 })) as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    expect(await refreshClaudeProfile(dir, { fetch: (async () => reply(200, { access_token: '', expires_in: 5 })) as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    expect(await refreshClaudeProfile(join(dir, 'missing'), { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    write({ claudeAiOauth: { accessToken: 'x' } });
+    expect(await refreshClaudeProfile(dir, { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'dead' });
+    writeFileSync(join(dir, '.credentials.json'), '{broken');
+    expect(await refreshClaudeProfile(dir, { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'transient' });
+  });
+
+  it('shares one request between concurrent calls for the same profile', async () => {
+    write(profile());
+    let release!: (value: Response) => void;
+    const fetchSpy = vi.fn(() => new Promise<Response>((resolve) => { release = resolve; }));
+    const first = refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW });
+    const second = refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW });
+    await new Promise((r) => setTimeout(r, 10));
+    release(reply(200, { access_token: 'n', refresh_token: 'r2', expires_in: 60 }));
+    expect(await first).toEqual({ kind: 'ok' });
+    expect(await second).toEqual({ kind: 'ok' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(read().claudeAiOauth.refreshToken).toBe('r2');
+  });
+
+  it('never returns or leaves tokens in temporary files', async () => {
+    write(profile());
+    const outcome = await refreshClaudeProfile(dir, { fetch: (async () => reply(200, { access_token: 'secret-new', expires_in: 60 })) as never, now: () => NOW });
+    expect(JSON.stringify(outcome)).not.toContain('secret-new');
+    mkdirSync(join(dir, 'x'), { recursive: true });
+    const { readdirSync } = await import('node:fs');
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+});
