@@ -65,13 +65,13 @@ describe('StatusTracker recovery', () => {
 describe('StatusTracker precise signals', () => {
   it('hooks drive the status and disable the heuristic', () => {
     const t = new StatusTracker(10);
-    t.hook('prompt');
-    expect(t.tick(100000)).toBe('working');
-    t.output(200000);
-    t.hook('stop');
+    t.hook('prompt', 0);
+    expect(t.tick(100)).toBe('working');
+    t.output(200);
+    t.hook('stop', 300);
     expect(t.status).toBe('waiting');
-    t.hook('prompt');
-    t.hook('notify');
+    t.hook('prompt', 400);
+    t.hook('notify', 500);
     expect(t.status).toBe('waiting');
   });
 
@@ -85,7 +85,7 @@ describe('StatusTracker precise signals', () => {
 
   it('osc9 does not override hook-driven status', () => {
     const t = new StatusTracker();
-    t.hook('prompt');
+    t.hook('prompt', 0);
     t.osc9();
     expect(t.status).toBe('working');
   });
@@ -93,7 +93,7 @@ describe('StatusTracker precise signals', () => {
   it('exited is sticky until reset', () => {
     const t = new StatusTracker();
     t.exited();
-    t.hook('prompt');
+    t.hook('prompt', 0);
     t.input(1, true);
     expect(t.status).toBe('exited');
     t.reset();

@@ -273,6 +273,7 @@ ptyHost.on('fatal', () => {
 });
 
 hooks.on('hook', (cellId: string, event: string) => {
+  if (!findCell(state, cellId)) return; // stale or foreign id
   automation.statuses.set(cellId, event === 'prompt' || event === 'busy' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
   send('cell:hook', cellId, event);
 });

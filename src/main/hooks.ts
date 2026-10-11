@@ -11,7 +11,8 @@ import type { HookEvent } from '../shared/status';
 const EVENTS: HookEvent[] = ['prompt', 'stop', 'notify', 'busy'];
 /** Notification types that do not mean "the agent needs you now" (idle_prompt follows Stop, or fires mid-work). */
 const IGNORED_NOTIFICATIONS = new Set(['idle_prompt', 'auth_success']);
-const MAX_BODY = 64 * 1024;
+const MAX_BODY = 16 * 1024;
+const CELL_ID = /^[\w-]{1,64}$/;
 
 /** True when a Notification hook payload (JSON on stdin) is a real request for the user. */
 export function isAttentionNotification(body: string): boolean {
@@ -35,10 +36,24 @@ export class HookServer extends EventEmitter {
         res.writeHead(403).end();
         return;
       }
-      const [cellId, event] = [decodeURIComponent(parts[2] ?? ''), parts[3] as HookEvent];
+      let cellId = '';
+      try {
+        cellId = decodeURIComponent(parts[2] ?? '');
+      } catch {
+        res.writeHead(400).end();
+        return;
+      }
+      const event = parts[3] as HookEvent;
+      if (!CELL_ID.test(cellId)) {
+        res.writeHead(400).end();
+        return;
+      }
       let body = '';
       req.setEncoding('utf8');
-      req.on('data', (chunk: string) => { if (body.length < MAX_BODY) body += chunk; });
+      req.on('data', (chunk: string) => {
+        body += chunk;
+        if (body.length > MAX_BODY) req.destroy(); // hooks never need more than the small notification payload
+      });
       req.on('end', () => {
         // 204 without a body: hook stdout would otherwise be fed back to Claude as context.
         res.writeHead(204).end();
@@ -47,6 +62,7 @@ export class HookServer extends EventEmitter {
         this.emit('hook', cellId, event);
       });
     });
+    this.server.requestTimeout = 5000;
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve));
     this.port = (this.server.address() as AddressInfo).port;
   }
@@ -62,9 +78,9 @@ export class HookServer extends EventEmitter {
   /** Writes the per-cell Claude settings file and returns its path. */
   writeClaudeSettings(dir: string, cellId: string): string {
     mkdirSync(dir, { recursive: true });
-    // The hook payload (JSON on stdin) is posted along: Notification needs its type.
+    // Only Notification needs its payload (JSON on stdin, for the type); tool hooks would upload whole files.
     const hook = (event: HookEvent) => [
-      { hooks: [{ type: 'command', command: `curl -s -m 2 -X POST --data-binary @- ${this.url(cellId, event)}` }] },
+      { hooks: [{ type: 'command', command: `curl -s -m 2 -X POST ${event === 'notify' ? '--data-binary @- ' : ''}${this.url(cellId, event)}` }] },
     ];
     // PreToolUse/PostToolUse/SubagentStop mark "still busy": the agent keeps working after a Stop
     // that only ended a turn (background tasks) or after a permission prompt was answered.

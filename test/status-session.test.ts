@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isUserInput, shouldNotify, StatusTracker } from '../src/shared/status';
+import { INTERRUPT_QUIET_MS, isUserInput, shouldNotify, STALL_MS, StatusTracker } from '../src/shared/status';
 
 describe('restart / session gating', () => {
   it('startup output of a resumed agent never turns into waiting (no turn observed)', () => {
@@ -31,8 +31,8 @@ describe('restart / session gating', () => {
     t.tick(1000);
     expect(t.status).toBe('waiting');
     expect(t.lastCause).toBe('heuristic');
-    t.hook('prompt');
-    t.hook('stop');
+    t.hook('prompt', 0);
+    t.hook('stop', 0);
     expect(t.lastCause).toBe('hook');
   });
 
@@ -55,6 +55,11 @@ describe('input handling', () => {
     expect(isUserInput('a')).toBe(true);
     expect(isUserInput('\r')).toBe(true);
     expect(isUserInput('\x1b[A')).toBe(true);
+    expect(isUserInput('\x1bP')).toBe(true); // Alt+Shift+P
+    expect(isUserInput('\x1b]')).toBe(true); // Alt+]
+    expect(isUserInput('\x1b[200~pasted\nline\x1b[201~')).toBe(true);
+    expect(isUserInput('\x1b]10;rgb:0000/0000/0000\x07')).toBe(false);
+    expect(isUserInput('\x1bP1$r0m\x1b\\')).toBe(false);
   });
 
   it('typing does not clear waiting, submitting does (heuristic cells)', () => {
@@ -80,20 +85,13 @@ describe('input handling', () => {
     }
     expect(t.tick(6100)).toBe('working');
   });
-
-  it('hooked working cell stays working while typing', () => {
-    const t = new StatusTracker(10);
-    t.hook('prompt');
-    t.input(1, false);
-    expect(t.status).toBe('working');
-  });
 });
 
 describe('Claude hooks', () => {
   it('permission answer (Enter after a notification) goes back to working', () => {
     const t = new StatusTracker();
-    t.hook('prompt');
-    t.hook('notify');
+    t.hook('prompt', 0);
+    t.hook('notify', 0);
     expect(t.status).toBe('waiting');
     t.input(5, true);
     expect(t.status).toBe('working');
@@ -101,31 +99,124 @@ describe('Claude hooks', () => {
 
   it('Enter on an idle prompt after Stop waits for UserPromptSubmit instead', () => {
     const t = new StatusTracker();
-    t.hook('prompt');
-    t.hook('stop');
+    t.hook('prompt', 0);
+    t.hook('stop', 0);
     t.input(5, true);
     expect(t.status).toBe('waiting');
-    t.hook('prompt');
+    t.hook('prompt', 0);
     expect(t.status).toBe('working');
   });
 
   it('tool / subagent activity brings a stale waiting back to working', () => {
     const t = new StatusTracker();
-    t.hook('prompt');
-    t.hook('stop'); // background task: turn "ended" but the agent resumes without a new prompt
-    t.hook('busy');
+    t.hook('prompt', 0);
+    t.hook('stop', 0); // background task: turn "ended" but the agent resumes without a new prompt
+    t.hook('busy', 0);
+    expect(t.status).toBe('working');
+  });
+});
+
+describe('safety nets and review fixes', () => {
+  it('a hooked cell whose Stop never arrives falls back to waiting after STALL_MS of silence', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.output(1000);
+    expect(t.tick(1000 + STALL_MS - 1)).toBe('working');
+    expect(t.tick(1000 + STALL_MS)).toBe('waiting');
+    expect(t.lastCause).toBe('heuristic');
+    expect(shouldNotify('working', 'waiting', t.lastCause)).toBe(true);
+  });
+
+  it('a spinner keeps a hooked cell working past STALL_MS', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    for (let ms = 1000; ms <= 120_000; ms += 1000) { t.output(ms); t.tick(ms); }
     expect(t.status).toBe('working');
   });
 
-  it('precise-hook cells ignore heuristics from the very first byte', () => {
-    const t = new StatusTracker(1000, true);
-    t.input(0, true);
-    for (let ms = 100; ms <= 5000; ms += 500) t.output(ms);
-    t.osc9();
-    expect(t.tick(60000)).toBe('idle');
-    t.reset();
+  it('Esc / Ctrl-C on a working hooked cell returns to waiting after a short silence', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.output(1000);
+    t.interrupt(2000);
+    expect(t.tick(2000 + INTERRUPT_QUIET_MS - 1)).toBe('working');
+    expect(t.tick(2000 + INTERRUPT_QUIET_MS)).toBe('waiting');
+  });
+
+  it('output after Esc (the agent ignored it) keeps the cell working', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.interrupt(1000);
+    for (let ms = 1500; ms <= 9000; ms += 500) { t.output(ms); t.tick(ms); }
+    expect(t.status).toBe('working');
+  });
+
+  it('interrupt is ignored when the cell is not working', () => {
+    const t = new StatusTracker();
+    t.hook('stop', 0);
+    t.interrupt(1);
+    expect(t.tick(100_000)).toBe('waiting');
+  });
+
+  it('a heuristic waiting recovers when the hooked agent keeps redrawing', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.tick(STALL_MS + 1);
+    expect(t.status).toBe('waiting');
+    for (let ms = STALL_MS + 2000; ms <= STALL_MS + 8000; ms += 1000) t.output(ms);
+    expect(t.status).toBe('working');
+  });
+
+  it('hooks that never arrive: the heuristic still works for a Claude cell', () => {
+    const t = new StatusTracker(1000);
     t.input(0, true);
     t.output(500);
-    expect(t.tick(60000)).toBe('idle');
+    expect(t.tick(600)).toBe('working');
+    expect(t.tick(2000)).toBe('waiting');
+    expect(t.lastCause).toBe('heuristic');
+  });
+
+  it('...but a resumed Claude cell without any hook still does not turn waiting on its own', () => {
+    const t = new StatusTracker(1000);
+    for (let ms = 0; ms <= 8000; ms += 500) t.output(ms);
+    t.osc9();
+    expect(t.tick(20_000)).toBe('idle');
+  });
+
+  it('any real key (not only Enter) answers a permission prompt', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.hook('notify', 10);
+    t.input(20, false); // "n" / digit / Esc
+    expect(t.status).toBe('working');
+    expect(t.tick(20 + STALL_MS)).toBe('waiting'); // nothing followed: silence net
+  });
+
+  it('typing after Stop does not clear a plain waiting', () => {
+    const t = new StatusTracker();
+    t.hook('stop', 0);
+    t.input(5, false);
+    expect(t.status).toBe('waiting');
+  });
+
+  it('a busy hook from a parallel tool does not hide a pending permission prompt', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.hook('notify', 1);
+    t.hook('busy', 2);
+    expect(t.status).toBe('waiting');
+    t.input(3, false);
+    t.hook('busy', 4);
+    expect(t.status).toBe('working');
+  });
+
+  it('a lone Esc after a denied prompt leads back to waiting', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.hook('notify', 1000);
+    t.input(2000, false);
+    t.interrupt(2000);
+    expect(t.status).toBe('working');
+    expect(t.tick(2000 + INTERRUPT_QUIET_MS)).toBe('waiting');
   });
 });

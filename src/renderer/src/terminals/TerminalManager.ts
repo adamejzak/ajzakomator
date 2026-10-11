@@ -45,8 +45,6 @@ type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cau
 export interface EnsureOptions {
   fontSize: number;
   agent: boolean;
-  /** The agent reports its status through hooks (Claude): screen heuristics are off. */
-  preciseHooks?: boolean;
   onFontSize?: (size: number) => void;
 }
 
@@ -162,7 +160,7 @@ class TerminalManager {
     term.open(host);
 
     const entry: Entry = {
-      id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(2000, opts.preciseHooks), win32: false, agent: opts.agent,
+      id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
       attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
     };
     this.entries.set(cellId, entry);
@@ -188,7 +186,7 @@ class TerminalManager {
     term.attachCustomKeyEventHandler((ev) => this.handleKey(entry, ev));
     term.onData((d) => {
       if (entry.replaying > 0) return;
-      if (isUserInput(d)) this.userInput(entry, d.includes('\r'));
+      if (isUserInput(d)) this.userInput(entry, d.includes('\r'), d === '\x1b' || d === '\x03');
       this.post({ t: 'write', id: cellId, data: d });
     });
     term.onBinary((d) => entry.replaying === 0 && this.post({ t: 'write', id: cellId, data: d }));
@@ -256,7 +254,9 @@ class TerminalManager {
       const seq = encodeWin32Key(ev);
       if (!seq) return true;
       ev.preventDefault();
-      if (ev.type === 'keydown') this.userInput(entry, ev.code === 'Enter' || ev.code === 'NumpadEnter');
+      if (ev.type === 'keydown' && !['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(ev.key)) {
+        this.userInput(entry, ev.code === 'Enter' || ev.code === 'NumpadEnter', ev.key === 'Escape' || (ctrl && ev.code === 'KeyC'));
+      }
       this.post({ t: 'write', id: entry.id, data: seq });
       return false;
     }
@@ -392,7 +392,7 @@ class TerminalManager {
 
   hook(cellId: string, event: HookEvent): void {
     const e = this.entries.get(cellId);
-    if (e) this.setStatus(e, () => e.tracker.hook(event));
+    if (e) this.setStatus(e, () => e.tracker.hook(event, performance.now()));
   }
 
   onStatus(l: StatusListener): () => void {
@@ -406,8 +406,12 @@ class TerminalManager {
   }
 
   /** User keystrokes can change the status (answering a prompt), so listeners must hear about it. */
-  private userInput(e: Entry, submitted: boolean): void {
-    this.setStatus(e, () => e.tracker.input(performance.now(), submitted));
+  private userInput(e: Entry, submitted: boolean, interrupt = false): void {
+    this.setStatus(e, () => {
+      const now = performance.now();
+      e.tracker.input(now, submitted);
+      if (interrupt) e.tracker.interrupt(now);
+    });
   }
 
   private setStatus(e: Entry, change: () => void): void {

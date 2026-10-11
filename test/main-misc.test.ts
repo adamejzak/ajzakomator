@@ -45,6 +45,24 @@ describe('HookServer', () => {
     expect(isAttentionNotification('not json')).toBe(true);
     s.stop();
   });
+
+  it('rejects malformed ids and oversized bodies without crashing, and sends bodies only for notify', async () => {
+    const s = new HookServer();
+    await s.start();
+    const got: string[] = [];
+    s.on('hook', (cell, ev) => got.push(`${cell}:${ev}`));
+    const base = `http://127.0.0.1:${s.port}/h/${s.token}`;
+    expect((await fetch(`${base}/%E0%A4%A/stop`, { method: 'POST' })).status).toBe(400);
+    expect((await fetch(`${base}/a%20b/stop`, { method: 'POST' })).status).toBe(400);
+    await fetch(`${base}/c2/notify`, { method: 'POST', body: 'x'.repeat(200_000) }).catch(() => {});
+    expect(got).toEqual([]);
+    expect(await (await fetch(`${base}/c2/stop`, { method: 'POST' })).status).toBe(204);
+    const path = s.writeClaudeSettings(mkdtempSync(join(tmpdir(), 'mc-hooks-')), 'c2');
+    const json = JSON.parse(readFileSync(path, 'utf8'));
+    expect(json.hooks.Notification[0].hooks[0].command).toContain('--data-binary');
+    expect(json.hooks.PostToolUse[0].hooks[0].command).not.toContain('--data-binary');
+    s.stop();
+  });
 });
 
 describe('worktree', () => {

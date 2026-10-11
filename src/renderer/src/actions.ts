@@ -38,7 +38,6 @@ export function ensureTerminal(cellId: string): void {
   terminals.ensure(cellId, {
     fontSize: found.cell.fontSize ?? getS().settings.fontSize,
     agent: profile.cli !== 'shell',
-    preciseHooks: profile.cli === 'claude',
     onFontSize: (size) => update((s) => updateCell(s, cellId, { fontSize: size })),
   });
 }
