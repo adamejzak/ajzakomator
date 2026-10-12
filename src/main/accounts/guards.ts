@@ -5,6 +5,8 @@ export interface GuardDeps {
   swapRunning(): boolean;
   /** True while a journal or backups of an unresolved swap exist. */
   swapPending(): Promise<boolean>;
+  /** Synchronous view of the same fact (set the moment a swap leaves its backups behind). */
+  swapPendingNow?(): boolean;
 }
 
 /** Why account-changing actions must wait: a swap is running or an earlier one is unresolved. */
@@ -42,5 +44,6 @@ export async function loginBlock(deps: GuardDeps, request: unknown): Promise<'bu
 
 /** Background refreshes must not write into a managed profile while a swap runs or is unresolved. */
 export function gateProfileRefresh<R>(deps: GuardDeps, refresh: (dir: string) => Promise<R>, blocked: R): (dir: string) => Promise<R> {
-  return async (dir) => ((await accountMutationBlock(deps)) ? blocked : refresh(dir));
+  // Checked synchronously: nothing may happen between the check and the start of the refresh.
+  return (dir) => (deps.swapRunning() || deps.swapPendingNow?.() ? Promise.resolve(blocked) : refresh(dir));
 }

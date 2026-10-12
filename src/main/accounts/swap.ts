@@ -2,7 +2,7 @@
 import { randomUUID } from 'crypto';
 import { mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'fs/promises';
 import { dirname, isAbsolute, join } from 'path';
-import { isAccountId, type SwapError, type SwapRecovery, type SwapResult, type SwapRestore } from '../../shared/accounts';
+import { isAccountId, type SwapError, type SwapRecovery, type SwapResult, type SwapPendingInfo, type SwapRestore } from '../../shared/accounts';
 import { withProfileLock, type RefreshOutcome } from './refresh';
 import type { AccountsStore } from './store';
 
@@ -27,7 +27,7 @@ import type { AccountsStore } from './store';
  */
 
 export interface SwapFs {
-  /** File text, or null when the file does not exist or cannot be read. */
+  /** File text, or null when the file does not exist; other read errors throw. */
   readFile(path: string): Promise<string | null>;
   stat(path: string): Promise<{ mtimeMs: number; size: number } | null>;
   writeFile(path: string, data: string, mode: number): Promise<void>;
@@ -40,14 +40,21 @@ export interface SwapFs {
   rmdir(path: string): Promise<void>;
 }
 
+/** A missing file is null; any other read error (EIO, EACCES ...) is thrown so it is never mistaken for an absent file. */
+function missingOrThrow(error: unknown): null {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+  throw error;
+}
+
 export const nodeSwapFs: SwapFs = {
-  readFile: (path) => readFile(path, 'utf8').catch(() => null),
-  stat: (path) => stat(path).then((s) => ({ mtimeMs: s.mtimeMs, size: s.size }), () => null),
+  readFile: (path) => readFile(path, 'utf8').catch(missingOrThrow),
+  stat: (path) => stat(path).then((s) => ({ mtimeMs: s.mtimeMs, size: s.size }), missingOrThrow),
   writeFile: (path, data, mode) => writeFile(path, data, { mode }),
   rename,
   rm: (path) => rm(path, { force: true }),
   mkdir: (path) => mkdir(path, { recursive: true, mode: 0o700 }).then(() => undefined),
-  readdir: (path) => readdir(path).catch(() => []),
+  readdir: (path) => readdir(path).catch((error) => missingOrThrow(error) ?? []),
   rmdir: (path) => rmdir(path),
 };
 
@@ -90,6 +97,9 @@ class Changed extends Error {}
 class Unprovable extends Error {}
 
 let running = false;
+/** Set synchronously whenever a swap or recovery left its journal and backups behind (checked by background refreshes). */
+let unresolved = false;
+export function isSwapUnresolved(): boolean { return unresolved; }
 /** True while a swap runs; the login flow must not start meanwhile. */
 export function isSwapRunning(): boolean { return running; }
 
@@ -218,7 +228,9 @@ export async function clearPendingSwap(deps: Pick<SwapDeps, 'backupDir' | 'fs'>)
     const names = await fs.readdir(deps.backupDir);
     for (const name of [...names.filter((n) => n === JOURNAL), ...names.filter((n) => n !== JOURNAL)]) await fs.rm(join(deps.backupDir, name));
     await fs.rmdir(deps.backupDir).catch(() => undefined);
-    return (await fs.readdir(deps.backupDir)).length === 0;
+    const empty = (await fs.readdir(deps.backupDir)).length === 0;
+    if (empty) unresolved = false;
+    return empty;
   } catch { return false; } finally { running = false; }
 }
 
@@ -232,6 +244,7 @@ export async function swapMainAccount(deps: SwapDeps, accountId: string): Promis
     if (await hasPendingSwap(deps)) return { ok: false, error: 'pending' };
     return await perform(deps, deps.fs ?? nodeSwapFs, accountId);
   } catch (error) {
+    if (error instanceof Fail && error.code === 'manual') unresolved = true;
     return { ok: false, error: error instanceof Fail ? error.code : 'write' };
   } finally {
     running = false;
@@ -389,6 +402,12 @@ async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
     if (!main || main.text !== c.writtenMainCreds || !validOauth(oauthOf(main.data)) || !target || !validOauth(oauthOf(target.data)) || !mainIdentity || !targetIdentity
       || !sameIdentity(mainIdentity, s.targetIdentity) || !sameIdentity(targetIdentity, s.mainIdentity)) throw new Fail('write');
     await jr('verified');
+    // Claude Code may have written since the verification: then nothing is deleted and the user is told to check.
+    const last = await readSnap(fs, paths.credentials);
+    if (!last || last.text !== c.writtenMainCreds) {
+      await write(c, join(deps.backupDir, JOURNAL), JSON.stringify({ version: 1, accountId, startedAt: deps.now(), phase: 'main-json-written', targetJsonExisted: s.targetJson !== null })).catch(() => undefined);
+      throw new Unprovable();
+    }
   } catch (error) {
     if (error instanceof Unprovable) throw new Fail('manual');
     const clean = await rollback(c, jr);
@@ -434,10 +453,11 @@ async function rollback(c: Ctx, jr: (phase: Phase) => Promise<void>): Promise<bo
   } else if (c.targetCredsWritten) {
     await step(() => write(c, c.targetCredsPath, s.targetCreds.text));
   }
-  if (c.targetJsonWritten) {
+  // After a failed credential step the identities stay as they are: resetting them would label a profile with a login it does not hold.
+  if (c.targetJsonWritten && clean) {
     await step(() => (s.targetJson ? write(c, c.targetJsonPath, s.targetJson.text) : fs.rm(c.targetJsonPath)));
   }
-  if (c.mainCredsReplaced) {
+  if (c.mainCredsReplaced && clean) {
     await step(async () => {
       const now = await readSnap(fs, c.paths.claudeJson);
       const id = now ? identityOf(now.data.oauthAccount) : null;
@@ -471,7 +491,11 @@ type Lineage = 'A' | 'X' | 'unknown' | 'none';
 export async function recoverInterruptedSwap(deps: SwapDeps): Promise<SwapRecovery> {
   if (running) return 'none';
   running = true; // no swap may race the recovery
-  try { return await recover(deps); } finally { running = false; }
+  try {
+    const result = await recover(deps);
+    unresolved = result === 'manual';
+    return result;
+  } catch { unresolved = true; return 'manual'; } finally { running = false; }
 }
 
 async function recover(deps: SwapDeps): Promise<SwapRecovery> {
@@ -488,6 +512,14 @@ async function recover(deps: SwapDeps): Promise<SwapRecovery> {
   if (!isRecord(info) || !isAccountId(info.accountId) || typeof info.phase !== 'string') return 'manual';
   const accountId = info.accountId;
   const phase = info.phase as Phase;
+  if (phase === 'verified') {
+    // The swap was complete; only the label of the saved account may still show the old owner.
+    try {
+      const text = await fs.readFile(join(deps.backupDir, BACKUP.mainJson));
+      const acct = text === null ? null : (JSON.parse(text) as Rec).oauthAccount;
+      if (isRecord(acct)) deps.store.update(accountId, { email: str(acct.emailAddress), org: str(acct.organizationName) });
+    } catch { /* label only */ }
+  }
   if (phase === 'verified' || phase === 'backed-up') { await removeBackups(deps, fs); await removeStaleTemps(deps, fs).catch(() => undefined); return 'none'; }
   const paths = swapPaths(deps);
   if (!paths) return 'manual';
@@ -546,14 +578,14 @@ async function recover(deps: SwapDeps): Promise<SwapRecovery> {
         await setKey(deps, fs, paths.claudeJson, 'oauthAccount', value, true);
       };
 
-      if (shared && (phase === 'target-written' || phase === 'main-creds-written')) {
+      if (shared && main !== 'X' && (phase === 'target-written' || phase === 'main-creds-written')) {
         // Identical tokens: the target copy provably came from main (forward), so the target gets its own login back.
         await atomicWrite(deps, fs, targetCredsPath, JSON.stringify({ ...(targetSnap?.data ?? {}), claudeAiOauth: xBlob }));
         await setTargetAccount(targetJsonB && isRecord(targetJsonB.oauthAccount) ? targetJsonB.oauthAccount : undefined);
         await setMainAccount(accountA);
         return 'recovered';
       }
-      if (shared && phase === 'rolling-back') {
+      if (shared && main === 'X' && phase === 'rolling-back') {
         // Reverse exchange: the target copy came from main (the target login X); the old main login A returns to the target.
         await atomicWrite(deps, fs, targetCredsPath, JSON.stringify({ ...(targetSnap?.data ?? {}), claudeAiOauth: aBlob }));
         await setTargetAccount(accountA);
@@ -586,10 +618,75 @@ async function recover(deps: SwapDeps): Promise<SwapRecovery> {
   }
 }
 
+
+interface BackupSet {
+  accountId: string; phase: Phase; targetJsonExisted: boolean;
+  aBlob: Rec; xBlob: Rec; accountA: Rec; accountX: Rec | null;
+}
+
+async function readBackupSet(deps: SwapDeps, fs: SwapFs): Promise<BackupSet | null> {
+  const journalText = await fs.readFile(join(deps.backupDir, JOURNAL));
+  let info: unknown;
+  try { info = journalText === null ? null : JSON.parse(journalText); } catch { info = null; }
+  if (!isRecord(info) || !isAccountId(info.accountId) || typeof info.phase !== 'string') return null;
+  const read = async (name: string) => {
+    const text = await fs.readFile(join(deps.backupDir, name));
+    try { const data: unknown = text === null ? null : JSON.parse(text); return isRecord(data) ? data : null; } catch { return null; }
+  };
+  const mainCredsB = await read(BACKUP.mainCreds);
+  const mainJsonB = await read(BACKUP.mainJson);
+  const targetCredsB = await read(BACKUP.targetCreds);
+  const targetJsonB = await read(BACKUP.targetJson);
+  const aBlob = mainCredsB ? oauthOf(mainCredsB) : null;
+  const xBlob = targetCredsB ? oauthOf(targetCredsB) : null;
+  const accountA = mainJsonB && isRecord(mainJsonB.oauthAccount) ? mainJsonB.oauthAccount : null;
+  const accountX = targetJsonB && isRecord(targetJsonB.oauthAccount) ? targetJsonB.oauthAccount : null;
+  if (!validOauth(aBlob) || !validOauth(xBlob) || !accountA || !identityOf(accountA)) return null;
+  const targetJsonExisted = info.targetJsonExisted !== false;
+  if (targetJsonExisted && !accountX) return null;
+  return { accountId: info.accountId, phase: info.phase as Phase, targetJsonExisted, aBlob, xBlob, accountA, accountX };
+}
+
 /**
- * User-confirmed way out of an unresolved swap: puts the two logins and the two identities from the backup back into
- * their original homes (main <- old main login, target profile <- its own login). Acts only when the backup is complete
- * and consistent; otherwise nothing is changed. Tokens that rotated since the backup may no longer work.
+ * Where the two credential files stand relative to the backup, or null when a restore would not be provably safe:
+ * both refresh tokens must be exactly the backup's (nothing rotated since) and the journal phase must fit the shape.
+ */
+async function restoreShape(deps: SwapDeps, fs: SwapFs, paths: Paths, b: BackupSet): Promise<{ main: 'A' | 'X'; target: 'A' | 'X' } | null> {
+  const lineage = async (path: string): Promise<'A' | 'X' | null> => {
+    const snap = await readSnap(fs, path);
+    const refresh = snap ? str(oauthOf(snap.data)?.refreshToken) : undefined;
+    return refresh === undefined ? null : refresh === b.aBlob.refreshToken ? 'A' : refresh === b.xBlob.refreshToken ? 'X' : null;
+  };
+  const main = await lineage(paths.credentials);
+  const target = await lineage(join(deps.store.dirOf(b.accountId), '.credentials.json'));
+  if (!main || !target) return null;
+  const p = b.phase;
+  const exchanged = p === 'main-creds-written' || p === 'main-json-written' || p === 'rolling-back';
+  if (main === 'A' && target === 'X') return { main, target };
+  if (main === 'X' && target === 'A' && exchanged) return { main, target };
+  if (main === 'A' && target === 'A' && (p === 'target-written' || p === 'main-creds-written' || p === 'main-json-written')) return { main, target };
+  if (main === 'X' && target === 'X' && p === 'rolling-back') return { main, target };
+  return null;
+}
+
+/** For the UI: is an unresolved swap pending, and could "restore" be done safely right now (read only)? */
+export async function swapPendingInfo(deps: SwapDeps): Promise<SwapPendingInfo> {
+  const fs = deps.fs ?? nodeSwapFs;
+  let pending: boolean;
+  try { pending = await hasPendingSwap(deps); } catch { return { pending: true, restorable: false }; }
+  if (!pending) return { pending: false, restorable: false };
+  try {
+    const paths = swapPaths(deps);
+    const b = paths ? await readBackupSet(deps, fs) : null;
+    return { pending: true, restorable: !!paths && !!b && (await restoreShape(deps, fs, paths, b)) !== null };
+  } catch { return { pending: true, restorable: false }; }
+}
+
+/**
+ * User-confirmed way out of an unresolved swap: puts the saved copies of both logins and identities back into their
+ * original homes. It acts ONLY when both current refresh tokens are exactly the backup's tokens (nothing rotated since)
+ * and the journal phase fits; otherwise it refuses ('refused') and writes nothing. If a write fails halfway, the files
+ * already written are put back where possible, but the result is 'manual': changes may be partially applied.
  */
 export async function restoreSwapBackup(deps: SwapDeps): Promise<SwapRestore> {
   if (running) return 'busy';
@@ -597,47 +694,46 @@ export async function restoreSwapBackup(deps: SwapDeps): Promise<SwapRestore> {
   try {
     const fs = deps.fs ?? nodeSwapFs;
     const paths = swapPaths(deps);
-    const journalText = await fs.readFile(join(deps.backupDir, JOURNAL));
-    let info: unknown;
-    try { info = journalText === null ? null : JSON.parse(journalText); } catch { info = null; }
-    if (!paths || !isRecord(info) || !isAccountId(info.accountId)) return 'manual';
-    const read = async (name: string) => {
-      const text = await fs.readFile(join(deps.backupDir, name));
-      try { const data: unknown = text === null ? null : JSON.parse(text); return isRecord(data) ? data : null; } catch { return null; }
-    };
-    const mainCredsB = await read(BACKUP.mainCreds);
-    const mainJsonB = await read(BACKUP.mainJson);
-    const targetCredsB = await read(BACKUP.targetCreds);
-    const targetJsonB = await read(BACKUP.targetJson);
-    const aBlob = mainCredsB ? oauthOf(mainCredsB) : null;
-    const xBlob = targetCredsB ? oauthOf(targetCredsB) : null;
-    const accountA = mainJsonB && isRecord(mainJsonB.oauthAccount) ? mainJsonB.oauthAccount : null;
-    const accountX = targetJsonB && isRecord(targetJsonB.oauthAccount) ? targetJsonB.oauthAccount : null;
-    if (!validOauth(aBlob) || !validOauth(xBlob) || !accountA || !identityOf(accountA)) return 'manual';
-    if (info.targetJsonExisted !== false && !accountX) return 'manual';
-    const accountId = info.accountId;
-    const targetDir = deps.store.dirOf(accountId);
+    const b = paths ? await readBackupSet(deps, fs) : null;
+    if (!paths || !b) return 'refused';
+    const targetDir = deps.store.dirOf(b.accountId);
     const targetCredsPath = join(targetDir, '.credentials.json');
     const targetJsonPath = join(targetDir, '.claude.json');
-    const restored = await withProfileLock(targetDir, async (): Promise<boolean> => {
+    const outcome = await withProfileLock(targetDir, async (): Promise<'restored' | 'refused' | 'manual'> => {
+      const shape = await restoreShape(deps, fs, paths, b);
+      if (!shape) return 'refused';
+      const undo: Array<() => Promise<void>> = [];
+      /** Replaces a whole JSON/credentials file and remembers how to put it back (only while it still holds our write). */
+      const put = async (path: string, build: (data: Rec) => string, guarded: boolean) => {
+        const before = await readSnap(fs, path);
+        const text = build(before?.data ?? {});
+        if (text === before?.text) return;
+        await atomicWrite(deps, fs, path, text, guarded && before ? unchanged(fs, path, before) : undefined);
+        undo.push(async () => {
+          const now = await readSnap(fs, path);
+          if (now?.text !== text) return;
+          if (before) await atomicWrite(deps, fs, path, before.text); else await fs.rm(path);
+        });
+      };
       try {
-        const targetCreds = await readSnap(fs, targetCredsPath);
-        await atomicWrite(deps, fs, targetCredsPath, JSON.stringify({ ...(targetCreds?.data ?? {}), claudeAiOauth: xBlob }));
-        const tj = await readSnap(fs, targetJsonPath);
-        if (accountX) await atomicWrite(deps, fs, targetJsonPath, JSON.stringify({ ...(tj?.data ?? {}), oauthAccount: accountX }, null, 2));
-        else if (tj) {
-          const { oauthAccount: _drop, ...rest } = tj.data;
-          if (Object.keys(rest).length === 0) await fs.rm(targetJsonPath);
-          else await atomicWrite(deps, fs, targetJsonPath, JSON.stringify(rest, null, 2));
-        }
-        await setKey(deps, fs, paths.credentials, 'claudeAiOauth', aBlob, true, undefined, 0);
-        await setKey(deps, fs, paths.claudeJson, 'oauthAccount', accountA, true);
-        return true;
-      } catch { return false; }
+        if (shape.target !== 'X') await put(targetCredsPath, (d) => JSON.stringify({ ...d, claudeAiOauth: b.xBlob }), false);
+        await put(targetJsonPath, (d) => {
+          if (b.accountX) return JSON.stringify({ ...d, oauthAccount: b.accountX }, null, 2);
+          const { oauthAccount: _drop, ...rest } = d;
+          return JSON.stringify(rest, null, 2);
+        }, false);
+        if (shape.main !== 'A') await put(paths.credentials, (d) => JSON.stringify({ ...d, claudeAiOauth: b.aBlob }), true);
+        await put(paths.claudeJson, (d) => JSON.stringify({ ...d, oauthAccount: b.accountA }, null, 2), true);
+        return 'restored';
+      } catch {
+        for (const fn of undo.reverse()) await fn().catch(() => undefined);
+        return 'manual';
+      }
     });
-    if (!restored) return 'manual';
+    if (outcome !== 'restored') return outcome;
     await removeBackups(deps, fs);
-    try { deps.store.update(accountId, { email: str(accountX?.emailAddress), org: str(accountX?.organizationName) }); } catch { /* label only */ }
+    unresolved = false;
+    try { deps.store.update(b.accountId, { email: str(b.accountX?.emailAddress), org: str(b.accountX?.organizationName) }); } catch { /* label only */ }
     return 'restored';
   } catch { return 'manual'; } finally { running = false; }
 }

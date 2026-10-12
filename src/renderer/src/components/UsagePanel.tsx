@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
-import type { LoginTarget } from '../../../shared/accounts';
+import type { LoginTarget, SwapPendingInfo } from '../../../shared/accounts';
 import { effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { useI18n } from '../i18n';
 import { swapErrorKey } from '../../../shared/swapMessages';
@@ -142,13 +142,13 @@ export function UsagePanel() {
   const [refreshing, setRefreshing] = useState(false);
   const spinning = useHoldBusy(refreshing, 700);
   const [swapping, setSwapping] = useState<string | null>(null);
-  const [swapPending, setSwapPending] = useState(false);
+  const [swapInfo, setSwapInfo] = useState<SwapPendingInfo>({ pending: false, restorable: false });
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   // An interrupted swap blocks further swaps until the user has checked the accounts and cleared the warning.
   useEffect(() => {
-    void window.mc.swapPending().then((pending) => { if (alive.current) setSwapPending(pending === true); }).catch(() => undefined);
-    return window.mc.on('accounts:swapPending', (pending) => { if (alive.current) setSwapPending(pending === true); });
+    void window.mc.swapPending().then((info) => { if (alive.current) setSwapInfo(info); }).catch(() => undefined);
+    return window.mc.on('accounts:swapPending', (info) => { if (alive.current) setSwapInfo(info); });
   }, []);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -171,21 +171,23 @@ export function UsagePanel() {
     if (choice !== 'yes') return;
     try {
       const result = await window.mc.clearSwapPending();
-      if (result.ok && alive.current) setSwapPending(false);
+      if (result.ok && alive.current) setSwapInfo({ pending: false, restorable: false });
     } catch { /* the warning stays */ }
   };
   const restoreBackup = async () => {
     const choice = await askChoice(
       tr('Przywrócić stan sprzed zamiany?'),
-      tr('Logowania z kopii awaryjnej wrócą na swoje miejsca (konto główne i zapisane konto). Tokeny, które zmieniły się od zamiany, mogą już nie działać i konto może wymagać ponownego zalogowania.'),
+      tr('Zapisane kopie logowań wrócą na swoje miejsca i mogą nadpisać nowsze tokeny. Przywracanie jest oferowane tylko wtedy, gdy żaden token nie zmienił się od zamiany, mimo to konto może wymagać ponownego zalogowania.'),
       [{ label: tr('Przywróć stan sprzed zamiany'), value: 'yes', danger: true }],
     );
     if (choice !== 'yes') return;
     try {
       const { result } = await window.mc.restoreSwapBackup();
       if (result === 'restored') toast(tr('Przywrócono stan sprzed zamiany.'));
-      else toast(tr(swapErrorKey(result === 'busy' ? 'busy' : 'manual')), 'error');
-    } catch { toast(tr(swapErrorKey('manual')), 'error'); }
+      else if (result === 'busy') toast(tr(swapErrorKey('busy')), 'error');
+      else if (result === 'refused') toast(tr('Nie można automatycznie przywrócić stanu, bo tokeny zmieniły się od zamiany. Zaloguj się ponownie do kont, a potem wyczyść ostrzeżenie.'), 'error');
+      else toast(tr('Przywracanie zostało przerwane - zmiany mogły zostać zastosowane częściowo. Sprawdź oba konta i w razie potrzeby zaloguj się ponownie.'), 'error');
+    } catch { toast(tr('Przywracanie zostało przerwane - zmiany mogły zostać zastosowane częściowo. Sprawdź oba konta i w razie potrzeby zaloguj się ponownie.'), 'error'); }
   };
   const makeMain = async (target: ProviderUsage) => {
     if (swapping !== null) return;
@@ -289,10 +291,12 @@ export function UsagePanel() {
       ) : <p className="usage-note">{summary}</p>)}
       {!collapsed && (
         <>
-          {swapPending && (
+          {swapInfo.pending && (
             <div className="usage-warning" role="alert">
               <p className="usage-note">{tr('Poprzednia zamiana kont została przerwana. Sprawdź oba konta (w razie potrzeby zaloguj się ponownie). Do czasu wyjaśnienia kolejne zamiany są zablokowane.')}</p>
-              <button className="btn small" onClick={() => void restoreBackup()}>{tr('Przywróć stan sprzed zamiany')}</button>
+              {swapInfo.restorable
+                ? <button className="btn small" onClick={() => void restoreBackup()}>{tr('Przywróć stan sprzed zamiany')}</button>
+                : <p className="usage-note">{tr('Nie można automatycznie przywrócić stanu, bo tokeny zmieniły się od zamiany. Zaloguj się ponownie do kont, a potem wyczyść ostrzeżenie.')}</p>}
               <button className="btn small" onClick={() => void clearWarning()}>{tr('Wyczyść ostrzeżenie')}</button>
             </div>
           )}

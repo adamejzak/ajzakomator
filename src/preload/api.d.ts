@@ -5,7 +5,7 @@ import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
 import type { ChangelogResult } from '../shared/changelog';
 import type { UsageState } from '../shared/usage';
-import type { LoginRequest, LoginState, SwapResult, SwapRestore } from '../shared/accounts';
+import type { LoginRequest, LoginState, SwapPendingInfo, SwapResult, SwapRestore } from '../shared/accounts';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
@@ -75,7 +75,7 @@ export interface McApi {
   removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' }>;
   makeMainAccount(id: string): Promise<SwapResult>;
   /** True while an interrupted swap is unresolved (swaps are blocked). Also pushed on the 'accounts:swapPending' channel. */
-  swapPending(): Promise<boolean>;
+  swapPending(): Promise<SwapPendingInfo>;
   clearSwapPending(): Promise<{ ok: boolean }>;
   restoreSwapBackup(): Promise<{ result: SwapRestore }>;
   on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
@@ -88,7 +88,7 @@ export interface McApi {
   on(channel: 'app:before-quit', cb: () => void): () => void;
   on(channel: 'update:state', cb: (s: UpdateState) => void): () => void;
   on(channel: 'usage:state', cb: (state: UsageState) => void): () => void;
-  on(channel: 'accounts:swapPending', cb: (pending: boolean) => void): () => void;
+  on(channel: 'accounts:swapPending', cb: (info: SwapPendingInfo) => void): () => void;
   on(channel: 'state:changed', cb: (snapshot: StateSnapshot) => void): () => void;
   on(channel: 'automation:start-cells', cb: (cellIds: string[]) => void): () => void;
 }

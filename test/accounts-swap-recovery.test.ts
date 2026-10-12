@@ -5,7 +5,7 @@ import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { accountMutationBlock, gateProfileRefresh, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
 import { AccountsStore } from '../src/main/accounts/store';
-import { clearPendingSwap, hasPendingSwap, nodeSwapFs, recoverInterruptedSwap, restoreSwapBackup, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
+import { clearPendingSwap, hasPendingSwap, isSwapUnresolved, swapPendingInfo, nodeSwapFs, recoverInterruptedSwap, restoreSwapBackup, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
 
 const FUTURE = Date.parse('2026-10-11T12:00:00Z') + 3_600_000;
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -372,13 +372,13 @@ describe('restoreSwapBackup', () => {
     await crashed('main-json-written');
     rmSync(join(backup(), 'target-credentials.json'));
     const before = snapshot();
-    expect(await restoreSwapBackup(deps())).toBe('manual');
+    expect(await restoreSwapBackup(deps())).toBe('refused');
     expect(snapshot()).toEqual(before);
     expect(existsSync(journalPath())).toBe(true);
   });
 
   it('refuses without a journal', async () => {
-    expect(await restoreSwapBackup(deps())).toBe('manual');
+    expect(await restoreSwapBackup(deps())).toBe('refused');
   });
 });
 
@@ -395,7 +395,7 @@ describe('cleanup order and guards', () => {
     const refresh = async (): Promise<RefreshOutcome> => { calls++; return { kind: 'ok' }; };
     const blocked: RefreshOutcome = { kind: 'transient' };
     expect(await gateProfileRefresh({ swapRunning: () => true, swapPending: async () => false }, refresh, blocked)('d')).toEqual(blocked);
-    expect(await gateProfileRefresh({ swapRunning: () => false, swapPending: async () => true }, refresh, blocked)('d')).toEqual(blocked);
+    expect(await gateProfileRefresh({ swapRunning: () => false, swapPending: async () => true, swapPendingNow: () => true }, refresh, blocked)('d')).toEqual(blocked);
     expect(calls).toBe(0);
     expect(await gateProfileRefresh({ swapRunning: () => false, swapPending: async () => false }, refresh, blocked)('d')).toEqual({ kind: 'ok' });
     expect(calls).toBe(1);
@@ -403,5 +403,126 @@ describe('cleanup order and guards', () => {
 
   it('does not block Codex logins', async () => {
     expect(await loginBlock({ swapRunning: () => true, swapPending: async () => true }, { provider: 'codex', target: { type: 'main' } })).toBeNull();
+  });
+});
+
+describe('restore only when nothing was rotated', () => {
+  const failingMain = (): SwapFs => {
+    const seen = new Map<string, number>();
+    return { ...nodeSwapFs, rename: async (from, to) => {
+      const n = (seen.get(to) ?? 0) + 1; seen.set(to, n);
+      if (to === mainJson()) throw Object.assign(new Error('boom'), { code: 'EIO' });
+      if (to === mainCreds() && n >= 2) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      return nodeSwapFs.rename(from, to);
+    } };
+  };
+
+  it('(a) refuses when Claude rotated main X0 -> X1 during the settle wait', async () => {
+    let first = true;
+    const d = { ...deps(), delay: async () => { if (first) { first = false; put(mainCreds(), creds('X1')); } } };
+    expect(await swapMainAccount(d, ID)).toEqual({ ok: false, error: 'manual' });
+    const before = snapshot();
+    expect(await swapPendingInfo(deps())).toEqual({ pending: true, restorable: false });
+    expect(await restoreSwapBackup(deps())).toBe('refused');
+    expect(snapshot()).toEqual(before);
+    expect(token(mainCreds())).toBe('tok-X1');
+  });
+
+  it('(b) refuses when the target profile rotated A -> A1', async () => {
+    fs = failingMain();
+    await swapMainAccount(deps(), ID);
+    fs = nodeSwapFs;
+    expect((await swapPendingInfo(deps())).restorable).toBe(true);
+    put(tCreds(), creds('A1'));
+    const before = snapshot();
+    expect(await restoreSwapBackup(deps())).toBe('refused');
+    expect(snapshot()).toEqual(before);
+    expect(token(tCreds())).toBe('tok-A1');
+    expect(await swapPendingInfo(deps())).toEqual({ pending: true, restorable: false });
+  });
+
+  it('(c) restores when the tokens are exactly the backup tokens', async () => {
+    fs = failingMain();
+    await swapMainAccount(deps(), ID);
+    fs = nodeSwapFs;
+    expect(isSwapUnresolved()).toBe(true);
+    expect(await swapPendingInfo(deps())).toEqual({ pending: true, restorable: true });
+    expect(await restoreSwapBackup(deps())).toBe('restored');
+    expect(isSwapUnresolved()).toBe(false);
+    expect(token(mainCreds())).toBe('tok-A');
+    expect(token(tCreds())).toBe('tok-X');
+    expect(await swapPendingInfo(deps())).toEqual({ pending: false, restorable: false });
+  });
+
+  it('puts already restored files back and reports manual when a later write fails', async () => {
+    await crashed('main-creds-written');
+    const before = snapshot();
+    fs = { ...nodeSwapFs, rename: async (from, to) => { if (to === mainCreds()) throw Object.assign(new Error('x'), { code: 'EIO' }); return nodeSwapFs.rename(from, to); } };
+    expect(await restoreSwapBackup(deps())).toBe('manual');
+    expect(snapshot()).toEqual(before);
+    expect(existsSync(journalPath())).toBe(true);
+  });
+});
+
+describe('stale writes and recovery', () => {
+  it('a stale A blob written into main after the settle read leaves a manual state that recovery does not touch', async () => {
+    let armed = false;
+    let reads = 0;
+    fs = {
+      ...nodeSwapFs,
+      rename: async (from, to) => { await nodeSwapFs.rename(from, to); if (to === mainJson()) armed = true; },
+      readFile: async (p) => {
+        const text = await nodeSwapFs.readFile(p);
+        if (armed && p === mainCreds() && ++reads === 1) put(mainCreds(), creds('A')); // Claude Code writes its unrotated A blob
+        return text;
+      },
+    };
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
+    fs = nodeSwapFs;
+    expect(acct(tJson())).toBe('a@x.com'); // the profile holding A is not relabelled X
+    const before = snapshot();
+    expect(await recoverInterruptedSwap(deps())).toBe('manual');
+    expect(snapshot()).toEqual(before);
+    expect(json(join(backup(), 'target-credentials.json')).claudeAiOauth.accessToken).toBe('tok-X');
+  });
+
+  it('keeps the backups when main changed between verification and cleanup', async () => {
+    let armed = false;
+    let reads = 0;
+    fs = {
+      ...nodeSwapFs,
+      rename: async (from, to) => { await nodeSwapFs.rename(from, to); if (to === mainJson()) armed = true; },
+      readFile: async (p) => {
+        const text = await nodeSwapFs.readFile(p);
+        if (armed && p === mainCreds() && ++reads === 3) return JSON.stringify(creds('X2'));
+        return text;
+      },
+    };
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
+    expect(existsSync(journalPath())).toBe(true);
+    expect(backupFiles()).toContain('main-credentials.json');
+  });
+
+  it('fixes the account label when the process died after the verified marker', async () => {
+    await crashed('verified');
+    store.update(ID, { email: 'x@x.com', org: 'Org X' });
+    expect(await recoverInterruptedSwap(deps())).toBe('none');
+    expect(store.list()[0]).toMatchObject({ email: 'a@x.com', org: 'Org A' });
+    expect(backupFiles()).toEqual([]);
+  });
+
+  it('aborts with write before any write when a file cannot be read (not absent)', async () => {
+    const before = snapshot();
+    fs = { ...nodeSwapFs, readFile: async (p) => { if (p === mainCreds()) throw Object.assign(new Error('io'), { code: 'EIO' }); return nodeSwapFs.readFile(p); } };
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'write' });
+    fs = nodeSwapFs;
+    expect(snapshot()).toEqual(before);
+    expect(existsSync(backup())).toBe(false);
+  });
+
+  it('flags an unresolved swap synchronously for background refreshes', async () => {
+    fs = { ...nodeSwapFs, rename: async (from, to) => { if (to === mainCreds()) throw Object.assign(new Error('x'), { code: 'EIO' }); return nodeSwapFs.rename(from, to); } };
+    await swapMainAccount(deps(), ID); // clean rollback: nothing left behind
+    expect(isSwapUnresolved()).toBe(false);
   });
 });
