@@ -108,7 +108,13 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
         <span className="usage-account" title={name}>{name}</span>
         {usage.plan && <span className="usage-chip">{usage.plan}</span>}
         {showMain && usage.accountId === 'claude:main' && <span className="usage-chip main">{tr('główne')}</span>}
-        {usage.managed && (
+        {swapping === usage.accountId && (
+          <span className="usage-swapping" role="status" aria-live="polite">
+            <span className="usage-spinner" aria-hidden="true" />
+            {tr('Przełączam konto…')}
+          </span>
+        )}
+        {usage.managed && swapping !== usage.accountId && (
           <button
             className="usage-kebab"
             aria-haspopup="menu"

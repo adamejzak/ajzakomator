@@ -75,6 +75,8 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
     : target.type === 'new' ? tr('Dodaj konto Claude') : tr('Zaloguj ponownie do Claude');
   const email = current?.email ?? '';
   const waiting = status === 'waiting';
+  /** Login refused up front: no terminal session exists, so only the refusal message is shown. */
+  const refused = startFailed && refusal !== null;
 
   let line: string;
   if (status === 'success') line = email ? tr('Zalogowano jako {email}', { email }) : tr('Zalogowano.');
@@ -92,8 +94,8 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
         <h3>{title}</h3>
         <button className="btn ghost icon" onClick={closeModal} aria-label={tr('Zamknij')}><IX /></button>
       </div>
-      <div className="auth-note muted">{tr('Dokończ logowanie w przeglądarce. Okno zamknie się samo, gdy logowanie się powiedzie.')}</div>
-      <div className="auth-terminal" ref={container} />
+      {!refused && <div className="auth-note muted">{tr('Dokończ logowanie w przeglądarce. Okno zamknie się samo, gdy logowanie się powiedzie.')}</div>}
+      {!refused && <div className="auth-terminal" ref={container} />}
       <div className={`auth-status ${waiting ? 'wait' : status === 'success' ? 'ok' : 'bad'}`}>
         {waiting && <RefreshIcon spinning />}
         <span>{line}</span>

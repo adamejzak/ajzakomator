@@ -3,6 +3,7 @@ import type { SwapError } from './accounts';
 // Texts for "Make main account" (swapping a saved Claude account into the machine's own login).
 // Each row: English, German, Spanish, French, Portuguese. Polish is the key.
 export const swapMessages = {
+  'Przełączam konto…': ['Switching account…', 'Konto wird gewechselt…', 'Cambiando de cuenta…', 'Changement de compte…', 'Trocando de conta…'],
   'Ustaw jako główne': ['Make main account', 'Als Hauptkonto festlegen', 'Establecer como cuenta principal', 'Définir comme compte principal', 'Definir como conta principal'],
   'Ustawić {name} jako konto główne?': ['Make {name} the main account?', '{name} als Hauptkonto festlegen?', '¿Establecer {name} como cuenta principal?', 'Définir {name} comme compte principal ?', 'Definir {name} como conta principal?'],
   'Obecne konto główne ({current}) zostanie zachowane jako zapisane konto, a wybrane stanie się głównym logowaniem Claude Code. Token wybranego konta jest przed zamianą odświeżany w Anthropic, a pliki logowania są wymieniane na tym komputerze. Otwarte sesje Claude zwykle przejmują nowe logowanie przy następnej wiadomości, ale zależy to od wersji Claude Code - sesję, która tego nie zrobi, wystarczy zrestartować lub wznowić.': [
