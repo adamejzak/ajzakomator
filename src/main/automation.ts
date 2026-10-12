@@ -2,12 +2,15 @@ import { automationSchemas, taskPrompt, type AgentMessage, type AgentRuntimeStat
 import { CELL_COLORS, closeTab, addTab, findCell, getProfile, setActiveTab, uid, updateCell, upsertPreset, upsertSnippet } from '../shared/state';
 import { layoutForCount, layoutFromRows } from '../shared/layout';
 import type { AppState, Cell, Tab, Worktree } from '../shared/types';
+import { CLI_NAMES, type CliId } from '../shared/cliStatus';
 import type { StateController } from './stateController';
 
 export interface AutomationDependencies {
   createWorktree(path: string, name: string): Promise<Worktree>;
   removeWorktree(path: string, worktree: Worktree): Promise<void>;
   startCells(ids: string[]): void;
+  /** The CLI a profile needs when it is known not to be installed (cached knowledge only, never blocks). */
+  missingCli?(profileId: string): CliId | undefined;
   stopCells?(ids: string[]): Promise<void>;
   isCellRunning?(cellId: string): boolean;
   /** Runtime must verify a confirmed, compatible session before killing and relaunching; never type a shell command. */
@@ -390,7 +393,14 @@ export class AutomationService {
         return this.log(next, project.id, existing ? 'agents_added' : 'grid_created', a.name || grid.name, actorId);
       });
       this.deps.startCells(cellIds);
-      return { gridId, cellIds };
+      // Cells whose CLI is not installed show an install prompt instead of starting; say so per cell instead of leaving the caller to wait.
+      const unavailable = cellIds.flatMap((cellId, i) => {
+        const cli = this.deps.missingCli?.(cells[i].profileId);
+        if (!cli) return [];
+        this.statuses.set(cellId, 'exited');
+        return [{ cellId, cli, error: `${CLI_NAMES[cli]} is not installed on this computer, so this cell did not start an agent. It shows an install prompt; ask the user to install ${CLI_NAMES[cli]} or switch the profile.` }];
+      });
+      return unavailable.length ? { gridId, cellIds, unavailable } : { gridId, cellIds };
     } catch (error) {
       for (const worktree of created.reverse()) await this.deps.removeWorktree(project.path, worktree).catch(() => undefined);
       throw error;

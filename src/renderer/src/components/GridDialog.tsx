@@ -5,8 +5,10 @@ import {
   createLayout, describeLayout, layoutForCount, layoutFromRows, MAX_COLS, MAX_ROWS, mergeRect, rowCountsOf, unmergeAll, type GridLayout,
 } from '../../../shared/layout';
 import { getProfile, removePreset, uid, upsertPreset } from '../../../shared/state';
+import { CLI_NAMES, missingCli, missingClis, type CliStatusMap } from '../../../shared/cliStatus';
+import { profileOptionLabel } from '../cliUi';
 import type { PresetCell } from '../../../shared/types';
-import { openTab } from '../actions';
+import { offerInstall, openTab, showCliInstructions } from '../actions';
 import { askChoice, askText, closeModal, update, useStore } from '../store';
 import { openMenuAt } from './ContextMenu';
 import { IChevron, ISnippet, IX } from './icons';
@@ -25,9 +27,17 @@ export function GridDialog({ projectId }: { projectId: string }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [name, setName] = useState('');
   const [isRepo, setIsRepo] = useState<boolean | null>(null);
+  const cliStatus = useStore((st) => st.ui.cliStatus);
+  // The first "create" with a missing CLI only arms the banner; the second one creates the grid anyway.
+  const [armed, setArmed] = useState(false);
   useEffect(() => {
     if (project) void window.mc.isGitRepo(project.path).then(setIsRepo);
   }, [project?.path]);
+  const usedProfiles = cells.slice(0, layout.areas.length).map((cell) => getProfile(s, cell.profileId));
+  const lacking = missingClis(usedProfiles, cliStatus);
+  const lackingCells = usedProfiles.filter((profile) => missingCli(profile, cliStatus)).length;
+  const lackingKey = lacking.join();
+  useEffect(() => setArmed(false), [lackingKey]);
 
   if (!project) return null;
   const presets = s.presets.filter((p) => !p.projectId || p.projectId === projectId);
@@ -55,6 +65,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
   };
 
   const open = () => {
+    if (lackingCells > 0 && !armed) { setArmed(true); return; }
     closeModal();
     void openTab(projectId, layout, cells.slice(0, n), name.trim() || undefined);
   };
@@ -193,7 +204,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
           <span className="section-title" style={{ margin: 0, flex: 1 }}>{tr("Komórki")}</span>
           <select className="select" value="" onChange={(e) => e.target.value && setAll({ profileId: e.target.value })}>
             <option value="">{tr("profil dla wszystkich…")}</option>
-            {s.profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {s.profiles.map((p) => <option key={p.id} value={p.id}>{profileOptionLabel(p, cliStatus, tr)}</option>)}
           </select>
           {snippets.length > 0 && (
             <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, [
@@ -221,6 +232,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
               index={i}
               cell={cells[i]}
               profiles={s.profiles}
+              cliStatus={cliStatus}
               snippets={snippets}
               isRepo={!!isRepo}
               onChange={(patch) => setCell(i, patch)}
@@ -230,21 +242,36 @@ export function GridDialog({ projectId }: { projectId: string }) {
 
         <input className="input" placeholder={tr("Nazwa zakładki (opcjonalnie)")} value={name} onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && open()} />
+        {lacking.length > 0 && (
+          <div className={`cli-banner ${armed ? 'armed' : ''}`} role="alert">
+            <span className="grow">
+              {tr('Brak w systemie: {names}. Komórki ({count}) pokażą ekran instalacji zamiast terminala.', { names: lacking.map((cli) => CLI_NAMES[cli]).join(', '), count: lackingCells })}
+              {armed && <> <b>{tr('Zainstaluj albo kliknij ponownie, aby mimo to utworzyć grid.')}</b></>}
+            </span>
+            {lacking.map((cli) => (
+              <span key={cli} className="row" style={{ gap: 6 }}>
+                <button className="btn small primary" onClick={() => offerInstall(cli)}>{tr('Zainstaluj')}{lacking.length > 1 ? ` ${CLI_NAMES[cli]}` : ''}</button>
+                <button className="btn small" onClick={() => showCliInstructions(cli)}>{tr('Pokaż instrukcję')}{lacking.length > 1 ? ` ${CLI_NAMES[cli]}` : ''}</button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="modal-foot">
         <button className="btn" onClick={() => void savePreset()}>{tr("Zapisz jako preset")}</button>
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={closeModal}>{tr("Anuluj")}</button>
-        <button className="btn white" onClick={open}>{tr('Otwórz grid ({count})', { count: n })}</button>
+        <button className="btn white" onClick={open}>{armed && lackingCells > 0 ? tr('Utwórz mimo to ({count})', { count: n }) : tr('Otwórz grid ({count})', { count: n })}</button>
       </div>
     </div>
   );
 }
 
-function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
+function CellRow({ index, cell, profiles, cliStatus, snippets, isRepo, onChange }: {
   index: number;
   cell: PresetCell;
-  profiles: Array<{ id: string; name: string; cli: string }>;
+  profiles: Array<{ id: string; name: string; cli: 'claude' | 'codex' | 'shell' }>;
+  cliStatus: CliStatusMap;
   snippets: Array<{ id: string; name: string; text: string }>;
   isRepo: boolean;
   onChange: (patch: Partial<PresetCell>) => void;
@@ -256,7 +283,7 @@ function CellRow({ index, cell, profiles, snippets, isRepo, onChange }: {
       <span className="num">{index + 1}</span>
       <input className="input" placeholder={tr("np. backend")} value={cell.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} />
       <select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
-        {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        {profiles.map((p) => <option key={p.id} value={p.id}>{profileOptionLabel(p, cliStatus, tr)}</option>)}
       </select>
       <RoleSelect value={cell.role} disabled={isShell} onChange={(role) => onChange({ role })} />
       <span className="prompt-wrap">

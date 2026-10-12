@@ -6,6 +6,7 @@ import { activeProject, activeTab, getProfile, setTabLayout } from '../../../sha
 import { createProject, quickTab, swapCellSlots } from '../actions';
 import { playCellMotion } from '../gridMotion';
 import { getUi, setUi, update, useStore } from '../store';
+import { profileOptionLabel } from '../cliUi';
 import { useCellDrag, type DragContext } from './useCellDrag';
 import { CellView } from './CellView';
 import { areaStyle, GridDividers } from './GridDividers';
@@ -16,6 +17,7 @@ export function GridView() {
   const { tr } = useI18n();
   const s = useStore((st) => st.s);
   const maximized = useStore((st) => st.ui.maximizedCellId);
+  const cliStatus = useStore((st) => st.ui.cliStatus);
   const project = activeProject(s);
   const tab = activeTab(project);
   const [preview, setPreview] = useState<{ tabId: string; layout: GridLayout } | null>(null);
@@ -63,7 +65,7 @@ export function GridView() {
           <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
             {s.profiles.map((p) => (
               <button key={p.id} className="btn" onClick={() => quickTab(p.id)} title={tr("Nowa zakładka z jednym terminalem")}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} /> {p.name}
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} /> {profileOptionLabel(p, cliStatus, tr)}
               </button>
             ))}
           </div>

@@ -9,6 +9,7 @@ import {
   swapCells as swapCellsState, uid, updateCell, updateSettings,
 } from '../../shared/state';
 import { canSwapCells, neighborSlot } from '../../shared/gridDrag';
+import { CLI_NAMES, profileAvailable, type CliId, type CliStatusMap } from '../../shared/cliStatus';
 import { snapshotCellRects } from './gridMotion';
 import { sessionSearchPaths } from '../../shared/sessionTrack';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
@@ -19,6 +20,8 @@ import { terminals } from './terminals/TerminalManager';
 /** Cells whose pty was started (or found alive) during this renderer session. */
 const started = new Set<string>();
 let aliveAtStart = new Set<string>();
+/** Cells whose start was skipped because their CLI is not installed; they start by themselves once it is found. */
+const blockedCells = new Set<string>();
 
 export function setAliveAtStart(ids: string[]): void {
   aliveAtStart = new Set(ids);
@@ -63,6 +66,9 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
   const profile = getProfile(getS(), cell.profileId);
   started.add(cellId);
   ensureTerminal(cellId);
+  // A CLI known to be missing never gets a shell that only prints "command not found": the cell shows an install card.
+  if (!profileAvailable(profile, getUi().cliStatus)) return holdForCli(cellId);
+  blockedCells.delete(cellId);
 
   let sessionId: string | undefined;
   const sameCli = cell.session && cell.session.cli === profile.cli;
@@ -91,8 +97,60 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
   });
   // The startup prompt is a one-shot: later restarts must not send it again.
   if (r.ok && cell.startupPrompt && mode === 'new') update((s) => updateCell(s, cellId, { startupPrompt: undefined }));
+  if (!r.ok && r.cliMissing) {
+    // The renderer's picture was stale (still unknown): main knows the CLI is missing.
+    const cli = r.cliMissing;
+    const known = r.cliStatus ?? { cli, state: 'missing' as const, checkedAt: Date.now() };
+    setUi((ui) => ({ cliStatus: { ...ui.cliStatus, [cli]: known } }));
+    return holdForCli(cellId);
+  }
   if (!r.ok) setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: r.error } }));
   else terminals.syncSize(cellId);
+}
+
+function holdForCli(cellId: string): void {
+  blockedCells.add(cellId);
+  window.mc.killCell(cellId); // a previous shell of this cell (profile switch) must not keep running behind the card
+}
+
+export const hasBlockedCells = (): boolean => blockedCells.size > 0;
+
+/** Starts, exactly once, every held cell whose CLI is not known to be missing any more (resume rules unchanged). */
+export function resumeBlockedCells(): void {
+  for (const cellId of [...blockedCells]) {
+    const found = findCell(getS(), cellId);
+    if (!found) { blockedCells.delete(cellId); continue; }
+    if (!profileAvailable(getProfile(getS(), found.cell.profileId), getUi().cliStatus)) continue;
+    blockedCells.delete(cellId);
+    void spawnCell(cellId, found.cell.session ? 'resume' : 'new');
+  }
+}
+
+/** New detection results (push or answer to a recheck). Results are merged: an absent CLI is only "being checked". */
+export function applyCliStatus(map: CliStatusMap): void {
+  const before = getUi().cliStatus;
+  setUi((ui) => ({ cliStatus: { ...ui.cliStatus, ...map } }));
+  const recovered = (Object.keys(map) as CliId[]).filter((cli) => before[cli]?.state === 'missing' && map[cli]?.state === 'found');
+  if (recovered.length && hasBlockedCells()) toast(tr('Wykryto: {name}', { name: recovered.map((cli) => CLI_NAMES[cli]).join(', ') }));
+  resumeBlockedCells();
+}
+
+/** Forgets cached detection and looks again; resolves with the new status of that CLI. */
+export async function recheckCli(cli?: CliId): Promise<void> {
+  try { applyCliStatus(await window.mc.cliRecheck(cli)); } catch { /* the next focus or click tries again */ }
+}
+
+/** Opens the official instructions (address chosen in main from an allow-list). */
+export function showCliInstructions(cli: CliId): void {
+  window.mc.cliOpenDocs(cli);
+}
+
+/**
+ * "Zainstaluj": the single entry point of the install flow (cell card, new-grid banner). The guided installer
+ * plugs in here later; until then it shows the official instructions.
+ */
+export function offerInstall(cli: CliId): void {
+  showCliInstructions(cli);
 }
 
 export function restartCell(cellId: string, mode: 'new' | 'resume'): void {
@@ -147,6 +205,7 @@ function killAndDispose(cellId: string): void {
 export function releaseCellTerminal(cellId: string): void {
   terminals.dispose(cellId);
   started.delete(cellId);
+  blockedCells.delete(cellId);
   aliveAtStart.delete(cellId);
   setUi((ui) => {
     const { [cellId]: _s, ...statuses } = ui.statuses;

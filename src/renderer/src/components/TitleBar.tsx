@@ -7,6 +7,7 @@ import { activeProject, renameTab, PROJECT_COLORS } from '../../../shared/state'
 import { aggregate } from '../../../shared/status';
 import { addAgent, closeTab, selectTab } from '../actions';
 import { setUi, update, useStore } from '../store';
+import { profileOptionLabel } from '../cliUi';
 import { openMenu, openMenuAt } from './ContextMenu';
 import { IChevron, IPlusBold, ISearch, IX, IFile, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
 import { StatusBadges } from './StatusBadges';
@@ -42,6 +43,7 @@ export function WorkspaceTabs() {
   const { tr } = useI18n();
   const s = useStore((st) => st.s);
   const statuses = useStore((st) => st.ui.statuses);
+  const cliStatus = useStore((st) => st.ui.cliStatus);
   const project = activeProject(s);
   const documents = useFileStore((st) => st.documents);
   const selectedFile = useFileStore((st) => st.activeFileId);
@@ -107,10 +109,10 @@ export function WorkspaceTabs() {
   const agentMenu = (el: HTMLElement) =>
     openMenuAt(el, [
       { header: tr("Dodaj komórkę do siatki") },
-      ...s.profiles.map((p) => ({ label: p.name, onClick: () => void addAgent(p.id), hint: p.id === s.settings.lastProfileId ? keyLabel("Ctrl+Shift+N") : undefined })),
+      ...s.profiles.map((p) => ({ label: profileOptionLabel(p, cliStatus, tr), onClick: () => void addAgent(p.id), hint: p.id === s.settings.lastProfileId ? keyLabel("Ctrl+Shift+N") : undefined })),
       { sep: true as const },
       { header: tr("W osobnym git worktree") },
-      ...s.profiles.filter((p) => p.cli !== 'shell').map((p) => ({ label: `${p.name} + worktree`, onClick: () => void addAgent(p.id, true) })),
+      ...s.profiles.filter((p) => p.cli !== 'shell').map((p) => ({ label: `${profileOptionLabel(p, cliStatus, tr)} + worktree`, onClick: () => void addAgent(p.id, true) })),
     ]);
 
   return <div className="workspace-tabs" aria-label={tr('Gridy i pliki')}>

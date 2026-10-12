@@ -6,6 +6,7 @@ import { OptimisticState } from '../../shared/optimisticState';
 import type { StateSnapshot } from '../../shared/stateEdits';
 import type { McpInfo } from '../../shared/automation';
 import type { LoginTarget } from '../../shared/accounts';
+import type { CliStatusMap } from '../../shared/cliStatus';
 
 export type Modal =
   | { kind: 'grid'; projectId: string }
@@ -46,6 +47,8 @@ export interface Ui {
   settingsTabOpen: boolean;
   settingsActive: boolean;
   mcpInfo: McpInfo;
+  /** Detected Claude Code / Codex binaries; a missing entry means "not checked yet" (never blocks a start). */
+  cliStatus: CliStatusMap;
 }
 
 interface Store {
@@ -79,6 +82,7 @@ export const useStore = create<Store>((set, get) => ({
     settingsTabOpen: false,
     settingsActive: false,
     mcpInfo: { running: false },
+    cliStatus: {},
   },
   ready: false,
   update(fn) {

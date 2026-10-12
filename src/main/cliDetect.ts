@@ -1,0 +1,281 @@
+// Finds the Claude Code / Codex binaries without relying on the PATH the app was launched with:
+// known install directories, then the (Windows: registry-refreshed) PATH, then on POSIX a login-shell probe.
+// All I/O is injected, so the whole decision logic is tested with fakes.
+import { posix, win32 } from 'path';
+import {
+  CLI_IDS, executableNames, getEnv, joinPath, knownCliDirs, mergePaths, npmPrefixBinDir, parseShellProbe, parseVersion,
+  prependDir, registryPathEntries, sameStatus, shellProbeScript, sortVersionsDesc, splitPath, versionedCliDirs, withPath,
+  type CliId, type CliReason, type CliSource, type CliStatus, type CliStatusMap,
+} from '../shared/cliStatus';
+import { cleanEnv } from '../shared/env';
+
+export interface ExecOptions {
+  timeout: number;
+  env: Record<string, string>;
+  /** Windows: pass the argument string untouched (needed for `cmd.exe /s /c "..."`). */
+  verbatim?: boolean;
+}
+export interface ExecResult { ok: boolean; stdout: string; timedOut: boolean }
+
+export interface CliDetectorDeps {
+  platform: NodeJS.Platform;
+  home: string;
+  env(): Record<string, string | undefined>;
+  now(): number;
+  isFile(path: string): Promise<boolean>;
+  /** Directory entries; an empty list when it cannot be read. */
+  readDir(path: string): Promise<string[]>;
+  readFile(path: string): Promise<string | null>;
+  exec(file: string, args: string[], options: ExecOptions): Promise<ExecResult>;
+  /** Raw (unexpanded) Machine and User PATH from the Windows registry; null when unreadable. The only registry access. */
+  readWindowsPath?(): Promise<{ machine: string | null; user: string | null } | null>;
+}
+
+export const FOUND_TTL_MS = 10 * 60_000;
+export const MISSING_TTL_MS = 30_000;
+export const EXEC_TIMEOUT_MS = 5000;
+const REGISTRY_TTL_MS = 5000;
+const NODE_VERSIONS_TRIED = 8;
+/** Characters that could break out of the quoted `cmd.exe /c` command line. */
+const UNSAFE_CMD = /["&|<>^%\r\n]/;
+
+interface ProbeResult { ok: boolean; reason?: CliReason; path: string[]; found: Partial<Record<CliId, string>> }
+
+export class CliDetector {
+  private cache = new Map<CliId, CliStatus>();
+  /** Last status handed to listeners; survives invalidation so an unchanged recheck is not announced again. */
+  private announced = new Map<CliId, CliStatus>();
+  private inflight = new Map<CliId, Promise<CliStatus>>();
+  private generation = 0;
+  private listeners = new Set<(map: CliStatusMap) => void>();
+  private probe?: { at: number; promise: Promise<ProbeResult> };
+  private registry?: { at: number; promise: Promise<string[] | null> };
+
+  constructor(private readonly deps: CliDetectorDeps) {}
+
+  private get path() { return this.deps.platform === 'win32' ? win32 : posix; }
+
+  /** Cached status, stale or not; undefined = never checked. */
+  peek(cli: CliId): CliStatus | undefined { return this.cache.get(cli); }
+
+  snapshot(): CliStatusMap {
+    const out: CliStatusMap = {};
+    for (const cli of CLI_IDS) { const status = this.cache.get(cli); if (status) out[cli] = status; }
+    return out;
+  }
+
+  onChange(listener: (map: CliStatusMap) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  /**
+   * Status with caching: `found` 10 min (a stale one is returned at once and re-verified in the background),
+   * `missing`/`unknown` 30 s, concurrent calls share one detection. With `waitMs` a slow detection yields `unknown`
+   * (which never blocks anything) instead of making the caller wait.
+   */
+  async get(cli: CliId, options: { waitMs?: number; force?: boolean } = {}): Promise<CliStatus> {
+    const cached = this.cache.get(cli);
+    if (!options.force && cached) {
+      const age = this.deps.now() - cached.checkedAt;
+      if (cached.state === 'found') {
+        if (age > FOUND_TTL_MS) void this.refresh(cli).catch(() => undefined);
+        return cached;
+      }
+      if (age <= MISSING_TTL_MS) return cached;
+    }
+    const run = this.refresh(cli);
+    if (!options.waitMs) return run;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const slow = new Promise<CliStatus>((resolve) => {
+      timer = setTimeout(() => resolve({ cli, state: 'unknown', reason: 'timeout', checkedAt: this.deps.now() }), options.waitMs);
+    });
+    try { return await Promise.race([run, slow]); } finally { clearTimeout(timer); }
+  }
+
+  /** Forgets cached results (and the login-shell / registry snapshots); the next `get` detects again. */
+  invalidate(cli?: CliId): void {
+    this.generation++;
+    this.probe = undefined;
+    this.registry = undefined;
+    for (const id of cli ? [cli] : CLI_IDS) { this.cache.delete(id); this.inflight.delete(id); }
+  }
+
+  /** Explicit "check again": invalidates and detects the given CLI (or both). */
+  async recheck(cli?: CliId): Promise<CliStatusMap> {
+    this.invalidate(cli);
+    await Promise.all((cli ? [cli] : CLI_IDS).map((id) => this.get(id, { force: true })));
+    return this.snapshot();
+  }
+
+  /** Startup scan: never throws. */
+  refreshAll(): Promise<CliStatusMap> {
+    return this.recheck().catch(() => this.snapshot());
+  }
+
+  /**
+   * Environment for a spawned process: on Windows the PATH is refreshed from the registry (an installer may
+   * have edited it after the app started), and the directory of the detected CLI goes in front when the PATH lacks it.
+   */
+  async applyEnv(env: Record<string, string>, cli?: CliId): Promise<Record<string, string>> {
+    const { platform } = this.deps;
+    let entries = splitPath(getEnv(env, 'PATH', platform), platform);
+    if (platform === 'win32') {
+      const registry = await this.registryEntries();
+      if (registry) entries = mergePaths(entries, registry, platform);
+    }
+    const status = cli ? this.cache.get(cli) : undefined;
+    if (status?.state === 'found' && status.path) entries = prependDir(entries, this.path.dirname(status.path), platform);
+    return entries.length ? withPath(env, joinPath(entries, platform), platform) : env;
+  }
+
+  private refresh(cli: CliId): Promise<CliStatus> {
+    const existing = this.inflight.get(cli);
+    if (existing) return existing;
+    const generation = this.generation;
+    const run: Promise<CliStatus> = this.detect(cli)
+      .catch((): CliStatus => ({ cli, state: 'unknown', reason: 'probeFailed', checkedAt: this.deps.now() }))
+      .then((status) => {
+        // A recheck that started meanwhile owns the cache; this older result is only returned to its own callers.
+        if (generation === this.generation) this.store(status);
+        return status;
+      })
+      .finally(() => { if (this.inflight.get(cli) === run) this.inflight.delete(cli); });
+    this.inflight.set(cli, run);
+    return run;
+  }
+
+  private store(status: CliStatus): void {
+    const previous = this.announced.get(status.cli);
+    this.cache.set(status.cli, status);
+    this.announced.set(status.cli, status);
+    if (!previous || !sameStatus(previous, status)) for (const listener of this.listeners) listener(this.snapshot());
+  }
+
+  private async detect(cli: CliId): Promise<CliStatus> {
+    const { platform } = this.deps;
+    const env = this.deps.env();
+    const names = executableNames(cli, platform, getEnv(env, 'PATHEXT', platform));
+    const inDir = async (dir: string): Promise<string | null> => {
+      for (const name of names) {
+        const full = this.path.join(dir, name);
+        if (await this.deps.isFile(full)) return full;
+      }
+      return null;
+    };
+    const found = async (path: string, source: CliSource) => this.verify(cli, path, source);
+
+    for (const dir of await this.knownDirs(env)) {
+      const hit = await inDir(dir);
+      if (hit) return found(hit, 'known');
+    }
+
+    const { entries, complete } = await this.pathEntries(env);
+    for (const dir of entries) {
+      const hit = await inDir(dir);
+      if (hit) return found(hit, 'path');
+    }
+
+    let probeReason: CliReason | undefined;
+    if (platform !== 'win32') {
+      const probe = await this.shellProbe(env);
+      if (probe.ok) {
+        const direct = probe.found[cli];
+        if (direct && await this.deps.isFile(direct)) return found(direct, 'shell');
+        for (const dir of probe.path) {
+          const hit = await inDir(dir);
+          if (hit) return found(hit, 'shell');
+        }
+      } else probeReason = probe.reason ?? 'probeFailed';
+    }
+
+    const checkedAt = this.deps.now();
+    // Not finding it is only a verdict when every place was really searched.
+    if (probeReason) return { cli, state: 'unknown', reason: probeReason, checkedAt };
+    if (!complete) return { cli, state: 'unknown', reason: 'registryFailed', checkedAt };
+    return { cli, state: 'missing', reason: 'notOnPath', checkedAt };
+  }
+
+  private async knownDirs(env: Record<string, string | undefined>): Promise<string[]> {
+    const { platform, home } = this.deps;
+    const dirs = [...knownCliDirs(platform, env, home)];
+    const fromEnv = (name: string, sub?: string) => {
+      const value = getEnv(env, name, platform);
+      if (value) dirs.push(sub ? this.path.join(value, sub) : value);
+    };
+    fromEnv('NVM_BIN');
+    fromEnv('VOLTA_HOME', 'bin');
+    fromEnv('BUN_INSTALL', 'bin');
+    fromEnv('PNPM_HOME');
+    const prefix = getEnv(env, 'npm_config_prefix', platform) ?? getEnv(env, 'NPM_CONFIG_PREFIX', platform);
+    if (prefix) dirs.push(platform === 'win32' ? prefix : this.path.join(prefix, 'bin'));
+    const npmrc = await this.deps.readFile(this.path.join(home, '.npmrc'));
+    const fromNpmrc = npmrc ? npmPrefixBinDir(npmrc, platform, home) : null;
+    if (fromNpmrc) dirs.push(fromNpmrc);
+    for (const { root, suffix } of versionedCliDirs(platform, home)) {
+      const versions = sortVersionsDesc(await this.deps.readDir(root)).slice(0, NODE_VERSIONS_TRIED);
+      for (const version of versions) dirs.push(suffix ? this.path.join(root, version, ...suffix.split('/')) : this.path.join(root, version));
+    }
+    return [...new Set(dirs)];
+  }
+
+  private async pathEntries(env: Record<string, string | undefined>): Promise<{ entries: string[]; complete: boolean }> {
+    const { platform } = this.deps;
+    const base = splitPath(getEnv(env, 'PATH', platform), platform);
+    if (platform !== 'win32' || !this.deps.readWindowsPath) return { entries: base, complete: true };
+    const registry = await this.registryEntries();
+    return { entries: mergePaths(base, registry ?? [], platform), complete: registry !== null };
+  }
+
+  private registryEntries(): Promise<string[] | null> {
+    const read = this.deps.readWindowsPath;
+    if (!read) return Promise.resolve(null);
+    const current = this.registry;
+    if (current && this.deps.now() - current.at <= REGISTRY_TTL_MS) return current.promise;
+    const promise = read().then((raw) => (raw ? registryPathEntries(raw, this.deps.env()) : null)).catch(() => null);
+    this.registry = { at: this.deps.now(), promise };
+    return promise;
+  }
+
+  private shellProbe(env: Record<string, string | undefined>): Promise<ProbeResult> {
+    const current = this.probe;
+    if (current && this.deps.now() - current.at <= MISSING_TTL_MS) return current.promise;
+    const promise = this.runProbe(env).catch((): ProbeResult => ({ ok: false, reason: 'probeFailed', path: [], found: {} }));
+    this.probe = { at: this.deps.now(), promise };
+    return promise;
+  }
+
+  /** `$SHELL -ilc` prints marker lines (rc files may print anything else); this also harvests the user's real PATH. */
+  private async runProbe(env: Record<string, string | undefined>): Promise<ProbeResult> {
+    const shell = getEnv(env, 'SHELL', this.deps.platform) || (this.deps.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
+    const script = shell.startsWith('/') ? shellProbeScript(shell) : null;
+    if (!script) return { ok: false, reason: 'probeFailed', path: [], found: {} };
+    const result = await this.deps.exec(shell, ['-ilc', script], { timeout: EXEC_TIMEOUT_MS, env: { ...cleanEnv(env), AJZAKOMATOR_PROBE: '1' } });
+    const parsed = parseShellProbe(result.stdout);
+    if (!parsed.path.length) return { ok: false, reason: result.timedOut ? 'timeout' : 'probeFailed', path: [], found: {} };
+    return { ok: true, ...parsed };
+  }
+
+  /** `<bin> --version`; the file existing is what makes it `found`, the version is a bonus (fail open). */
+  private async verify(cli: CliId, path: string, source: CliSource): Promise<CliStatus> {
+    const { platform } = this.deps;
+    const base = { cli, state: 'found' as const, path, source, checkedAt: this.deps.now() };
+    const env = cleanEnv(this.deps.env());
+    // Shims (npm, nvm) start `node` from the PATH, which usually sits next to them.
+    const entries = prependDir(splitPath(getEnv(env, 'PATH', platform), platform), this.path.dirname(path), platform);
+    const execEnv = withPath(env, joinPath(entries, platform), platform);
+    let file = path;
+    let args = ['--version'];
+    let verbatim = false;
+    if (platform === 'win32' && /\.(cmd|bat)$/i.test(path)) {
+      if (UNSAFE_CMD.test(path)) return { ...base, reason: 'versionFailed' };
+      file = getEnv(env, 'ComSpec', platform) || 'cmd.exe';
+      args = ['/d', '/s', '/c', `""${path}" --version"`];
+      verbatim = true;
+    }
+    const result = await this.deps.exec(file, args, { timeout: EXEC_TIMEOUT_MS, env: execEnv, verbatim }).catch((): ExecResult => ({ ok: false, stdout: '', timedOut: false }));
+    const version = parseVersion(result.stdout);
+    if (version) return { ...base, version };
+    return { ...base, reason: result.timedOut ? 'timeout' : 'versionFailed' };
+  }
+}

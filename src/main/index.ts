@@ -44,6 +44,10 @@ import { StateController } from './stateController';
 import { AutomationService } from './automation';
 import { AjzakomatorMcpServer } from './mcp';
 import { queueCodexMessage } from './agentDelivery';
+import { CliDetector } from './cliDetect';
+import { createCliHandlers } from './cliIpc';
+import { systemCliDeps } from './cliSystem';
+import { cliForProfile, CLI_NAMES, isCliId, missingCli, spawnDecision, type CliId, type CliStatus } from '../shared/cliStatus';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
@@ -99,9 +103,23 @@ const usage = new UsageService({
   enabled: () => state.settings.showAiUsage,
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
 });
-const execText = (command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string | null> => new Promise((resolve) => {
-  execFile(command, args, { env: cleanEnv(env), timeout: 15000, windowsHide: true, shell: process.platform === 'win32' }, (error, stdout) => resolve(error ? null : stdout));
-});
+/** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
+const cliDetector = new CliDetector(systemCliDeps({ disableRegistry: !app.isPackaged && process.env.MC_CLI_NO_REGISTRY === '1' }));
+/** How long a spawn may wait for a detection before it proceeds anyway (unknown never blocks). */
+const CLI_WAIT_MS = 7000;
+const execText = async (command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string | null> => {
+  // `claude` / `codex` run from where they were detected, with a PATH that has their directory.
+  const cli = isCliId(command) ? command : undefined;
+  const status = cli ? await cliDetector.get(cli, { waitMs: CLI_WAIT_MS }).catch(() => undefined) : undefined;
+  const file = status?.state === 'found' && status.path ? (process.platform === 'win32' && /\s/.test(status.path) ? `"${status.path}"` : status.path) : command;
+  const runEnv = await cliDetector.applyEnv(cleanEnv(env), cli);
+  return new Promise((resolve) => {
+    execFile(file, args, { env: runEnv, timeout: 15000, windowsHide: true, shell: process.platform === 'win32' }, (error, stdout) => resolve(error ? null : stdout));
+  });
+};
+/** Bumped when a cell is killed, so a spawn that was waiting for the detection does not resurrect it. */
+const killCount = new Map<string, number>();
+const noteKill = (id: string) => killCount.set(id, (killCount.get(id) ?? 0) + 1);
 let usageKey = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
 const ptyHost = new PtyHostClient();
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -190,6 +208,7 @@ const updateStrings = (): UpdateStrings => ({
 });
 
 const send = (channel: string, ...args: unknown[]) => { safeSend(win, channel, ...args); };
+cliDetector.onChange((map) => send('cli:changed', map));
 
 const controller = new StateController(state, (snapshot) => {
   for (const project of state.projects) for (const tab of project.tabs) for (const cell of tab.cells) {
@@ -205,8 +224,12 @@ const automation = new AutomationService(controller, {
   createWorktree,
   removeWorktree: (path, wt) => removeWorktree(path, wt, true),
   startCells: (ids) => send('automation:start-cells', ids),
+  missingCli: (profileId) => {
+    const profile = state.profiles.find((p) => p.id === profileId);
+    return profile ? missingCli(profile, cliDetector.snapshot()) ?? undefined : undefined;
+  },
   stopCells: async (ids) => {
-    for (const id of ids) { mcp.revokeCell(id); verifiedCodex.delete(id); alive.delete(id); automation.statuses.set(id, 'exited'); }
+    for (const id of ids) { noteKill(id); mcp.revokeCell(id); verifiedCodex.delete(id); alive.delete(id); automation.statuses.set(id, 'exited'); }
     await Promise.all(ids.map((id) => ptyHost.killAndWait(id)));
   },
   isCellRunning: (cellId) => alive.has(cellId),
@@ -222,7 +245,7 @@ const automation = new AutomationService(controller, {
     verifiedCodex.delete(cellId);
     alive.delete(cellId);
     await ptyHost.killAndWait(cellId);
-    const result = spawnRequest({ cellId, cwd, profile, mode: 'resume', sessionId: session.id, sessionConfirmed: true, cols: 100, rows: 30 });
+    const result = await spawnRequest({ cellId, cwd, profile, mode: 'resume', sessionId: session.id, sessionConfirmed: true, cols: 100, rows: 30 });
     if (result.ok) send('cell:restarted', cellId);
     return { restarted: result.ok, reason: result.ok ? undefined : result.error };
   },
@@ -232,7 +255,11 @@ const automation = new AutomationService(controller, {
     if (getProfile(state, found.cell.profileId).cli !== 'codex') throw new Error('Available in the MCP inbox. Use Paste to insert it into this agent without submitting.');
     const sessionId = verifiedCodex.get(cellId);
     if (!sessionId || found.cell.session?.id !== sessionId) throw new Error('Session identity is not verified. The item is available in the MCP inbox.');
-    await queueCodexMessage(sessionId, text);
+    const codex = await cliDetector.get('codex', { waitMs: CLI_WAIT_MS }).catch(() => undefined);
+    await queueCodexMessage(sessionId, text, {
+      command: codex?.state === 'found' ? codex.path : undefined,
+      env: await cliDetector.applyEnv(cleanEnv(process.env), 'codex'),
+    });
   },
 });
 const mcp = new AjzakomatorMcpServer(automation);
@@ -372,8 +399,23 @@ ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input:
 });
 
 ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => spawnRequest(req));
-function spawnRequest(req: SpawnCellRequest): { ok: true } | { ok: false; error: string } {
+type SpawnResult = { ok: true } | { ok: false; error: string; cliMissing?: CliId; cliStatus?: CliStatus };
+async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
   if (!existsSync(req.cwd)) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
+  const killsBefore = killCount.get(req.cellId) ?? 0;
+  const cli = cliForProfile(req.profile);
+  if (cli) {
+    // A definite "not installed" never spawns a shell that would only print "command not found"; unknown fails open.
+    const status = await cliDetector.get(cli, { waitMs: CLI_WAIT_MS }).catch(() => undefined);
+    if (!spawnDecision(req.profile, status).spawn) {
+      mcp.revokeCell(req.cellId);
+      alive.delete(req.cellId);
+      automation.statuses.set(req.cellId, 'exited');
+      return { ok: false, error: tr('{name} nie jest zainstalowany', { name: CLI_NAMES[cli] }), cliMissing: cli, cliStatus: status };
+    }
+  }
+  const baseEnv = await cliDetector.applyEnv({ ...cleanEnv(process.env), MC_CELL_ID: req.cellId }, cli ?? undefined);
+  if ((killCount.get(req.cellId) ?? 0) !== killsBefore) return { ok: true }; // the cell was closed while the CLI was being looked up
   const claudeSettingsPath = req.profile.cli === 'claude' ? hooks.writeClaudeSettings(HOOKS_DIR, req.cellId) : undefined;
   let mode = req.mode;
   // Claude only writes a transcript after the first prompt: resuming an unused id would fail,
@@ -390,7 +432,7 @@ function spawnRequest(req: SpawnCellRequest): { ok: true } | { ok: false; error:
     writeFileSync(file, req.startupPrompt, 'utf8');
     initialPrompt = { file, text: req.startupPrompt };
   }
-  const env: Record<string, string> = { ...cleanEnv(process.env), MC_CELL_ID: req.cellId };
+  const env: Record<string, string> = baseEnv;
   let mcpConfig: { url: string; tokenEnv: string; claudeConfigPath: string } | undefined;
   if (req.profile.cli !== 'shell' && findCell(state, req.cellId)?.cell.role && mcp.getInfo().running) {
     env.AJZ_MCP_TOKEN = mcp.issueToken(req.cellId);
@@ -413,6 +455,7 @@ function spawnRequest(req: SpawnCellRequest): { ok: true } | { ok: false; error:
   return { ok: true };
 }
 ipcMain.on('cell:kill', (_e, id: string) => {
+  noteKill(id);
   mcp.revokeCell(id);
   verifiedCodex.delete(id);
   automation.statuses.set(id, 'exited');
@@ -420,6 +463,7 @@ ipcMain.on('cell:kill', (_e, id: string) => {
   ptyHost.kill(id);
 });
 ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
+  noteKill(id);
   mcp.revokeCell(id);
   verifiedCodex.delete(id);
   automation.statuses.set(id, 'exited');
@@ -427,6 +471,10 @@ ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
   await ptyHost.killAndWait(id);
 });
 ipcMain.handle('cell:alive', () => [...alive]);
+const cliHandlers = createCliHandlers(cliDetector, (url) => { void shell.openExternal(url); });
+ipcMain.handle('cli:status', () => cliHandlers.status());
+ipcMain.handle('cli:recheck', (_e, id?: unknown) => cliHandlers.recheck(id));
+ipcMain.on('cli:openDocs', (_e, id?: unknown) => { cliHandlers.openDocs(id); });
 ipcMain.on('cell:runtime', (_e, cellId: string, status: string, reason?: string, hooked?: boolean) => {
   const found = findCell(state, cellId);
   if (!found || !alive.has(cellId)) return;
@@ -669,6 +717,7 @@ async function startMainApp(): Promise<void> {
   // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another.
   try { await recoverInterruptedSwap(swapDeps()); } catch { /* the journal stays and the next start retries */ }
   createWindow();
+  void cliDetector.refreshAll(); // async: the window does not wait for it, spawns wait only for their own CLI
   usage.start();
   scheduleUpdateCleanup();
 }

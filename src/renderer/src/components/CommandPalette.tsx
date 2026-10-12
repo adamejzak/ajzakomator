@@ -10,6 +10,7 @@ import {
   sendSnippet, switchProject, toggleMaximize,
 } from '../actions';
 import { getS, getUi, setUi, toast, update, useStore } from '../store';
+import { profileOptionLabel } from '../cliUi';
 import { statusLog } from '../terminals/TerminalManager';
 
 interface Item {
@@ -28,6 +29,7 @@ export function CommandPalette() {
 function PaletteInner() {
   const { tr } = useI18n();
   const s = useStore((st) => st.s);
+  const cliStatus = useStore((st) => st.ui.cliStatus);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -84,8 +86,9 @@ function PaletteInner() {
       for (const pr of s.presets.filter((x) => !x.projectId || x.projectId === project.id))
         out.push({ kind: tr('Preset'), title: pr.name, desc: describeLayout(pr.layout), run: () => void openTab(project.id, pr.layout, pr.cells) });
       for (const pf of s.profiles) {
-        out.push({ kind: '+ agent', title: pf.name, desc: tr("Dodaj komórkę do siatki"), run: () => void addAgent(pf.id) });
-        out.push({ kind: tr('Terminal'), title: pf.name, desc: tr("Nowa zakładka z jednym terminalem"), run: () => quickTab(pf.id) });
+        const label = profileOptionLabel(pf, cliStatus, tr);
+        out.push({ kind: '+ agent', title: label, desc: tr("Dodaj komórkę do siatki"), run: () => void addAgent(pf.id) });
+        out.push({ kind: tr('Terminal'), title: label, desc: tr("Nowa zakładka z jednym terminalem"), run: () => quickTab(pf.id) });
       }
       for (const a of project.archive)
         out.push({ kind: tr('Historia'), title: a.name, desc: tr('zamknięty grid {layout}, przywróć', { layout: describeLayout(a.layout) }), run: () => restoreArchived(project.id, a.id) });
@@ -93,7 +96,7 @@ function PaletteInner() {
         out.push({ kind: x.cli, title: x.title, desc: tr("wznów w nowej zakładce · Shift: w nowej komórce"), run: (shift) => resumeSession(x, shift ? 'newCell' : 'newTab') });
     }
     return out;
-  }, [s, sessions, project, tr]);
+  }, [s, sessions, project, tr, cliStatus]);
 
   const results = fuzzyFilter(items, q, (i) => `${i.title} ${i.kind} ${i.desc ?? ''}`, 80);
   useEffect(() => setSel(0), [q]);

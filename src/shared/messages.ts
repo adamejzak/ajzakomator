@@ -2,6 +2,7 @@
 // Polish uses the source message (the key). Placeholders must match across a row.
 import { alertMessages } from './alertMessages';
 import { automationMessages } from './automationMessages';
+import { cliMessages } from './cliMessages';
 import { gridMessages } from './gridMessages';
 import { macUpdateMessages } from './macUpdateMessages';
 import { statusMessages } from './statusMessages';
@@ -12,6 +13,7 @@ import { uxMessages } from './uxMessages';
 export const messages = {
   ...alertMessages,
   ...automationMessages,
+  ...cliMessages,
   ...gridMessages,
   ...macUpdateMessages,
   ...statusMessages,

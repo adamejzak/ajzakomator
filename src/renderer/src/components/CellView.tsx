@@ -3,6 +3,9 @@ import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { getProfile, PROJECT_COLORS } from '../../../shared/state';
+import { missingCli } from '../../../shared/cliStatus';
+import { profileOptionLabel } from '../cliUi';
+import { CliMissingCard } from './CliMissingCard';
 import type { Cell } from '../../../shared/types';
 import {
   changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, setCellColor, toggleMaximize,
@@ -32,6 +35,8 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const mcpInfo = useStore((st) => st.ui.mcpInfo);
   const error = useStore((st) => st.ui.cellErrors[cell.id]);
   const epoch = useStore((st) => st.ui.epoch);
+  const cliStatus = useStore((st) => st.ui.cliStatus);
+  const lackingCli = missingCli(profile, cliStatus);
   const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
   const [drop, setDrop] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -53,7 +58,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
 
   const profileItems = (): MenuItem[] => [
     { header: tr("Zmień profil (nowa rozmowa)") },
-    ...profiles.map((p) => ({ label: p.name, onClick: () => changeCellProfile(cell.id, p.id) })),
+    ...profiles.map((p) => ({ label: profileOptionLabel(p, cliStatus, tr), onClick: () => changeCellProfile(cell.id, p.id) })),
   ];
 
   const restartItems = (): MenuItem[] => [
@@ -173,7 +178,8 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
           <button title={tr("Zamknij komórkę")} onClick={() => void removeCell(cell.id)}><IX /></button>
         </span>
       </div>
-      <div className="cell-body" ref={bodyRef} />
+      <div className="cell-body" ref={bodyRef} style={lackingCli ? { visibility: 'hidden' } : undefined} />
+      {lackingCli && <CliMissingCard cli={lackingCli} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
       {error && (
         <div className="cell-error">
           <span className="grow">{errorText(error)}</span>

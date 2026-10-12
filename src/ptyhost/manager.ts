@@ -32,9 +32,13 @@ interface Entry {
   exited: Promise<void>;
 }
 
-function onPath(exe: string, env: Record<string, string>): boolean {
+/** Full path of `exe` in the PATH of `env` (the cell's PATH, which may be newer than this process's own); null when absent. */
+function findOnPath(exe: string, env: Record<string, string>): string | null {
   const path = env.PATH ?? env.Path ?? '';
-  return path.split(delimiter).some((dir) => dir && existsSync(join(dir, exe)));
+  for (const dir of path.split(delimiter)) {
+    if (dir && existsSync(join(dir, exe))) return join(dir, exe);
+  }
+  return null;
 }
 
 export function resolveShell(kind: ShellKind, env: Record<string, string>, platform = process.platform): { file: string; args: string[] } {
@@ -44,7 +48,9 @@ export function resolveShell(kind: ShellKind, env: Record<string, string>, platf
     return { file: `/bin/${shell}`, args: ['-il'] };
   }
   if (kind === 'cmd') return { file: 'cmd.exe', args: [] };
-  if (kind === 'pwsh' && onPath('pwsh.exe', env)) return { file: 'pwsh.exe', args: ['-NoLogo'] };
+  // An absolute path: node-pty resolves bare names only through this process's own (possibly stale) PATH.
+  const pwsh = kind === 'pwsh' ? findOnPath('pwsh.exe', env) : null;
+  if (pwsh) return { file: pwsh, args: ['-NoLogo'] };
   return { file: 'powershell.exe', args: ['-NoLogo'] };
 }
 

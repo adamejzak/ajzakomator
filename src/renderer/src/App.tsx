@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { alertForStatus } from './alerts';
-import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
+import { applyCliStatus, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
 import { GridView } from './components/GridView';
@@ -33,8 +33,13 @@ async function boot(): Promise<void> {
     for (const cell of previous) if (!findCell(getS(), cell.id)) releaseCellTerminal(cell.id);
   });
   window.mc.on('automation:start-cells', (ids) => ids.forEach(ensureStarted));
-  const [snapshot, alive, mcpInfo] = await Promise.all([window.mc.loadSnapshot(), window.mc.aliveCells(), window.mc.getMcpInfo()]);
+  // Listening first: the startup scan may finish before the first answer arrives.
+  window.mc.on('cli:changed', applyCliStatus);
+  const [snapshot, alive, mcpInfo, cliStatus] = await Promise.all([
+    window.mc.loadSnapshot(), window.mc.aliveCells(), window.mc.getMcpInfo(), window.mc.cliStatus().catch(() => ({})),
+  ]);
   setAliveAtStart(alive);
+  setUi({ cliStatus });
   useStore.getState().init(snapshot);
   setUi({ mcpInfo });
   const state = getS();
@@ -52,6 +57,12 @@ async function boot(): Promise<void> {
     refreshSessionTitles(activeProject(st.s)?.path);
   });
 
+  // Coming back to the app (after installing a CLI in another window) is the moment to look again, but only if a cell waits for it.
+  let focusTimer: number | undefined;
+  window.addEventListener('focus', () => {
+    window.clearTimeout(focusTimer);
+    focusTimer = window.setTimeout(() => { if (hasBlockedCells()) void recheckCli(); }, 500);
+  });
   window.mc.on('cell:restarted', (cellId) => { terminals.prepareSpawn(cellId); terminals.syncSize(cellId); });
   window.mc.on('cell:hook', (cellId, event, info) => terminals.hook(cellId, event, info));
   window.mc.on('cell:session', (cellId, session) => {

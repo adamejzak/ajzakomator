@@ -1,5 +1,6 @@
 import type { HookEvent, HookInfo } from '../shared/status';
 import type { CellStatus, StatusReason } from '../shared/status';
+import type { CliId, CliStatus, CliStatusMap } from '../shared/cliStatus';
 import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
@@ -32,7 +33,14 @@ export interface McApi {
   applyStateEdit(edit: StateEdit): Promise<StateSnapshot>;
   getMcpInfo(): Promise<McpInfo>;
   automation<K extends AutomationOperation>(operation: K, input: AutomationInput<K>): Promise<unknown>;
-  spawnCell(req: SpawnCellRequest): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** `cliMissing` = the profile's CLI is not installed: nothing was spawned. */
+  spawnCell(req: SpawnCellRequest): Promise<{ ok: true } | { ok: false; error: string; cliMissing?: CliId; cliStatus?: CliStatus }>;
+  /** Detected Claude Code / Codex binaries (may still be empty while the first scan runs; `cli:changed` follows). */
+  cliStatus(): Promise<CliStatusMap>;
+  /** Forgets cached results and detects again (one CLI or both). */
+  cliRecheck(id?: CliId): Promise<CliStatusMap>;
+  /** Opens the official documentation of the CLI (address comes from an allow-list in main). */
+  cliOpenDocs(id: CliId): void;
   killCell(cellId: string): void;
   killCellAndWait(cellId: string): Promise<void>;
   /** Binds the freshest unclaimed Codex session in `cwd` to the cell (emits cell:session). */
@@ -79,6 +87,7 @@ export interface McApi {
   swapPending(): Promise<boolean>;
   clearSwapPending(): Promise<{ ok: boolean }>;
   on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
+  on(channel: 'cli:changed', cb: (status: CliStatusMap) => void): () => void;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent, info?: HookInfo) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;
