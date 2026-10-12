@@ -46,8 +46,8 @@ interface Session {
   sleeps: Set<Timer>;
 }
 
-/** `claude auth login` signs in with a Claude subscription by default (`--console` is the API-billing alternative); `--claudeai` is not in the CLI reference, so it is not used. */
-export const loginCommand = (provider: 'claude' | 'codex'): string => (provider === 'claude' ? 'claude auth login' : 'codex login');
+/** `--claudeai` is not in the public CLI reference but is what the existing login flow has used and verified; plain `claude auth login` would show an interactive method menu on some versions. */
+export const loginCommand = (provider: 'claude' | 'codex'): string => (provider === 'claude' ? 'claude auth login --claudeai' : 'codex login');
 
 const IDENTITY_TRIES = 5;
 const IDENTITY_GAP_MS = 1000;

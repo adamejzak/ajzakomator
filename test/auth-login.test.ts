@@ -146,7 +146,7 @@ describe('LoginManager', () => {
   it('re-logs the main Claude login without touching the store', async () => {
     const h = setup();
     await runSuccess(h, { provider: 'claude', target: { type: 'main' } });
-    expect(h.mock.spawnPty).toHaveBeenCalledWith({ id: expect.stringMatching(/^auth:/), env: {}, command: 'claude auth login' });
+    expect(h.mock.spawnPty).toHaveBeenCalledWith({ id: expect.stringMatching(/^auth:/), env: {}, command: 'claude auth login --claudeai' });
     expect(h.deps.fingerprint).toHaveBeenCalledWith('claude', undefined);
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'success']);
     expect(store.list()).toEqual([]);
@@ -161,7 +161,7 @@ describe('LoginManager', () => {
     expect(h.mock.spawnPty).toHaveBeenCalledWith({
       id: expect.stringMatching(/^auth:/),
       env: { CLAUDE_CONFIG_DIR: prepared.dir, CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' },
-      command: 'claude auth login',
+      command: 'claude auth login --claudeai',
     });
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'success']);
     expect(store.list()).toEqual([{ id: prepared.id, email: 'New@Example.com', org: 'Org', addedAt: 1 }]);
@@ -310,7 +310,7 @@ describe('LoginManager', () => {
     const h = setup();
     await h.manager.start({ provider: 'claude', target: { type: 'new' } });
     const spec = h.mock.spawnPty.mock.calls[0][0];
-    expect(spec.command).toBe('claude auth login');
+    expect(spec.command).toBe('claude auth login --claudeai');
     expect(Object.keys(spec.env)).toEqual(['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']);
     expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
     expect(spec.env.ANTHROPIC_API_KEY).toBe('');
@@ -355,7 +355,7 @@ describe('LoginManager on macOS (main login through the Keychain)', () => {
     });
     const res = await h.manager.start({ provider: 'claude', target: { type: 'main' } });
     expect(res.ok).toBe(true);
-    expect(h.mock.spawnPty).toHaveBeenCalledWith({ id: expect.stringMatching(/^auth:/), env: {}, command: 'claude auth login' });
+    expect(h.mock.spawnPty).toHaveBeenCalledWith({ id: expect.stringMatching(/^auth:/), env: {}, command: 'claude auth login --claudeai' });
     expect(reset).toHaveBeenCalledTimes(1);
     await advance(1500 * 2);
     keychain = SECRET;
