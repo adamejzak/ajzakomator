@@ -89,7 +89,7 @@ export async function startSplash(exe: string, config: UpdateSplashConfig, stale
     const configPath = join(config.workDir, 'config.json');
     await writeFile(configPath, JSON.stringify(config));
     return await new Promise<boolean>((resolve) => {
-      const child = spawn(exe, [`--update-config=${configPath}`], { detached: true, stdio: 'ignore', cwd: dirname(exe) });
+      const child = spawn(exe, [`--update-config=${configPath}`], { detached: true, stdio: 'ignore', cwd: dirname(exe), env: { ...process.env, ELECTRON_NO_ASAR: '1' } });
       child.once('error', () => resolve(false));
       child.once('spawn', () => { child.unref(); resolve(true); });
     });

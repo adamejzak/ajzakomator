@@ -9,6 +9,10 @@ import { join } from 'path';
 import { safeSend } from '../main/safeWindow';
 import { closeAction, UpdateProgressModel, type UpdateSplashConfig, type UpdateStage } from '../shared/updateProgress';
 
+// The installer replaces resourcespp.asar while this window is alive: reading an archive as a file (directoryBytes
+// stats the install dir) would make Electron keep it open without delete sharing and block the installer.
+process.noAsar = true;
+
 const configPath = process.argv.find((arg) => arg.startsWith('--update-config='))?.slice('--update-config='.length);
 if (!configPath) app.exit(2);
 const config: UpdateSplashConfig = JSON.parse(readFileSync(configPath!, 'utf8'));
