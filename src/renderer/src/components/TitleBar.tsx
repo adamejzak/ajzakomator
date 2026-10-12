@@ -1,6 +1,7 @@
 import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type DragEvent } from 'react';
+import { workspaceOrder, reorderWorkspace } from '../../../shared/workspaceOrder';
 import { describeLayout } from '../../../shared/layout';
 import { activeProject, renameTab, PROJECT_COLORS } from '../../../shared/state';
 import { aggregate } from '../../../shared/status';
@@ -48,6 +49,60 @@ export function WorkspaceTabs() {
   const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
   const settingsActive = useStore((st) => st.ui.settingsActive);
   const [editing, setEditing] = useState<string | null>(null);
+  const [orders, setOrders] = useState<Record<string, string[]>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('mc-workspace-order-v1') ?? '{}');
+      return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every((id) => typeof id === 'string')));
+    } catch { return {}; }
+  });
+  const [drag, setDrag] = useState<{ id: string; projectId: string } | null>(null);
+  const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
+  const projectKey = project?.id ?? 'no-project';
+  const order = workspaceOrder(orders[projectKey] ?? [], [
+    ...(settingsTabOpen ? ['settings'] : []),
+    ...(project?.tabs.map((t) => `grid:${t.id}`) ?? []),
+    ...documents.filter((doc) => doc.projectId === project?.id).map((doc) => `file:${doc.id}`),
+  ]);
+  const endDrag = () => { setDrag(null); setDrop(null); };
+  const dragProps = (id: string) => ({
+    draggable: editing !== id.slice(5),
+    'data-workspace-id': id,
+    'data-dragging': drag?.id === id ? '' : undefined,
+    'data-drop': drop?.id === id ? (drop.after ? 'after' : 'before') : undefined,
+    onDragStart: (e: DragEvent<HTMLDivElement>) => {
+      if ((e.target as HTMLElement).closest('input, .x')) { e.preventDefault(); return; }
+      e.dataTransfer.setData('application/x-ajzakomator-workspace-tab', id);
+      e.dataTransfer.effectAllowed = 'move';
+      setDrag({ id, projectId: projectKey });
+    },
+    onDragEnd: endDrag,
+    onDragOver: (e: DragEvent<HTMLDivElement>) => {
+      if (!drag || drag.projectId !== projectKey || drag.id === id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const bounds = e.currentTarget.getBoundingClientRect();
+      setDrop({ id, after: e.clientX > bounds.left + bounds.width / 2 });
+      const strip = e.currentTarget.parentElement!;
+      const viewport = strip.getBoundingClientRect();
+      if (e.clientX < viewport.left + 32) strip.scrollLeft -= 20;
+      if (e.clientX > viewport.right - 32) strip.scrollLeft += 20;
+    },
+    onDragLeave: (e: DragEvent<HTMLDivElement>) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrop(null);
+    },
+    onDrop: (e: DragEvent<HTMLDivElement>) => {
+      if (!drag || drag.projectId !== projectKey) return;
+      e.preventDefault(); e.stopPropagation();
+      const bounds = e.currentTarget.getBoundingClientRect();
+      const next = reorderWorkspace(order, drag.id, id, e.clientX > bounds.left + bounds.width / 2);
+      const saved = { ...orders, [projectKey]: next };
+      setOrders(saved);
+      try { localStorage.setItem('mc-workspace-order-v1', JSON.stringify(saved)); } catch { /* Current session order is retained. */ }
+      if (project) update((st) => ({ ...st, projects: st.projects.map((p) => p.id === project.id
+        ? { ...p, tabs: [...p.tabs].sort((a, b) => next.indexOf(`grid:${a.id}`) - next.indexOf(`grid:${b.id}`)) } : p) }));
+      endDrag();
+    },
+  });
 
   const agentMenu = (el: HTMLElement) =>
     openMenuAt(el, [
@@ -60,7 +115,7 @@ export function WorkspaceTabs() {
 
   return <div className="workspace-tabs" aria-label={tr('Gridy i pliki')}>
     <div className="tabs no-drag">
-      {settingsTabOpen && <div className={`tab settings-tab ${settingsActive ? 'active' : ''}`} onClick={() => setUi({ settingsActive: true })} onAuxClick={(e) => { if (e.button === 1) setUi({ settingsTabOpen: false, settingsActive: false }); }}>
+      {settingsTabOpen && <div {...dragProps('settings')} style={{ order: order.indexOf('settings') }} className={`tab settings-tab ${settingsActive ? 'active' : ''}`} onClick={() => setUi({ settingsActive: true })} onAuxClick={(e) => { if (e.button === 1) setUi({ settingsTabOpen: false, settingsActive: false }); }}>
         <span className="tab-type-icon"><TSettings /></span><span className="label">{tr('Ustawienia')}</span>
         <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); setUi({ settingsTabOpen: false, settingsActive: false }); }}><IX /></button>
       </div>}
@@ -71,8 +126,9 @@ export function WorkspaceTabs() {
             return (
               <div
                 key={t.id}
+                {...dragProps(`grid:${t.id}`)}
                 className={`tab grid-tab ${!settingsActive && !activeFileId && t.id === project.activeTabId ? 'active' : ''}`}
-                style={t.color ? { '--tab-color': t.color } as CSSProperties : undefined}
+                style={{ order: order.indexOf(`grid:${t.id}`), ...(t.color ? { '--tab-color': t.color } : {}) } as CSSProperties}
                 onMouseDown={(e) => e.button === 0 && selectTab(project.id, t)}
                 onAuxClick={(e) => e.button === 1 && closeTab(project.id, t.id)}
                 onDoubleClick={() => setEditing(t.id)}
@@ -116,7 +172,7 @@ export function WorkspaceTabs() {
             );
           })}
           {documents.filter((doc) => doc.projectId === project.id).map((doc) => (
-            <div key={doc.id} className={`tab file-tab ${!settingsActive && activeFileId === doc.id ? 'active' : ''}`} title={doc.relativePath}
+            <div key={doc.id} {...dragProps(`file:${doc.id}`)} style={{ order: order.indexOf(`file:${doc.id}`) }} className={`tab file-tab ${!settingsActive && activeFileId === doc.id ? 'active' : ''}`} title={doc.relativePath}
               onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) void closeFile(doc.id); }}>
               <span className="tab-type-icon" aria-hidden="true"><IFile /></span><span className="label">{doc.name}</span>
               {doc.text !== doc.savedText && <span className="file-dirty" aria-label={tr('Niezapisane zmiany')}>●</span>}

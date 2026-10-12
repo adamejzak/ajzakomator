@@ -683,6 +683,12 @@ button:focus-visible, .snippet:focus-visible { outline: 2px solid var(--accent);
 .workspace-tabs .grid-tab .tab-type-icon { color: var(--tab-color); }
 .workspace-tabs .file-tab { --tab-color: #737373; background: #101010; }
 .workspace-tabs .file-tab.active { background: #202020; border-top-color: #dedede; }
+.workspace-tabs .tab[draggable="true"] { cursor: grab; }
+.workspace-tabs .tab[data-dragging] { opacity: .45; }
+.workspace-tabs .tab[data-drop]::after { content: ''; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; z-index: 2; }
+.workspace-tabs .tab[data-drop="before"]::after { left: 0; }
+.workspace-tabs .tab[data-drop="after"]::after { right: 0; }
+.workspace-tabs .tabs > button { order: 2147483647; }
 .file-dirty { color: #e5cfa7; font-size: 9px; }
 .workspace-content, .terminal-workspace { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .settings-workspace { flex: 1; min-width: 0; min-height: 0; }

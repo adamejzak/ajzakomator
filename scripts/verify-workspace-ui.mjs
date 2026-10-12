@@ -78,6 +78,28 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
     assert.equal(await evaluate('document.querySelector(".terminal-workspace").style.display'), 'none');
   };
   await openSettings();
+  const visualCards = () => evaluate(`[...document.querySelectorAll('.workspace-tabs .tab')].sort((a,b) => a.getBoundingClientRect().left-b.getBoundingClientRect().left).map(el => el.dataset.workspaceId)`);
+  const dragCard = async (source, target, after) => {
+    await evaluate(`window.cardTransfer = new DataTransfer(); [...document.querySelectorAll('[data-workspace-id]')].find(el => el.dataset.workspaceId === ${JSON.stringify(source)}).dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: window.cardTransfer }));`);
+    await until(() => evaluate(`!!document.querySelector('[data-dragging]')`), 'card drag started');
+    await evaluate(`var el = [...document.querySelectorAll('[data-workspace-id]')].find(el => el.dataset.workspaceId === ${JSON.stringify(target)}); var bounds = el.getBoundingClientRect(); var x = ${after} ? bounds.right-2 : bounds.left+2; el.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.cardTransfer, clientX: x }));`);
+    await until(() => evaluate(`!!document.querySelector('[data-drop]')`), 'card insertion indicator');
+    await evaluate(`var el = [...document.querySelectorAll('[data-workspace-id]')].find(el => el.dataset.workspaceId === ${JSON.stringify(target)}); var bounds = el.getBoundingClientRect(); el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.cardTransfer, clientX: ${after} ? bounds.right-2 : bounds.left+2 }));`);
+    await until(() => evaluate(`!document.querySelector('[data-dragging], [data-drop]')`), 'card drag cleanup');
+  };
+  const initialCards = await visualCards();
+  const fileCard = initialCards.find(id => id.startsWith('file:'));
+  const grids = initialCards.filter(id => id.startsWith('grid:'));
+  await dragCard(fileCard, grids[0], false);
+  assert.ok((await visualCards()).indexOf(fileCard) < (await visualCards()).indexOf(grids[0]), 'file can move before a grid');
+  await dragCard('settings', grids.at(-1), true);
+  assert.equal((await visualCards()).at(-1), 'settings', 'settings can move behind grids and files');
+  await dragCard(grids[0], fileCard, false);
+  const movedCards = await visualCards();
+  assert.ok(movedCards.indexOf(grids[0]) < movedCards.indexOf(fileCard), 'grid can move before a file');
+  const savedOrders = await evaluate(`JSON.parse(localStorage.getItem('mc-workspace-order-v1'))`);
+  assert.ok(Object.values(savedOrders).some(order => JSON.stringify(order) === JSON.stringify(movedCards)), 'mixed order saved for project');
+  await screenshot('workspace-card-reorder');
   await screenshot('settings-general');
   assert.ok(await evaluate('(() => { const nav = document.querySelector(".settings-nav"); const content = document.querySelector(".settings-content"); return parseFloat(getComputedStyle(nav).borderRightWidth) >= 1 && nav.getBoundingClientRect().right <= content.getBoundingClientRect().left; })()'), 'settings navigation is divided from options');
   const sectionLabels = await evaluate('[...document.querySelectorAll(".settings-nav button")].map(button => button.textContent.trim())');
@@ -100,6 +122,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   assert.equal(await evaluate('document.querySelectorAll(".settings-tab").length'), 1, 'reopening settings reuses its tab');
   await click('.settings-tab .x');
   await until(() => evaluate('!document.querySelector(".settings-tab") && !!document.querySelector(".grid-tab.active")'), 'closing settings restores grid');
+  assert.deepEqual(await visualCards(), movedCards.filter(id => id !== 'settings'), 'closing settings preserves the other card positions');
   await click('.file-tab');
   await until(() => evaluate('!!document.querySelector(".file-editor .cm-content")'), 'return to editor after settings checks');
   const gridTabsBeforeClose = await evaluate('document.querySelectorAll(".grid-tab").length');
@@ -135,6 +158,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   assert.equal(readFileSync(path, 'utf8'), original + '\n// External disk change\n');
   await cdp('Page.reload');
   await until(() => evaluate('!!document.querySelector(".file-tab .file-dirty")'), 'restored draft after reload');
+  assert.deepEqual(await visualCards(), movedCards.filter(id => id !== 'settings'), 'mixed card order survives reload');
   await click('.file-tab');
   await until(() => evaluate('document.querySelector(".cm-content")?.textContent.includes("Unsaved protected draft")'), 'draft text restored');
   await click('.file-tab .x');
