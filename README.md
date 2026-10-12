@@ -50,6 +50,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 - Optional sound at the same moment (Settings: off, system sound or your own file with volume); works for Codex cells too
 - Alerts stay silent while you look at the cell in the active window; **Alert also when the app is the active window** (Settings) turns notification and sound on for that case too
 - Cells are named after the conversation automatically
+- **AI account limits** panel shows the 5-hour and weekly limits of your main Claude account, extra saved Claude accounts and Codex. From a saved account's "⋮" menu, **Make main account** swaps it with the main Claude login: the previous main account stays saved, and open Claude sessions switch to the new login on their next message without being closed. Tokens are only exchanged on your computer. Not available on macOS, where Claude keeps its login in the Keychain (saved accounts cannot be added there either).
 - Optional local **MCP** gives selected Claude Code and Codex cells coordinator or worker roles, tracked tasks, structured results and messages. Ordinary grids start with **No MCP**. See the [English guide](docs/MCP.en.md) or [Polish guide](docs/MCP.md).
 
 **Never lose a conversation**

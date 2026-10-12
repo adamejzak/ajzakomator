@@ -18,6 +18,8 @@ export interface LoginDeps {
   onChanged(): void;
   /** False where isolated Claude profiles cannot work (macOS keeps Claude tokens in the Keychain). Defaults to true. */
   profilesSupported?: boolean;
+  /** True while the main account is being swapped; a login must not touch the same files meanwhile. */
+  swapRunning?: () => boolean;
   pollMs?: number;
   settleMs?: number;
   timeoutMs?: number;
@@ -57,6 +59,7 @@ export class LoginManager {
     if ((provider !== 'claude' && provider !== 'codex') || typeof target !== 'object' || target === null) return invalid;
     if (provider === 'codex' && target.type !== 'main') return invalid;
     if (this.deps.profilesSupported === false && (target.type === 'new' || target.type === 'account')) return { ok: false, error: 'unsupported' };
+    if (this.deps.swapRunning?.()) return { ok: false, error: 'busy' };
     if (target.type === 'account') {
       if (!isAccountId(target.id) || !this.deps.store.list().some((account) => account.id === target.id)) return invalid;
     } else if (target.type !== 'new' && target.type !== 'main') {
@@ -115,6 +118,11 @@ export class LoginManager {
     session.timeout = setTimeout(() => this.onTimeout(session), this.deps.timeoutMs ?? 600000);
     this.deps.emit({ sessionId, status: 'waiting' });
     return { ok: true, sessionId, ptyId: session.ptyId };
+  }
+
+  /** True while a login session is in progress. */
+  isActive(): boolean {
+    return this.current !== null;
   }
 
   cancel(sessionId: string): void {

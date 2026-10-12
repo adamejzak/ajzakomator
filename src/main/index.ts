@@ -27,7 +27,9 @@ import { createUpdaterLogger } from './updaterLog';
 import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile } from './accounts/refresh';
+import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
+import { isSwapRunning, recoverInterruptedSwap, swapMainAccount, type SwapDeps } from './accounts/swap';
 import { readManagedIdentity } from './accounts/identity';
 import { LoginManager } from './auth/login';
 import { isAccountId, type LoginRequest } from '../shared/accounts';
@@ -132,6 +134,17 @@ const login = new LoginManager({
   emit: (s) => send('auth:state', s),
   onChanged: () => void usage.refresh(true, true),
   profilesSupported: process.platform !== 'darwin',
+  swapRunning: isSwapRunning,
+});
+const swapDeps = (): SwapDeps => ({
+  home: homedir(),
+  env: process.env,
+  platform: process.platform,
+  store: accounts,
+  backupDir: join(DATA_DIR, 'accounts', 'swap-backup'),
+  now: () => Date.now(),
+  refresh: (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }),
+  delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
@@ -499,6 +512,11 @@ ipcMain.handle('accounts:remove', (_e, id: unknown) => {
   void usage.refresh(true, true);
   return { ok: true };
 });
+ipcMain.handle('accounts:makeMain', (_e, id: unknown) => handleMakeMain({
+  loginActive: () => login.isActive(),
+  swap: (accountId) => swapMainAccount(swapDeps(), accountId),
+  onSwapped: () => { void usage.refresh(true, true); },
+}, id));
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
@@ -617,6 +635,8 @@ async function startMainApp(): Promise<void> {
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   createWindow();
+  // An interrupted main-account swap is rolled back before the usage service reads any credentials.
+  try { await recoverInterruptedSwap(swapDeps()); } catch { /* the journal stays and the next start retries */ }
   usage.start();
   scheduleUpdateCleanup();
 }

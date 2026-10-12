@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 
 export type MenuItem =
-  | { label: string; onClick: () => void; danger?: boolean; hint?: string }
+  | { label: string; onClick: () => void; danger?: boolean; hint?: string; disabled?: boolean }
   | { sep: true }
   | { header: string }
   | { colors: string[]; onPick: (color: string) => void };
@@ -88,7 +88,7 @@ export function ContextMenuHost() {
             </div>
           );
         return (
-          <button key={i} role="menuitem" className={`menu-item ${item.danger ? 'danger' : ''}`} onClick={() => { close(); item.onClick(); }}>
+          <button key={i} role="menuitem" className={`menu-item ${item.danger ? 'danger' : ''} ${item.disabled ? 'disabled' : ''}`} aria-disabled={item.disabled || undefined} onClick={() => { if (item.disabled) return; close(); item.onClick(); }}>
             <span style={{ flex: 1 }}>{item.label}</span>
             {item.hint && <span className="kbd">{item.hint}</span>}
           </button>

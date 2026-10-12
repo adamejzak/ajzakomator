@@ -18,6 +18,7 @@ Przełączaj projekty, gdy terminale nadal pracują w tle.
 ## Co potrafi
 
 - **Opcjonalny MCP dla agentów**: role, gridy w tle, zadania z wynikami i wiadomości w panelu AI. Zwykłe gridy domyślnie działają bez MCP - [instrukcja](docs/MCP.md).
+- **Limity kont AI**: panel pokazuje limity 5-godzinne i tygodniowe głównego konta Claude, dodatkowych zapisanych kont Claude i Codex. W menu „⋮” zapisanego konta **Ustaw jako główne** zamienia je z głównym logowaniem Claude: dotychczasowe konto główne zostaje zapisane, a otwarte sesje Claude przełączają się na nowe logowanie przy następnej wiadomości, bez zamykania. Tokeny są wymieniane tylko na Twoim komputerze. Niedostępne na macOS, gdzie Claude trzyma logowanie w Keychain (zapisanych kont też nie da się tam dodać).
 - **Projekty po lewej**, a w każdym kilka gridów jako zakładki: od jednego terminala po 5×4, układy rzędami (`3+2`, `2+2+1`) i scalanie komórek
 - **Każda komórka** może mieć nazwę, kolor, prompt startowy i osobny `git worktree`
 - **Statusy na żywo**: ◐ pracuje, ● czeka na Ciebie, plus powiadomienie systemowe, gdy agent w tle skończy

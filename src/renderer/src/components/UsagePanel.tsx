@@ -3,7 +3,8 @@ import { updateSettings } from '../../../shared/state';
 import type { LoginTarget } from '../../../shared/accounts';
 import { effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { useI18n } from '../i18n';
-import { askChoice, setUi, update, useStore } from '../store';
+import { swapErrorKey } from '../../../shared/swapMessages';
+import { askChoice, setUi, toast, update, useStore } from '../store';
 import { useUsage } from '../usage';
 import { openMenuAt } from './ContextMenu';
 import { IChevron, IPlus } from './icons';
@@ -49,8 +50,15 @@ function KebabIcon() {
   return <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden><circle cx="8" cy="3.5" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="8" cy="12.5" r="1.2" /></svg>;
 }
 
-function AccountCard({ usage, now, language, showMain }: { usage: ProviderUsage; now: number; language: string; showMain: boolean }) {
+function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
+  usage: ProviderUsage; now: number; language: string; showMain: boolean;
+  /** Account id whose swap is running (any card is locked meanwhile), or null. */
+  swapping: string | null; onMakeMain: (usage: ProviderUsage) => void;
+}) {
   const { tr } = useI18n();
+  const busy = swapping !== null;
+  // On macOS Claude keeps its tokens in the Keychain, so the main login cannot be exchanged there.
+  const canMakeMain = usage.managed && usage.provider === 'claude' && window.mc.platform !== 'darwin';
   const providerName = NAMES[usage.provider];
   const name = usage.email || providerName;
   const age = formatDuration((now - usage.fetchedAt) / 1000);
@@ -91,7 +99,7 @@ function AccountCard({ usage, now, language, showMain }: { usage: ProviderUsage;
   }
 
   return (
-    <div className={`usage-card ${expired ? 'expired' : ''}`} title={usage.org || undefined}>
+    <div className={`usage-card ${expired ? 'expired' : ''} ${swapping === usage.accountId ? 'busy' : ''}`} title={usage.org || undefined} aria-busy={swapping === usage.accountId || undefined}>
       <div className="usage-card-head">
         <ProviderIcon provider={usage.provider} />
         <span className="usage-account" title={name}>{name}</span>
@@ -103,7 +111,10 @@ function AccountCard({ usage, now, language, showMain }: { usage: ProviderUsage;
             aria-haspopup="menu"
             aria-label={tr('Usuń konto')}
             title={tr('Usuń konto')}
-            onClick={(e) => openMenuAt(e.currentTarget, [{ label: tr('Usuń konto'), danger: true, onClick: () => void removeAccount() }])}
+            onClick={(e) => openMenuAt(e.currentTarget, [
+              ...(canMakeMain ? [{ label: tr('Ustaw jako główne'), disabled: busy, onClick: () => onMakeMain(usage) }] : []),
+              { label: tr('Usuń konto'), danger: true, disabled: busy, onClick: () => void removeAccount() },
+            ])}
           ><KebabIcon /></button>
         )}
       </div>
@@ -121,6 +132,7 @@ export function UsagePanel() {
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const spinning = useHoldBusy(refreshing, 700);
+  const [swapping, setSwapping] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
@@ -134,6 +146,26 @@ export function UsagePanel() {
   const refresh = async () => {
     setRefreshing(true);
     try { await window.mc.refreshUsage(); } catch { /* the next scheduled refresh retries */ } finally { if (alive.current) setRefreshing(false); }
+  };
+  const makeMain = async (target: ProviderUsage) => {
+    if (swapping !== null) return;
+    const current = providers.find((usage) => usage.accountId === 'claude:main')?.email || tr('obecne konto główne');
+    const name = target.email || NAMES.claude;
+    const exhausted = target.windows.some((window) => effectivePercent(window, Date.now()) >= 100);
+    const body = tr('Obecne konto główne ({current}) zostanie zachowane jako zapisane konto, a wybrane stanie się głównym logowaniem Claude Code. Otwarte sesje Claude przełączą się na nie przy następnej wiadomości, bez zamykania. Na macOS ta funkcja nie jest dostępna. Tokeny są wymieniane tylko na tym komputerze.', { current })
+      + (exhausted ? `\n\n${tr('Limity tego konta są wyczerpane (100%), więc sesje mogą nie działać do czasu resetu.')}` : '');
+    const choice = await askChoice(tr('Ustawić {name} jako konto główne?', { name }), body, [{ label: tr('Ustaw jako główne'), value: 'yes', primary: true }]);
+    if (choice !== 'yes') return;
+    setSwapping(target.accountId);
+    try {
+      const result = await window.mc.makeMainAccount(target.accountId.replace(/^claude:/, ''));
+      if (result.ok) toast(result.email ? tr('Konto główne: {email}', { email: result.email }) : tr('Zmieniono konto główne.'));
+      else toast(tr(swapErrorKey(result.error)), 'error');
+    } catch {
+      toast(tr('Nie udało się zmienić konta głównego.'), 'error');
+    } finally {
+      if (alive.current) setSwapping(null);
+    }
   };
   const summary = usageSummary(providers, now) || tr('Konta AI');
   // Tooltip of one account: name plus every window, e.g. "Claude · 5 h 12% · 7 days 40%".
@@ -219,7 +251,7 @@ export function UsagePanel() {
         <>
           {visible.length ? (
             <>
-              {visible.map((usage) => <AccountCard key={usage.accountId} usage={usage} now={now} language={language} showMain={claudeCount > 1} />)}
+              {visible.map((usage) => <AccountCard key={usage.accountId} usage={usage} now={now} language={language} showMain={claudeCount > 1} swapping={swapping} onMakeMain={(target) => void makeMain(target)} />)}
               {updated && <p className="usage-note">{tr('Zaktualizowano {time}', { time: updated })}</p>}
             </>
           ) : (
