@@ -8,7 +8,7 @@ import { moveSnippet, removeSnippet, uid, upsertSnippet, type DropEdge } from '.
 import { PANEL_LIMITS } from '../../../shared/panels';
 import { askChoice, setUi, update, useStore } from '../store';
 import { SNIPPET_MIME } from './CellView';
-import { IEdit, IGrip, IPlus, ISnippet } from './icons';
+import { IEdit, IPlus, ISnippet } from './icons';
 import { dropEdge, scrollDragList } from './listDrag';
 import { openMenu } from './ContextMenu';
 import { PanelResizeHandle, type PanelResizeProps } from './PanelResizeHandle';
@@ -145,7 +145,6 @@ export function SnippetPanel({ resize }: { resize: PanelResizeProps }) {
             title={tr("Klik: wklej do aktywnej komórki · Shift+klik: do wszystkich · przeciągnij na komórkę")}
           >
             <div className="s-head">
-              <span className="list-drag-grip" title={tr("Przeciągnij snippet, aby zmienić kolejność")} aria-hidden="true"><IGrip /></span>
               {sn.icon && <span className="s-icon">{sn.icon}</span>}
               <span className="s-name">{sn.name}</span>
               {sn.projectId && <span className="tag">{tr("Projekt")}</span>}
