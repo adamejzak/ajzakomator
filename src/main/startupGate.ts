@@ -31,9 +31,13 @@ export interface GateEnv {
   recentFailure: boolean;
 }
 
-/** The gate exists only for the installed Windows build in the 'ask' (Automatic) mode; 'manual' starts the app at once. */
+/**
+ * The gate exists only for the installed Windows build and the macOS app in the 'ask' (Automatic) mode; 'manual' starts the
+ * app at once. On macOS an app that cannot replace itself (disk image, read-only folder, ...) has nothing to offer, so the
+ * start-up check finds no installable update and the prompt never appears.
+ */
 export function shouldGateOnStartup(env: GateEnv): boolean {
-  return env.platform === 'win32' && env.packaged && !env.portable && env.mode === 'ask' && !env.recentFailure;
+  return (env.platform === 'win32' || env.platform === 'darwin') && env.packaged && !env.portable && env.mode === 'ask' && !env.recentFailure;
 }
 
 export interface FailureRecord { version: string; at: number }

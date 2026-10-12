@@ -166,7 +166,7 @@ export interface UpdateState {
   percent?: number;
   /** When the last successful check finished (ms since epoch) and the newest version GitHub reported. */
   checkedAt?: number;
-  /** Builds without automatic installation (portable Windows and ad-hoc macOS) link to downloads. */
+  /** Builds without automatic installation (portable Windows, and a macOS app that cannot replace itself) link to downloads. */
   portable?: boolean;
   url?: string;
 }

@@ -71,17 +71,6 @@ describe('updater lifecycle', () => {
     api.installNow();
     expect(mock.quit).not.toHaveBeenCalled(); expect(mock.install).not.toHaveBeenCalled();
   });
-  it('uses manual updates on macOS without requiring portable environment flags', async () => {
-    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'darwin' });
-    const api = await setup();
-    expect(updater.autoDownload).toBe(false);
-    updater.emit('update-available', { version: '0.5.0' });
-    updater.emit('download-progress', { percent: 50, transferred: 50, total: 100, bytesPerSecond: 10 });
-    updater.emit('update-downloaded', { version: '0.5.0' });
-    expect(api.getUpdateState()).toMatchObject({ status: 'available', portable: true, url: api.RELEASES_URL });
-    api.installNow();
-    expect(mock.quit).not.toHaveBeenCalled(); expect(mock.install).not.toHaveBeenCalled();
-  });
   it('exposes disabled development checks', async () => {
     mock.app.isPackaged = false;
     const api = await setup(); await api.checkForUpdates();

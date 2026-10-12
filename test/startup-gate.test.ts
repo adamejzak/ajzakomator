@@ -7,9 +7,11 @@ import {
 const env: GateEnv = { platform: 'win32', packaged: true, portable: false, mode: 'ask', recentFailure: false };
 
 describe('shouldGateOnStartup', () => {
-  it('gates only the installed Windows build in the Automatic (ask) mode', () => {
+  it('gates only the installed Windows and macOS builds in the Automatic (ask) mode', () => {
     expect(shouldGateOnStartup(env)).toBe(true);
-    expect(shouldGateOnStartup({ ...env, platform: 'darwin' })).toBe(false);
+    expect(shouldGateOnStartup({ ...env, platform: 'darwin' })).toBe(true);
+    expect(shouldGateOnStartup({ ...env, platform: 'darwin', mode: 'manual' })).toBe(false);
+    expect(shouldGateOnStartup({ ...env, platform: 'darwin', packaged: false })).toBe(false);
     expect(shouldGateOnStartup({ ...env, platform: 'linux' })).toBe(false);
     expect(shouldGateOnStartup({ ...env, packaged: false })).toBe(false);
     expect(shouldGateOnStartup({ ...env, portable: true })).toBe(false);

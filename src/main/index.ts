@@ -19,7 +19,7 @@ import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from './sessions';
 import { createSaver, loadState } from './store';
-import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, isPortableBuild, updateHandoffStarted, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
+import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, isPortableBuild, previousMacUpdate, signalMacUpdateReady, updateHandoffStarted, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
 import { compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup } from './startupGate';
 import { createGateWindow } from './gateWindow';
 import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
@@ -258,6 +258,7 @@ function createWindow(): void {
   win.once('ready-to-show', () => {
     if (process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show();
     void signalUpdateReady();
+    signalMacUpdateReady();
     clearGateFailureIfUpdated();
   });
   const created = win;
@@ -589,6 +590,7 @@ const readGateFailure = () => { try { return parseFailure(JSON.parse(readFileSyn
 const HANDOFF_QUIT_WATCHDOG_MS = 15 * 1000;
 let handoffWatchdog: ReturnType<typeof setTimeout> | undefined;
 
+const MAC_GATE_DOWNLOAD_TOTAL_MS = 10 * 60 * 1000;
 const writeGateRecord = (version: string) => { try { writeFileSync(GATE_FILE, JSON.stringify({ version, at: Date.now() })); } catch { /* best effort */ } };
 const recordUpdateFailure = (version: string) => { writeGateRecord(version); blockUpdateVersion(version); };
 
@@ -631,6 +633,8 @@ async function runUpdateGate(): Promise<boolean> {
       handoff: (next, hide) => { handedOver = next; return startupHandoff(hide); },
       show: window.show, hide: window.hide, onCancel: window.onCancel, onInstall: window.onInstall,
       skipVersion: failure?.version,
+      // The macOS archive is about 140 MB: allow more than the default for the whole download.
+      downloadTotalMs: process.platform === 'darwin' ? MAC_GATE_DOWNLOAD_TOTAL_MS : undefined,
       markAttempt: writeGateRecord, recordFailure: recordUpdateFailure,
     });
     if (result !== 'installing') { gating = false; return false; }
@@ -674,6 +678,9 @@ app.whenReady().then(async () => {
   // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
   Menu.setApplicationMenu(null);
   initUpdater((s) => send('update:state', s), { strings: updateStrings });
+  // macOS: an update whose swap did not happen counts as a failure of that version (the cooldown applies).
+  const previous = await previousMacUpdate();
+  if (previous.kind === 'failed') recordUpdateFailure(previous.version);
   if (await runUpdateGate()) return;
   await startMainApp();
 }).catch((error) => console.error('startup failed', error));

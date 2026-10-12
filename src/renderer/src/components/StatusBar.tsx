@@ -34,7 +34,7 @@ export function StatusBar() {
       case 'ready':
         return <button className="sb-btn sb-action" onClick={() => window.mc.installUpdate()} title={tr('Zainstaluj i uruchom ponownie (rozmowy wznowią się same)')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · uruchom ponownie', { version })}</button>;
       case 'available':
-        return <button className="sb-btn sb-action" onClick={() => window.mc.openReleases()} title={tr('Otwórz stronę pobierania')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · pobierz', { version })}</button>;
+        return <button className="sb-btn sb-action" onClick={() => window.mc.openReleases()} title={u.message ? errorText(u.message) : tr('Otwórz stronę pobierania')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · pobierz', { version })}</button>;
       case 'unavailable':
         return <span className="sb-item sb-muted" role="status">{errorText(u.message ?? '')}</span>;
       case 'installing':
