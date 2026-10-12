@@ -6,7 +6,8 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
-import { isUserInput, StatusTracker, type CellStatus, type HookEvent, type StatusCause } from '../../../shared/status';
+import { isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
+import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
 import { confirmTerminalLink } from '../terminalLinks';
@@ -43,7 +44,11 @@ interface Entry {
   applySelection: ((args: unknown[]) => void) | null;
 }
 
-type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cause: StatusCause) => void;
+/** `reason` is why the cell last became waiting (done / attention / error); `hooked` = Claude hooks drive this cell. */
+type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cause: StatusCause, reason: StatusReason, hooked: boolean) => void;
+
+/** Recent status transitions of every cell, for bug reports (no message text). */
+export const statusLog = new StatusLog();
 
 export interface EnsureOptions {
   fontSize: number;
@@ -101,7 +106,7 @@ class TerminalManager {
       const e = this.entries.get(m.id);
       if (e) {
         e.term.write(`\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
-        this.setStatus(e, () => e.tracker.exited());
+        this.setStatus(e, () => e.tracker.exited(), 'exit');
       }
       this.exitListeners.forEach((l) => l(m.id));
       return;
@@ -128,7 +133,7 @@ class TerminalManager {
     } else {
       e.term.write(m.data, () => this.ack(m));
       // Published right away: output alone can flip the status to "working" (it used to surface only later).
-      this.setStatus(e, () => e.tracker.output(performance.now()));
+      this.setStatus(e, () => e.tracker.output(performance.now()), 'output');
     }
   }
 
@@ -203,17 +208,20 @@ class TerminalManager {
     term.parser.registerOscHandler(9, (payload) => {
       // 9;4;... = progress, 9;9;... = cwd reporting (oh-my-posh etc.) - not notifications.
       if (/^(4|9);/.test(payload)) return true;
-      if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9());
+      if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9(), 'osc9');
       return true;
     });
     term.onBell(() => {
-      if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9());
+      if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9(), 'osc9');
     });
 
     term.attachCustomKeyEventHandler((ev) => this.handleKey(entry, ev));
     term.onData((d) => {
       if (entry.replaying > 0) return;
+      // Focus / mouse reports (a click on the cell) and device replies are the terminal's, not the user's: they must not
+      // count as typing, and the redraw they make the agent do must not count as work.
       if (isUserInput(d)) this.userInput(entry, d.includes('\r'), d === '\x1b' || d === '\x03');
+      else entry.tracker.terminalReply(performance.now());
       this.post({ t: 'write', id: cellId, data: d });
     });
     term.onBinary((d) => entry.replaying === 0 && this.post({ t: 'write', id: cellId, data: d }));
@@ -418,7 +426,7 @@ class TerminalManager {
     if (!e) return;
     e.win32 = false;
     e.term.reset();
-    this.setStatus(e, () => e.tracker.reset());
+    this.setStatus(e, () => e.tracker.reset(), 'restore');
   }
 
   dispose(cellId: string): void {
@@ -438,9 +446,9 @@ class TerminalManager {
     return this.entries.get(cellId)?.tracker.status ?? 'idle';
   }
 
-  hook(cellId: string, event: HookEvent): void {
+  hook(cellId: string, event: HookEvent, info?: HookInfo): void {
     const e = this.entries.get(cellId);
-    if (e) this.setStatus(e, () => e.tracker.hook(event, performance.now()));
+    if (e) this.setStatus(e, () => e.tracker.hook(event, performance.now(), info), event, info);
   }
 
   onStatus(l: StatusListener): () => void {
@@ -459,18 +467,29 @@ class TerminalManager {
       const now = performance.now();
       e.tracker.input(now, submitted);
       if (interrupt) e.tracker.interrupt(now);
-    });
+    }, 'input');
   }
 
-  private setStatus(e: Entry, change: () => void): void {
+  private setStatus(e: Entry, change: () => unknown, trigger: StatusTrigger, info?: HookInfo): void {
     const prev = e.tracker.status;
-    change();
-    if (e.tracker.status !== prev) this.statusListeners.forEach((l) => l(e.id, e.tracker.status, prev, e.tracker.lastCause));
+    const result = change();
+    const { status, lastCause, lastReason } = e.tracker;
+    const hookEvent = trigger === 'stop' || trigger === 'stopbg' || trigger === 'notify' || trigger === 'busy' || trigger === 'fail' || trigger === 'prompt' || trigger === 'session';
+    // Transitions are always logged; hook events that changed nothing only when they matter (busy spam would evict the history).
+    const changed = status !== prev;
+    if (changed || (hookEvent && (trigger !== 'busy' || result === 'ignored'))) {
+      const detail = [hookDetail(info), trigger === 'tick-stall' && e.tracker.lastStallKind ? `stall=${e.tracker.lastStallKind}` : ''].filter(Boolean).join(' ');
+      statusLog.push({
+        at: Date.now(), cellId: e.id, from: prev, to: status, cause: lastCause, trigger, reason: status === 'waiting' ? lastReason : undefined,
+        note: result === 'ignored' ? 'ignored' : changed ? undefined : 'no-change', detail: detail || undefined,
+      });
+    }
+    if (changed) this.statusListeners.forEach((l) => l(e.id, status, prev, lastCause, lastReason, e.tracker.isHooked));
   }
 
   private tickStatuses(): void {
     const now = performance.now();
-    for (const e of this.entries.values()) this.setStatus(e, () => e.tracker.tick(now));
+    for (const e of this.entries.values()) this.setStatus(e, () => e.tracker.tick(now), 'tick-stall');
   }
 }
 

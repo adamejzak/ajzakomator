@@ -107,11 +107,21 @@ describe('Claude hooks', () => {
     expect(t.status).toBe('working');
   });
 
-  it('tool / subagent activity brings a stale waiting back to working', () => {
+  it('tool / subagent activity brings a background-mode waiting back to working', () => {
     const t = new StatusTracker();
     t.hook('prompt', 0);
-    t.hook('stop', 0); // background task: turn "ended" but the agent resumes without a new prompt
+    t.hook('stopbg', 0); // background task: the turn "ended" but the agent resumes without a new prompt
     t.hook('busy', 0);
+    expect(t.status).toBe('working');
+  });
+
+  it('a plain Stop closes the turn: late tool / subagent hooks do not reopen it', () => {
+    const t = new StatusTracker();
+    t.hook('prompt', 0);
+    t.hook('stop', 0);
+    t.hook('busy', 0);
+    expect(t.status).toBe('waiting');
+    t.hook('prompt', 10);
     expect(t.status).toBe('working');
   });
 });
@@ -124,7 +134,8 @@ describe('safety nets and review fixes', () => {
     expect(t.tick(1000 + STALL_MS - 1)).toBe('working');
     expect(t.tick(1000 + STALL_MS)).toBe('waiting');
     expect(t.lastCause).toBe('heuristic');
-    expect(shouldNotify('working', 'waiting', t.lastCause)).toBe(true);
+    expect(shouldNotify('working', 'waiting', t.lastCause)).toBe(true); // a non-hooked cell would alert...
+    expect(shouldNotify('working', 'waiting', t.lastCause, true)).toBe(false); // ...a hooked one is judged by its hooks only
   });
 
   it('a spinner keeps a hooked cell working past STALL_MS', () => {

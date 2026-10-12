@@ -9,7 +9,8 @@ import {
   addAgent, closeTab, createProject, moveCellBy, openTab, quickTab, restartCell, restoreArchived, resumeSession, selectTab,
   sendSnippet, switchProject, toggleMaximize,
 } from '../actions';
-import { getS, getUi, setUi, update, useStore } from '../store';
+import { getS, getUi, setUi, toast, update, useStore } from '../store';
+import { statusLog } from '../terminals/TerminalManager';
 
 interface Item {
   kind: string;
@@ -67,6 +68,11 @@ function PaletteInner() {
     out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj panel projektów"), desc: keyLabel("Ctrl+Shift+E"), run: () => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed })) });
     out.push({ kind: tr('Akcja'), title: tr("Nowy snippet") + '…', run: () => setUi({ modal: { kind: 'snippet', snippetId: null } }) });
     out.push({ kind: tr('Akcja'), title: tr("Ustawienia"), run: () => setUi({ settingsTabOpen: true, settingsActive: true }) });
+    out.push({ kind: tr('Akcja'), title: tr('Skopiuj dziennik statusów'), run: () => {
+      if (!statusLog.size) { toast(tr('Dziennik statusów jest jeszcze pusty')); return; }
+      window.mc.clipboardWrite(statusLog.toText());
+      toast(tr('Skopiowano dziennik statusów ({count} wpisów)', { count: statusLog.size }));
+    } });
 
     for (const p of s.projects) out.push({ kind: tr('Projekt'), title: p.name, desc: p.path, run: () => switchProject(p.id) });
     for (const p of s.projects)

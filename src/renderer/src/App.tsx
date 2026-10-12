@@ -17,7 +17,7 @@ import { StatusBar } from './components/StatusBar';
 import { TitleBar, WorkspaceTabs } from './components/TitleBar';
 import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
-import { terminals } from './terminals/TerminalManager';
+import { statusLog, terminals } from './terminals/TerminalManager';
 import { AutomationPanel } from './components/AutomationPanel';
 import { FileEditor } from './components/FileEditor';
 import { SettingsPage } from './components/SettingsPage';
@@ -55,7 +55,7 @@ async function boot(): Promise<void> {
   });
 
   window.mc.on('cell:restarted', (cellId) => { terminals.prepareSpawn(cellId); terminals.syncSize(cellId); });
-  window.mc.on('cell:hook', (cellId, event) => terminals.hook(cellId, event));
+  window.mc.on('cell:hook', (cellId, event, info) => terminals.hook(cellId, event, info));
   window.mc.on('cell:session', (cellId, session) => {
     update((s) => updateCell(s, cellId, { session }));
     // A different conversation: its title may not be indexed yet.
@@ -69,12 +69,13 @@ async function boot(): Promise<void> {
     resetStarted();
   });
 
-  terminals.onStatus((cellId, status, prev, cause) => {
+  terminals.onStatus((cellId, status, prev, cause, _reason, hooked) => {
     if (cellId.startsWith('auth:')) return; // login windows are not cells
     window.mc.reportCellStatus(cellId, status);
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
     if (status !== 'waiting') return;
-    if (shouldNotify(prev, status, cause)) {
+    if (shouldNotify(prev, status, cause, hooked)) {
+      statusLog.markAlert(cellId);
       maybeNotify(cellId);
       maybePlaySound(cellId);
     }

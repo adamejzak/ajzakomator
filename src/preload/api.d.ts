@@ -1,4 +1,4 @@
-import type { HookEvent } from '../shared/status';
+import type { HookEvent, HookInfo } from '../shared/status';
 import type { CellStatus } from '../shared/status';
 import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
@@ -79,7 +79,7 @@ export interface McApi {
   clearSwapPending(): Promise<{ ok: boolean }>;
   on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
-  on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent) => void): () => void;
+  on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent, info?: HookInfo) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;
   on(channel: 'cell:spawnError', cb: (cellId: string, message: string) => void): () => void;
   on(channel: 'focus-cell', cb: (cellId: string) => void): () => void;

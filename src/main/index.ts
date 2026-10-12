@@ -303,10 +303,16 @@ ptyHost.on('fatal', () => {
   dialog.showErrorBox('ajzakomator', tr('Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.'));
 });
 
-hooks.on('hook', (cellId: string, event: string) => {
+hooks.on('hook', (cellId: string, event: string, info?: unknown) => {
   if (!findCell(state, cellId)) return; // stale or foreign id
   automation.statuses.set(cellId, event === 'prompt' || event === 'busy' || event === 'stopbg' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
-  send('cell:hook', cellId, event);
+  send('cell:hook', cellId, event, info);
+});
+
+// SessionStart ends the "background tasks still running" mode of the cell (they belong to a previous conversation).
+hooks.on('sessionstart', (cellId: string, source?: string) => {
+  if (!findCell(state, cellId)) return;
+  send('cell:hook', cellId, 'session', { source });
 });
 
 // The user switched conversation inside a running Claude (/resume, /clear): follow it so a restart
