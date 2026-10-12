@@ -5,7 +5,7 @@ import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { accountMutationBlock, gateProfileRefresh, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
 import { AccountsStore } from '../src/main/accounts/store';
-import { clearPendingSwap, hasPendingSwap, isSwapUnresolved, swapPendingInfo, nodeSwapFs, recoverInterruptedSwap, restoreSwapBackup, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
+import { clearPendingSwap, hasPendingSwap, isSwapUnresolved, nodeSwapFs, recoverInterruptedSwap, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
 
 const FUTURE = Date.parse('2026-10-11T12:00:00Z') + 3_600_000;
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -342,46 +342,6 @@ describe('identical tokens after a crash', () => {
   });
 });
 
-describe('restoreSwapBackup', () => {
-  const failing = (): SwapFs => {
-    const seen = new Map<string, number>();
-    return { ...nodeSwapFs, rename: async (from, to) => {
-      const n = (seen.get(to) ?? 0) + 1; seen.set(to, n);
-      if (to === mainJson()) throw Object.assign(new Error('boom'), { code: 'EIO' });
-      if (to === mainCreds() && n >= 2) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
-      return nodeSwapFs.rename(from, to);
-    } };
-  };
-
-  it('puts both logins and identities back from the T1 state and deletes the backup', async () => {
-    fs = failing();
-    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
-    fs = nodeSwapFs;
-    expect(await restoreSwapBackup(deps())).toBe('restored');
-    expect(token(mainCreds())).toBe('tok-A');
-    expect(token(tCreds())).toBe('tok-X');
-    expect(acct(mainJson())).toBe('a@x.com');
-    expect(acct(tJson())).toBe('x@x.com');
-    expect(json(mainCreds()).mcpOAuth).toEqual({ server: 'A' }); // only the blob key was written
-    expect(existsSync(backup())).toBe(false);
-    expect(store.list()[0].email).toBe('x@x.com');
-    expect((await swapMainAccount(deps(), ID)).ok).toBe(true);
-  });
-
-  it('changes nothing when the backup is incomplete', async () => {
-    await crashed('main-json-written');
-    rmSync(join(backup(), 'target-credentials.json'));
-    const before = snapshot();
-    expect(await restoreSwapBackup(deps())).toBe('refused');
-    expect(snapshot()).toEqual(before);
-    expect(existsSync(journalPath())).toBe(true);
-  });
-
-  it('refuses without a journal', async () => {
-    expect(await restoreSwapBackup(deps())).toBe('refused');
-  });
-});
-
 describe('cleanup order and guards', () => {
   it('deletes the journal before the backup files', async () => {
     const order: string[] = [];
@@ -406,64 +366,6 @@ describe('cleanup order and guards', () => {
   });
 });
 
-describe('restore only when nothing was rotated', () => {
-  const failingMain = (): SwapFs => {
-    const seen = new Map<string, number>();
-    return { ...nodeSwapFs, rename: async (from, to) => {
-      const n = (seen.get(to) ?? 0) + 1; seen.set(to, n);
-      if (to === mainJson()) throw Object.assign(new Error('boom'), { code: 'EIO' });
-      if (to === mainCreds() && n >= 2) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
-      return nodeSwapFs.rename(from, to);
-    } };
-  };
-
-  it('(a) refuses when Claude rotated main X0 -> X1 during the settle wait', async () => {
-    let first = true;
-    const d = { ...deps(), delay: async () => { if (first) { first = false; put(mainCreds(), creds('X1')); } } };
-    expect(await swapMainAccount(d, ID)).toEqual({ ok: false, error: 'manual' });
-    const before = snapshot();
-    expect(await swapPendingInfo(deps())).toEqual({ pending: true, restorable: false });
-    expect(await restoreSwapBackup(deps())).toBe('refused');
-    expect(snapshot()).toEqual(before);
-    expect(token(mainCreds())).toBe('tok-X1');
-  });
-
-  it('(b) refuses when the target profile rotated A -> A1', async () => {
-    fs = failingMain();
-    await swapMainAccount(deps(), ID);
-    fs = nodeSwapFs;
-    expect((await swapPendingInfo(deps())).restorable).toBe(true);
-    put(tCreds(), creds('A1'));
-    const before = snapshot();
-    expect(await restoreSwapBackup(deps())).toBe('refused');
-    expect(snapshot()).toEqual(before);
-    expect(token(tCreds())).toBe('tok-A1');
-    expect(await swapPendingInfo(deps())).toEqual({ pending: true, restorable: false });
-  });
-
-  it('(c) restores when the tokens are exactly the backup tokens', async () => {
-    fs = failingMain();
-    await swapMainAccount(deps(), ID);
-    fs = nodeSwapFs;
-    expect(isSwapUnresolved()).toBe(true);
-    expect(await swapPendingInfo(deps())).toEqual({ pending: true, restorable: true });
-    expect(await restoreSwapBackup(deps())).toBe('restored');
-    expect(isSwapUnresolved()).toBe(false);
-    expect(token(mainCreds())).toBe('tok-A');
-    expect(token(tCreds())).toBe('tok-X');
-    expect(await swapPendingInfo(deps())).toEqual({ pending: false, restorable: false });
-  });
-
-  it('puts already restored files back and reports manual when a later write fails', async () => {
-    await crashed('main-creds-written');
-    const before = snapshot();
-    fs = { ...nodeSwapFs, rename: async (from, to) => { if (to === mainCreds()) throw Object.assign(new Error('x'), { code: 'EIO' }); return nodeSwapFs.rename(from, to); } };
-    expect(await restoreSwapBackup(deps())).toBe('manual');
-    expect(snapshot()).toEqual(before);
-    expect(existsSync(journalPath())).toBe(true);
-  });
-});
-
 describe('stale writes and recovery', () => {
   it('a stale A blob written into main after the settle read leaves a manual state that recovery does not touch', async () => {
     let armed = false;
@@ -484,6 +386,9 @@ describe('stale writes and recovery', () => {
     expect(await recoverInterruptedSwap(deps())).toBe('manual');
     expect(snapshot()).toEqual(before);
     expect(json(join(backup(), 'target-credentials.json')).claudeAiOauth.accessToken).toBe('tok-X');
+    expect(json(journalPath()).phase).toBe('rolling-back');
+    expect(backupFiles()).toEqual(expect.arrayContaining(['main-credentials.json', 'target-credentials.json', 'swap-journal.json']));
+    expect(isSwapUnresolved()).toBe(true);
   });
 
   it('keeps the backups when main changed between verification and cleanup', async () => {
@@ -499,8 +404,51 @@ describe('stale writes and recovery', () => {
       },
     };
     expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
-    expect(existsSync(journalPath())).toBe(true);
+    expect(json(journalPath()).phase).not.toBe('verified');
     expect(backupFiles()).toContain('main-credentials.json');
+  });
+
+  it('does not declare the swap done when main .claude.json was overwritten with the old identity after verification', async () => {
+    let armed = false;
+    let reads = 0;
+    fs = {
+      ...nodeSwapFs,
+      rename: async (from, to) => { await nodeSwapFs.rename(from, to); if (to === mainJson()) armed = true; },
+      readFile: async (p) => {
+        const text = await nodeSwapFs.readFile(p);
+        if (armed && p === mainJson() && ++reads === 2) return JSON.stringify({ oauthAccount: account('A', 'a@x.com') });
+        return text;
+      },
+    };
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
+    expect(json(journalPath()).phase).not.toBe('verified');
+    expect(backupFiles()).toContain('target-credentials.json');
+  });
+
+  it('a completed swap stays ok when cleanup fails, the label is already fixed and the next start cleans up', async () => {
+    fs = { ...nodeSwapFs, rm: async (p) => { if (p.includes('swap-backup')) throw Object.assign(new Error('io'), { code: 'EIO' }); return nodeSwapFs.rm(p); } };
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: true, email: 'x@x.com' });
+    expect(store.list()[0].email).toBe('a@x.com');
+    expect(json(journalPath()).phase).toBe('verified');
+    fs = nodeSwapFs;
+    expect(await recoverInterruptedSwap(deps())).toBe('none');
+    expect(backupFiles()).toEqual([]);
+  });
+
+  it('cleans a verified journal whose backups are already gone', async () => {
+    await crashed('verified');
+    for (const n of backupFiles()) if (n !== 'swap-journal.json') rmSync(join(backup(), n));
+    expect(await recoverInterruptedSwap(deps())).toBe('none');
+    expect(backupFiles()).toEqual([]);
+  });
+
+  it('does not delete the backups of a verified swap when main holds the old main login again', async () => {
+    await crashed('verified');
+    put(mainCreds(), creds('A'));
+    const before = snapshot();
+    expect(await recoverInterruptedSwap(deps())).toBe('manual');
+    expect(snapshot()).toEqual(before);
+    expect(backupFiles()).toContain('target-credentials.json');
   });
 
   it('fixes the account label when the process died after the verified marker', async () => {
@@ -521,8 +469,13 @@ describe('stale writes and recovery', () => {
   });
 
   it('flags an unresolved swap synchronously for background refreshes', async () => {
-    fs = { ...nodeSwapFs, rename: async (from, to) => { if (to === mainCreds()) throw Object.assign(new Error('x'), { code: 'EIO' }); return nodeSwapFs.rename(from, to); } };
-    await swapMainAccount(deps(), ID); // clean rollback: nothing left behind
+    let armed = false;
+    fs = { ...nodeSwapFs, rename: async (from, to) => { await nodeSwapFs.rename(from, to); if (to === mainJson()) armed = true; },
+      readFile: async (p) => { const t = await nodeSwapFs.readFile(p); if (armed && p === mainCreds()) { put(mainCreds(), creds('Z')); armed = false; } return t; } };
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
+    expect(isSwapUnresolved()).toBe(true);
+    fs = nodeSwapFs;
+    expect(await clearPendingSwap(deps())).toBe(true);
     expect(isSwapUnresolved()).toBe(false);
   });
 });

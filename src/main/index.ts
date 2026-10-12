@@ -30,7 +30,7 @@ import { refreshClaudeProfile, type RefreshOutcome } from './accounts/refresh';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
 import { gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
-import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, swapPendingInfo, recoverInterruptedSwap, restoreSwapBackup, swapMainAccount, type SwapDeps } from './accounts/swap';
+import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapMainAccount, type SwapDeps } from './accounts/swap';
 import { readManagedIdentity } from './accounts/identity';
 import { LoginManager } from './auth/login';
 import { isAccountId, type LoginRequest } from '../shared/accounts';
@@ -149,7 +149,7 @@ const swapDeps = (): SwapDeps => ({
 const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: isSwapUnresolved };
 /** Tells the renderer whether an unresolved swap blocks further swaps. */
 async function pushSwapPending(): Promise<void> {
-  send('accounts:swapPending', await swapPendingInfo(swapDeps()));
+  send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
 }
 // Background refreshes never write into a managed profile while a swap runs or is unresolved.
 usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }), { kind: 'transient' });
@@ -527,14 +527,7 @@ ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
   void pushSwapPending();
   return result;
 });
-ipcMain.handle('accounts:swapPending', () => swapPendingInfo(swapDeps()));
-/** The user confirmed: put the logins from the emergency copy back where they were before the interrupted swap. */
-ipcMain.handle('accounts:restoreSwapBackup', async () => {
-  const result = await restoreSwapBackup(swapDeps());
-  void pushSwapPending();
-  if (result === 'restored') void usage.refresh(true, true);
-  return { result };
-});
+ipcMain.handle('accounts:swapPending', () => hasPendingSwap(swapDeps()).catch(() => true));
 /** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
 ipcMain.handle('accounts:clearSwapPending', async () => {
   const cleared = await clearPendingSwap(swapDeps());

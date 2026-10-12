@@ -45,8 +45,3 @@ export function isSwapError(value: unknown): value is SwapError {
 export type SwapRecovery = 'none' | 'recovered' | 'manual';
 
 /** Outcome of restoring the pre-swap backup: done, refused (a swap runs) or not possible (nothing was changed, or check the accounts). */
-/** 'refused': a restore would not be safe (tokens changed since the swap), nothing was written. 'manual': a write failed halfway, changes may be partially applied. */
-export type SwapRestore = 'restored' | 'busy' | 'refused' | 'manual';
-
-/** Pushed to the renderer: an unresolved swap blocks swaps; `restorable` says whether restoring the backup is safe right now. */
-export interface SwapPendingInfo { pending: boolean; restorable: boolean }
