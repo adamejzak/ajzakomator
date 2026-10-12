@@ -4,6 +4,7 @@ import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/au
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
 import type { ChangelogResult } from '../shared/changelog';
+import type { AlertEventId } from '../shared/alerts';
 import type { UsageState } from '../shared/usage';
 import type { LoginRequest, LoginState, SwapResult } from '../shared/accounts';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
@@ -39,10 +40,10 @@ export interface McApi {
   aliveCells(): Promise<string[]>;
   reportCellStatus(cellId: string, status: CellStatus): void;
   pickFolder(): Promise<string | null>;
-  /** Native dialog for the own waiting sound; null when cancelled. */
+  /** Native dialog for an own alert sound; null when cancelled. */
   pickSoundFile(): Promise<string | null>;
-  /** Bytes of the saved own sound (main reads the path from settings); `data` is null when `knownKey` is still current. */
-  loadWaitingSound(knownKey?: string): Promise<{ ok: true; key: string; data: Uint8Array | null } | { ok: false }>;
+  /** Bytes of the saved own sound of an alert event (main reads the path from settings); `data` is null when `knownKey` is still current. */
+  loadAlertSound(event: AlertEventId, knownKey?: string): Promise<{ ok: true; key: string; data: Uint8Array | null } | { ok: false }>;
   systemBeep(): void;
   pathExists(path: string): Promise<boolean>;
   listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;

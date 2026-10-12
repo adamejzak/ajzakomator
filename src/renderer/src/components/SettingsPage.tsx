@@ -3,15 +3,14 @@ import { useI18n } from '../i18n';
 import { update, useStore, toast } from '../store';
 import { updateSettings, upsertProfile, removeProfile, uid } from '../../../shared/state';
 import type { CliKind, ShellKind } from '../../../shared/types';
-import { normalizeWaitingSound, normalizeWaitingSoundVolume } from '../../../shared/sound';
 import { normalizeUpdateMode } from '../../../shared/updateMode';
-import { playWaitingSound } from '../waitingSound';
+import { AlertsSettings } from './AlertsSettings';
 import { isLanguage, LANGUAGES } from '../../../shared/languages';
 import { shellsForPlatform } from '../../../shared/platform';
 import { USAGE_INTERVALS_MINUTES } from '../../../shared/usage';
 import { IX, TSettings } from './icons';
 
-const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia", "Aktualizacje", "Konta AI", "Profile agentów"] as const;
+const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia i dźwięki", "Aktualizacje", "Konta AI", "Profile agentów"] as const;
 export function SettingsPage() {
   const { tr, language } = useI18n();
   const s = useStore((st) => st.s);
@@ -74,56 +73,7 @@ export function SettingsPage() {
 
         </div>
       </>}
-      {section === 2 && <>
-          <label className="check">
-            <input type="checkbox" checked={s.settings.notifications} onChange={(e) => setSetting({ notifications: e.target.checked })} />
-
-            {tr("Powiadomienia, gdy agent czeka na Ciebie")}
-          </label>
-        <div className="field">
-          <label htmlFor="settings-waiting-sound">{tr('Dźwięk przy oczekiwaniu na Ciebie')}</label>
-          <div className="row" style={{ flexWrap: 'wrap' }}>
-            <select id="settings-waiting-sound" className="select" style={{ width: 200 }} value={s.settings.waitingSound}
-              onChange={(e) => setSetting({ waitingSound: normalizeWaitingSound(e.target.value) })}>
-              <option value="off">{tr('Wyłączony')}</option>
-              <option value="system">{tr('Dźwięk systemowy')}</option>
-              <option value="custom">{tr('Własny plik')}</option>
-            </select>
-            {s.settings.waitingSound === 'custom' && (
-              <>
-                <button className="btn" onClick={async () => {
-                  const file = await window.mc.pickSoundFile();
-                  if (file) setSetting({ waitingSoundFile: file });
-                }}>{tr('Wybierz plik...')}</button>
-                <span className="muted" title={s.settings.waitingSoundFile}>
-                  {s.settings.waitingSoundFile ? s.settings.waitingSoundFile.split(/[\\/]/).pop() : tr('Nie wybrano pliku')}
-                </span>
-              </>
-            )}
-            {s.settings.waitingSound !== 'off' && (
-              <button className="btn" onClick={async () => {
-                if (!(await playWaitingSound())) toast(tr('Nie udało się odtworzyć pliku, użyto dźwięku systemowego.'), 'error');
-              }}>{tr('Test')}</button>
-            )}
-          </div>
-          {s.settings.waitingSound === 'custom' && (
-            <div className="row">
-              <label htmlFor="settings-waiting-volume">{tr('Głośność')}</label>
-              <input id="settings-waiting-volume" type="range" min={0} max={100} value={s.settings.waitingSoundVolume}
-                onChange={(e) => setSetting({ waitingSoundVolume: normalizeWaitingSoundVolume(Number(e.target.value)) })} />
-              <span className="muted">{s.settings.waitingSoundVolume}%</span>
-            </div>
-          )}
-          <span className="muted">{tr('Gra w tym samym momencie co powiadomienie, także dla agentów Codex. Dźwięk systemowy ignoruje głośność.')}</span>
-        </div>
-        <div className="field">
-          <label className="check">
-            <input type="checkbox" checked={s.settings.notifyWhenFocused} onChange={(e) => setSetting({ notifyWhenFocused: e.target.checked })} />
-            {tr('Powiadamiaj i graj dźwięk także w aktywnym oknie')}
-          </label>
-          <span className="muted">{tr('Domyślnie, gdy patrzysz na komórkę w aktywnym oknie aplikacji, nie dostajesz ani powiadomienia, ani dźwięku. Po włączeniu dostaniesz je zawsze, gdy agent skończy pracę i czeka na Ciebie.')}</span>
-        </div>
-      </>}
+      {section === 2 && <AlertsSettings />}
       {section === 3 && <>
         <div className="field">
           <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>

@@ -21,7 +21,7 @@ const api: McApi = {
   reportCellStatus: (cellId, status) => ipcRenderer.send('cell:runtime', cellId, status),
   pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
   pickSoundFile: () => ipcRenderer.invoke('sound:pick'),
-  loadWaitingSound: (knownKey) => ipcRenderer.invoke('sound:load', knownKey),
+  loadAlertSound: (event, knownKey) => ipcRenderer.invoke('sound:load', event, knownKey),
   systemBeep: () => ipcRenderer.send('sound:beep'),
   pathExists:(path) => ipcRenderer.invoke('fs:exists', path),
   listProjectDirectory: (projectId, path = '') => ipcRenderer.invoke('fs:listProjectDirectory', projectId, path),

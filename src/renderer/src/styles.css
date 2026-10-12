@@ -927,3 +927,24 @@ body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-sel
 .auth-status.bad { color: var(--error); }
 .auth-status.wait { color: var(--muted); }
 .grid-tab .badges { display: inline-flex; gap: 3px; margin-left: 4px; }
+.settings-card .alert-events { display: flex; flex-direction: column; gap: 16px; container-type: inline-size; }
+.alert-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 14px; min-width: 0; }
+.alert-name { grid-column: 1 / -1; color: #dedede; font-size: 12px; font-weight: 600; }
+.alert-notify { grid-column: 1 / -1; justify-self: start; font-size: 12px; }
+.settings-card .alert-sound { grid-column: 1; width: 100%; min-width: 0; }
+.alert-test { grid-column: 2; justify-self: end; }
+.alert-file { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.alert-file .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (min-width: 300px) {
+  .alert-name { grid-column: 1; }
+  .alert-notify { grid-column: 2; justify-self: end; }
+}
+@container (min-width: 540px) {
+  .alert-row { grid-template-columns: 110px auto minmax(0, 1fr) auto; }
+  .alert-name, .alert-notify, .settings-card .alert-sound, .alert-test { grid-column: auto; }
+  .alert-file { grid-column: 3 / -1; }
+}
+.alert-volume input[type=range] { flex: 1 1 160px; max-width: 300px; min-width: 80px; }
+.alert-quiet { gap: 10px; }
+.alert-quiet .input { width: 110px; }
+.settings-card .alert-quiet .input:disabled { opacity: .5; }

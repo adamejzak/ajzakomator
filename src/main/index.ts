@@ -49,7 +49,7 @@ import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
 import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
-import { loadSoundFile } from './waitingSound';
+import { loadEventSound } from './alertSound';
 
 const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
 // Carry over state from the app's previous name.
@@ -444,9 +444,8 @@ ipcMain.handle('sound:pick', async () => {
   });
   return r.canceled || !isSoundFile(r.filePaths[0]) ? null : r.filePaths[0];
 });
-// The path is never taken from the renderer: only the saved setting (set from the dialog result) is read.
-ipcMain.handle('sound:load', (_e, knownKey?: unknown) =>
-  loadSoundFile(state.settings.waitingSoundFile, typeof knownKey === 'string' ? knownKey : undefined));
+// The path is never taken from the renderer: only the saved setting of that event (set from the dialog result) is read.
+ipcMain.handle('sound:load', (_e, event?: unknown, knownKey?: unknown) => loadEventSound(state.settings.alerts, event, knownKey));
 ipcMain.on('sound:beep', () => shell.beep());
 ipcMain.handle('fs:exists',(_e, p: string) => existsSync(p));
 ipcMain.handle('fs:listProjectDirectory', (_e, projectId: string, path: string) => {
@@ -492,7 +491,7 @@ ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) =>
       w.show();
       w.focus();
     });
-    send('focus-cell', n.cellId);
+    if (n.cellId) send('focus-cell', n.cellId);
   });
   notification.show();
 });

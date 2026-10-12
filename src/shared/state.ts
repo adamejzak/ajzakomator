@@ -6,7 +6,7 @@ import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
 import { normalizePanelWidth, PANEL_LIMITS } from './panels';
 import { defaultAutomation } from './automation';
 import { USAGE_INTERVALS_MINUTES } from './usage';
-import { DEFAULT_SOUND_VOLUME, normalizeWaitingSound, normalizeWaitingSoundVolume } from './sound';
+import { defaultAlerts, LEGACY_ALERT_KEYS, readAlerts } from './alerts';
 import { DEFAULT_UPDATE_MODE, normalizeUpdateMode } from './updateMode';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
@@ -26,7 +26,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { language: null, fontSize: 13, notifications: true, shell: defaultShell(platform), lastProfileId: 'claude', updateMode: DEFAULT_UPDATE_MODE, notifyWhenFocused: false, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, waitingSound: 'off', waitingSoundFile: '', waitingSoundVolume: DEFAULT_SOUND_VOLUME },
+    settings: { language: null, fontSize: 13, shell: defaultShell(platform), lastProfileId: 'claude', updateMode: DEFAULT_UPDATE_MODE, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, alerts: defaultAlerts() },
     sidebarCollapsed: false,
     snippetsOpen: true,
     sidebarWidth: PANEL_LIMITS.sidebar.default,
@@ -292,7 +292,7 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
   const remap = (id: string) => RETIRED_PROFILES[id] ?? id;
   const remapCells = <T extends { profileId: string }>(cells: T[]) => cells.map((c) => ({ ...c, profileId: remap(c.profileId) }));
   const profiles = (Array.isArray(r.profiles) && r.profiles.length ? r.profiles : d.profiles).filter((p) => !(p.id in RETIRED_PROFILES));
-  return {
+  const normalized = {
     ...d,
     ...r,
     automation: {
@@ -314,13 +314,11 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       lastProfileId: remap(r.settings?.lastProfileId ?? d.settings.lastProfileId),
       // The retired boolean `autoInstallUpdates` only seeds the mode when none is saved yet.
       updateMode: normalizeUpdateMode(r.settings?.updateMode, (r.settings as Record<string, unknown> | undefined)?.autoInstallUpdates),
-      notifyWhenFocused: typeof r.settings?.notifyWhenFocused === 'boolean' ? r.settings.notifyWhenFocused : d.settings.notifyWhenFocused,
       showAiUsage: typeof r.settings?.showAiUsage === 'boolean' ? r.settings.showAiUsage : d.settings.showAiUsage,
       usageIntervalMinutes: (USAGE_INTERVALS_MINUTES as readonly number[]).includes(r.settings?.usageIntervalMinutes as number) ? r.settings!.usageIntervalMinutes! : d.settings.usageIntervalMinutes,
       usageCollapsed: typeof r.settings?.usageCollapsed === 'boolean' ? r.settings.usageCollapsed : d.settings.usageCollapsed,
-      waitingSound: normalizeWaitingSound(r.settings?.waitingSound),
-      waitingSoundFile: typeof r.settings?.waitingSoundFile === 'string' ? r.settings.waitingSoundFile : d.settings.waitingSoundFile,
-      waitingSoundVolume: normalizeWaitingSoundVolume(r.settings?.waitingSoundVolume),
+      // The retired notifications / waitingSound* keys only seed the alerts when none are saved yet; they are never written again.
+      alerts: readAlerts(r.settings as Record<string, unknown> | undefined),
     },
     projects: r.projects.map((p) => ({
       ...p,
@@ -328,5 +326,7 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       archive: (p.archive ?? []).map((t) => ({ ...t, cells: remapCells(t.cells) })),
     })),
   } as AppState;
+  for (const key of LEGACY_ALERT_KEYS) delete (normalized.settings as unknown as Record<string, unknown>)[key];
+  return normalized;
 }
 

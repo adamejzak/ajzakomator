@@ -45,7 +45,7 @@ interface Entry {
 }
 
 /** `reason` is why the cell last became waiting (done / attention / error); `hooked` = Claude hooks drive this cell. */
-type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cause: StatusCause, reason: StatusReason, hooked: boolean) => void;
+type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cause: StatusCause, reason: StatusReason, hooked: boolean, info?: HookInfo) => void;
 
 /** Recent status transitions of every cell, for bug reports (no message text). */
 export const statusLog = new StatusLog();
@@ -485,7 +485,7 @@ class TerminalManager {
       });
     }
     // A renotify (the real Stop after a continued turn) is reported as working -> waiting so the alert rules see a transition.
-    if (changed || result === 'renotify') this.statusListeners.forEach((l) => l(e.id, status, changed ? prev : 'working', lastCause, lastReason, e.tracker.isHooked));
+    if (changed || result === 'renotify') this.statusListeners.forEach((l) => l(e.id, status, changed ? prev : 'working', lastCause, lastReason, e.tracker.isHooked, info));
   }
 
   private tickStatuses(): void {

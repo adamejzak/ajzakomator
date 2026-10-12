@@ -2,9 +2,7 @@ import { tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
-import { shouldNotify } from '../../shared/status';
-import { createSoundThrottle, shouldAlertUser, shouldPlayWaitingSound } from '../../shared/sound';
-import { playWaitingSound } from './waitingSound';
+import { alertForStatus } from './alerts';
 import { ensureStarted, focusCell, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
@@ -69,16 +67,12 @@ async function boot(): Promise<void> {
     resetStarted();
   });
 
-  terminals.onStatus((cellId, status, prev, cause, _reason, hooked) => {
+  terminals.onStatus((cellId, status, prev, cause, reason, hooked, info) => {
     if (cellId.startsWith('auth:')) return; // login windows are not cells
     window.mc.reportCellStatus(cellId, status);
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
     if (status !== 'waiting') return;
-    if (shouldNotify(prev, status, cause, hooked)) {
-      statusLog.markAlert(cellId);
-      maybeNotify(cellId);
-      maybePlaySound(cellId);
-    }
+    alertForStatus(cellId, status, prev, cause, reason, hooked, info);
     bindCodexSession(cellId);
     // A turn finished: the agent may have (re)titled the conversation.
     const found = findCell(getS(), cellId);
@@ -95,46 +89,11 @@ async function boot(): Promise<void> {
   }
 }
 
-function isVisible(cellId: string): boolean {
-  const tab = activeTab(activeProject(getS()));
-  if (!tab?.cells.some((c) => c.id === cellId)) return false;
-  const max = getUi().maximizedCellId;
-  return !max || max === cellId;
-}
-
 /** A Codex cell just finished a turn: its session file is fresh, so bind it if not known yet. */
 function bindCodexSession(cellId: string): void {
   const found = findCell(getS(), cellId);
   if (!found || found.cell.session || getProfile(getS(), found.cell.profileId).cli !== 'codex') return;
   void window.mc.bindCodexSession(cellId, found.cell.worktree?.path ?? found.project.path);
-}
-
-const allowSound = createSoundThrottle();
-
-/** Same rules as the notification, but independent of the notifications setting. */
-function maybePlaySound(cellId: string): void {
-  const s = getS();
-  if (!shouldPlayWaitingSound(s.settings.waitingSound, true, document.hasFocus() && isVisible(cellId), s.settings.notifyWhenFocused)) return;
-  const found = findCell(s, cellId);
-  if (!found || getProfile(s, found.cell.profileId).cli === 'shell') return;
-  if (allowSound(Date.now())) void playWaitingSound();
-}
-
-function maybeNotify(cellId: string): void {
-  const s = getS();
-  if (!s.settings.notifications) return;
-  // The user is looking at it: silent unless alerting in the active window is on.
-  if (!shouldAlertUser(true, document.hasFocus() && isVisible(cellId), s.settings.notifyWhenFocused)) return;
-  const found = findCell(s, cellId);
-  if (!found) return;
-  const profile = getProfile(s, found.cell.profileId);
-  if (profile.cli === 'shell') return;
-  const n = found.tab.cells.findIndex((c) => c.id === cellId) + 1;
-  window.mc.notify({
-    title: `${found.project.name} · ${found.tab.name} #${n}`,
-    body: tr('{name} czeka na Ciebie', { name: profile.name }),
-    cellId,
-  });
 }
 
 export function App() {

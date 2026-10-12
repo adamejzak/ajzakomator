@@ -1,0 +1,232 @@
+// Alerts: an OS notification and/or a sound per agent event (finished, needs you, error).
+// Everything here is pure: settings model, migration of the retired waiting-sound settings, and the decision of what to raise.
+import type { MessageKey } from './i18n';
+import type { CellStatus, StatusCause, StatusReason } from './status';
+import { shouldNotify } from './status';
+import { shouldAlertUser } from './sound';
+import { isPresetId, type PresetId } from './soundPresets';
+
+export type AlertEventId = 'done' | 'attention' | 'error';
+export const ALERT_EVENTS: readonly AlertEventId[] = ['done', 'attention', 'error'];
+
+export type SoundChoice =
+  | { kind: 'off' }
+  | { kind: 'preset'; id: PresetId }
+  | { kind: 'system' }
+  | { kind: 'file'; path: string };
+
+export interface EventAlert {
+  notify: boolean;
+  sound: SoundChoice;
+}
+
+export interface QuietHours {
+  enabled: boolean;
+  /** 'HH:MM', local time; alerts are suppressed from `start` (inclusive) to `end` (exclusive), the range may wrap midnight. */
+  start: string;
+  end: string;
+}
+
+export interface AlertSettings {
+  /** 0..1, applies to presets and own files (the system sound ignores it). */
+  volume: number;
+  /** Also alert while the app window is focused and the cell is visible. */
+  notifyWhenFocused: boolean;
+  quietHours: QuietHours;
+  events: Record<AlertEventId, EventAlert>;
+}
+
+export const DEFAULT_ALERT_VOLUME = 0.7;
+export const DEFAULT_QUIET_HOURS: QuietHours = { enabled: false, start: '22:00', end: '07:00' };
+const MAX_PATH_LENGTH = 1024;
+
+export const DEFAULT_EVENT_SOUNDS: Record<AlertEventId, SoundChoice> = {
+  done: { kind: 'preset', id: 'ding-dong' },
+  attention: { kind: 'preset', id: 'alert' },
+  error: { kind: 'preset', id: 'low-warn' },
+};
+
+export function defaultAlerts(): AlertSettings {
+  return {
+    volume: DEFAULT_ALERT_VOLUME,
+    notifyWhenFocused: false,
+    quietHours: { ...DEFAULT_QUIET_HOURS },
+    events: {
+      done: { notify: true, sound: { ...DEFAULT_EVENT_SOUNDS.done } },
+      attention: { notify: true, sound: { ...DEFAULT_EVENT_SOUNDS.attention } },
+      error: { notify: true, sound: { ...DEFAULT_EVENT_SOUNDS.error } },
+    },
+  };
+}
+
+export function isAlertEvent(value: unknown): value is AlertEventId {
+  return typeof value === 'string' && (ALERT_EVENTS as readonly string[]).includes(value);
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+
+export function normalizeVolume(value: unknown, fallback = DEFAULT_ALERT_VOLUME): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.round(Math.max(0, Math.min(1, value)) * 100) / 100 : fallback;
+}
+
+const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
+export const isTime = (value: unknown): value is string => typeof value === 'string' && TIME.test(value);
+
+export function normalizeQuietHours(value: unknown): QuietHours {
+  const q = isObject(value) ? value : {};
+  return {
+    enabled: q.enabled === true,
+    start: isTime(q.start) ? q.start : DEFAULT_QUIET_HOURS.start,
+    end: isTime(q.end) ? q.end : DEFAULT_QUIET_HOURS.end,
+  };
+}
+
+export function isUsablePath(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_PATH_LENGTH && !value.includes('\0');
+}
+
+export function normalizeSoundChoice(value: unknown, fallback: SoundChoice): SoundChoice {
+  if (!isObject(value)) return { ...fallback };
+  if (value.kind === 'off') return { kind: 'off' };
+  if (value.kind === 'system') return { kind: 'system' };
+  if (value.kind === 'preset' && isPresetId(value.id)) return { kind: 'preset', id: value.id };
+  if (value.kind === 'file' && isUsablePath(value.path)) return { kind: 'file', path: value.path };
+  return { ...fallback };
+}
+
+/** Reads a saved `alerts` object; every missing or corrupt field falls back to its default. */
+export function normalizeAlerts(value: unknown): AlertSettings {
+  const r = isObject(value) ? value : {};
+  const d = defaultAlerts();
+  const events = isObject(r.events) ? r.events : {};
+  const event = (id: AlertEventId): EventAlert => {
+    const e = isObject(events[id]) ? events[id] as Record<string, unknown> : {};
+    return { notify: typeof e.notify === 'boolean' ? e.notify : d.events[id].notify, sound: normalizeSoundChoice(e.sound, d.events[id].sound) };
+  };
+  return {
+    volume: normalizeVolume(r.volume),
+    notifyWhenFocused: typeof r.notifyWhenFocused === 'boolean' ? r.notifyWhenFocused : d.notifyWhenFocused,
+    quietHours: normalizeQuietHours(r.quietHours),
+    events: { done: event('done'), attention: event('attention'), error: event('error') },
+  };
+}
+
+/** Keys of the retired settings (a boolean, a three-way sound mode, its file and volume 0-100, and the focus option). */
+export const LEGACY_ALERT_KEYS = ['notifications', 'waitingSound', 'waitingSoundFile', 'waitingSoundVolume', 'notifyWhenFocused'] as const;
+
+/**
+ * Builds the alerts from the retired settings keys of a saved state. Without any of them (a fresh install) the defaults apply.
+ * The old sound was one for "the agent waits for you", so it maps to "finished" and "needs you"; errors did not exist as an event
+ * and stay silent for users who had chosen a sound (they keep the notification). 'off' stays off everywhere.
+ */
+export function migrateLegacyAlerts(settings: Record<string, unknown>): AlertSettings {
+  const d = defaultAlerts();
+  if (!LEGACY_ALERT_KEYS.some((key) => key in settings)) return d;
+  const notify = typeof settings.notifications === 'boolean' ? settings.notifications : true;
+  const file = settings.waitingSoundFile;
+  const volume = typeof settings.waitingSoundVolume === 'number' && Number.isFinite(settings.waitingSoundVolume)
+    ? normalizeVolume(settings.waitingSoundVolume / 100) : DEFAULT_ALERT_VOLUME;
+  const waiting: SoundChoice = settings.waitingSound === 'system' ? { kind: 'system' }
+    : settings.waitingSound === 'custom' ? (isUsablePath(file) ? { kind: 'file', path: file } : { kind: 'system' }) // custom without a file used to beep
+      : { kind: 'off' };
+  const off: SoundChoice = { kind: 'off' };
+  return {
+    ...d,
+    volume,
+    notifyWhenFocused: settings.notifyWhenFocused === true,
+    events: {
+      done: { notify, sound: waiting },
+      attention: { notify, sound: { ...waiting } },
+      error: { notify, sound: off },
+    },
+  };
+}
+
+/** The saved alerts when present, otherwise the migration of the retired keys. */
+export function readAlerts(settings: Record<string, unknown> | undefined): AlertSettings {
+  const s = settings ?? {};
+  return isObject(s.alerts) ? normalizeAlerts(s.alerts) : migrateLegacyAlerts(s);
+}
+
+// ── quiet hours ─────────────────────────────────────────────────────────────
+
+const minutesOf = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+
+/** True when `now` (local time) is inside the quiet range. An empty range (start = end) never suppresses. */
+export function inQuietHours(quiet: QuietHours, now: Date): boolean {
+  if (!quiet.enabled || !isTime(quiet.start) || !isTime(quiet.end)) return false;
+  const start = minutesOf(quiet.start);
+  const end = minutesOf(quiet.end);
+  if (start === end) return false;
+  const minute = now.getHours() * 60 + now.getMinutes();
+  return start < end ? minute >= start && minute < end : minute >= start || minute < end;
+}
+
+// ── decision ────────────────────────────────────────────────────────────────
+
+export interface AlertContext {
+  prev: CellStatus;
+  status: CellStatus;
+  cause: StatusCause;
+  hooked: boolean;
+  reason: StatusReason;
+  /** Window focused and the cell visible. */
+  userLooking: boolean;
+  /** Claude or Codex cell (never a shell). */
+  agent: boolean;
+  now: Date;
+  /** Asked only when a sound would play; allowed calls open a new quiet window (see createSoundThrottle). */
+  allowSound?: (nowMs: number) => boolean;
+}
+
+export interface AlertDecision {
+  event: AlertEventId;
+  notify: boolean;
+  /** What to play, or null for silence. */
+  sound: SoundChoice | null;
+}
+
+/** The event of a cell that just started waiting: the hook reason, or "finished" for any heuristic. */
+export function alertEventOf(cause: StatusCause, reason: StatusReason): AlertEventId {
+  return cause === 'hook' && (reason === 'attention' || reason === 'error') ? reason : 'done';
+}
+
+/**
+ * What to raise for a status change. It keeps every rule of the former notification: only a real transition seen in this
+ * session (no alert on restore, none for a silence-based "waiting" of a hooked cell), nothing while the user looks at the
+ * cell unless `notifyWhenFocused`, nothing for shell cells. On top: quiet hours silence everything, a disabled event
+ * raises nothing, and bursts of sounds are throttled.
+ */
+export function decideAlert(alerts: AlertSettings, ctx: AlertContext): AlertDecision {
+  const event = alertEventOf(ctx.cause, ctx.reason);
+  const none: AlertDecision = { event, notify: false, sound: null };
+  if (!ctx.agent) return none;
+  if (!shouldAlertUser(shouldNotify(ctx.prev, ctx.status, ctx.cause, ctx.hooked), ctx.userLooking, alerts.notifyWhenFocused)) return none;
+  if (inQuietHours(alerts.quietHours, ctx.now)) return none;
+  const config = alerts.events[event];
+  const wantsSound = config.sound.kind !== 'off';
+  const sound = wantsSound && (ctx.allowSound?.(ctx.now.getTime()) ?? true) ? config.sound : null;
+  return { event, notify: config.notify, sound };
+}
+
+// ── notification text ───────────────────────────────────────────────────────
+
+/** Human phrases of the StopFailure error codes; unknown codes use the last entry. */
+export const ERROR_PHRASES: Record<string, MessageKey> = {
+  rate_limit: 'limit osiągnięty',
+  overloaded: 'serwer przeciążony',
+  authentication_failed: 'błąd uwierzytelniania',
+  oauth_org_not_allowed: 'organizacja bez dostępu',
+  account_on_hold: 'konto wstrzymane',
+  billing_error: 'problem z rozliczeniem',
+  invalid_request: 'nieprawidłowe żądanie',
+  model_not_found: 'nie znaleziono modelu',
+  server_error: 'błąd serwera',
+  max_output_tokens: 'limit tokenów odpowiedzi',
+  cloud_credential_error: 'błąd poświadczeń chmury',
+  unknown: 'nieznany błąd',
+};
+
+export function errorPhrase(code: string | undefined): MessageKey {
+  return (code && Object.hasOwn(ERROR_PHRASES, code) ? ERROR_PHRASES[code] : ERROR_PHRASES.unknown);
+}

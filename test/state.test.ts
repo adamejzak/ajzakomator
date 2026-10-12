@@ -138,15 +138,15 @@ describe('state', () => {
     expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.updateMode).toBe('manual');
   });
 
-  it('normalizeState keeps notifyWhenFocused off unless explicitly on', () => {
+  it('normalizeState keeps alerts.notifyWhenFocused off unless explicitly on', () => {
     const raw = JSON.parse(JSON.stringify(defaultState()));
-    delete raw.settings.notifyWhenFocused;
-    expect(defaultState().settings.notifyWhenFocused).toBe(false);
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.notifyWhenFocused).toBe(false);
-    raw.settings.notifyWhenFocused = true;
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.notifyWhenFocused).toBe(true);
-    raw.settings.notifyWhenFocused = 'yes';
-    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.notifyWhenFocused).toBe(false);
+    expect(defaultState().settings.alerts.notifyWhenFocused).toBe(false);
+    delete raw.settings.alerts.notifyWhenFocused;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.alerts.notifyWhenFocused).toBe(false);
+    raw.settings.alerts.notifyWhenFocused = true;
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.alerts.notifyWhenFocused).toBe(true);
+    raw.settings.alerts.notifyWhenFocused = 'yes';
+    expect(normalizeState(JSON.parse(JSON.stringify(raw)))!.settings.alerts.notifyWhenFocused).toBe(false);
   });
 
   it('normalizeState folds retired profiles into claude/codex', () => {

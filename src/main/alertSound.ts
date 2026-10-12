@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'fs';
+import { isAlertEvent, type AlertSettings } from '../shared/alerts';
 import { isSoundFile, SOUND_MAX_BYTES } from '../shared/sound';
 
 export type SoundLoad =
@@ -23,4 +24,15 @@ export function loadSoundFile(path: string, knownKey?: string): SoundLoad {
   } catch {
     return { ok: false };
   }
+}
+
+/**
+ * The own sound of one alert event. The path is never taken from the renderer: only the saved setting of that event
+ * (set from the native dialog result) is read, and only when it is an own-file choice. Unknown events are refused.
+ */
+export function loadEventSound(alerts: AlertSettings, event: unknown, knownKey?: unknown): SoundLoad {
+  if (!isAlertEvent(event)) return { ok: false };
+  const sound = alerts.events[event]?.sound;
+  if (sound?.kind !== 'file') return { ok: false };
+  return loadSoundFile(sound.path, typeof knownKey === 'string' ? knownKey : undefined);
 }

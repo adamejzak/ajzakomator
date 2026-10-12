@@ -1,6 +1,6 @@
 import type { GridLayout } from './layout';
 import type { Language } from './languages';
-import type { WaitingSound } from './sound';
+import type { AlertSettings } from './alerts';
 import type { UpdateMode } from './updateMode';
 import type { AgentRole, AutomationState } from './automation';
 
@@ -102,25 +102,18 @@ export interface Settings {
   /** null until the language is confirmed on first launch. */
   language: Language | null;
   fontSize: number;
-  notifications: boolean;
   shell: ShellKind;
   lastProfileId: string;
   /** Startup update behaviour (see `UpdateMode`); replaces the former boolean `autoInstallUpdates`. */
   updateMode: UpdateMode;
-  /** Also notify and play the waiting sound while the app window is focused and the cell is visible. */
-  notifyWhenFocused: boolean;
   /** Show the docked "AI account limits" section in the sidebar. */
   showAiUsage: boolean;
   /** How often the limits are read, in minutes (1, 5 or 15). */
   usageIntervalMinutes: number;
   /** The docked section is folded to one line. */
   usageCollapsed: boolean;
-  /** Sound when a cell starts waiting for the user (same moment as the OS notification). */
-  waitingSound: WaitingSound;
-  /** Path of the own sound file, chosen with the native dialog. */
-  waitingSoundFile: string;
-  /** 0-100, applies to the own sound file. */
-  waitingSoundVolume: number;
+  /** Notifications and sounds for the agent events (finished, needs you, error); replaces the retired `notifications` and `waitingSound*` keys. */
+  alerts: AlertSettings;
 }
 
 export interface AppState {

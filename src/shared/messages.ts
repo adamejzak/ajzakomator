@@ -1,5 +1,6 @@
 // Each row contains English, German, Spanish, French and Portuguese translations.
 // Polish uses the source message (the key). Placeholders must match across a row.
+import { alertMessages } from './alertMessages';
 import { automationMessages } from './automationMessages';
 import { gridMessages } from './gridMessages';
 import { statusMessages } from './statusMessages';
@@ -8,6 +9,7 @@ import { updateMessages } from './updateMessages';
 import { usageMessages } from './usageMessages';
 import { uxMessages } from './uxMessages';
 export const messages = {
+  ...alertMessages,
   ...automationMessages,
   ...gridMessages,
   ...statusMessages,
@@ -23,7 +25,6 @@ export const messages = {
   'Zmiana języka działa od razu.': ['Language changes apply immediately.', 'Sprachänderungen werden sofort übernommen.', 'El cambio de idioma se aplica al instante.', 'Le changement de langue est immédiat.', 'A alteração de idioma é imediata.'],
   'Ustawienia aplikacji': ['App settings', 'App-Einstellungen', 'Ajustes de la aplicación', 'Paramètres de l’application', 'Definições da aplicação'],
   'Ustawienia': ['Settings', 'Einstellungen', 'Ajustes', 'Paramètres', 'Definições'],
-  'Powiadomienia': ['Notifications', 'Benachrichtigungen', 'Notificaciones', 'Notifications', 'Notificações'],
   'Anuluj': ['Cancel', 'Abbrechen', 'Cancelar', 'Annuler', 'Cancelar'],
   'Zapisz': ['Save', 'Speichern', 'Guardar', 'Enregistrer', 'Guardar'],
   'Usuń': ['Delete', 'Löschen', 'Eliminar', 'Supprimer', 'Eliminar'],
@@ -139,17 +140,13 @@ export const messages = {
   'Nowa zakładka': ['New tab', 'Neuer Tab', 'Nueva pestaña', 'Nouvel onglet', 'Novo separador'],
   'Brak zapisanych rozmów Claude/Codex dla tego folderu.': ['No saved Claude/Codex conversations for this folder.', 'Keine gespeicherten Claude-/Codex-Gespräche für diesen Ordner.', 'No hay conversaciones guardadas de Claude/Codex para esta carpeta.', 'Aucune conversation Claude/Codex enregistrée pour ce dossier.', 'Sem conversas Claude/Codex guardadas para esta pasta.'],
   'Rozmiar czcionki terminala (nowe komórki)': ['Terminal font size (new cells)', 'Terminalschriftgröße (neue Zellen)', 'Tamaño de fuente del terminal (nuevas celdas)', 'Taille de police du terminal (nouvelles cellules)', 'Tamanho da letra do terminal (novas células)'],
-  'Powiadomienia, gdy agent czeka na Ciebie': ['Notifications when an agent is waiting for you', 'Benachrichtigungen, wenn ein Agent auf dich wartet', 'Notificaciones cuando un agente espera tu respuesta', 'Notifications lorsqu’un agent attend votre réponse', 'Notificações quando um agente espera pela sua resposta'],
-  'Dźwięk przy oczekiwaniu na Ciebie': ['Sound when waiting for you', 'Ton, wenn auf dich gewartet wird', 'Sonido cuando se espera tu respuesta', 'Son lorsqu’un agent attend votre réponse', 'Som quando se espera pela sua resposta'],
   'Wyłączony': ['Off', 'Aus', 'Desactivado', 'Désactivé', 'Desativado'],
   'Dźwięk systemowy': ['System sound', 'Systemton', 'Sonido del sistema', 'Son système', 'Som do sistema'],
-  'Własny plik': ['Own file', 'Eigene Datei', 'Archivo propio', 'Fichier personnel', 'Ficheiro próprio'],
   'Wybierz plik...': ['Choose file...', 'Datei wählen ...', 'Elegir archivo...', 'Choisir un fichier...', 'Escolher ficheiro...'],
   'Nie wybrano pliku': ['No file chosen', 'Keine Datei gewählt', 'Ningún archivo elegido', 'Aucun fichier choisi', 'Nenhum ficheiro escolhido'],
   'Test': ['Test', 'Testen', 'Probar', 'Tester', 'Testar'],
   'Głośność': ['Volume', 'Lautstärke', 'Volumen', 'Volume', 'Volume'],
   'Nie udało się odtworzyć pliku, użyto dźwięku systemowego.': ['Could not play the file, the system sound was used.', 'Die Datei konnte nicht abgespielt werden, der Systemton wurde verwendet.', 'No se pudo reproducir el archivo, se usó el sonido del sistema.', 'Impossible de lire le fichier, le son système a été utilisé.', 'Não foi possível reproduzir o ficheiro, foi usado o som do sistema.'],
-  'Gra w tym samym momencie co powiadomienie, także dla agentów Codex. Dźwięk systemowy ignoruje głośność.': ['Plays at the same moment as the notification, also for Codex agents. The system sound ignores the volume.', 'Wird zum selben Zeitpunkt wie die Benachrichtigung abgespielt, auch für Codex-Agenten. Der Systemton ignoriert die Lautstärke.', 'Suena en el mismo momento que la notificación, también para agentes Codex. El sonido del sistema ignora el volumen.', 'Joué au même moment que la notification, aussi pour les agents Codex. Le son système ignore le volume.', 'Toca no mesmo momento que a notificação, também para agentes Codex. O som do sistema ignora o volume.'],
   'Wybierz plik dźwiękowy': ['Choose sound file', 'Audiodatei auswählen', 'Elegir archivo de sonido', 'Choisir un fichier audio', 'Escolher ficheiro de som'],
   'Pliki dźwiękowe': ['Sound files', 'Audiodateien', 'Archivos de sonido', 'Fichiers audio', 'Ficheiros de som'],
   'Profile agentów': ['Agent profiles', 'Agentenprofile', 'Perfiles de agentes', 'Profils des agents', 'Perfis dos agentes'],
