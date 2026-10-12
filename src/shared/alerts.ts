@@ -3,7 +3,7 @@
 import type { MessageKey } from './i18n';
 import type { CellStatus, StatusCause, StatusReason } from './status';
 import { shouldNotify } from './status';
-import { shouldAlertUser } from './sound';
+import { createSoundThrottle, isLocalAbsolutePath, shouldAlertUser, SOUND_THROTTLE_MS } from './sound';
 import { isPresetId, type PresetId } from './soundPresets';
 
 export type AlertEventId = 'done' | 'attention' | 'error';
@@ -82,7 +82,7 @@ export function normalizeQuietHours(value: unknown): QuietHours {
 }
 
 export function isUsablePath(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= MAX_PATH_LENGTH && !value.includes('\0');
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_PATH_LENGTH && !value.includes('\0') && isLocalAbsolutePath(value);
 }
 
 export function normalizeSoundChoice(value: unknown, fallback: SoundChoice): SoundChoice {
@@ -116,8 +116,8 @@ export const LEGACY_ALERT_KEYS = ['notifications', 'waitingSound', 'waitingSound
 
 /**
  * Builds the alerts from the retired settings keys of a saved state. Without any of them (a fresh install) the defaults apply.
- * The old sound was one for "the agent waits for you", so it maps to "finished" and "needs you"; errors did not exist as an event
- * and stay silent for users who had chosen a sound (they keep the notification). 'off' stays off everywhere.
+ * The old sound played whenever the agent started waiting for the user, which included a turn that ended with an error,
+ * so the chosen sound moves to all three events (system -> system, own file -> the same file, off -> off).
  */
 export function migrateLegacyAlerts(settings: Record<string, unknown>): AlertSettings {
   const d = defaultAlerts();
@@ -129,7 +129,6 @@ export function migrateLegacyAlerts(settings: Record<string, unknown>): AlertSet
   const waiting: SoundChoice = settings.waitingSound === 'system' ? { kind: 'system' }
     : settings.waitingSound === 'custom' ? (isUsablePath(file) ? { kind: 'file', path: file } : { kind: 'system' }) // custom without a file used to beep
       : { kind: 'off' };
-  const off: SoundChoice = { kind: 'off' };
   return {
     ...d,
     volume,
@@ -137,7 +136,7 @@ export function migrateLegacyAlerts(settings: Record<string, unknown>): AlertSet
     events: {
       done: { notify, sound: waiting },
       attention: { notify, sound: { ...waiting } },
-      error: { notify, sound: off },
+      error: { notify, sound: { ...waiting } },
     },
   };
 }
@@ -175,8 +174,17 @@ export interface AlertContext {
   /** Claude or Codex cell (never a shell). */
   agent: boolean;
   now: Date;
-  /** Asked only when a sound would play; allowed calls open a new quiet window (see createSoundThrottle). */
-  allowSound?: (nowMs: number) => boolean;
+  /** Asked only when a sound would play; allowed calls open a new quiet window (see createAlertSoundThrottle). */
+  allowSound?: (nowMs: number, event: AlertEventId) => boolean;
+}
+
+/** Why a real alert transition raised nothing (or no sound); recorded in the status log so bug reports show it. */
+export type AlertSuppression = 'focused' | 'quiet-hours' | 'disabled' | 'sound-throttled';
+
+/** One burst throttle per event: a finished sound must not swallow the needs-you or error sound that follows. */
+export function createAlertSoundThrottle(windowMs = SOUND_THROTTLE_MS): (nowMs: number, event: AlertEventId) => boolean {
+  const byEvent = Object.fromEntries(ALERT_EVENTS.map((event) => [event, createSoundThrottle(windowMs)])) as Record<AlertEventId, (now: number) => boolean>;
+  return (nowMs, event) => byEvent[event](nowMs);
 }
 
 export interface AlertDecision {
@@ -184,6 +192,8 @@ export interface AlertDecision {
   notify: boolean;
   /** What to play, or null for silence. */
   sound: SoundChoice | null;
+  /** Set when the transition deserved an alert but something held it back (all of it, or only the sound for a burst). */
+  suppressed?: AlertSuppression;
 }
 
 /** The event of a cell that just started waiting: the hook reason, or "finished" for any heuristic. */
@@ -200,13 +210,17 @@ export function alertEventOf(cause: StatusCause, reason: StatusReason): AlertEve
 export function decideAlert(alerts: AlertSettings, ctx: AlertContext): AlertDecision {
   const event = alertEventOf(ctx.cause, ctx.reason);
   const none: AlertDecision = { event, notify: false, sound: null };
-  if (!ctx.agent) return none;
-  if (!shouldAlertUser(shouldNotify(ctx.prev, ctx.status, ctx.cause, ctx.hooked), ctx.userLooking, alerts.notifyWhenFocused)) return none;
-  if (inQuietHours(alerts.quietHours, ctx.now)) return none;
+  if (!ctx.agent || !shouldNotify(ctx.prev, ctx.status, ctx.cause, ctx.hooked)) return none;
+  if (!shouldAlertUser(true, ctx.userLooking, alerts.notifyWhenFocused)) return { ...none, suppressed: 'focused' };
+  if (inQuietHours(alerts.quietHours, ctx.now)) return { ...none, suppressed: 'quiet-hours' };
   const config = alerts.events[event];
   const wantsSound = config.sound.kind !== 'off';
-  const sound = wantsSound && (ctx.allowSound?.(ctx.now.getTime()) ?? true) ? config.sound : null;
-  return { event, notify: config.notify, sound };
+  if (!config.notify && !wantsSound) return { ...none, suppressed: 'disabled' };
+  const soundAllowed = !wantsSound || (ctx.allowSound?.(ctx.now.getTime(), event) ?? true);
+  return {
+    event, notify: config.notify, sound: wantsSound && soundAllowed ? config.sound : null,
+    ...(wantsSound && !soundAllowed ? { suppressed: 'sound-throttled' as const } : {}),
+  };
 }
 
 // ── notification text ───────────────────────────────────────────────────────

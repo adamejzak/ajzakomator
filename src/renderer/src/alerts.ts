@@ -1,7 +1,6 @@
 // Raises the alerts (OS notification and sound) for agent status changes. The decision itself is pure (shared/alerts).
-import { decideAlert, errorPhrase, type AlertEventId } from '../../shared/alerts';
+import { ALERT_EVENTS, createAlertSoundThrottle, decideAlert, errorPhrase, type AlertEventId } from '../../shared/alerts';
 import { activeProject, activeTab, findCell, getProfile } from '../../shared/state';
-import { createSoundThrottle } from '../../shared/sound';
 import type { CellStatus, HookInfo, StatusCause, StatusReason } from '../../shared/status';
 import { playAlertSound } from './alertSound';
 import { tr } from './i18n';
@@ -22,7 +21,7 @@ export function alertBody(event: AlertEventId, name: string, errorCode?: string)
   return tr('{name} skończył pracę', { name });
 }
 
-const allowSound = createSoundThrottle();
+const allowSound = createAlertSoundThrottle();
 
 /** Called for every status change of a cell; raises whatever the alert settings and the status rules allow. */
 export function alertForStatus(
@@ -37,6 +36,7 @@ export function alertForStatus(
     prev, status, cause, hooked, reason, agent: profile.cli !== 'shell', now: new Date(), allowSound,
     userLooking: document.hasFocus() && isVisible(cellId),
   });
+  if (decision.suppressed) statusLog.markAlert(cellId, decision.suppressed);
   if (!decision.notify && !decision.sound) return;
   statusLog.markAlert(cellId);
   if (decision.notify) {
@@ -48,6 +48,22 @@ export function alertForStatus(
     });
   }
   if (decision.sound) void playAlertSound(decision.event, decision.sound);
+}
+
+let previewing = false;
+
+/** Short preview of an event sound at `volume` after the slider was committed; never overlaps itself. System beeps are skipped (they ignore the volume). */
+export async function previewVolume(volume: number): Promise<void> {
+  if (previewing) return;
+  const { events } = getS().settings.alerts;
+  const event = ALERT_EVENTS.find((e) => events[e].sound.kind === 'preset' || events[e].sound.kind === 'file');
+  if (!event) return;
+  previewing = true;
+  try {
+    await playAlertSound(event, events[event].sound, volume);
+  } finally {
+    setTimeout(() => { previewing = false; }, 700);
+  }
 }
 
 /** The test button of the settings: plays exactly what would play, and sends a sample notification only when it is on. */

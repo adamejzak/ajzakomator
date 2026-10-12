@@ -948,3 +948,4 @@ body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-sel
 .alert-quiet { gap: 10px; }
 .alert-quiet .input { width: 110px; }
 .settings-card .alert-quiet .input:disabled { opacity: .5; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

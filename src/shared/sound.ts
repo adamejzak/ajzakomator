@@ -12,6 +12,15 @@ export function isSoundFile(path: string): boolean {
 }
 
 /**
+ * A local absolute path: a drive path (C:\x or C:/x) or a POSIX path. Relative paths and anything starting with two
+ * separators (UNC shares, \\?\ and \\.\ device paths, //host/share) are refused: they could reach the network or devices.
+ */
+export function isLocalAbsolutePath(path: string): boolean {
+  if (/^[\\/]{2}/.test(path)) return false;
+  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('/');
+}
+
+/**
  * The shared alert gate: by default nothing is signalled while the user is looking at the cell
  * (`userLooking` = window focused and the cell visible); `alertWhenFocused` signals that case too.
  */

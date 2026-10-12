@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -76,5 +76,22 @@ describe('loadEventSound', () => {
     for (const sound of [{ kind: 'off' }, { kind: 'system' }, { kind: 'preset', id: 'retro' }] as const) {
       expect(loadEventSound(alerts({ done: { notify: true, sound } }), 'done')).toEqual({ ok: false });
     }
+  });
+});
+
+describe('loadSoundFile path rules', () => {
+  it('refuses relative, UNC and device paths even when the extension is fine', () => {
+    for (const path of ['a.wav', './a.wav', '..\\a.wav', 'sounds/a.wav', '\\\\host\\share\\a.wav', '//host/share/a.wav', '\\\\?\\UNC\\host\\share\\a.wav', '\\\\?\\C:\\a.wav', '\\\\.\\pipe\\a.wav']) {
+      expect(loadSoundFile(path), path).toEqual({ ok: false });
+    }
+  });
+
+  it('refuses a symbolic link to a sound file', (ctx) => {
+    const target = join(dir, 'real.wav');
+    writeFileSync(target, Buffer.from([1, 2]));
+    const link = join(dir, 'link.wav');
+    try { symlinkSync(target, link); } catch { ctx.skip(); return; } // creating symlinks needs a privilege on Windows
+    expect(loadSoundFile(target)).toMatchObject({ ok: true });
+    expect(loadSoundFile(link)).toEqual({ ok: false });
   });
 });

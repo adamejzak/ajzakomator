@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ALERT_EVENTS, isTime, normalizeVolume, type AlertEventId, type AlertSettings, type SoundChoice } from '../../../shared/alerts';
 import { SOUND_PRESETS, getPreset } from '../../../shared/soundPresets';
 import { updateSettings } from '../../../shared/state';
 import type { MessageKey } from '../../../shared/i18n';
-import { testAlert } from '../alerts';
+import { previewVolume, testAlert } from '../alerts';
 import { useI18n } from '../i18n';
-import { toast, update, useStore } from '../store';
+import { getS, toast, update, useStore } from '../store';
 
 const EVENT_LABELS: Record<AlertEventId, MessageKey> = {
   done: 'Skończył pracę',
@@ -23,6 +23,12 @@ export function AlertsSettings() {
   const { tr } = useI18n();
   const alerts = useStore((st) => st.s.settings.alerts);
   const [testing, setTesting] = useState<AlertEventId | null>(null);
+  // The slider keeps a local draft while it is dragged; the state edit (and the preview) happen once it is released.
+  const [draft, setDraft] = useState<number | null>(null);
+  const [announce, setAnnounce] = useState('');
+  const dragging = useRef(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
   const setAlerts = (change: (current: AlertSettings) => AlertSettings) =>
     update((st) => updateSettings(st, { alerts: change(st.settings.alerts) }));
   const setEvent = (event: AlertEventId, patch: Partial<AlertSettings['events'][AlertEventId]>) =>
@@ -43,12 +49,26 @@ export function AlertsSettings() {
   const test = async (event: AlertEventId) => {
     setTesting(event);
     try {
-      if (!(await testAlert(event))) toast(tr('Nie udało się odtworzyć pliku, użyto dźwięku systemowego.'), 'error');
+      const kind = getS().settings.alerts.events[event].sound.kind;
+      if (!(await testAlert(event))) {
+        toast(kind === 'file' ? tr('Nie udało się odtworzyć pliku, użyto dźwięku systemowego.') : tr('Nie udało się odtworzyć dźwięku, użyto dźwięku systemowego.'), 'error');
+      }
     } finally {
       setTesting(null);
     }
   };
-  const volumePercent = Math.round(alerts.volume * 100);
+  const savedPercent = Math.round(alerts.volume * 100);
+  const volumePercent = draft ?? savedPercent;
+  const commitVolume = (percent: number) => {
+    window.clearTimeout(timer.current);
+    dragging.current = false;
+    setDraft(null);
+    if (percent === savedPercent) return;
+    const volume = normalizeVolume(percent / 100, alerts.volume);
+    setAlerts((a) => ({ ...a, volume }));
+    setAnnounce(tr('Głośność ustawiona na {value}%', { value: percent }));
+    void previewVolume(volume);
+  };
   const quiet = alerts.quietHours;
   const setQuiet = (patch: Partial<typeof quiet>) => setAlerts((a) => ({ ...a, quietHours: { ...a.quietHours, ...patch } }));
 
@@ -60,7 +80,7 @@ export function AlertsSettings() {
         return <div key={event} className="alert-row" role="group" aria-label={label} data-event={event}>
           <div className="alert-name">{label}</div>
           <label className="check alert-notify">
-            <input type="checkbox" checked={config.notify} aria-label={tr('Powiadomienie: {event}', { event: label })}
+            <input type="checkbox" checked={config.notify} aria-label={tr('Powiadomienie systemowe: {event}', { event: label })}
               onChange={(e) => setEvent(event, { notify: e.target.checked })} />
             {tr('Powiadomienie systemowe')}
           </label>
@@ -71,11 +91,11 @@ export function AlertsSettings() {
             <option value="system">{tr('Dźwięk systemowy')}</option>
             <option value="file">{tr('Własny plik...')}</option>
           </select>
-          <button type="button" className="btn alert-test" disabled={testing === event} aria-label={tr('Przetestuj: {event}', { event: label })}
+          <button type="button" className="btn alert-test" disabled={testing === event} aria-label={tr('Test: {event}', { event: label })}
             onClick={() => void test(event)}>{tr('Test')}</button>
           {config.sound.kind === 'file' && <div className="alert-file">
             <span className="muted" title={config.sound.path}>{fileName(config.sound.path)}</span>
-            <button type="button" className="btn small" onClick={() => void pickFile(event)}>{tr('Wybierz plik...')}</button>
+            <button type="button" className="btn small" aria-label={tr('Wybierz plik dla zdarzenia: {event}', { event: label })} onClick={() => void pickFile(event)}>{tr('Wybierz plik...')}</button>
           </div>}
         </div>;
       })}
@@ -83,9 +103,21 @@ export function AlertsSettings() {
     <div className="field">
       <div className="row alert-volume">
         <label htmlFor="settings-alert-volume">{tr('Głośność')}</label>
-        <input id="settings-alert-volume" type="range" min={0} max={100} value={volumePercent}
-          onChange={(e) => setAlerts((a) => ({ ...a, volume: normalizeVolume(Number(e.target.value) / 100, a.volume) }))} />
-        <span className="muted" aria-live="polite">{volumePercent}%</span>
+        <input id="settings-alert-volume" type="range" min={0} max={100} value={volumePercent} aria-valuetext={`${volumePercent}%`}
+          onPointerDown={() => { dragging.current = true; }}
+          onPointerUp={(e) => commitVolume(Number(e.currentTarget.value))}
+          onPointerCancel={(e) => commitVolume(Number(e.currentTarget.value))}
+          onKeyUp={(e) => commitVolume(Number(e.currentTarget.value))}
+          onBlur={(e) => commitVolume(Number(e.currentTarget.value))}
+          onChange={(e) => {
+            const percent = Number(e.target.value);
+            setDraft(percent);
+            window.clearTimeout(timer.current);
+            // Changes that come with no pointer or key release (assistive technology) are committed after a short pause.
+            if (!dragging.current) timer.current = window.setTimeout(() => commitVolume(percent), 300);
+          }} />
+        <span className="muted" aria-hidden="true">{volumePercent}%</span>
+        <span className="sr-only" role="status">{announce}</span>
       </div>
     </div>
     <div className="field">

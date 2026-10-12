@@ -19,6 +19,8 @@ export interface StatusLogEntry {
   note?: 'no-change' | 'ignored';
   /** The app raised a notification / sound for this transition. */
   alert?: boolean;
+  /** A real alert transition that was held back (focused, quiet-hours, disabled) or lost only its sound (sound-throttled). */
+  suppressed?: string;
   /** Short key=value diagnostics (background task counts, error code, stall kind), never text. */
   detail?: string;
 }
@@ -56,11 +58,12 @@ export class StatusLog {
     return this.entries;
   }
 
-  /** Marks the newest entry of the cell as one that raised an alert. */
-  markAlert(cellId: string): void {
+  /** Marks the newest entry of the cell as one that raised an alert, or (with a reason) as one that was suppressed. */
+  markAlert(cellId: string, suppressed?: string): void {
     for (let i = this.entries.length - 1; i >= 0; i--) {
       if (this.entries[i].cellId !== cellId) continue;
-      this.entries[i].alert = true;
+      if (suppressed) this.entries[i].suppressed = suppressed;
+      else this.entries[i].alert = true;
       return;
     }
   }
@@ -80,6 +83,7 @@ export function formatEntry(e: StatusLogEntry): string {
   if (e.reason && e.to === 'waiting') parts.push(`reason=${e.reason}`);
   if (e.note) parts.push(e.note);
   if (e.alert) parts.push('alert');
+  if (e.suppressed) parts.push(`alert=suppressed:${e.suppressed}`);
   if (e.detail) parts.push(e.detail);
   return parts.join(' ');
 }

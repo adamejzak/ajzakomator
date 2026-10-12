@@ -1,6 +1,6 @@
-import { readFileSync, statSync } from 'fs';
+import { lstatSync, readFileSync, statSync } from 'fs';
 import { isAlertEvent, type AlertSettings } from '../shared/alerts';
-import { isSoundFile, SOUND_MAX_BYTES } from '../shared/sound';
+import { isLocalAbsolutePath, isSoundFile, SOUND_MAX_BYTES } from '../shared/sound';
 
 export type SoundLoad =
   | { ok: true; key: string; data: Uint8Array | null }
@@ -9,11 +9,13 @@ export type SoundLoad =
 /**
  * Reads the user's own sound file for the renderer (which may not load file:// URLs itself).
  * `knownKey` is the key the renderer already decoded: when the file is unchanged no bytes are sent again.
+ * Only local absolute paths are read: relative paths, UNC / device paths and symbolic links are refused.
  * Never throws; any problem (no path, bad extension, missing, too big, unreadable) is `{ ok: false }`.
  */
 export function loadSoundFile(path: string, knownKey?: string): SoundLoad {
   try {
-    if (!path || !isSoundFile(path)) return { ok: false };
+    if (!path || !isLocalAbsolutePath(path) || !isSoundFile(path)) return { ok: false };
+    if (lstatSync(path).isSymbolicLink()) return { ok: false };
     const info = statSync(path);
     if (!info.isFile() || info.size === 0 || info.size > SOUND_MAX_BYTES) return { ok: false };
     const key = `${path}|${info.size}|${info.mtimeMs}`;

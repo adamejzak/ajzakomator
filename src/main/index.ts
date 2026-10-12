@@ -51,6 +51,7 @@ import { automationHintForHook, automationStatusFor } from '../shared/runtimeSta
 import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadEventSound } from './alertSound';
+import { notificationOptions } from './notifyOptions';
 
 const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
 // Carry over state from the app's previous name.
@@ -482,7 +483,7 @@ ipcMain.handle('git:removeWorktree', (_e, p: string, wt: Worktree, del: boolean)
 
 ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) => {
   if (!Notification.isSupported()) return;
-  const notification = new Notification({ title: n.title, body: n.body, silent: false });
+  const notification = new Notification(notificationOptions(n));
   notifications.add(notification);
   const forget = () => notifications.delete(notification);
   notification.on('close', forget);

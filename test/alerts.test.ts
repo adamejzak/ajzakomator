@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  alertEventOf, ALERT_EVENTS, decideAlert, defaultAlerts, ERROR_PHRASES, errorPhrase, inQuietHours, migrateLegacyAlerts, normalizeAlerts,
+  alertEventOf, ALERT_EVENTS, createAlertSoundThrottle, decideAlert, defaultAlerts, ERROR_PHRASES, errorPhrase, inQuietHours, migrateLegacyAlerts, normalizeAlerts,
   type AlertContext, type AlertSettings,
 } from '../src/shared/alerts';
 import { messages } from '../src/shared/messages';
-import { createSoundThrottle } from '../src/shared/sound';
+import { StateController } from '../src/main/stateController';
+import { notificationOptions } from '../src/main/notifyOptions';
+import { formatEntry, StatusLog } from '../src/shared/statusLog';
 import { defaultState, normalizeState } from '../src/shared/state';
 
 const at = (h: number, m = 0) => new Date(2026, 9, 12, h, m);
@@ -38,7 +40,7 @@ describe('decideAlert', () => {
   it('raises nothing for an event with both notification and sound off', () => {
     const a = defaultAlerts();
     a.events.error = { notify: false, sound: { kind: 'off' } };
-    expect(decideAlert(a, ctx({ reason: 'error' }))).toEqual({ event: 'error', notify: false, sound: null });
+    expect(decideAlert(a, ctx({ reason: 'error' }))).toEqual({ event: 'error', notify: false, sound: null, suppressed: 'disabled' });
   });
 
   it('never alerts for shell cells', () => {
@@ -75,18 +77,44 @@ describe('decideAlert', () => {
     expect(decideAlert({ ...quiet, notifyWhenFocused: true }, ctx({ now: at(23), userLooking: true }))).toMatchObject({ notify: false, sound: null });
   });
 
-  it('throttles bursts of sounds but not the notifications, and only counts sounds that would play', () => {
-    const allow = createSoundThrottle(1000);
+  it('throttles bursts of sounds per event but not the notifications, and only counts sounds that would play', () => {
+    const allow = createAlertSoundThrottle(1000);
     const first = decideAlert(defaultAlerts(), ctx({ allowSound: allow }));
     const second = decideAlert(defaultAlerts(), ctx({ allowSound: allow }));
     expect(first.sound).not.toBeNull();
-    expect(second).toMatchObject({ notify: true, sound: null });
+    expect(second).toMatchObject({ notify: true, sound: null, suppressed: 'sound-throttled' });
     // a silent event does not consume the window
-    const quiet = createSoundThrottle(1000);
+    const quiet = createAlertSoundThrottle(1000);
     const a = defaultAlerts();
     a.events.done.sound = { kind: 'off' };
     decideAlert(a, ctx({ allowSound: quiet }));
     expect(decideAlert(defaultAlerts(), ctx({ allowSound: quiet })).sound).not.toBeNull();
+  });
+
+  it('a finished sound never swallows the needs-you or error sound within the window', () => {
+    const allow = createAlertSoundThrottle(1000);
+    const t0 = at(12, 0).getTime();
+    const done = decideAlert(defaultAlerts(), ctx({ allowSound: allow, now: new Date(t0) }));
+    const attention = decideAlert(defaultAlerts(), ctx({ allowSound: allow, reason: 'attention', now: new Date(t0 + 100) }));
+    const error = decideAlert(defaultAlerts(), ctx({ allowSound: allow, reason: 'error', now: new Date(t0 + 200) }));
+    const doneAgain = decideAlert(defaultAlerts(), ctx({ allowSound: allow, now: new Date(t0 + 300) }));
+    expect([done.sound?.kind, attention.sound?.kind, error.sound?.kind]).toEqual(['preset', 'preset', 'preset']);
+    expect(doneAgain.sound).toBeNull();
+    expect(doneAgain.suppressed).toBe('sound-throttled');
+    // two finished sounds within the window play once; the window opens again afterwards
+    expect(decideAlert(defaultAlerts(), ctx({ allowSound: allow, now: new Date(t0 + 1000) })).sound).not.toBeNull();
+  });
+
+  it('reports why a real alert transition raised nothing', () => {
+    expect(decideAlert(defaultAlerts(), ctx({ userLooking: true })).suppressed).toBe('focused');
+    expect(decideAlert(withAlerts({ quietHours: { enabled: true, start: '09:00', end: '17:00' } }), ctx({ now: at(12) })).suppressed).toBe('quiet-hours');
+    const off = defaultAlerts();
+    off.events.done = { notify: false, sound: { kind: 'off' } };
+    expect(decideAlert(off, ctx()).suppressed).toBe('disabled');
+    // no alert transition or a shell cell: nothing to explain
+    expect(decideAlert(defaultAlerts(), ctx({ prev: 'waiting' })).suppressed).toBeUndefined();
+    expect(decideAlert(defaultAlerts(), ctx({ agent: false })).suppressed).toBeUndefined();
+    expect(decideAlert(defaultAlerts(), ctx()).suppressed).toBeUndefined();
   });
 });
 
@@ -186,19 +214,19 @@ describe('migration of the retired settings', () => {
     for (const e of ALERT_EVENTS) expect(alerts.events[e]).toEqual({ notify: false, sound: off });
   });
 
-  it('the system sound moves to finished and needs-you', () => {
+  it('the system sound moves to every event (errors played it before, too)', () => {
     const { alerts } = migrate({ notifications: true, waitingSound: 'system', waitingSoundFile: '', waitingSoundVolume: 70, notifyWhenFocused: false });
     expect(alerts.events.done).toEqual({ notify: true, sound: { kind: 'system' } });
     expect(alerts.events.attention).toEqual({ notify: true, sound: { kind: 'system' } });
-    expect(alerts.events.error).toEqual({ notify: true, sound: off });
+    expect(alerts.events.error).toEqual({ notify: true, sound: { kind: 'system' } });
   });
 
-  it('an own file moves to finished and needs-you with its volume (0-100 becomes 0-1)', () => {
+  it('an own file moves to every event with its volume (0-100 becomes 0-1)', () => {
     const { alerts } = migrate({ notifications: true, waitingSound: 'custom', waitingSoundFile: 'C:\\s\\ding.mp3', waitingSoundVolume: 30 });
     expect(alerts.volume).toBe(0.3);
     expect(alerts.events.done.sound).toEqual({ kind: 'file', path: 'C:\\s\\ding.mp3' });
     expect(alerts.events.attention.sound).toEqual({ kind: 'file', path: 'C:\\s\\ding.mp3' });
-    expect(alerts.events.error.sound).toEqual(off);
+    expect(alerts.events.error.sound).toEqual({ kind: 'file', path: 'C:\\s\\ding.mp3' });
   });
 
   it('custom without a file used to beep, so it becomes the system sound', () => {
@@ -225,5 +253,52 @@ describe('migration of the retired settings', () => {
     // a second pass is stable
     const again = normalizeState(JSON.parse(JSON.stringify({ ...defaultState(), settings })))!.settings;
     expect(again.alerts).toEqual(settings.alerts);
+  });
+});
+
+describe('saved sound paths', () => {
+  it('only local absolute paths survive normalization', () => {
+    const fallback = defaultAlerts().events.done.sound;
+    const choose = (path: string) => normalizeAlerts({ events: { done: { sound: { kind: 'file', path } } } }).events.done.sound;
+    for (const ok of ['C:\\sounds\\a.wav', 'D:/s/a.mp3', '/Users/me/a.wav']) expect(choose(ok)).toEqual({ kind: 'file', path: ok });
+    for (const bad of ['a.wav', './a.wav', '..\\a.wav', '\\\\host\\share\\a.wav', '//host/share/a.wav', '\\\\?\\UNC\\h\\s\\a.wav', '\\\\?\\C:\\a.wav', '\\\\.\\pipe\\x']) expect(choose(bad)).toEqual(fallback);
+  });
+
+  it('the main-process state edit path normalizes alerts, so the renderer cannot store arbitrary values', () => {
+    const base = defaultState();
+    const controller = new StateController(base, () => {});
+    const next = JSON.parse(JSON.stringify(base));
+    next.settings.alerts.events.done.sound = { kind: 'file', path: '\\\\evil\\share\\x.wav' };
+    next.settings.alerts.events.error.sound = { kind: 'preset', id: 'nope' };
+    next.settings.alerts.volume = 99;
+    next.settings.alerts.events.attention.sound = { kind: 'file', path: 'C:\\ok\\a.wav' };
+    const { alerts } = controller.apply({ id: 'e1', base, next }).state.settings;
+    expect(alerts.events.done.sound).toEqual(defaultAlerts().events.done.sound);
+    expect(alerts.events.error.sound).toEqual(defaultAlerts().events.error.sound);
+    expect(alerts.events.attention.sound).toEqual({ kind: 'file', path: 'C:\\ok\\a.wav' });
+    expect(alerts.volume).toBe(1);
+  });
+});
+
+describe('OS notification options', () => {
+  it('are always silent: the app plays the chosen sound itself', () => {
+    expect(notificationOptions({ title: 'T', body: 'B' })).toEqual({ title: 'T', body: 'B', silent: true });
+    const long = notificationOptions({ title: 'x'.repeat(1000), body: 'y'.repeat(1000) });
+    expect(long.silent).toBe(true);
+    expect(long.title).toHaveLength(200);
+  });
+});
+
+describe('status log alert markers', () => {
+  const entry = (log: StatusLog) => log.push({ at: 0, cellId: 'c', from: 'working', to: 'waiting', cause: 'hook', trigger: 'stop', reason: 'done' });
+  it('records an alert and a suppressed alert with its reason', () => {
+    const log = new StatusLog();
+    entry(log); log.markAlert('c');
+    entry(log); log.markAlert('c', 'quiet-hours');
+    const [raised, held] = log.list().map(formatEntry);
+    expect(raised).toMatch(/ alert( |$)/);
+    expect(raised).not.toContain('suppressed');
+    expect(held).toContain('alert=suppressed:quiet-hours');
+    expect(held).not.toMatch(/ alert( |$)/);
   });
 });

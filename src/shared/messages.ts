@@ -104,7 +104,6 @@ export const messages = {
   'pracuje': ['working', 'arbeitet', 'trabajando', 'en cours', 'a trabalhar'],
   'czeka na Ciebie': ['waiting for you', 'wartet auf dich', 'esperando tu respuesta', 'attend votre réponse', 'à espera da sua resposta'],
   'zakończony': ['exited', 'beendet', 'finalizado', 'terminé', 'terminado'],
-  '{name} czeka na Ciebie': ['{name} is waiting for you', '{name} wartet auf dich', '{name} está esperando tu respuesta', '{name} attend votre réponse', '{name} está à espera da sua resposta'],
   'Zmień profil': ['Change profile', 'Profil ändern', 'Cambiar perfil', 'Changer de profil', 'Mudar perfil'],
   'Zmień profil (nowa rozmowa)': ['Change profile (new conversation)', 'Profil ändern (neues Gespräch)', 'Cambiar perfil (nueva conversación)', 'Changer de profil (nouvelle conversation)', 'Mudar perfil (nova conversa)'],
   'Przywróć nazwę automatyczną': ['Restore automatic name', 'Automatischen Namen wiederherstellen', 'Restaurar nombre automático', 'Rétablir le nom automatique', 'Restaurar nome automático'],

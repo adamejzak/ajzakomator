@@ -1,6 +1,7 @@
 import { mergeStateEdit, type StateEdit, type StateSnapshot } from '../shared/stateEdits';
 import type { AppState } from '../shared/types';
 import { layoutForCount, MAX_CELLS } from '../shared/layout';
+import { normalizeAlerts } from '../shared/alerts';
 
 /** Main is the single writer. Renderer edits rebase; MCP operations mutate the latest state. */
 export class StateController {
@@ -17,7 +18,8 @@ export class StateController {
   apply(edit: StateEdit): StateSnapshot {
     return this.change((state) => {
       const next = mergeStateEdit(state, edit);
-      return { ...next, projects: next.projects.map((project) => ({ ...project,
+      // The renderer cannot store arbitrary alert values (unknown presets, relative or UNC sound paths): they are normalized here.
+      return { ...next, settings: { ...next.settings, alerts: normalizeAlerts(next.settings.alerts) }, projects: next.projects.map((project) => ({ ...project,
         tabs: project.tabs.map((tab) => {
           if (tab.cells.length < 1 || tab.cells.length > MAX_CELLS) throw new Error('Concurrent grid change exceeds the cell limit.');
           return tab.layout.areas.length === tab.cells.length ? tab : { ...tab, layout: layoutForCount(tab.cells.length) };
