@@ -26,6 +26,21 @@ describe('refreshClaudeProfile', () => {
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
+  it('retries storing a rotated token and then reports the login as unusable', async () => {
+    write(profile());
+    let tries = 0;
+    const fetchSpy = vi.fn(async () => {
+      tries++;
+      rmSync(join(dir, '.credentials.json'), { force: true });
+      mkdirSync(join(dir, '.credentials.json'));
+      return reply(200, { access_token: 'n', refresh_token: 'rotated', expires_in: 60 });
+    });
+    const outcome = await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW, delay: async () => undefined });
+    expect(outcome).toEqual({ kind: 'unusable' });
+    expect(tries).toBe(1);
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
   it('renews the tokens, rotates the refresh token and keeps every other key', async () => {
     write(profile());
     const fetchSpy = vi.fn(async () => reply(200, { access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600, scope: 'user:inference user:profile' }));

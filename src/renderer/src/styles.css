@@ -875,6 +875,7 @@ body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-sel
 .usage-kebab { flex: none; margin-left: auto; display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .usage-kebab:hover { color: var(--text); background: var(--border-2); }
 .usage-expired { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.usage-warning { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px; margin-bottom: 6px; border: 1px solid var(--warn, #d9a441); border-radius: 6px; }
 .usage-empty { display: flex; flex-direction: column; gap: 6px; }
 .usage-empty-buttons { display: flex; gap: 6px; }
 .usage-empty-buttons .btn { display: inline-flex; align-items: center; gap: 5px; }

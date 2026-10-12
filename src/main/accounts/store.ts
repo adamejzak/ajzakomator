@@ -76,7 +76,15 @@ export class AccountsStore {
     const accounts = this.list();
     const index = accounts.findIndex((entry) => entry.id === id);
     if (index < 0) return;
-    accounts[index] = sanitize({ ...accounts[index], ...patch });
+    // Fields are changed in place so the key order in accounts.json stays stable.
+    const next: ManagedAccount = { ...accounts[index] };
+    for (const key of ['email', 'org'] as const) {
+      if (!(key in patch)) continue;
+      const value = optionalText(patch[key]);
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+    }
+    accounts[index] = next;
     this.write(accounts);
   }
 

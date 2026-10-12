@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { accountMutationBlock, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
 import { AccountsStore } from '../src/main/accounts/store';
-import { nodeSwapFs, recoverInterruptedSwap, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
+import { clearPendingSwap, hasPendingSwap, nodeSwapFs, recoverInterruptedSwap, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
 
 const FUTURE = Date.parse('2026-10-11T12:00:00Z') + 3_600_000;
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -151,14 +152,53 @@ describe('rollback follows the position of a token', () => {
   };
   const boom = () => Object.assign(new Error('boom'), { code: 'EIO' });
 
-  it('sends a token that Claude Code rotated after step 2 back to the target profile', async () => {
+  it('does not guess when Claude Code rotated main after our write and a later step fails', async () => {
     fs = renameHook((to) => { if (to === mainJson()) { put(mainCreds(), creds('X2')); throw boom(); } });
-    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'write' });
-    expect(token(mainCreds())).toBe('tok-A');
-    expect(token(tCreds())).toBe('tok-X2');
-    expect(acct(mainJson())).toBe('a@x.com');
-    expect(acct(tJson())).toBe('x@x.com');
-    expect(backupFiles()).toEqual([]);
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
+    // main keeps what Claude Code wrote, the target keeps the old main login; the X1 login stays recoverable from the backup
+    expect(token(mainCreds())).toBe('tok-X2');
+    expect(token(tCreds())).toBe('tok-A');
+    expect(json(join(backup(), 'target-credentials.json')).claudeAiOauth.accessToken).toBe('tok-X');
+    expect(existsSync(journalPath())).toBe(true);
+  });
+
+  it('S2: a refresh result written into main right after our write makes the outcome manual', async () => {
+    let first = true;
+    const d = { ...deps(), delay: async () => { if (first) { first = false; put(mainCreds(), creds('A2')); } } };
+    expect(await swapMainAccount(d, ID)).toEqual({ ok: false, error: 'manual' });
+    expect(token(mainCreds())).toBe('tok-A2');
+    expect(token(tCreds())).toBe('tok-A');
+    expect(json(join(backup(), 'target-credentials.json')).claudeAiOauth.accessToken).toBe('tok-X');
+    expect(json(join(backup(), 'main-credentials.json')).claudeAiOauth.accessToken).toBe('tok-A');
+    expect(existsSync(journalPath())).toBe(true);
+  });
+
+  it('S2b: the same after the main identity was written', async () => {
+    let calls = 0;
+    const d = { ...deps(), delay: async () => { if (++calls === 2) put(mainCreds(), creds('X2')); } };
+    expect(await swapMainAccount(d, ID)).toEqual({ ok: false, error: 'manual' });
+    expect(token(mainCreds())).toBe('tok-X2');
+    expect(existsSync(journalPath())).toBe(true);
+    expect(backupFiles()).toContain('target-credentials.json');
+  });
+
+  it('blocks a second swap while an unresolved one left its journal and backups', async () => {
+    fs = renameHook((to, n) => {
+      if (to === mainJson()) throw boom();
+      if (to === mainCreds() && n >= 2) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    });
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
+    fs = nodeSwapFs;
+    const before = snapshot();
+    const files = backupFiles().map((n) => [n, readFileSync(join(backup(), n), 'utf8')]);
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'pending' });
+    expect(snapshot()).toEqual(before);
+    expect(backupFiles().map((n) => [n, readFileSync(join(backup(), n), 'utf8')])).toEqual(files);
+    expect(await hasPendingSwap(deps())).toBe(true);
+    // the user clears it deliberately
+    expect(await clearPendingSwap(deps())).toBe(true);
+    expect(existsSync(backup())).toBe(false);
+    expect(await hasPendingSwap(deps())).toBe(false);
   });
 
   it('stops after an unclean rollback: no retry, backup and journal kept, nothing lost', async () => {
@@ -211,5 +251,61 @@ describe('identity and path rules', () => {
     put(tJson(), { oauthAccount: { accountUuid: 'uuid-X' } });
     expect(await swapMainAccount(deps(), ID)).toEqual({ ok: true, email: 'x@x.com' });
     expect(acct(mainJson())).toBe('x@x.com');
+  });
+});
+
+describe('startup cleanup', () => {
+  it('deletes stray backups when there is no journal, and only our own stale temp files', async () => {
+    mkdirSync(backup(), { recursive: true });
+    writeFileSync(join(backup(), 'main-credentials.json'), JSON.stringify(creds('A')));
+    const uuid = '123e4567-e89b-42d3-a456-426614174000';
+    const stale = [join(home, '.claude', `.credentials.json.${uuid}.tmp`), join(home, `.claude.json.${uuid}.tmp`), join(tDir(), `.credentials.json.${uuid}.tmp`)];
+    const keep = [join(home, '.claude', 'notes.tmp'), join(home, '.claude', '.credentials.json.backup.tmp')];
+    for (const f of [...stale, ...keep]) writeFileSync(f, 'x');
+    const before = snapshot();
+    expect(await recoverInterruptedSwap(deps())).toBe('none');
+    expect(existsSync(backup())).toBe(false);
+    for (const f of stale) expect(existsSync(f)).toBe(false);
+    for (const f of keep) expect(existsSync(f)).toBe(true);
+    expect(snapshot()).toEqual(before);
+  });
+
+  it('keeps temp files while an unresolved journal exists', async () => {
+    await crashed('main-creds-written');
+    put(mainCreds(), creds('M9')); put(tCreds(), creds('T9'));
+    const stale = join(home, '.claude', '.credentials.json.123e4567-e89b-42d3-a456-426614174000.tmp');
+    writeFileSync(stale, 'x');
+    expect(await recoverInterruptedSwap(deps())).toBe('manual');
+    expect(existsSync(stale)).toBe(true);
+  });
+});
+
+describe('account mutation guards', () => {
+  const base = (running: boolean, pending: boolean) => ({ swapRunning: () => running, swapPending: async () => pending });
+  const removeDeps = (running: boolean, pending: boolean) => {
+    const calls: string[] = [];
+    return { calls, deps: { ...base(running, pending), cancelLogin: () => calls.push('cancel'), remove: () => calls.push('remove'), onRemoved: () => calls.push('refresh') } };
+  };
+
+  it('refuses to remove an account while a swap runs or is pending', async () => {
+    for (const [running, pending, error] of [[true, false, 'busy'], [false, true, 'pending']] as const) {
+      const { calls, deps: d } = removeDeps(running, pending);
+      expect(await handleRemoveAccount(d, ID)).toEqual({ ok: false, error });
+      expect(calls).toEqual([]);
+    }
+  });
+
+  it('removes when nothing blocks and validates the id', async () => {
+    const { calls, deps: d } = removeDeps(false, false);
+    expect(await handleRemoveAccount(d, '../x')).toEqual({ ok: false });
+    expect(await handleRemoveAccount(d, ID)).toEqual({ ok: true });
+    expect(calls).toEqual(['cancel', 'remove', 'refresh']);
+  });
+
+  it('holds re-logins of the main login or a saved account, not new accounts', async () => {
+    expect(await loginBlock(base(false, true), { provider: 'claude', target: { type: 'main' } })).toBe('pending');
+    expect(await loginBlock(base(true, false), { provider: 'claude', target: { type: 'account', id: ID } })).toBe('busy');
+    expect(await loginBlock(base(false, true), { provider: 'claude', target: { type: 'new' } })).toBeNull();
+    expect(await accountMutationBlock({ swapRunning: () => false, swapPending: async () => { throw new Error('io'); } })).toBe('pending');
   });
 });

@@ -29,7 +29,8 @@ import { createChangelog } from './changelog';
 import { refreshClaudeProfile } from './accounts/refresh';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
-import { isSwapRunning, recoverInterruptedSwap, swapMainAccount, type SwapDeps } from './accounts/swap';
+import { handleRemoveAccount, loginBlock } from './accounts/guards';
+import { clearPendingSwap, hasPendingSwap, isSwapRunning, recoverInterruptedSwap, swapMainAccount, type SwapDeps } from './accounts/swap';
 import { readManagedIdentity } from './accounts/identity';
 import { LoginManager } from './auth/login';
 import { isAccountId, type LoginRequest } from '../shared/accounts';
@@ -146,6 +147,11 @@ const swapDeps = (): SwapDeps => ({
   refresh: (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }),
   delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
+const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()) };
+/** Tells the renderer whether an unresolved swap blocks further swaps. */
+async function pushSwapPending(): Promise<void> {
+  send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
+}
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();
@@ -257,7 +263,7 @@ function createWindow(): void {
   win.on('restore', () => usage.setActive(true));
   win.on('show', () => usage.setActive(true));
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
-  win.webContents.on('did-finish-load', () => { if (isLive(win)) ptyHost.connectRenderer(win.webContents); });
+  win.webContents.on('did-finish-load', () => { if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -502,21 +508,31 @@ ipcMain.handle('usage:get', () => usage.getState());
 ipcMain.handle('usage:refresh', () => usage.refresh(true));
 ipcMain.handle('auth:start', (_e, request: unknown) => {
   if (typeof request !== 'object' || request === null || Array.isArray(request)) return { ok: false, error: 'invalid request' };
-  return login.start(request as LoginRequest);
+  return loginBlock(guardDeps, request).then((block) => (block ? { ok: false as const, error: block } : login.start(request as LoginRequest)));
 });
 ipcMain.on('auth:cancel', (_e, id: unknown) => { if (typeof id === 'string') login.cancel(id); });
-ipcMain.handle('accounts:remove', (_e, id: unknown) => {
-  if (!isAccountId(id)) return { ok: false };
-  login.cancelFor(id);
-  accounts.remove(id);
-  void usage.refresh(true, true);
-  return { ok: true };
-});
-ipcMain.handle('accounts:makeMain', (_e, id: unknown) => handleMakeMain({
-  loginActive: () => login.isActive(),
-  swap: (accountId) => swapMainAccount(swapDeps(), accountId),
-  onSwapped: () => { void usage.refresh(true, true); },
+ipcMain.handle('accounts:remove', (_e, id: unknown) => handleRemoveAccount({
+  ...guardDeps,
+  cancelLogin: (accountId) => login.cancelFor(accountId),
+  remove: (accountId) => accounts.remove(accountId),
+  onRemoved: () => { void usage.refresh(true, true); },
 }, id));
+ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
+  const result = await handleMakeMain({
+    loginActive: () => login.isActive(),
+    swap: (accountId) => swapMainAccount(swapDeps(), accountId),
+    onSwapped: () => { void usage.refresh(true, true); },
+  }, id);
+  void pushSwapPending();
+  return result;
+});
+ipcMain.handle('accounts:swapPending', () => hasPendingSwap(swapDeps()).catch(() => true));
+/** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
+ipcMain.handle('accounts:clearSwapPending', async () => {
+  const cleared = await clearPendingSwap(swapDeps());
+  void pushSwapPending();
+  return { ok: cleared };
+});
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
@@ -634,9 +650,9 @@ async function startMainApp(): Promise<void> {
   await hooks.start();
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
-  createWindow();
-  // An interrupted main-account swap is rolled back before the usage service reads any credentials.
+  // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another.
   try { await recoverInterruptedSwap(swapDeps()); } catch { /* the journal stays and the next start retries */ }
+  createWindow();
   usage.start();
   scheduleUpdateCleanup();
 }

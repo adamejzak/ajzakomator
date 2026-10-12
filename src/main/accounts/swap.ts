@@ -1,7 +1,7 @@
 // src/main/accounts/swap.ts
 import { randomUUID } from 'crypto';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'fs/promises';
-import { isAbsolute, join } from 'path';
+import { mkdir, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'fs/promises';
+import { dirname, isAbsolute, join } from 'path';
 import { isAccountId, type SwapError, type SwapRecovery, type SwapResult } from '../../shared/accounts';
 import { withProfileLock, type RefreshOutcome } from './refresh';
 import type { AccountsStore } from './store';
@@ -34,6 +34,10 @@ export interface SwapFs {
   rename(from: string, to: string): Promise<void>;
   rm(path: string): Promise<void>;
   mkdir(path: string): Promise<void>;
+  /** File names in a directory (empty when it does not exist). */
+  readdir(path: string): Promise<string[]>;
+  /** Removes an EMPTY directory; errors are for the caller to ignore. */
+  rmdir(path: string): Promise<void>;
 }
 
 export const nodeSwapFs: SwapFs = {
@@ -43,6 +47,8 @@ export const nodeSwapFs: SwapFs = {
   rename,
   rm: (path) => rm(path, { force: true }),
   mkdir: (path) => mkdir(path, { recursive: true, mode: 0o700 }).then(() => undefined),
+  readdir: (path) => readdir(path).catch(() => []),
+  rmdir: (path) => rmdir(path),
 };
 
 export interface SwapDeps {
@@ -67,6 +73,9 @@ const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const MAX_RETRIES = 5;
 const MAX_TRIES = 3;
 const EXPIRY_MARGIN_MS = 60_000;
+/** How long Claude Code gets to write its own refresh result before we trust what we wrote. */
+const SETTLE_MS = 1500;
+const TEMP_NAME = /^\.(credentials|claude)\.json\.[0-9a-f-]{36}\.tmp$/;
 const JOURNAL = 'swap-journal.json';
 const BACKUP = { mainCreds: 'main-credentials.json', mainJson: 'main-claude.json', targetCreds: 'target-credentials.json', targetJson: 'target-claude.json' };
 
@@ -77,6 +86,8 @@ class Fail extends Error {
 }
 /** A shared file changed between our read and our rename; the caller re-reads and recomputes. */
 class Changed extends Error {}
+/** Main credentials no longer hold what we wrote: whose lineage they are cannot be proven, so nothing more is touched. */
+class Unprovable extends Error {}
 
 let running = false;
 /** True while a swap runs; the login flow must not start meanwhile. */
@@ -193,6 +204,23 @@ async function inspect(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
   return { mainCreds, mainJson, targetCreds, targetJson, mainOauth, targetOauth, mainAccount, targetAccount, mainIdentity, targetIdentity };
 }
 
+/** True while an earlier swap left a journal or backups behind (they are the only proof of whose login is whose). */
+export async function hasPendingSwap(deps: Pick<SwapDeps, 'backupDir' | 'fs'>): Promise<boolean> {
+  return ((await (deps.fs ?? nodeSwapFs).readdir(deps.backupDir)).length) > 0;
+}
+
+/** Deletes the journal and backups for good (the user confirmed). Refused while a swap runs. */
+export async function clearPendingSwap(deps: Pick<SwapDeps, 'backupDir' | 'fs'>): Promise<boolean> {
+  if (running) return false;
+  running = true;
+  try {
+    const fs = deps.fs ?? nodeSwapFs;
+    for (const name of await fs.readdir(deps.backupDir)) await fs.rm(join(deps.backupDir, name));
+    await fs.rmdir(deps.backupDir).catch(() => undefined);
+    return (await fs.readdir(deps.backupDir)).length === 0;
+  } catch { return false; } finally { running = false; }
+}
+
 /** Swaps the main Claude login with the one saved in managed account `accountId`. Never throws; never exposes a token. */
 export async function swapMainAccount(deps: SwapDeps, accountId: string): Promise<SwapResult> {
   if (deps.platform === 'darwin') return { ok: false, error: 'unsupported' };
@@ -200,6 +228,7 @@ export async function swapMainAccount(deps: SwapDeps, accountId: string): Promis
   if (running) return { ok: false, error: 'busy' };
   running = true;
   try {
+    if (await hasPendingSwap(deps)) return { ok: false, error: 'pending' };
     return await perform(deps, deps.fs ?? nodeSwapFs, accountId);
   } catch (error) {
     return { ok: false, error: error instanceof Fail ? error.code : 'write' };
@@ -217,7 +246,7 @@ async function perform(deps: SwapDeps, fs: SwapFs, accountId: string): Promise<S
   const targetDir = deps.store.dirOf(accountId);
   let outcome: RefreshOutcome;
   try { outcome = await deps.refresh(targetDir); } catch { outcome = { kind: 'transient' }; }
-  if (outcome.kind === 'dead') throw new Fail('dead');
+  if (outcome.kind === 'dead' || outcome.kind === 'unusable') throw new Fail('dead');
   return withProfileLock(targetDir, () => runSwap(deps, fs, paths, accountId, targetDir, outcome.kind === 'transient'));
 }
 
@@ -226,6 +255,8 @@ interface Ctx {
   targetCredsPath: string; targetJsonPath: string;
   targetCredsWritten: boolean; targetJsonWritten: boolean; mainCredsReplaced: boolean; mainJsonReplaced: boolean;
   phase: Phase | null;
+  /** Exact text we wrote to main credentials (null until then). */
+  writtenMainCreds: string | null;
 }
 
 const write = (c: Ctx, path: string, data: string, guard?: () => Promise<boolean>) => atomicWrite(c.deps, c.fs, path, data, guard);
@@ -240,19 +271,22 @@ async function journal(c: Ctx, phase: Phase): Promise<void> {
  * Moves the CURRENT main blob into the target profile and `toMain` into main. Main is re-read on every try and guarded
  * right before every rename attempt; when Claude Code wrote meanwhile the target copy is recomputed from the fresh blob.
  */
-async function exchangeCreds(c: Ctx, toMain: Rec, journaled: boolean): Promise<void> {
+async function exchangeCreds(c: Ctx, toMain: Rec, journaled: boolean, expectText?: string): Promise<void> {
   for (let tries = 0; tries < MAX_TRIES; tries++) {
     const main = await readSnap(c.fs, c.paths.credentials);
     const mainOauth = main ? oauthOf(main.data) : null;
     if (!main || !validOauth(mainOauth)) throw new Fail('write');
+    if (expectText !== undefined && main.text !== expectText) throw new Unprovable();
     const target = await readSnap(c.fs, c.targetCredsPath);
     if (journaled) await journal(c, 'target-written');
     await write(c, c.targetCredsPath, JSON.stringify({ ...(target?.data ?? c.s.targetCreds.data), claudeAiOauth: mainOauth }));
     c.targetCredsWritten = true;
     if (journaled) await journal(c, 'main-creds-written');
     try {
-      await write(c, c.paths.credentials, JSON.stringify({ ...main.data, claudeAiOauth: toMain }), unchanged(c.fs, c.paths.credentials, main));
+      const text = JSON.stringify({ ...main.data, claudeAiOauth: toMain });
+      await write(c, c.paths.credentials, text, unchanged(c.fs, c.paths.credentials, main));
       c.mainCredsReplaced = true;
+      c.writtenMainCreds = text;
       return;
     } catch (error) { if (!(error instanceof Changed)) throw error; }
   }
@@ -274,6 +308,18 @@ async function setKey(deps: SwapDeps, fs: SwapFs, path: string, key: string, val
 
 async function removeBackups(deps: SwapDeps, fs: SwapFs): Promise<void> {
   for (const name of [...Object.values(BACKUP), JOURNAL]) await fs.rm(join(deps.backupDir, name)).catch(() => undefined);
+  for (const name of await fs.readdir(deps.backupDir)) if (/\.[0-9a-f-]{36}\.tmp$/.test(name)) await fs.rm(join(deps.backupDir, name)).catch(() => undefined);
+  await fs.rmdir(deps.backupDir).catch(() => undefined);
+}
+
+/** Only our own leftover temp files (`.credentials.json.<uuid>.tmp`, `.claude.json.<uuid>.tmp`) in the config dirs. */
+async function removeStaleTemps(deps: SwapDeps, fs: SwapFs): Promise<void> {
+  const paths = swapPaths(deps);
+  const dirs = new Set<string>(paths ? [dirname(paths.credentials), dirname(paths.claudeJson)] : []);
+  for (const account of deps.store.list()) { try { dirs.add(deps.store.dirOf(account.id)); } catch { /* invalid id */ } }
+  for (const dir of dirs) {
+    for (const name of await fs.readdir(dir)) if (TEMP_NAME.test(name)) await fs.rm(join(dir, name)).catch(() => undefined);
+  }
 }
 
 async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: string, targetDir: string, requireValidToken: boolean): Promise<SwapResult> {
@@ -284,7 +330,7 @@ async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
   }
   const c: Ctx = {
     deps, fs, paths, s, accountId, targetCredsPath: join(targetDir, '.credentials.json'), targetJsonPath: join(targetDir, '.claude.json'),
-    targetCredsWritten: false, targetJsonWritten: false, mainCredsReplaced: false, mainJsonReplaced: false, phase: null,
+    targetCredsWritten: false, targetJsonWritten: false, mainCredsReplaced: false, mainJsonReplaced: false, phase: null, writtenMainCreds: null,
   };
   const jr = (phase: Phase) => journal(c, phase);
 
@@ -302,6 +348,7 @@ async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
     await write(c, c.targetJsonPath, JSON.stringify({ ...(s.targetJson?.data ?? {}), oauthAccount: s.mainAccount }, null, 2));
     c.targetJsonWritten = true;
     await exchangeCreds(c, s.targetOauth, true);
+    await settle(c);
 
     // 2. main identity
     await jr('main-json-written');
@@ -310,6 +357,7 @@ async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
       return id !== null && sameIdentity(id, s.mainIdentity);
     });
     c.mainJsonReplaced = true;
+    await settle(c);
 
     // 3. verify by reading everything back (a refreshed access token is fine; identity and a usable login are checked)
     const main = await readSnap(fs, paths.credentials);
@@ -322,6 +370,7 @@ async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
       || !sameIdentity(mainIdentity, s.targetIdentity) || !sameIdentity(targetIdentity, s.mainIdentity)) throw new Fail('write');
     await jr('verified');
   } catch (error) {
+    if (error instanceof Unprovable) throw new Fail('manual');
     const clean = await rollback(c, jr);
     if (!clean) throw new Fail('manual');
     await removeBackups(deps, fs);
@@ -335,6 +384,13 @@ async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
   return { ok: true, email: str(s.targetAccount.emailAddress) };
 }
 
+/** Gives Claude Code time to write its own result, then requires main credentials to still be exactly what we wrote. */
+async function settle(c: Ctx): Promise<void> {
+  await c.deps.delay(SETTLE_MS);
+  const now = await readSnap(c.fs, c.paths.credentials);
+  if (!now || now.text !== c.writtenMainCreds) throw new Unprovable();
+}
+
 /**
  * Undoes a failed swap on the CURRENT content. Before main was replaced only the target profile was touched and its
  * own originals go back. Afterwards it is a reverse exchange: the blob now in main (the target account's login,
@@ -344,6 +400,7 @@ async function runSwap(deps: SwapDeps, fs: SwapFs, paths: Paths, accountId: stri
 async function rollback(c: Ctx, jr: (phase: Phase) => Promise<void>): Promise<boolean> {
   const { deps, fs, s } = c;
   let clean = true;
+  let moved: Rec | null = null;
   const step = async (fn: () => Promise<void>) => { try { await fn(); } catch { clean = false; } };
   if (c.mainCredsReplaced) {
     await step(() => jr('rolling-back'));
@@ -351,7 +408,8 @@ async function rollback(c: Ctx, jr: (phase: Phase) => Promise<void>): Promise<bo
       const target = await readSnap(fs, c.targetCredsPath);
       const back = target ? oauthOf(target.data) : null;
       if (!validOauth(back)) throw new Fail('manual');
-      await exchangeCreds(c, back, false);
+      moved = back;
+      await exchangeCreds(c, back, false, c.writtenMainCreds ?? undefined);
     });
   } else if (c.targetCredsWritten) {
     await step(() => write(c, c.targetCredsPath, s.targetCreds.text));
@@ -367,6 +425,18 @@ async function rollback(c: Ctx, jr: (phase: Phase) => Promise<void>): Promise<bo
       await setKey(deps, fs, c.paths.claudeJson, 'oauthAccount', s.mainAccount, true);
     });
   }
+  // Only a verified rollback may be reported as "nothing was changed".
+  await step(async () => {
+    if (!clean) return;
+    if (c.mainCredsReplaced) {
+      const main = await readSnap(fs, c.paths.credentials);
+      const now = main ? oauthOf(main.data) : null;
+      if (!moved || !now || now.refreshToken !== moved.refreshToken) throw new Fail('manual');
+    } else if (c.targetCredsWritten) {
+      const target = await readSnap(fs, c.targetCredsPath);
+      if (!target || target.text !== s.targetCreds.text) throw new Fail('manual');
+    }
+  });
   return clean;
 }
 
@@ -379,15 +449,26 @@ type Lineage = 'A' | 'X' | 'unknown' | 'none';
  * Only the `claudeAiOauth` / `oauthAccount` keys are ever written.
  */
 export async function recoverInterruptedSwap(deps: SwapDeps): Promise<SwapRecovery> {
+  if (running) return 'none';
+  running = true; // no swap may race the recovery
+  try { return await recover(deps); } finally { running = false; }
+}
+
+async function recover(deps: SwapDeps): Promise<SwapRecovery> {
   const fs = deps.fs ?? nodeSwapFs;
   const journalText = await fs.readFile(join(deps.backupDir, JOURNAL));
-  if (journalText === null) return 'none';
+  if (journalText === null) {
+    // No journal: it is written before the first credential file changes, so nothing was modified. Stray backups
+    // (a crash while they were being made) only hold live tokens and go away.
+    try { await removeBackups(deps, fs); await removeStaleTemps(deps, fs); } catch { /* best effort */ }
+    return 'none';
+  }
   let info: unknown;
   try { info = JSON.parse(journalText); } catch { info = null; }
   if (!isRecord(info) || !isAccountId(info.accountId) || typeof info.phase !== 'string') return 'manual';
   const accountId = info.accountId;
   const phase = info.phase as Phase;
-  if (phase === 'verified' || phase === 'backed-up') { await removeBackups(deps, fs); return 'none'; }
+  if (phase === 'verified' || phase === 'backed-up') { await removeBackups(deps, fs); await removeStaleTemps(deps, fs).catch(() => undefined); return 'none'; }
   const paths = swapPaths(deps);
   if (!paths) return 'manual';
 
@@ -460,7 +541,7 @@ export async function recoverInterruptedSwap(deps: SwapDeps): Promise<SwapRecove
       }
       return 'manual';
     });
-    if (outcome === 'recovered') await removeBackups(deps, fs);
+    if (outcome === 'recovered') { await removeBackups(deps, fs); await removeStaleTemps(deps, fs).catch(() => undefined); }
     return outcome;
   } catch {
     return 'manual';

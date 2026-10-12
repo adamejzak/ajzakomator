@@ -53,7 +53,7 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
   /** Renews the profile and re-reads its credentials; returns the failure result instead when that did not work. */
   const renew = async (): Promise<FetchResult | undefined> => {
     const outcome = await refresh!(configDir);
-    if (outcome.kind === 'dead') return { usage: { ...known, status: 'expired' } };
+    if (outcome.kind === 'dead' || outcome.kind === 'unusable') return { usage: { ...known, status: 'expired' } };
     if (outcome.kind === 'transient') return { usage: { ...known, status: 'error', error: 'network' } };
     const renewed = await readClaudeCredentials(source);
     if (!renewed) return { usage: { ...known, status: 'expired' } };

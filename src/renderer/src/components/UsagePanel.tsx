@@ -70,7 +70,10 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
       [{ label: tr('Usuń konto'), value: 'yes', danger: true }],
     );
     if (choice !== 'yes') return;
-    try { await window.mc.removeAccount(usage.accountId.replace(/^claude:/, '')); } catch { /* the next usage refresh shows the real state */ }
+    try {
+      const result = await window.mc.removeAccount(usage.accountId.replace(/^claude:/, ''));
+      if (!result.ok && result.error) toast(tr(swapErrorKey(result.error)), 'error');
+    } catch { /* the next usage refresh shows the real state */ }
   };
 
   let body;
@@ -133,8 +136,14 @@ export function UsagePanel() {
   const [refreshing, setRefreshing] = useState(false);
   const spinning = useHoldBusy(refreshing, 700);
   const [swapping, setSwapping] = useState<string | null>(null);
+  const [swapPending, setSwapPending] = useState(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // An interrupted swap blocks further swaps until the user has checked the accounts and cleared the warning.
+  useEffect(() => {
+    void window.mc.swapPending().then((pending) => { if (alive.current) setSwapPending(pending === true); }).catch(() => undefined);
+    return window.mc.on('accounts:swapPending', (pending) => { if (alive.current) setSwapPending(pending === true); });
+  }, []);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
@@ -147,12 +156,24 @@ export function UsagePanel() {
     setRefreshing(true);
     try { await window.mc.refreshUsage(); } catch { /* the next scheduled refresh retries */ } finally { if (alive.current) setRefreshing(false); }
   };
+  const clearWarning = async () => {
+    const choice = await askChoice(
+      tr('Wyczyścić ostrzeżenie?'),
+      tr('Kopia awaryjna poprzedniej zamiany (z danymi logowania) zostanie usunięta na stałe, a zamiany kont zostaną odblokowane. Zrób to dopiero po sprawdzeniu, że oba konta działają.'),
+      [{ label: tr('Wyczyść ostrzeżenie'), value: 'yes', danger: true }],
+    );
+    if (choice !== 'yes') return;
+    try {
+      const result = await window.mc.clearSwapPending();
+      if (result.ok && alive.current) setSwapPending(false);
+    } catch { /* the warning stays */ }
+  };
   const makeMain = async (target: ProviderUsage) => {
     if (swapping !== null) return;
     const current = providers.find((usage) => usage.accountId === 'claude:main')?.email || tr('obecne konto główne');
     const name = target.email || NAMES.claude;
     const exhausted = target.windows.some((window) => effectivePercent(window, Date.now()) >= 100);
-    const body = tr('Obecne konto główne ({current}) zostanie zachowane jako zapisane konto, a wybrane stanie się głównym logowaniem Claude Code. Otwarte sesje Claude przełączą się na nie przy następnej wiadomości, bez zamykania. Na macOS ta funkcja nie jest dostępna. Tokeny są wymieniane tylko na tym komputerze.', { current })
+    const body = tr('Obecne konto główne ({current}) zostanie zachowane jako zapisane konto, a wybrane stanie się głównym logowaniem Claude Code. Token wybranego konta jest przed zamianą odświeżany w Anthropic, a pliki logowania są wymieniane na tym komputerze. Otwarte sesje Claude zwykle przejmują nowe logowanie przy następnej wiadomości, ale zależy to od wersji Claude Code - sesję, która tego nie zrobi, wystarczy zrestartować lub wznowić.', { current })
       + (exhausted ? `\n\n${tr('Limity tego konta są wyczerpane (100%), więc sesje mogą nie działać do czasu resetu.')}` : '');
     const choice = await askChoice(tr('Ustawić {name} jako konto główne?', { name }), body, [{ label: tr('Ustaw jako główne'), value: 'yes', primary: true }]);
     if (choice !== 'yes') return;
@@ -249,6 +270,12 @@ export function UsagePanel() {
       ) : <p className="usage-note">{summary}</p>)}
       {!collapsed && (
         <>
+          {swapPending && (
+            <div className="usage-warning" role="alert">
+              <p className="usage-note">{tr('Poprzednia zamiana kont została przerwana. Sprawdź oba konta (w razie potrzeby zaloguj się ponownie). Do czasu wyjaśnienia kolejne zamiany są zablokowane.')}</p>
+              <button className="btn small" onClick={() => void clearWarning()}>{tr('Wyczyść ostrzeżenie')}</button>
+            </div>
+          )}
           {visible.length ? (
             <>
               {visible.map((usage) => <AccountCard key={usage.accountId} usage={usage} now={now} language={language} showMain={claudeCount > 1} swapping={swapping} onMakeMain={(target) => void makeMain(target)} />)}

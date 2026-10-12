@@ -6,10 +6,12 @@ export const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 /** Public client id of Claude Code's OAuth flow (the same value claude-swap uses). */
 export const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const REQUEST_TIMEOUT_MS = 10_000;
+const WRITE_TRIES = 3;
 const DEAD_ERRORS = /^(invalid_grant|invalid_client|unauthorized_client)$/;
 
-export type RefreshOutcome = { kind: 'ok' } | { kind: 'dead' } | { kind: 'transient' };
-export interface RefreshDeps { fetch: typeof fetch; now(): number; tokenUrl?: string }
+/** 'unusable': the server rotated the token but it could not be stored, so the saved login is lost (sign in again). */
+export type RefreshOutcome = { kind: 'ok' } | { kind: 'dead' } | { kind: 'transient' } | { kind: 'unusable' };
+export interface RefreshDeps { fetch: typeof fetch; now(): number; tokenUrl?: string; delay?(ms: number): Promise<void> }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const inflight = new Map<string, Promise<RefreshOutcome>>();
@@ -70,13 +72,19 @@ async function run(dir: string, deps: RefreshDeps): Promise<RefreshOutcome> {
   oauth.expiresAt = deps.now() + body.expires_in * 1000;
   if (typeof body.refresh_token === 'string' && body.refresh_token) oauth.refreshToken = body.refresh_token;
   if (typeof body.scope === 'string' && body.scope) oauth.scopes = body.scope.split(' ');
-  const temporary = `${file}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, JSON.stringify(data), { mode: 0o600 });
-    await rename(temporary, file);
-  } catch {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    return { kind: 'transient' };
+  const delay = deps.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const text = JSON.stringify(data);
+  for (let attempt = 0; attempt < WRITE_TRIES; attempt++) {
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, text, { mode: 0o600 });
+      await rename(temporary, file);
+      return { kind: 'ok' };
+    } catch {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      if (attempt < WRITE_TRIES - 1) await delay(100);
+    }
   }
-  return { kind: 'ok' };
+  // A rotated refresh token was already used up on the server: a plain 'transient' would let callers go on with a dead token.
+  return typeof body.refresh_token === 'string' && body.refresh_token ? { kind: 'unusable' } : { kind: 'transient' };
 }

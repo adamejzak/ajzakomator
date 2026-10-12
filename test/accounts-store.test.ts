@@ -154,3 +154,17 @@ describe('AccountsStore', () => {
     expect(readdirSync(root)).toContain('accounts.json');
   });
 });
+
+describe('AccountsStore.update', () => {
+  it('keeps the key order of the stored entry', () => {
+    const store = new AccountsStore(root);
+    const id = '123e4567-e89b-42d3-a456-426614174000';
+    store.commit({ id, email: 'a@x.com', org: 'Org', addedAt: 5 });
+    const keys = () => Object.keys(JSON.parse(readFileSync(join(root, 'accounts.json'), 'utf8')).claude[0]);
+    const before = keys();
+    store.update(id, { org: 'Other', email: 'b@x.com' });
+    expect(keys()).toEqual(before);
+    store.update(id, { org: undefined });
+    expect(store.list()[0]).toEqual({ id, email: 'b@x.com', addedAt: 5 });
+  });
+});

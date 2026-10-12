@@ -72,8 +72,11 @@ export interface McApi {
   refreshUsage(): Promise<UsageState>;
   startLogin(request: LoginRequest): Promise<{ ok: true; sessionId: string; ptyId: string } | { ok: false; error: string }>;
   cancelLogin(sessionId: string): void;
-  removeAccount(id: string): Promise<{ ok: boolean }>;
+  removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' }>;
   makeMainAccount(id: string): Promise<SwapResult>;
+  /** True while an interrupted swap is unresolved (swaps are blocked). Also pushed on the 'accounts:swapPending' channel. */
+  swapPending(): Promise<boolean>;
+  clearSwapPending(): Promise<{ ok: boolean }>;
   on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent) => void): () => void;
@@ -84,6 +87,7 @@ export interface McApi {
   on(channel: 'app:before-quit', cb: () => void): () => void;
   on(channel: 'update:state', cb: (s: UpdateState) => void): () => void;
   on(channel: 'usage:state', cb: (state: UsageState) => void): () => void;
+  on(channel: 'accounts:swapPending', cb: (pending: boolean) => void): () => void;
   on(channel: 'state:changed', cb: (snapshot: StateSnapshot) => void): () => void;
   on(channel: 'automation:start-cells', cb: (cellIds: string[]) => void): () => void;
 }
