@@ -1,5 +1,5 @@
 import type { HookEvent, HookInfo } from '../shared/status';
-import type { CellStatus } from '../shared/status';
+import type { CellStatus, StatusReason } from '../shared/status';
 import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
@@ -38,7 +38,7 @@ export interface McApi {
   /** Binds the freshest unclaimed Codex session in `cwd` to the cell (emits cell:session). */
   bindCodexSession(cellId: string, cwd: string): Promise<string | null>;
   aliveCells(): Promise<string[]>;
-  reportCellStatus(cellId: string, status: CellStatus): void;
+  reportCellStatus(cellId: string, status: CellStatus, reason?: StatusReason, hooked?: boolean): void;
   pickFolder(): Promise<string | null>;
   /** Native dialog for an own alert sound; null when cancelled. */
   pickSoundFile(): Promise<string | null>;

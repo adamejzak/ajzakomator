@@ -47,6 +47,7 @@ import { queueCodexMessage } from './agentDelivery';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
+import { automationHintForHook, automationStatusFor } from '../shared/runtimeStatus';
 import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadEventSound } from './alertSound';
@@ -305,7 +306,10 @@ ptyHost.on('fatal', () => {
 
 hooks.on('hook', (cellId: string, event: string, info?: unknown) => {
   if (!findCell(state, cellId)) return; // stale or foreign id
-  automation.statuses.set(cellId, event === 'prompt' || event === 'busy' || event === 'stopbg' ? 'working' : event === 'stop' ? 'ready' : 'needs_attention');
+  // Immediate hints only for events the tracker always applies; busy is left to the tracker (it may ignore late tool hooks)
+  // and reaches automation through cell:runtime.
+  const hint = automationHintForHook(event);
+  if (hint) automation.statuses.set(cellId, hint);
   send('cell:hook', cellId, event, info);
 });
 
@@ -420,13 +424,12 @@ ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
   await ptyHost.killAndWait(id);
 });
 ipcMain.handle('cell:alive', () => [...alive]);
-ipcMain.on('cell:runtime', (_e, cellId: string, status: string) => {
+ipcMain.on('cell:runtime', (_e, cellId: string, status: string, reason?: string, hooked?: boolean) => {
   const found = findCell(state, cellId);
-  if (!found || !alive.has(cellId) || getProfile(state, found.cell.profileId).cli !== 'codex') return;
-  // TUI heuristics can indicate activity or a request for attention, never precise readiness.
-  if (status === 'working') automation.statuses.set(cellId, 'working');
-  else if (status === 'waiting' && automation.statuses.get(cellId) !== 'ready') automation.statuses.set(cellId, 'needs_attention');
-  else if (status === 'idle' && automation.statuses.get(cellId) !== 'ready') automation.statuses.set(cellId, 'unknown');
+  if (!found || !alive.has(cellId)) return;
+  // The renderer's StatusTracker decides; heuristics (hooked = false) never yield "ready".
+  const next = automationStatusFor(status, reason, hooked === true, automation.statuses.get(cellId));
+  if (next) automation.statuses.set(cellId, next);
 });
 
 /** Opens the dialog on the main window while it exists, free-standing otherwise. */
