@@ -13,6 +13,18 @@ export interface RefreshDeps { fetch: typeof fetch; now(): number; tokenUrl?: st
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const inflight = new Map<string, Promise<RefreshOutcome>>();
+const locks = new Map<string, Promise<unknown>>();
+
+/** Runs `fn` after every earlier job on the same profile directory finished, so refreshes and swap writes never interleave. */
+export function withProfileLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  const key = resolve(dir);
+  const previous = locks.get(key) ?? Promise.resolve();
+  const result = previous.then(fn, fn);
+  const tail = result.then(() => undefined, () => undefined);
+  locks.set(key, tail);
+  void tail.then(() => { if (locks.get(key) === tail) locks.delete(key); });
+  return result;
+}
 
 /**
  * Renews the tokens of an isolated profile owned by this app. Only such profiles are ever written: the machine's own
@@ -23,7 +35,7 @@ export function refreshClaudeProfile(dir: string, deps: RefreshDeps): Promise<Re
   const key = resolve(dir);
   const running = inflight.get(key);
   if (running) return running;
-  const promise = run(dir, deps).finally(() => { inflight.delete(key); });
+  const promise = withProfileLock(dir, () => run(dir, deps)).finally(() => { inflight.delete(key); });
   inflight.set(key, promise);
   return promise;
 }
