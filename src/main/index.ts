@@ -34,7 +34,7 @@ import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, reco
 import { readManagedIdentity } from './accounts/identity';
 import { LoginManager } from './auth/login';
 import { isAccountId, type LoginRequest } from '../shared/accounts';
-import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
+import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
 import { MAIN_ACCOUNTS } from '../shared/usage';
@@ -93,6 +93,7 @@ const usage = new UsageService({
   ],
   fetchAccount: (ref) => (ref.provider === 'claude' ? fetchClaude(usageDeps, ref) : fetchCodex(usageDeps)),
   cacheFile: join(DATA_DIR, 'usage-cache.json'),
+  credentialsStamp: (ref) => (ref.provider === 'claude' && !ref.configDir ? claudeCredentialsStamp(usageDeps.credentials) : Promise.resolve(null)),
   enabled: () => state.settings.showAiUsage,
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
 });

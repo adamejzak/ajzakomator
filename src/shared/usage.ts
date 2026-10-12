@@ -1,6 +1,7 @@
 /** Limits of the user's Claude and Codex accounts: types and pure helpers shared by main process and window. */
 export type UsageProvider = 'claude' | 'codex';
-export type UsageStatus = 'ok' | 'signedOut' | 'expired' | 'apiKey' | 'error';
+export type UsageStatus = 'ok' | 'signedOut' | 'expired' | 'dormant' | 'apiKey' | 'error';
+/* `dormant`: the main Claude login's access token is past its expiry but a refresh token exists; Claude Code renews it on next use. Not an error. */
 export type UsageSource = 'live' | 'log' | 'cache';
 
 export interface UsageWindow {

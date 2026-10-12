@@ -877,6 +877,7 @@ body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-sel
 .usage-card { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid var(--border); }
 .usage-head + .usage-card { border-top: 0; padding-top: 2px; }
 .usage-card.expired { opacity: .75; }
+.usage-card.dormant .usage-row, .usage-rail-item.dormant, .usage-mini.dormant { opacity: .55; filter: grayscale(1); }
 .usage-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text); font-weight: 600; }
 .usage-account { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-chip { flex: none; padding: 0 5px; border-radius: 8px; background: var(--border-2); color: var(--muted); font-size: 10px; font-weight: 400; line-height: 15px; white-space: nowrap; }

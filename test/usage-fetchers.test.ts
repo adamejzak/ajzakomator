@@ -21,7 +21,7 @@ const put = (rel: string, body: string) => { mkdirSync(join(home, rel, '..'), { 
 function deps(fetchImpl: FetcherDeps['fetch']): FetcherDeps {
   return {
     credentials: { env: {}, home, platform: 'win32', keychain: async () => null, readFile: (path) => readFile(path, 'utf8').catch(() => null) },
-    fetch: fetchImpl, now: () => NOW, codexHome: () => join(home, '.codex'),
+    fetch: fetchImpl, now: () => NOW, sleep: async () => undefined, codexHome: () => join(home, '.codex'),
     claudeUrl: 'https://claude.test/usage', codexUrl: 'https://codex.test/usage',
   };
 }
@@ -54,6 +54,50 @@ describe('fetchClaude', () => {
     const fetchSpy = vi.fn();
     expect((await fetchClaude(deps(fetchSpy))).usage).toMatchObject({ status: 'expired', plan: 'Max 5x' });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('treats an expired main token with a refresh token as dormant: no request, no refresh', async () => {
+    claudeLogin({ expiresAt: NOW - 1000, refreshToken: 'rt-secret' });
+    const fetchSpy = vi.fn();
+    const refreshClaude = vi.fn();
+    const { usage } = await fetchClaude({ ...deps(fetchSpy), refreshClaude }); // main ref: never renewed by the app
+    expect(usage).toMatchObject({ status: 'dormant', plan: 'Max 5x', windows: [] });
+    expect(JSON.stringify(usage)).not.toContain('rt-secret');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(refreshClaude).not.toHaveBeenCalled();
+  });
+
+  it('re-reads once before calling an expired main token without refresh token expired', async () => {
+    claudeLogin({ expiresAt: NOW - 1000 });
+    let reads = 0;
+    const d = deps(vi.fn() as never);
+    const inner = d.credentials.readFile;
+    d.credentials = { ...d.credentials, readFile: async (path) => { if (path.endsWith('.credentials.json') && ++reads === 2) claudeLogin(); return inner(path); } };
+    const fetchSpy = vi.fn(async () => reply(200, claudeBody));
+    // the atomic rewrite finished during the pause: the fresh token is used
+    expect((await fetchClaude({ ...d, fetch: fetchSpy as never })).usage.status).toBe('ok');
+  });
+
+  it('re-reads a missing main credentials file once before reporting signed out', async () => {
+    let reads = 0;
+    const d = deps((async () => reply(200, claudeBody)) as never);
+    const inner = d.credentials.readFile;
+    d.credentials = { ...d.credentials, readFile: async (path) => { if (path.endsWith('.credentials.json') && ++reads === 2) claudeLogin(); return inner(path); } };
+    expect((await fetchClaude(d)).usage.status).toBe('ok');
+    expect(reads).toBeGreaterThanOrEqual(2);
+  });
+
+  it('re-reads after a 401 on the main login and only then reports expired', async () => {
+    claudeLogin({ refreshToken: 'rt' });
+    const fetchSpy = vi.fn(async () => reply(401, {}));
+    expect((await fetchClaude(deps(fetchSpy as never))).usage.status).toBe('expired');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // Claude Code renewed the token meanwhile: the second request succeeds
+    let calls = 0;
+    expect((await fetchClaude(deps((async () => (++calls === 1 ? reply(401, {}) : reply(200, claudeBody))) as never))).usage.status).toBe('ok');
+    // the re-read shows an expired token that can be renewed: dormant, not expired
+    const d = deps((async () => { claudeLogin({ expiresAt: NOW - 5000, refreshToken: 'rt' }); return reply(401, {}); }) as never);
+    expect((await fetchClaude(d)).usage.status).toBe('dormant');
   });
 
   it('maps rejected tokens, rate limiting and bad bodies', async () => {

@@ -1,7 +1,7 @@
 import { MAIN_ACCOUNTS, type AccountRef, type ProviderUsage } from '../../shared/usage';
 import type { RefreshOutcome } from '../accounts/refresh';
 import { readCodexLog } from './codexLog';
-import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, type CredentialSource } from './credentials';
+import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, type ClaudeCredentials, type CredentialSource } from './credentials';
 import { parseClaudeUsage, parseCodexPlan, parseCodexRateLimits } from './parse';
 
 const REQUEST_TIMEOUT_MS = 5000;
@@ -17,7 +17,12 @@ export interface FetcherDeps {
   codexUrl: string;
   /** Renews the tokens of a managed Claude profile directory; absent in tests that do not need it. */
   refreshClaude?: (dir: string) => Promise<RefreshOutcome>;
+  /** Pause used before re-reading the main login's file (Claude Code rewrites it atomically); tests inject an instant one. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** How long to wait before the one re-read of a main login that looks missing, expired or rejected. */
+const REREAD_DELAY_MS = 300;
 
 export interface FetchResult {
   usage: ProviderUsage;
@@ -43,7 +48,11 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
   const now = deps.now();
   const source = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
   const base: ProviderUsage = { accountId: ref.id, provider: 'claude', status: 'signedOut', windows: [], fetchedAt: now, source: 'live', ...(ref.configDir ? { managed: true } : {}) };
-  let credentials = await readClaudeCredentials(source);
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  // The main login belongs to Claude Code, which rewrites the file while renewing; one re-read avoids reporting that moment.
+  const reread = async (): Promise<ClaudeCredentials | null> => { await sleep(REREAD_DELAY_MS); return readClaudeCredentials(source); };
+  let credentials: ClaudeCredentials | null = await readClaudeCredentials(source);
+  if (!credentials && !ref.configDir) credentials = await reread();
   if (!credentials) return { usage: base };
   const identity = await readClaudeIdentity(source);
   const known: ProviderUsage = { ...base, plan: credentials.plan, email: identity.email, org: identity.org };
@@ -61,11 +70,19 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
     return undefined;
   };
   const expired = (): boolean => credentials!.expiresAt !== undefined && credentials!.expiresAt <= now + EXPIRY_MARGIN_MS;
+  const dormant: FetchResult = { usage: { ...known, status: 'dormant' } };
   if (expired()) {
-    if (!refresh) return { usage: { ...known, status: 'expired' } };
-    const failure = await renew();
-    if (failure) return failure;
-    if (expired()) return { usage: { ...known, status: 'expired' } };
+    if (!refresh) {
+      // Main login: with a refresh token Claude Code renews the access token on its next use, which is not an error.
+      if (credentials.hasRefresh) return dormant;
+      const again = await reread();
+      if (again) credentials = again;
+      if (expired()) return { usage: { ...known, status: again?.hasRefresh ? 'dormant' : 'expired' } };
+    } else {
+      const failure = await renew();
+      if (failure) return failure;
+      if (expired()) return { usage: { ...known, status: 'expired' } };
+    }
   }
   const request = () => deps.fetch(deps.claudeUrl, {
     headers: {
@@ -82,6 +99,15 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
       const failure = await renew();
       if (failure) return failure;
       response = await request();
+    }
+    if (!ref.configDir && (response.status === 401 || response.status === 403)) {
+      // Claude Code may have just renewed the token: look at the file once more before calling the login dead.
+      const again = await reread();
+      if (again) {
+        credentials = again;
+        if (expired()) return { usage: { ...known, status: again.hasRefresh ? 'dormant' : 'expired' } };
+        response = await request();
+      }
     }
     if (response.status === 401 || response.status === 403) return { usage: { ...known, status: 'expired' } };
     if (!response.ok) return { usage: { ...known, status: 'error', error: `http-${response.status}` }, retryAfterMs: retryAfterMs(response) };

@@ -11,6 +11,7 @@ import { IChevron, IPlus } from './icons';
 import { ProviderIcon } from './ProviderIcons';
 import { RefreshIcon, useHoldBusy } from './Spinner';
 
+const DORMANT_NOTE = 'Token dostępu wygasł - Claude Code odświeży go przy najbliższym użyciu. Uruchom sesję Claude (albo wyślij wiadomość), a limity wrócą.';
 const NAMES: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
 
 function Bar({ percent, label }: { percent: number; label: string }) {
@@ -63,6 +64,7 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
   const name = usage.email || providerName;
   const age = formatDuration((now - usage.fetchedAt) / 1000);
   const expired = usage.status === 'expired';
+  const dormant = usage.status === 'dormant';
   const removeAccount = async () => {
     const choice = await askChoice(
       tr('Usunąć konto {name}?', { name }),
@@ -84,6 +86,15 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
         <button className="btn small primary" onClick={() => openAuth(usage.provider, reloginTarget(usage))}>{tr('Zaloguj ponownie')}</button>
       </div>
     );
+  } else if (dormant) {
+    // Calm state: the numbers are the last known ones, Claude Code renews the token itself.
+    body = (
+      <>
+        {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
+        {usage.windows.length > 0 && <p className="usage-note">{tr('dane sprzed {age}', { age })}</p>}
+        <p className="usage-note">{tr(DORMANT_NOTE)}</p>
+      </>
+    );
   } else if (usage.status === 'apiKey') {
     body = <p className="usage-note">{tr('Codex: logowanie kluczem API, brak limitów.')}</p>;
   } else if (!usage.windows.length) {
@@ -102,7 +113,7 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
   }
 
   return (
-    <div className={`usage-card ${expired ? 'expired' : ''} ${swapping === usage.accountId ? 'busy' : ''}`} title={usage.org || undefined} aria-busy={swapping === usage.accountId || undefined}>
+    <div className={`usage-card ${expired ? 'expired' : ''} ${dormant ? 'dormant' : ''} ${swapping === usage.accountId ? 'busy' : ''}`} title={usage.org || undefined} aria-busy={swapping === usage.accountId || undefined}>
       <div className="usage-card-head">
         <ProviderIcon provider={usage.provider} />
         <span className="usage-account" title={name}>{name}</span>
@@ -211,7 +222,7 @@ export function UsagePanel() {
     return (
       <div className="usage-panel usage-rail" title={summary}>
         {shown.map((usage) => (
-          <div key={usage.accountId} className="usage-rail-item" title={accountDetail(usage, now)}>
+          <div key={usage.accountId} className={`usage-rail-item ${usage.status === 'dormant' ? 'dormant' : ''}`} title={accountDetail(usage, now)}>
             <ProviderIcon provider={usage.provider} size={14} />
             {usage.windows.map((window) => {
               const percent = effectivePercent(window, now);
@@ -250,7 +261,7 @@ export function UsagePanel() {
           {shown.map((usage) => {
             const label = usage.provider === 'claude' && claudeCount > 1 ? shortAccountName(usage.email, NAMES.claude, 7) : '';
             return (
-              <div key={usage.accountId} className="usage-mini" title={accountDetail(usage, now)}>
+              <div key={usage.accountId} className={`usage-mini ${usage.status === 'dormant' ? 'dormant' : ''}`} title={accountDetail(usage, now)}>
                 <span className="usage-mini-who">
                   <ProviderIcon provider={usage.provider} size={12} />
                   {label && <span className="usage-mini-name">{label}</span>}
@@ -273,7 +284,7 @@ export function UsagePanel() {
             );
           })}
         </div>
-      ) : <p className="usage-note">{summary}</p>)}
+      ) : <p className="usage-note">{providers.some((usage) => usage.status === 'dormant') ? tr(DORMANT_NOTE) : summary}</p>)}
       {!collapsed && (
         <>
           {swapPending && (

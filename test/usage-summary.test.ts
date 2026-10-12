@@ -17,6 +17,10 @@ describe('usage summary', () => {
     const list = [make({ email: 'a@x.pl' }), make({ accountId: 'claude:u', email: 'b@x.pl', windows: [{ id: '5h', usedPercent: 40, resetsAt: 0 }] }), make({ accountId: 'claude:v', email: 'c@x.pl', status: 'expired' })];
     expect(usageSummary(list, 1)).toBe('a 17% · b 40%');
   });
+  it('shows the last known numbers of a dormant login and nothing for a dormant one without numbers', () => {
+    expect(usageSummary([make({ status: 'dormant' })], 1)).toBe('Claude 17%');
+    expect(usageSummary([make({ status: 'dormant', windows: [] })], 1)).toBe('');
+  });
   it('is empty with nothing to show', () => {
     expect(usageSummary([make({ status: 'signedOut' })], 1)).toBe('');
   });

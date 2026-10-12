@@ -22,7 +22,7 @@ const source = (over: Partial<CredentialSource> = {}): CredentialSource => ({
 describe('Claude credentials', () => {
   it('reads the token, expiry and plan from the credentials file', async () => {
     put('.claude/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'tok-1', expiresAt: 1781010642000, subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' } }));
-    expect(await readClaudeCredentials(source())).toEqual({ accessToken: 'tok-1', expiresAt: 1781010642000, plan: 'Max 5x' });
+    expect(await readClaudeCredentials(source())).toEqual({ accessToken: 'tok-1', expiresAt: 1781010642000, plan: 'Max 5x', hasRefresh: false });
   });
 
   it('labels plans with and without a multiplier', () => {
@@ -54,7 +54,7 @@ describe('Claude credentials', () => {
     const keychain = vi.fn(async () => JSON.stringify({ claudeAiOauth: { accessToken: 'tok-kc' } }));
     expect(await readClaudeCredentials(source({ platform: 'win32', keychain }))).toBeNull();
     expect(keychain).not.toHaveBeenCalled();
-    expect(await readClaudeCredentials(source({ platform: 'darwin', keychain }))).toEqual({ accessToken: 'tok-kc', expiresAt: undefined, plan: undefined });
+    expect(await readClaudeCredentials(source({ platform: 'darwin', keychain }))).toEqual({ accessToken: 'tok-kc', expiresAt: undefined, plan: undefined, hasRefresh: false });
     put('.claude/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'tok-file' } }));
     keychain.mockClear();
     expect(await readClaudeCredentials(source({ platform: 'darwin', keychain }))).toMatchObject({ accessToken: 'tok-file' });
@@ -154,5 +154,29 @@ describe('readClaudeIdentity', () => {
     expect(await readClaudeIdentity(source())).toEqual({});
     put('.claude.json', JSON.stringify({ oauthAccount: 'x' }));
     expect(await readClaudeIdentity(source())).toEqual({ email: undefined, org: undefined });
+  });
+});
+
+describe('claude credential extras', () => {
+  it('reports a refresh token without exposing it and stamps the file', async () => {
+    const { mkdtempSync, writeFileSync, rmSync, mkdirSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { readFile } = await import('node:fs/promises');
+    const { claudeCredentialsStamp, readClaudeCredentials } = await import('../src/main/usage/credentials');
+    const home = mkdtempSync(join(tmpdir(), 'ajza-cred-'));
+    try {
+      const source = { env: {}, home, platform: 'win32' as const, keychain: async () => null, readFile: (p: string) => readFile(p, 'utf8').catch(() => null) };
+      expect(await claudeCredentialsStamp(source)).toBeNull();
+      mkdirSync(join(home, '.claude'));
+      writeFileSync(join(home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'at', refreshToken: 'rt' } }));
+      const credentials = await readClaudeCredentials(source);
+      expect(credentials).toMatchObject({ accessToken: 'at', hasRefresh: true });
+      expect(JSON.stringify(credentials)).not.toContain('"rt"');
+      const before = await claudeCredentialsStamp(source);
+      writeFileSync(join(home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'at2', refreshToken: 'rt2' } }));
+      expect(await claudeCredentialsStamp(source)).not.toBeNull();
+      expect(before).not.toBeNull();
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });

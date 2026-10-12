@@ -6,6 +6,7 @@ import type { FetchResult } from './fetchers';
 import { sanitizeUsage } from './sanitize';
 
 export const MIN_GAP_MS = 20_000;
+const WATCH_MS = 20_000;
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
 const FETCH_TIMEOUT_MS = 30_000;
@@ -20,6 +21,10 @@ export interface UsageServiceOptions {
   /** Polling interval in milliseconds; 0 or less disables polling. */
   intervalMs(): number;
   now?(): number;
+  /** Change marker of an account's credentials file (null when unknown); lets a dormant login be noticed the moment Claude Code renews it. */
+  credentialsStamp?(ref: AccountRef): Promise<string | null>;
+  /** Poll period of that marker while some account is dormant; defaults to 20 s. */
+  watchMs?: number;
 }
 
 /** Owns the provider state: polling, minimum gap between reads, backoff after failures, on-disk cache. */
@@ -28,6 +33,9 @@ export class UsageService {
   private readonly listeners = new Set<(state: UsageState) => void>();
   private readonly backoff = new Map<string, { until: number; failures: number }>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  /** Credential-file markers taken before the read that found an account dormant. */
+  private readonly stamps = new Map<string, string | null>();
+  private watcher: ReturnType<typeof setInterval> | undefined;
   private pending: Promise<UsageState> | undefined;
   private followUp: Promise<UsageState> | undefined;
   private lastRun = 0;
@@ -58,11 +66,13 @@ export class UsageService {
   stop(): void {
     this.running = false;
     this.clearTimer();
+    this.syncWatch();
   }
 
   /** The window was hidden or shown: no polling while hidden, a catch-up read on return when data is stale. */
   setActive(active: boolean): void {
     this.active = active;
+    this.syncWatch();
     if (!active) { this.clearTimer(); return; }
     const interval = this.options.intervalMs();
     if (this.running && this.options.enabled() && interval > 0 && this.now() - this.lastRun >= interval) void this.kick();
@@ -120,6 +130,7 @@ export class UsageService {
     await Promise.all(accounts.map((ref) => this.update(ref, started, manual)));
     this.prune(this.options.accounts());
     this.saveCache();
+    this.syncWatch();
     const state = this.getState();
     for (const listener of this.listeners) {
       try { listener(state); } catch { /* a bad listener must not affect the others or the run */ }
@@ -132,6 +143,33 @@ export class UsageService {
     const ids = new Set(accounts.map((ref) => ref.id));
     for (const id of [...this.providers.keys()]) if (!ids.has(id)) this.providers.delete(id);
     for (const id of [...this.backoff.keys()]) if (!ids.has(id)) this.backoff.delete(id);
+    for (const id of [...this.stamps.keys()]) if (!ids.has(id)) this.stamps.delete(id);
+  }
+
+  /** Polls the credentials file of dormant accounts only (cheap stat) and refreshes at once when it changed. */
+  private syncWatch(): void {
+    const dormant = this.options.accounts().filter((ref) => this.providers.get(ref.id)?.status === 'dormant' && this.stamps.has(ref.id));
+    const wanted = this.running && this.active && this.options.enabled() && !!this.options.credentialsStamp && dormant.length > 0;
+    if (!wanted) {
+      if (this.watcher) clearInterval(this.watcher);
+      this.watcher = undefined;
+      return;
+    }
+    if (this.watcher) return;
+    this.watcher = setInterval(() => { void this.checkStamps(); }, this.options.watchMs ?? WATCH_MS);
+    this.watcher.unref?.();
+  }
+
+  private async checkStamps(): Promise<void> {
+    const stampOf = this.options.credentialsStamp;
+    if (!stampOf || this.pending) return;
+    try {
+      for (const ref of this.options.accounts()) {
+        if (this.providers.get(ref.id)?.status !== 'dormant' || !this.stamps.has(ref.id)) continue;
+        const current = await stampOf(ref);
+        if (current !== this.stamps.get(ref.id)) { await this.refresh(true, true); return; }
+      }
+    } catch { /* the regular poll still runs */ }
   }
 
   private async update(ref: AccountRef, now: number, manual: boolean): Promise<void> {
@@ -139,6 +177,8 @@ export class UsageService {
     const hold = this.backoff.get(id);
     if (!manual && hold && hold.until > now) return;
     let result: FetchResult;
+    let stamp: string | null = null;
+    try { if (this.options.credentialsStamp) stamp = await this.options.credentialsStamp(ref); } catch { /* no marker, no watching */ }
     const failure = (error: string): FetchResult => ({ usage: { accountId: id, provider, status: 'error', windows: [], fetchedAt: now, source: 'live', error } });
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -153,12 +193,14 @@ export class UsageService {
     const { retryAfterMs } = result;
     const failed = usage.status === 'error' || result.failed === true;
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
+      this.stamps.delete(id);
       this.providers.set(id, usage);
       if (failed) this.startBackoff(id, now, hold?.failures, retryAfterMs);
       else this.backoff.delete(id);
       return;
     }
     // Expired or failed: keep the last numbers, marked as remembered, so the panel is never blank after a hiccup.
+    if (usage.status === 'dormant') this.stamps.set(id, stamp); else this.stamps.delete(id);
     const previous = this.providers.get(id);
     const own = usage.windows.length > 0;
     this.providers.set(id, !own && previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);

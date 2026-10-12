@@ -382,4 +382,44 @@ describe('UsageService', () => {
       expect(make().service.getState().providers).toEqual([]);
     });
   });
+
+  describe('dormant main login', () => {
+    const dormant = (): FetchResult => ({ usage: { accountId: 'claude:main', provider: 'claude', status: 'dormant', plan: 'Max 5x', fetchedAt: Date.now(), source: 'live', windows: [] } });
+
+    it('keeps the last windows with their age and starts no backoff', async () => {
+      let step = 0;
+      const { service, claude } = make({ claude: async () => (step++ === 0 ? ok('claude', 40) : dormant()) });
+      await service.refresh();
+      const firstAt = service.getState().providers[0].fetchedAt;
+      await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+      await service.refresh();
+      expect(service.getState().providers[0]).toMatchObject({ status: 'dormant', source: 'cache', fetchedAt: firstAt, windows: [{ id: '5h', usedPercent: 40 }] });
+      await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+      await service.refresh();
+      expect(claude).toHaveBeenCalledTimes(3);
+    });
+
+    it('refreshes at once when the credentials file changes, polling only while dormant', async () => {
+      let stamp: string | null = 'a';
+      let renewed = false;
+      const credentialsStamp = vi.fn(async () => stamp);
+      const claude = vi.fn(async () => (renewed ? ok('claude', 12) : dormant()));
+      const service = new UsageService({ accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: claude, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp, watchMs: 20_000 });
+      service.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.getState().providers[0].status).toBe('dormant');
+      const stats = credentialsStamp.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(claude).toHaveBeenCalledTimes(1); // unchanged file: no read
+      expect(credentialsStamp.mock.calls.length).toBeGreaterThan(stats);
+      stamp = 'b'; renewed = true;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(claude).toHaveBeenCalledTimes(2);
+      expect(service.getState().providers[0]).toMatchObject({ status: 'ok', source: 'live' });
+      const after = credentialsStamp.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(credentialsStamp.mock.calls.length).toBe(after); // no longer dormant: watching stopped
+      service.stop();
+    });
+  });
 });

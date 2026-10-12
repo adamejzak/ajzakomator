@@ -1,6 +1,6 @@
 // src/main/usage/credentials.ts
 import { execFile } from 'child_process';
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
 import { decodeJwtClaims } from './parse';
@@ -65,7 +65,22 @@ export async function readClaudeIdentity(source: CredentialSource): Promise<{ em
   } catch { return {}; }
 }
 
-export interface ClaudeCredentials { accessToken: string; expiresAt?: number; plan?: string }
+export interface ClaudeCredentials {
+  accessToken: string;
+  expiresAt?: number;
+  plan?: string;
+  /** A refresh token is stored, so Claude Code can renew an expired access token by itself. The token itself is never exposed. */
+  hasRefresh?: boolean;
+}
+
+/** Cheap change marker (mtime and size) of the Claude credentials file, or null when it cannot be statted (missing, Keychain). */
+export async function claudeCredentialsStamp(source: CredentialSource): Promise<string | null> {
+  const directory = source.env.CLAUDE_CONFIG_DIR?.trim() || join(source.home, '.claude');
+  try {
+    const info = await stat(join(directory, '.credentials.json'));
+    return `${info.mtimeMs}:${info.size}`;
+  } catch { return null; }
+}
 
 export function claudePlanLabel(subscriptionType?: unknown, rateLimitTier?: unknown): string | undefined {
   if (typeof subscriptionType !== 'string' || !subscriptionType) return undefined;
@@ -89,6 +104,7 @@ export async function readClaudeCredentials(source: CredentialSource): Promise<C
     return {
       accessToken: token,
       expiresAt: typeof oauth.expiresAt === 'number' ? oauth.expiresAt : undefined,
+      hasRefresh: typeof oauth.refreshToken === 'string' && oauth.refreshToken.length > 0,
       plan: claudePlanLabel(oauth.subscriptionType, oauth.rateLimitTier),
     };
   } catch { return null; }
