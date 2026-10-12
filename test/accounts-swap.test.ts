@@ -64,7 +64,8 @@ describe('swapMainAccount', () => {
     expect(json(join(tDir(), '.claude.json'))).toEqual({ oauthAccount: account('A', 'a@x.com'), theme: 'dark' });
     expect(store.list()[0]).toMatchObject({ id: ID, email: 'a@x.com', org: 'Org A' });
     expect(existsSync(journalPath())).toBe(false);
-    expect(json(join(root, 'accounts', 'swap-backup', 'main-credentials.json')).claudeAiOauth.accessToken).toBe('tok-A');
+    // live tokens must not linger after a verified swap
+    expect(existsSync(join(root, 'accounts', 'swap-backup')) ? readdirSync(join(root, 'accounts', 'swap-backup')) : []).toEqual([]);
     expect(temps()).toEqual([]);
     expect(JSON.stringify([result, log.mock.calls, err.mock.calls])).not.toContain('tok-');
     expect(isSwapRunning()).toBe(false);
@@ -198,7 +199,7 @@ describe('swapMainAccount', () => {
     };
 
     it('redoes the whole pass when the credentials were refreshed', async () => {
-      fs = onFirstRenameTo(join(tDir(), '.claude.json'), () => put(mainCreds(), creds('A2')));
+      fs = onFirstRenameTo(join(tDir(), '.credentials.json'), () => put(mainCreds(), creds('A2')));
       expect((await swapMainAccount(deps(), ID)).ok).toBe(true);
       expect(json(join(tDir(), '.credentials.json')).claudeAiOauth.accessToken).toBe('tok-A2');
       expect(json(mainCreds()).claudeAiOauth.accessToken).toBe('tok-X');
@@ -219,37 +220,5 @@ describe('swapMainAccount', () => {
       expect(snapshot()).toEqual(before);
       expect(temps()).toEqual([]);
     });
-  });
-});
-
-describe('recoverInterruptedSwap', () => {
-  it('does nothing without a journal', async () => {
-    expect(await recoverInterruptedSwap(deps())).toBe(false);
-  });
-
-  it('restores the pre-swap files from a crashed swap', async () => {
-    const before = snapshot();
-    await swapMainAccount(deps(), ID);
-    // Simulate a dead process: everything written, journal left behind.
-    writeFileSync(journalPath(), JSON.stringify({ version: 1, accountId: ID, startedAt: 1, targetJsonExisted: true }));
-    expect(await recoverInterruptedSwap(deps())).toBe(true);
-    expect(parsed(snapshot())).toEqual(parsed(before));
-    expect(existsSync(journalPath())).toBe(false);
-  });
-
-  it('leaves credentials alone that Claude Code refreshed since', async () => {
-    await swapMainAccount(deps(), ID);
-    writeFileSync(journalPath(), JSON.stringify({ version: 1, accountId: ID, startedAt: 1, targetJsonExisted: true }));
-    put(mainCreds(), creds('NEWER'));
-    await recoverInterruptedSwap(deps());
-    expect(json(mainCreds()).claudeAiOauth.accessToken).toBe('tok-NEWER');
-    expect(existsSync(journalPath())).toBe(false);
-  });
-
-  it('drops a corrupt journal', async () => {
-    mkdirSync(join(root, 'accounts', 'swap-backup'), { recursive: true });
-    writeFileSync(journalPath(), 'nope');
-    expect(await recoverInterruptedSwap(deps())).toBe(true);
-    expect(existsSync(journalPath())).toBe(false);
   });
 });

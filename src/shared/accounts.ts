@@ -32,7 +32,7 @@ export function isAccountId(value: unknown): value is string {
 }
 
 /** Why making a managed account the main one was refused or failed (see `swapMainAccount` in the main process). */
-export const SWAP_ERRORS = ['unsupported', 'invalid', 'busy', 'envToken', 'noMain', 'noTarget', 'sameAccount', 'duplicate', 'dead', 'transient', 'write'] as const;
+export const SWAP_ERRORS = ['unsupported', 'invalid', 'busy', 'envToken', 'noMain', 'noTarget', 'sameAccount', 'duplicate', 'dead', 'transient', 'write', 'manual'] as const;
 export type SwapError = (typeof SWAP_ERRORS)[number];
 
 export type SwapResult = { ok: true; email?: string } | { ok: false; error: SwapError };
@@ -40,3 +40,6 @@ export type SwapResult = { ok: true; email?: string } | { ok: false; error: Swap
 export function isSwapError(value: unknown): value is SwapError {
   return typeof value === 'string' && (SWAP_ERRORS as readonly string[]).includes(value);
 }
+
+/** Outcome of `recoverInterruptedSwap`: nothing to do, state repaired, or ambiguous (nothing modified; backup kept; tell the user to check). */
+export type SwapRecovery = 'none' | 'recovered' | 'manual';
