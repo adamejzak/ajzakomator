@@ -189,6 +189,7 @@ export function refreshSessionTitles(projectPath: string | undefined, delay = 0)
 export function focusCell(cellId: string): void {
   const found = findCell(getS(), cellId);
   if (!found) return;
+  showTerminalTabs();
   update((s) => setActiveTab(setActiveProject(s, found.project.id), found.project.id, found.tab.id));
   // Keep a maximized cell only if it is the one being focused; otherwise the target would be hidden.
   setUi((ui) => ({ focusedCellId: cellId, maximizedCellId: ui.maximizedCellId === cellId ? cellId : null }));

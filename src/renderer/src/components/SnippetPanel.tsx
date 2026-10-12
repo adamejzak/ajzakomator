@@ -166,7 +166,7 @@ export function SnippetPanel({ resize }: { resize: PanelResizeProps }) {
           </div>
         ))}
         {visible.length > 0 && <div className={`snippet-drop-space ${over?.id === null ? 'drop-end' : ''}`} aria-hidden="true" />}
-        {!visible.length && <div className="muted" style={{ padding: '8px 2px' }}>{q ? tr('Nic nie pasuje do „{query}”.', { query: q }) : tr("Brak snippetów dostępnych w tym projekcie.")}</div>}
+        {!visible.length && <div className="muted snippet-empty">{q ? tr('Nic nie pasuje do „{query}”.', { query: q }) : tr("Brak snippetów dostępnych w tym projekcie.")}</div>}
       </div>
       </>
       )}

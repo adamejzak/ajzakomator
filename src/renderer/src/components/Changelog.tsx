@@ -75,7 +75,7 @@ export function ChangelogModal() {
         ))}
       </div>
       <div className="modal-foot">
-        <button className="btn primary" onClick={() => load(true)} disabled={spinning}><RefreshIcon spinning={spinning} />{tr('Odśwież')}</button>
+        <button className="btn refresh-button" onClick={() => load(true)} disabled={spinning}><RefreshIcon spinning={spinning} />{tr('Odśwież')}</button>
         <button className="btn" onClick={() => window.mc.openExternal(RELEASES_PAGE)}>{tr('Otwórz na GitHubie')}</button>
       </div>
     </div>

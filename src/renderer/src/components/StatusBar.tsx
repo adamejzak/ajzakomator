@@ -56,7 +56,7 @@ export function StatusBar() {
     : status;
   return (
     <footer className="statusbar">
-      {currentVersion && <span className="sb-version" title={tr('Wersja {version}', { version: currentVersion })}>ajzakomator v{currentVersion}</span>}
+      {currentVersion && <span className="sb-version" title={tr('Wersja {version}', { version: currentVersion })}>v{currentVersion}</span>}
       {shown}
       <span className="sb-spacer" />
       <button className="sb-btn" onClick={() => setUi({ modal: { kind: 'changelog' } })} title={tr('Co nowego')} aria-label={tr('Co nowego')}><IChangelog />{tr('Co nowego')}</button>

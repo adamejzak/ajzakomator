@@ -15,8 +15,8 @@ import { activateFile, closeFile, useFileStore } from '../files';
 export function TitleBar() {
   const { tr } = useI18n();
   const s = useStore((st) => st.s);
-  const statuses = useStore((st) => st.ui.statuses);
   const automationOpen = useStore((st) => st.ui.automationOpen);
+  const settingsActive = useStore((st) => st.ui.settingsActive);
   const pendingTasks = s.automation.tasks.filter((t) => !['completed', 'cancelled'].includes(t.status)).length;
   const project = activeProject(s);
   return (
@@ -31,7 +31,7 @@ export function TitleBar() {
         {project && <button className="tb-btn" title={tr("Historia czatów i gridów") + keyLabel(" (Ctrl+Shift+H)")} onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
         <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title={tr("Snippety") + keyLabel(" (Ctrl+Shift+B)")} onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
         <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title={tr("Panel projektów") + keyLabel(" (Ctrl+Shift+E)")} onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
-        <button className="tb-btn" title={tr("Ustawienia")} onClick={() => setUi({ modal: { kind: 'settings' } })}><TSettings /></button>
+        <button className={`tb-btn ${settingsActive ? 'on' : ''}`} title={tr("Ustawienia")} aria-label={tr("Ustawienia")} onClick={() => setUi({ settingsTabOpen: true, settingsActive: true })}><TSettings /></button>
       </div>
     </div>
   );
@@ -45,6 +45,8 @@ export function WorkspaceTabs() {
   const documents = useFileStore((st) => st.documents);
   const selectedFile = useFileStore((st) => st.activeFileId);
   const activeFileId = documents.some((doc) => doc.id === selectedFile && doc.projectId === project?.id) ? selectedFile : null;
+  const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
+  const settingsActive = useStore((st) => st.ui.settingsActive);
   const [editing, setEditing] = useState<string | null>(null);
 
   const agentMenu = (el: HTMLElement) =>
@@ -57,14 +59,19 @@ export function WorkspaceTabs() {
     ]);
 
   return <div className="workspace-tabs" aria-label={tr('Gridy i pliki')}>
+    <div className="tabs no-drag">
+      {settingsTabOpen && <div className={`tab settings-tab ${settingsActive ? 'active' : ''}`} onClick={() => setUi({ settingsActive: true })} onAuxClick={(e) => { if (e.button === 1) setUi({ settingsTabOpen: false, settingsActive: false }); }}>
+        <span className="tab-type-icon"><TSettings /></span><span className="label">{tr('Ustawienia')}</span>
+        <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); setUi({ settingsTabOpen: false, settingsActive: false }); }}><IX /></button>
+      </div>}
       {project && (
-        <div className="tabs no-drag">
+        <>
           {project.tabs.map((t) => {
             const counts = aggregate(t.cells.map((c) => statuses[c.id] ?? 'idle'));
             return (
               <div
                 key={t.id}
-                className={`tab grid-tab ${!activeFileId && t.id === project.activeTabId ? 'active' : ''}`}
+                className={`tab grid-tab ${!settingsActive && !activeFileId && t.id === project.activeTabId ? 'active' : ''}`}
                 style={t.color ? { '--tab-color': t.color } as CSSProperties : undefined}
                 onMouseDown={(e) => e.button === 0 && selectTab(project.id, t)}
                 onAuxClick={(e) => e.button === 1 && closeTab(project.id, t.id)}
@@ -109,7 +116,7 @@ export function WorkspaceTabs() {
             );
           })}
           {documents.filter((doc) => doc.projectId === project.id).map((doc) => (
-            <div key={doc.id} className={`tab file-tab ${activeFileId === doc.id ? 'active' : ''}`} title={doc.relativePath}
+            <div key={doc.id} className={`tab file-tab ${!settingsActive && activeFileId === doc.id ? 'active' : ''}`} title={doc.relativePath}
               onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) void closeFile(doc.id); }}>
               <span className="tab-type-icon" aria-hidden="true"><IFile /></span><span className="label">{doc.name}</span>
               {doc.text !== doc.savedText && <span className="file-dirty" aria-label={tr('Niezapisane zmiany')}>●</span>}
@@ -120,7 +127,8 @@ export function WorkspaceTabs() {
           <button className="tb-add" title={tr("Dodaj agenta do siatki") + keyLabel(" (Ctrl+Shift+N)")} onClick={(e) => agentMenu(e.currentTarget)}>
             <IPlusBold />  {tr("Dodaj")} <IChevron />
           </button>
-        </div>
+        </>
       )}
+    </div>
   </div>;
 }

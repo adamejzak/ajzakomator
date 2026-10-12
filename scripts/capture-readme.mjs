@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import electron from 'electron';
 import { verifyWorkspaceUI } from './verify-workspace-ui.mjs';
 
@@ -20,7 +21,46 @@ const root = mkdtempSync(join(temporaryBase, 'ajzakomator-readme-'));
 const data = join(root, 'data'), project = join(root, 'atlas');
 for (const dir of [data, project, join(project, 'src'), join(project, 'test')]) mkdirSync(dir, { recursive: true });
 writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'atlas-demo', private: true, type: 'module', scripts: { test: 'node --test', check: 'node --check src/catalog.mjs' } }, null, 2));
-writeFileSync(join(project, 'README.md'), '# Atlas\n\nA small product catalog used for the ajzakomator screenshot demo.\n\nRun `npm test` to check filtering and price formatting.\n');
+writeFileSync(join(project, 'README.md'), [
+  '# Atlas storefront',
+  '',
+  'A small product catalog shared by the storefront and API. **Six focused tests** cover filtering and price formatting.',
+  '',
+  '[Project checks](#project-checks) · [Browse the catalog source](src/catalog.mjs)',
+  '',
+  '## Catalog',
+  '',
+  '| Product | Category | Price |',
+  '| --- | --- | ---: |',
+  '| Orbit desk lamp | Lighting | $79 |',
+  '| Folio notebook | Stationery | $12 |',
+  '| Arc bookend | Workspace | $24 |',
+  '',
+  '> Keep the catalog API small. Review behavior beside the terminal before changing the implementation.',
+  '',
+  '## Quick start',
+  '',
+  '```javascript',
+  "import { findProducts, formatPrice } from './src/catalog.mjs';",
+  "console.log(findProducts('orbit'));",
+  'console.log(formatPrice(79));',
+  '```',
+  '',
+  '## Project checks',
+  '',
+  '- [x] Filter names and categories',
+  '- [x] Format prices in USD',
+  '- [ ] Review the next feature',
+  '',
+  'Run `npm test` to check filtering and price formatting.',
+  '',
+  '<details><summary>Preview sanitization fixture</summary>',
+  '<p onclick="window.__markdownInjected=true">This text remains readable.</p>',
+  '<script>window.__markdownInjected=true</script>',
+  '<a href="javascript:window.__markdownInjected=true">Unsafe URL fixture</a>',
+  '</details>',
+  '',
+].join('\n'));
 writeFileSync(join(project, 'src/catalog.mjs'), `/** A tiny catalog shared by the storefront and API. */
 export const products = [
   { id: 'orbit', name: 'Orbit desk lamp', category: 'lighting', price: 79 },
@@ -79,7 +119,7 @@ writeFileSync(join(data, 'state.json'), JSON.stringify({
     { id: 'test', name: 'Add focused tests', icon: '🧪', color: '#10b981', text: 'Add focused tests for the behavior we changed.', autoSend: false },
     { id: 'plan', name: 'Plan the next step', icon: '📋', color: '#c084fc', text: 'Explain the next implementation step before editing.', autoSend: false }],
   presets: [{ id: 'review-team', name: 'Review team', layout, cells: ['Coordinator', 'Frontend', 'Backend', 'Tests'].map((name, i) => ({ name, profileId: i % 2 ? 'codex' : 'claude', role: i ? 'worker' : 'coordinator', worktree: false, prompt: ['Plan and coordinate the review.', 'Review the storefront accessibility.', 'Review catalog validation.', 'Check edge cases and tests.'][i] })) }],
-  settings: { language: 'en', fontSize: 14, notifications: false, shell: process.platform === 'win32' ? 'cmd' : 'bash', lastProfileId: 'claude' },
+  settings: { language: 'en', fontSize: 14, notifications: false, showAiUsage: false, shell: process.platform === 'win32' ? 'cmd' : 'bash', lastProfileId: 'claude' },
   sidebarCollapsed: false, snippetsOpen: true, sidebarWidth: 230, snippetsWidth: 220,
 }));
 const port = await new Promise((resolvePort, reject) => {
@@ -170,9 +210,14 @@ try {
   if (process.argv.includes('--verify')) {
     await key('Escape', 'Escape');
     await until(() => evaluate('!document.querySelector(".palette")'), 'close palette before checks');
-    await verifyWorkspaceUI({ cdp, evaluate, click, key, until, project, cells });
+    await verifyWorkspaceUI({ cdp, evaluate, click, key, until, project, cells, screenshot });
   }
   if (exceptions.length) throw new Error(`Renderer exceptions: ${exceptions.join('; ')}`);
+  if (process.argv.includes('--verify') && existsSync(join(checkout, 'docs/design/project-add-concepts.html'))) {
+    await cdp('Page.navigate', { url: pathToFileURL(join(checkout, 'docs/design/project-add-concepts.html')).href });
+    await until(() => evaluate('document.querySelectorAll(".concepts article").length === 3'), 'project add concepts');
+    await screenshot('project-add-concepts');
+  }
   console.log(`Screenshots: ${output}\nIsolated demo data: ${root}`);
 } catch (error) {
   console.error(error); process.exitCode = 1;

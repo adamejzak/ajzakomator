@@ -8,6 +8,7 @@ spike/
 *.stackdump
 *.tsbuildinfo
 release-next/
+artifacts/
 
 # Local-only project notes and tooling (not published)
 CLAUDE.md

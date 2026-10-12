@@ -19,6 +19,7 @@ export const messages = {
   'Zmiana języka działa od razu.': ['Language changes apply immediately.', 'Sprachänderungen werden sofort übernommen.', 'El cambio de idioma se aplica al instante.', 'Le changement de langue est immédiat.', 'A alteração de idioma é imediata.'],
   'Ustawienia aplikacji': ['App settings', 'App-Einstellungen', 'Ajustes de la aplicación', 'Paramètres de l’application', 'Definições da aplicação'],
   'Ustawienia': ['Settings', 'Einstellungen', 'Ajustes', 'Paramètres', 'Definições'],
+  'Powiadomienia': ['Notifications', 'Benachrichtigungen', 'Notificaciones', 'Notifications', 'Notificações'],
   'Anuluj': ['Cancel', 'Abbrechen', 'Cancelar', 'Annuler', 'Cancelar'],
   'Zapisz': ['Save', 'Speichern', 'Guardar', 'Enregistrer', 'Guardar'],
   'Usuń': ['Delete', 'Löschen', 'Eliminar', 'Supprimer', 'Eliminar'],

@@ -20,6 +20,7 @@ import { getS, getUi, setUi, toast, update, useStore } from './store';
 import { terminals } from './terminals/TerminalManager';
 import { AutomationPanel } from './components/AutomationPanel';
 import { FileEditor } from './components/FileEditor';
+import { SettingsPage } from './components/SettingsPage';
 import { useFileStore } from './files';
 
 let booted = false;
@@ -140,6 +141,8 @@ export function App() {
   const selectedFile = useFileStore((st) => st.activeFileId);
   const documents = useFileStore((st) => st.documents);
   const projectId = useStore((st) => st.s.activeProjectId);
+  const settingsActive = useStore((st) => st.ui.settingsActive);
+  const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
   const fileOpen = documents.some((doc) => doc.id === selectedFile && doc.projectId === projectId);
   const ready = useStore((st) => st.ready);
   const automationOpen = useStore((st) => st.ui.automationOpen);
@@ -190,8 +193,9 @@ export function App() {
         <div className="main">
           <WorkspaceTabs />
           <div className="workspace-content">
-            <div className="terminal-workspace" style={{ display: fileOpen ? 'none' : 'flex' }}><GridView /></div>
-            {fileOpen && <FileEditor />}
+            <div className="terminal-workspace" style={{ display: fileOpen || settingsActive ? 'none' : 'flex' }}><GridView /></div>
+            {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><SettingsPage /></div>}
+            {!settingsActive && fileOpen && <FileEditor />}
           </div>
           {automationOpen && <AutomationPanel />}
         </div>

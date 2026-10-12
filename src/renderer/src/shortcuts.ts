@@ -27,12 +27,15 @@ export function useShortcuts(): void {
       if (ctrlShift && e.code === 'KeyN') return stop(e, () => void addAgent(getS().settings.lastProfileId));
       if (ctrlShift && e.code === 'KeyG' && project) return stop(e, () => setUi({ modal: { kind: 'grid', projectId: project.id } }));
       if (ctrlShift && e.code === 'KeyH' && project) return stop(e, () => setUi({ modal: { kind: 'history', projectId: project.id } }));
-      if (ctrlShift && e.code === 'KeyW' && project) {
+      if (ctrlShift && e.code === 'KeyW') {
+        if (ui.settingsActive) return stop(e, () => setUi({ settingsTabOpen: false, settingsActive: false }));
+        if (!project) return;
         const tab = activeTab(project);
         if (tab) return stop(e, () => closeTab(project.id, tab.id));
       }
       if (ctrlShift && e.code === 'KeyB') return stop(e, () => update((s) => ({ ...s, snippetsOpen: !s.snippetsOpen })));
       if (ctrlShift && e.code === 'KeyE') return stop(e, () => update((s) => ({ ...s, sidebarCollapsed: !s.sidebarCollapsed })));
+      if (ui.settingsActive) return;
       if (ctrlShift && e.code === 'KeyM') return stop(e, () => toggleMaximize());
       if (ctrl && e.code === 'Tab') return stop(e, () => cycleTab(e.shiftKey ? -1 : 1));
       if (primary && e.altKey && !e.getModifierState('AltGraph')) {

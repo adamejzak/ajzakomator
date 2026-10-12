@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { detectLanguage, type Language } from '../../shared/languages';
-import { askChoice, getS, getUi } from './store';
+import { askChoice, getS, getUi, setUi } from './store';
 import { tr } from './i18n';
 
 export interface FileDocument {
@@ -15,6 +15,7 @@ export interface FileDocument {
   saving: boolean;
   error: string | null;
   wrap: boolean;
+  markdownView?: 'preview' | 'source';
 }
 const labels = {
   dirty: ['Unsaved changes', 'Niezapisane zmiany', 'Ungespeicherte Änderungen', 'Cambios sin guardar', 'Modifications non enregistrées', 'Alterações não guardadas'],
@@ -54,10 +55,12 @@ function patch(id: string, changes: Partial<FileDocument>): void {
 }
 export const isFileDirty = (d: FileDocument): boolean => d.text !== d.savedText;
 export function activateFile(id: string): void {
+  setUi({ settingsActive: false });
   if (useFileStore.getState().documents.some((d) => d.id === id)) useFileStore.setState({ activeFileId: id });
 }
-export function showTerminalTabs(): void { useFileStore.setState({ activeFileId: null }); }
+export function showTerminalTabs(): void { setUi({ settingsActive: false }); useFileStore.setState({ activeFileId: null }); }
 export async function openFile(projectId: string, relativePath: string): Promise<void> {
+  setUi({ settingsActive: false });
   const path = relativePath.replace(/\\/g, '/');
   const id = JSON.stringify([projectId, path]);
   const existing = useFileStore.getState().documents.find((d) => d.id === id);
@@ -87,6 +90,9 @@ export function editFile(id: string, text: string): void {
 export function toggleFileWrap(id: string): void {
   const doc = useFileStore.getState().documents.find((d) => d.id === id);
   if (doc) patch(id, { wrap: !doc.wrap });
+}
+export function setFileMarkdownView(id: string, markdownView: 'preview' | 'source'): void {
+  patch(id, { markdownView });
 }
 export async function saveFile(id: string): Promise<boolean> {
   const doc = useFileStore.getState().documents.find((d) => d.id === id);

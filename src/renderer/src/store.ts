@@ -10,7 +10,6 @@ import type { LoginTarget } from '../../shared/accounts';
 export type Modal =
   | { kind: 'grid'; projectId: string }
   | { kind: 'history'; projectId: string }
-  | { kind: 'settings' }
   | { kind: 'changelog' }
   | { kind: 'search'; projectId: string }
   | { kind: 'snippet'; snippetId: string | null; projectId?: string }
@@ -44,6 +43,8 @@ export interface Ui {
   epoch: number;
   sidebarView: 'projects' | 'files';
   automationOpen: boolean;
+  settingsTabOpen: boolean;
+  settingsActive: boolean;
   mcpInfo: McpInfo;
 }
 
@@ -75,6 +76,8 @@ export const useStore = create<Store>((set, get) => ({
     epoch: 0,
     sidebarView: 'projects',
     automationOpen: false,
+    settingsTabOpen: false,
+    settingsActive: false,
     mcpInfo: { running: false },
   },
   ready: false,

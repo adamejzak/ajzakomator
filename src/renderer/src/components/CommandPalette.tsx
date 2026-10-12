@@ -66,7 +66,7 @@ function PaletteInner() {
     out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj snippety"), desc: keyLabel("Ctrl+Shift+B"), run: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) });
     out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj panel projektów"), desc: keyLabel("Ctrl+Shift+E"), run: () => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed })) });
     out.push({ kind: tr('Akcja'), title: tr("Nowy snippet") + '…', run: () => setUi({ modal: { kind: 'snippet', snippetId: null } }) });
-    out.push({ kind: tr('Akcja'), title: tr("Ustawienia"), run: () => setUi({ modal: { kind: 'settings' } }) });
+    out.push({ kind: tr('Akcja'), title: tr("Ustawienia"), run: () => setUi({ settingsTabOpen: true, settingsActive: true }) });
 
     for (const p of s.projects) out.push({ kind: tr('Projekt'), title: p.name, desc: p.path, run: () => switchProject(p.id) });
     for (const p of s.projects)

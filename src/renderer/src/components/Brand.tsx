@@ -35,7 +35,7 @@ export function Brand({ collapsed }: { collapsed: boolean }) {
         onKeyDown={(e) => { if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) { e.preventDefault(); openMenuAt(e.currentTarget, menuItems()); } }}>
         <span className="brand-mark"><Logo size={20} /></span>
         {!collapsed && <><span className="brand-name"><span className="bn-base">ajzakomator</span><span className="bn-fx" aria-hidden>ajzakomator</span></span>
-          {version && <span className="brand-version" title={tr('Wersja {version}', { version })}>v{version}</span>}</>}
+          </>}
         {effect.active && <span key={effect.run} className="brand-burst" aria-hidden />}
       </button>
     </div>

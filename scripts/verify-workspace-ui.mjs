@@ -2,12 +2,48 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, project }) {
+export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, project, screenshot }) {
+  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
   assert.equal(await evaluate('document.querySelectorAll(".titlebar .tab").length'), 0);
   assert.equal(await evaluate('document.querySelectorAll(".workspace-tabs .tab").length >= 2'), true);
   assert.equal(await evaluate('document.querySelectorAll(".sidebar .list-drag-grip, .explorer-foot").length'), 0);
   assert.equal(await evaluate('document.querySelectorAll(".project[draggable=true]").length'), 3);
-  assert.equal(await evaluate('document.querySelector(".brand-version").textContent'), 'v0.5.0');
+  assert.ok(await evaluate(`(() => {
+    const head = document.querySelector('.cell-head');
+    const status = document.createElement('span');
+    status.className = 'status-text working';
+    status.textContent = 'working…';
+    head.insertBefore(status, head.querySelector('.grow'));
+    try {
+      const elements = [head.querySelector('.cell-name'), head.querySelector('.profile'), status];
+      const styles = elements.map(el => getComputedStyle(el));
+      const centers = elements.map(el => {
+        const text = [...el.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        const rect = range.getBoundingClientRect();
+        return rect.y + rect.height / 2;
+      });
+      return styles.every(style => style.fontSize === styles[0].fontSize && style.lineHeight === styles[0].lineHeight)
+        && Math.max(...centers) - Math.min(...centers) < 1;
+    } finally { status.remove(); }
+  })()`), 'cell title, profile and working status use aligned text');
+  assert.equal(await evaluate('document.querySelectorAll(".brand .brand-version").length'), 0);
+  await until(() => evaluate(`document.querySelector('.statusbar .sb-version')?.textContent === ${JSON.stringify(`v${version}`)}`), 'running version in footer');
+  assert.ok(await evaluate('!document.querySelector(".statusbar").textContent.toLowerCase().includes("ajzakomator")'), 'footer omits brand name');
+  assert.ok(await evaluate('[...document.querySelectorAll(".project")].every(row => !/[\\\\/]/.test(row.textContent))'), 'projects show names without path rows');
+  assert.ok(await evaluate('(() => { const add = document.querySelector(".project-add-inline"); const rows = [...document.querySelectorAll(".project")]; return !!add && rows.every(row => row.getBoundingClientRect().bottom <= add.getBoundingClientRect().top); })()'), 'add project follows the project list');
+  await evaluate('document.querySelector(".rpanel .search").focus()');
+  await cdp('Input.insertText', { text: '__no_matching_snippet__' });
+  await until(() => evaluate('!!document.querySelector(".snippet-empty")'), 'snippet empty search state');
+  await screenshot('snippets-empty');
+  assert.ok(await evaluate('(() => { const search = document.querySelector(".rpanel .search").getBoundingClientRect(); const empty = document.querySelector(".snippet-empty").getBoundingClientRect(); return Math.abs(search.left-empty.left) < 1 && Math.abs(search.right-empty.right) < 1 && empty.top >= search.bottom; })()'), 'empty snippet message aligns with search field');
+  await evaluate(`(() => {
+    const input = document.querySelector('.rpanel .search');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await until(() => evaluate('document.querySelectorAll(".snippet").length === 3'), 'snippet search cleared');
   await click('.brand-trigger');
   await until(() => evaluate('document.querySelector(".brand").classList.contains("fx")'), 'brand effect');
   await evaluate('document.querySelector(".brand-trigger").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 20 }))');
@@ -34,6 +70,43 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   assert.ok(await evaluate('[...document.querySelectorAll(".cm-lineNumbers .cm-gutterElement")].some(el => el.textContent === "1")'), 'line numbers');
   assert.ok(await evaluate('new Set([...document.querySelectorAll(".cm-line span")].map(el => getComputedStyle(el).color)).size >= 3'), 'syntax colors');
   assert.ok(await evaluate('(() => { const toolbar = document.querySelector(".file-preview-toolbar"); const centers = [...toolbar.children].map(el => { const r = el.getBoundingClientRect(); return r.y+r.height/2; }); return Math.max(...centers)-Math.min(...centers) < 1; })()'), 'aligned editor toolbar');
+  const openSettings = async () => {
+    await click('.titlebar button[title="Settings"]');
+    await until(() => evaluate('!!document.querySelector(".settings-tab.active") && !!document.querySelector(".settings-page")'), 'settings workspace tab');
+    assert.equal(await evaluate('document.querySelectorAll(".overlay, .modal").length'), 0, 'settings opens without a modal');
+    assert.equal(await evaluate('document.querySelectorAll(".workspace-tabs .tab.active").length'), 1, 'only settings tab is active');
+    assert.equal(await evaluate('document.querySelector(".terminal-workspace").style.display'), 'none');
+  };
+  await openSettings();
+  await screenshot('settings-general');
+  assert.ok(await evaluate('(() => { const nav = document.querySelector(".settings-nav"); const content = document.querySelector(".settings-content"); return parseFloat(getComputedStyle(nav).borderRightWidth) >= 1 && nav.getBoundingClientRect().right <= content.getBoundingClientRect().left; })()'), 'settings navigation is divided from options');
+  const sectionLabels = await evaluate('[...document.querySelectorAll(".settings-nav button")].map(button => button.textContent.trim())');
+  assert.equal(sectionLabels.length, 6);
+  for (const label of sectionLabels) {
+    await click('.settings-nav button', label);
+    await until(() => evaluate(`document.querySelector('.settings-content h2')?.textContent === ${JSON.stringify(label)}`), `settings section ${label}`);
+    assert.equal(await evaluate('document.querySelectorAll(".settings-nav button[role=tab][aria-selected=true]").length'), 1);
+    assert.ok(await evaluate('!!document.querySelector(".settings-card input, .settings-card select")'), 'settings section provides controls');
+  }
+  await screenshot('settings-profiles');
+  await click('.file-tab');
+  await until(() => evaluate('!!document.querySelector(".file-tab.active") && !!document.querySelector(".file-editor .cm-content") && !document.querySelector(".settings-page")?.getClientRects().length'), 'return from settings to file');
+  await openSettings();
+  assert.equal(await evaluate('document.querySelector(".settings-content h2").textContent'), sectionLabels.at(-1), 'settings remembers its section after returning from file');
+  await evaluate('document.querySelector(".grid-tab").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))');
+  await until(() => evaluate('!!document.querySelector(".grid-tab.active") && document.querySelector(".terminal-workspace").style.display === "flex" && !document.querySelector(".settings-page")?.getClientRects().length'), 'return from settings to grid');
+  await openSettings();
+  assert.equal(await evaluate('document.querySelector(".settings-content h2").textContent'), sectionLabels.at(-1), 'settings remembers its section after returning from grid');
+  assert.equal(await evaluate('document.querySelectorAll(".settings-tab").length'), 1, 'reopening settings reuses its tab');
+  await click('.settings-tab .x');
+  await until(() => evaluate('!document.querySelector(".settings-tab") && !!document.querySelector(".grid-tab.active")'), 'closing settings restores grid');
+  await click('.file-tab');
+  await until(() => evaluate('!!document.querySelector(".file-editor .cm-content")'), 'return to editor after settings checks');
+  const gridTabsBeforeClose = await evaluate('document.querySelectorAll(".grid-tab").length');
+  await openSettings();
+  await key('W', 'KeyW', { ctrlKey: process.platform !== 'darwin', metaKey: process.platform === 'darwin', shiftKey: true });
+  await until(() => evaluate('!document.querySelector(".settings-tab") && !!document.querySelector(".file-tab.active") && !!document.querySelector(".file-editor .cm-content")'), 'settings close shortcut restores file');
+  assert.equal(await evaluate('document.querySelectorAll(".grid-tab").length'), gridTabsBeforeClose, 'closing settings does not close a background grid');
   const path = join(project, 'src', 'catalog.mjs');
   const original = readFileSync(path, 'utf8');
   const setText = async text => {
@@ -69,5 +142,39 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await click('.modal-foot button', 'Discard');
   await until(() => evaluate('!document.querySelector(".file-tab")'), 'file close returns to grid');
   assert.equal(await evaluate('document.querySelector(".terminal-workspace").style.display'), 'flex');
-  console.log('Workspace UI verified: distinct grid/file tabs, aligned toolbar, line numbers, syntax colors, undo, project dragging, brand/version/update menu, neutral resize cleanup, editor save/conflict/close and draft recovery.');
+  await click('#files-view');
+  await until(() => evaluate(`!!document.querySelector('.file-entry[title="README.md"]')`), 'Markdown file in project explorer');
+  await click('.file-entry[title="README.md"]');
+  await until(() => evaluate('!!document.querySelector(".markdown-preview")'), 'Markdown opens in preview by default');
+  assert.equal(await evaluate('document.querySelector(".markdown-view-toggle button[aria-pressed=true]").textContent'), 'Preview');
+  assert.equal(await evaluate('!!document.querySelector(".file-editor .cm-content")'), false, 'preview renders document instead of source editor');
+  assert.ok(await evaluate('(() => { const article = document.querySelector(".markdown-preview"); return !!article.querySelector("h1") && article.querySelectorAll("h2").length >= 3 && article.querySelectorAll("table tbody tr").length === 3 && !!article.querySelector("blockquote") && article.querySelector("pre code").textContent.includes("findProducts") && article.querySelectorAll("input[type=checkbox][disabled]").length === 3 && article.querySelectorAll("input[type=checkbox][checked]").length === 2; })()'), 'Markdown headings, table, quote, fenced code and task lists render');
+  assert.ok(await evaluate('(() => { const article = document.querySelector(".markdown-preview"); return !article.querySelector("script, iframe, object, embed") && [...article.querySelectorAll("*")].every(el => [...el.attributes].every(attr => !/^on/i.test(attr.name) && !(/^href$|^src$/i.test(attr.name) && /^javascript:/i.test(attr.value)))) && window.__markdownInjected !== true; })()'), 'Markdown removes executable HTML and JavaScript URLs');
+  await screenshot('markdown-preview');
+  await click('.markdown-preview a[href="#project-checks"]');
+  assert.ok(await evaluate('(() => { const viewport = document.querySelector(".markdown-preview-scroll").getBoundingClientRect(); const target = document.querySelector("#markdown-project-checks").getBoundingClientRect(); return target.top >= viewport.top && target.top < viewport.bottom && document.querySelector(".file-editor").getAttribute("aria-label") === "README.md"; })()'), 'Markdown fragment navigates inside preview');
+  await click('.markdown-preview a[href="src/catalog.mjs"]');
+  await until(() => evaluate('document.querySelector(".file-editor")?.getAttribute("aria-label") === "src/catalog.mjs" && !!document.querySelector(".cm-content")'), 'relative Markdown link opens project source');
+  await click('.file-tab[title="README.md"]');
+  await until(() => evaluate('!!document.querySelector(".markdown-preview")'), 'return to Markdown preview');
+  await click('.markdown-view-toggle button', 'Edit source');
+  await until(() => evaluate('!!document.querySelector(".file-editor .cm-content")'), 'Markdown source toggle');
+  await screenshot('markdown-source');
+  const readmePath = join(project, 'README.md');
+  const readmeOriginal = readFileSync(readmePath, 'utf8');
+  await setText(readmeOriginal + '\n## Unsaved preview update\n\nThis draft is visible before saving.\n');
+  await until(() => evaluate(`!!document.querySelector('.file-tab[title="README.md"] .file-dirty')`), 'Markdown source creates protected draft');
+  await click('.markdown-view-toggle button', 'Preview');
+  await until(() => evaluate('document.querySelector("#markdown-unsaved-preview-update")?.textContent === "Unsaved preview update"'), 'Markdown preview reflects unsaved source');
+  assert.equal(readFileSync(readmePath, 'utf8'), readmeOriginal, 'preview leaves draft unsaved on disk');
+  await click('.file-tab[title="README.md"] .x');
+  await until(() => evaluate('!!document.querySelector(".overlay")'), 'Markdown preview protects draft on close');
+  await click('.modal-foot button', 'Cancel');
+  await until(() => evaluate('!document.querySelector(".overlay") && !!document.querySelector("#markdown-unsaved-preview-update")'), 'cancel preserves Markdown preview draft');
+  await click('.file-tab[title="README.md"] .x');
+  await until(() => evaluate('!!document.querySelector(".overlay")'), 'Markdown discard confirmation');
+  await click('.modal-foot button', 'Discard');
+  await until(() => evaluate(`!document.querySelector('.file-tab[title="README.md"]')`), 'Markdown draft discarded');
+  assert.equal(readFileSync(readmePath, 'utf8'), readmeOriginal, 'discard keeps original Markdown file');
+  console.log('Workspace UI verified: settings tab/sections/grid/file navigation, aligned snippet empty state, project names and add placement, footer version, distinct grid/file tabs, aligned toolbar, line numbers, syntax colors, undo, project dragging, update menu, neutral resize cleanup, editor save/conflict/close and draft recovery, safe Markdown rendering, fragment/project links, source/preview toggles and draft protection.');
 }

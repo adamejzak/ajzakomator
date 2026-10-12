@@ -115,14 +115,11 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         onDoubleClick={(e) => (e.target as HTMLElement).closest('button,.cell-name,input') || toggleMaximize(cell.id)}
       >
         <span className="idx">{index + 1}</span>
-        {profile.cli !== 'shell' && <button className={`role-button ${cell.role ?? ''}`} title={tr('Rola / MCP')} onClick={(e) => openMenuAt(e.currentTarget, [
-          { header: tr('Rola / MCP') },
-          { label: tr('Koordynator'), onClick: () => void changeAgentRole(cell.id, 'coordinator') },
-          { label: tr('Wykonawca'), onClick: () => void changeAgentRole(cell.id, 'worker') },
-          { label: tr('Bez MCP'), onClick: () => void changeAgentRole(cell.id, null) },
-        ])}>{tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Włącz MCP')}
-        {cell.role && <span title={tr(mcpInfo.connectedCellIds?.includes(cell.id) ? 'MCP działa' : mcpInfo.configuredCellIds?.includes(cell.id) ? 'MCP skonfigurowane · oczekiwanie na agenta' : 'Wymaga restartu')}> · {mcpInfo.connectedCellIds?.includes(cell.id) ? '●' : '○'}</span>}</button>}
         <span className={`dot ${status}`} />
+        <span className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title={tr("Zmień profil")}>
+          <span className="pchip" style={{ background: profile.color }} />
+          {profile.name}
+        </span>
         {editing ? (
           <input
             className="cell-name-input"
@@ -147,10 +144,6 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
             </span>
           )
         )}
-        <span className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title={tr("Zmień profil")}>
-          <span className="pchip" style={{ background: profile.color }} />
-          {profile.name}
-        </span>
         {!label && !editing && (
           <span className="cell-name placeholder" onDoubleClick={() => setEditing(true)} title={tr("Dwuklik: nadaj nazwę")}>{tr("bez nazwy")}</span>
         )}
@@ -159,6 +152,19 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         )}
         {status !== 'idle' && <span className={`status-text ${status}`}>{status === 'working' ? tr('pracuje') : status === 'waiting' ? tr('czeka na Ciebie') : tr('zakończony')}{status === 'working' ? '…' : ''}</span>}
         <span className="grow" />
+        {profile.cli !== 'shell' && <button className={`mcp-control ${cell.role ?? 'disabled'} ${mcpInfo.connectedCellIds?.includes(cell.id) ? 'connected' : ''}`}
+          aria-label={`${tr('Rola / MCP')}: ${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')}`}
+          title={`${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')} · ${tr(cell.role ? mcpInfo.connectedCellIds?.includes(cell.id) ? 'MCP działa' : mcpInfo.configuredCellIds?.includes(cell.id) ? 'MCP skonfigurowane · oczekiwanie na agenta' : 'Wymaga restartu' : 'Rola / MCP')}`}
+          onClick={(e) => openMenuAt(e.currentTarget, [
+            { header: tr('Rola / MCP') },
+            { label: tr('Koordynator'), hint: cell.role === 'coordinator' ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, 'coordinator') },
+            { label: tr('Wykonawca'), hint: cell.role === 'worker' ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, 'worker') },
+            { label: tr('Bez MCP'), hint: !cell.role ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, null) },
+          ])}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {cell.role === 'coordinator' ? <><circle cx="12" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="19" r="2" /><path d="M12 7v6M5 17v-4h14v4" /></> : <><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4" />{!cell.role && <path d="m3 3 18 18" />}</>}
+          </svg><span className="mcp-indicator" />
+        </button>}
         <span className="actions">
           <button title={tr("Uruchom ponownie")} onClick={(e) => openMenuAt(e.currentTarget, restartItems())}><IRestart /></button>
           <button title={maximized ? tr("Przywróć siatkę") + keyLabel(" (Ctrl+Shift+M)") : tr("Maksymalizuj") + keyLabel(" (Ctrl+Shift+M)")} onClick={() => toggleMaximize(cell.id)}>

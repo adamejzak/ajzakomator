@@ -135,11 +135,6 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`} aria-label={tr("Panel projektów")} onContextMenu={backgroundMenu}>
       {!collapsed && <PanelResizeHandle {...resize} />}
       <div className="side-section">
-        {(s.projects.length > 0 || collapsed) && (
-          <button className="btn side-add" onClick={() => void createProject()} title={tr("Dodaj projekt")} aria-label={tr("Dodaj projekt")}>
-            <IFolder />{!collapsed && tr("Dodaj projekt")}
-          </button>
-        )}
         {!collapsed && (
           <div className="sidebar-heading">
             <div className="sidebar-tabs" role="tablist" aria-label={tr("Widok panelu projektów")}>
@@ -191,8 +186,8 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
               }}
             >
               <div
-                className={`project ${active ? 'active' : ''} ${active && !collapsed ? 'with-path' : ''} ${missing[p.id] ? 'missing' : ''}`}
-                title={`${missing[p.id] ? tr('Folder nie istnieje: {path}', { path: p.path }) : p.path}\n${tr('Przeciągnij, aby zmienić kolejność')}`}
+                className={`project ${active ? 'active' : ''} ${missing[p.id] ? 'missing' : ''}`}
+                title={`${p.name}\n${missing[p.id] ? tr('Folder nie istnieje: {path}', { path: p.path }) : p.path}\n${tr('Przeciągnij, aby zmienić kolejność')}`}
                 onClick={() => switchProject(p.id)}
                 onDoubleClick={() => setUi({ modal: { kind: 'project', projectId: p.id } })}
                 onContextMenu={(e) => menu(e, p)}
@@ -210,9 +205,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
                 }} onDoubleClick={(e) => e.stopPropagation()} draggable={false}>
                   <ProjectIconView project={p} />
                 </button>
-                {!collapsed && (active
-                  ? <span className="name-block"><span className="name">{p.name}</span><span className="path">{p.path}</span></span>
-                  : <span className="name">{p.name}</span>)}
+                {!collapsed && <span className="name">{p.name}</span>}
                 {!collapsed && <StatusBadges counts={counts} />}
               </div>
               {!collapsed && <TabList project={p} active={active} statuses={statuses} />}
@@ -231,6 +224,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
             </div>
           );
         })}
+      {(s.projects.length > 0 || collapsed) && <button className="btn project-add-inline" onClick={() => void createProject()} title={tr('Dodaj projekt')} aria-label={tr('Dodaj projekt')}><IPlus />{!collapsed && tr('Dodaj projekt')}</button>}
       {s.projects.length > 0 && <div className={`project-drop-space ${over?.id === null ? 'drop-end' : ''}`} aria-hidden="true" />}
       {!s.projects.length && !collapsed && (
         <div className="empty-state">
@@ -242,6 +236,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
       )}
       </div>
       )}
+      {view === 'files' && !collapsed && project && <div className="side-footer"><button className="btn project-add-inline" onClick={() => void createProject()}><IPlus />{tr('Dodaj projekt')}</button></div>}
       <UsagePanel />
     </aside>
   );

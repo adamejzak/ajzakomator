@@ -3,15 +3,12 @@ import { tr, useI18n } from '../i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { describeLayout } from '../../../shared/layout';
 import {
-  deleteArchived, getProfile, PROJECT_COLORS, removeProfile, removeSnippet, uid, updateProject, updateSettings, upsertProfile, upsertSnippet,
+  deleteArchived, getProfile, PROJECT_COLORS, removeSnippet, uid, updateProject, upsertSnippet,
 } from '../../../shared/state';
 import { fuzzyFilter } from '../../../shared/fuzzy';
-import type { CliKind, ProjectIcon, SessionInfo, ShellKind, Snippet } from '../../../shared/types';
+import type { ProjectIcon, SessionInfo, Snippet } from '../../../shared/types';
 import { restoreArchived, resumeSession } from '../actions';
 import { closeDialog, closeModal, setUi, toast, update, useStore, type Dialog } from '../store';
-import { normalizeWaitingSound, normalizeWaitingSoundVolume } from '../../../shared/sound';
-import { normalizeUpdateMode } from '../../../shared/updateMode';
-import { playWaitingSound } from '../waitingSound';
 import { AuthModal } from './AuthModal';
 import { ChangelogModal } from './Changelog';
 import { FindReplaceModal } from './FindReplace';
@@ -19,10 +16,7 @@ import { GridDialog } from './GridDialog';
 import { IEdit, IGrip, IX } from './icons';
 import { ProjectIconView } from './ProjectIcon';
 import { FilePreview } from './FilePreview';
-import { isLanguage, LANGUAGES } from '../../../shared/languages';
 import { formatAgo } from '../../../shared/i18n';
-import { shellsForPlatform } from '../../../shared/platform';
-import { USAGE_INTERVALS_MINUTES } from '../../../shared/usage';
 
 export function Modals() {
   const modal = useStore((st) => st.ui.modal);
@@ -46,7 +40,6 @@ export function Modals() {
         <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && closeModal()}>
           {modal.kind === 'grid' && <GridDialog projectId={modal.projectId} />}
           {modal.kind === 'history' && <HistoryModal projectId={modal.projectId} />}
-          {modal.kind === 'settings' && <SettingsModal />}
           {modal.kind === 'changelog' && <ChangelogModal />}
           {modal.kind === 'search' && <FindReplaceModal key={modal.projectId} projectId={modal.projectId} />}
           {modal.kind === 'snippet' && <SnippetEditor key={modal.snippetId ?? modal.projectId ?? 'new'} snippetId={modal.snippetId} projectId={modal.projectId} />}
@@ -184,143 +177,6 @@ function HistoryModal({ projectId }: { projectId: string }) {
             {sessions && !sessions.length && <div className="muted">{tr("Brak zapisanych rozmów Claude/Codex dla tego folderu.")}</div>}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ── settings ────────────────────────────────────────────────────────────────
-
-function SettingsModal() {
-  const { tr, language } = useI18n();
-  const s = useStore((st) => st.s);
-  const setSetting = (patch: Partial<typeof s.settings>) => update((st) => updateSettings(st, patch));
-  return (
-    <div className="modal wide">
-      <div className="modal-head">
-        <h3>{tr("Ustawienia")}</h3>
-        <button className="btn ghost icon" onClick={closeModal}><IX /></button>
-      </div>
-      <div className="modal-body">
-        <div className="section-title">{tr('Ustawienia aplikacji')}</div>
-        <div className="field language-setting">
-          <label htmlFor="settings-language">{tr('Język aplikacji')}</label>
-          <select id="settings-language" className="select" value={language} onChange={(event) => {
-            if (isLanguage(event.target.value)) setSetting({ language: event.target.value });
-          }}>
-            {LANGUAGES.map((option) => <option key={option.code} value={option.code} lang={option.code}>{option.name}</option>)}
-          </select>
-          <span className="muted">{tr('Zmiana języka działa od razu.')}</span>
-        </div>
-        <div className="row" style={{ gap: 18, flexWrap: 'wrap' }}>
-          <div className="field">
-            <label>{tr("Rozmiar czcionki terminala (nowe komórki)")}</label>
-            <input className="input" type="number" min={8} max={32} value={s.settings.fontSize} style={{ width: 120 }}
-              onChange={(e) => setSetting({ fontSize: Math.max(8, Math.min(32, Number(e.target.value) || 13)) })} />
-          </div>
-          <div className="field">
-            <label>{tr("Shell")}</label>
-            <select className="select" value={s.settings.shell} onChange={(e) => setSetting({ shell: e.target.value as ShellKind })}>
-              {shellsForPlatform(window.mc.platform).map((shell) => <option key={shell.code} value={shell.code}>{shell.name}</option>)}
-            </select>
-          </div>
-          <label className="check" style={{ alignSelf: 'flex-end', paddingBottom: 6 }}>
-            <input type="checkbox" checked={s.settings.notifications} onChange={(e) => setSetting({ notifications: e.target.checked })} />
-
-            {tr("Powiadomienia, gdy agent czeka na Ciebie")}
-          </label>
-        </div>
-        <div className="field">
-          <label htmlFor="settings-waiting-sound">{tr('Dźwięk przy oczekiwaniu na Ciebie')}</label>
-          <div className="row" style={{ flexWrap: 'wrap' }}>
-            <select id="settings-waiting-sound" className="select" style={{ width: 200 }} value={s.settings.waitingSound}
-              onChange={(e) => setSetting({ waitingSound: normalizeWaitingSound(e.target.value) })}>
-              <option value="off">{tr('Wyłączony')}</option>
-              <option value="system">{tr('Dźwięk systemowy')}</option>
-              <option value="custom">{tr('Własny plik')}</option>
-            </select>
-            {s.settings.waitingSound === 'custom' && (
-              <>
-                <button className="btn" onClick={async () => {
-                  const file = await window.mc.pickSoundFile();
-                  if (file) setSetting({ waitingSoundFile: file });
-                }}>{tr('Wybierz plik...')}</button>
-                <span className="muted" title={s.settings.waitingSoundFile}>
-                  {s.settings.waitingSoundFile ? s.settings.waitingSoundFile.split(/[\\/]/).pop() : tr('Nie wybrano pliku')}
-                </span>
-              </>
-            )}
-            {s.settings.waitingSound !== 'off' && (
-              <button className="btn" onClick={async () => {
-                if (!(await playWaitingSound())) toast(tr('Nie udało się odtworzyć pliku, użyto dźwięku systemowego.'), 'error');
-              }}>{tr('Test')}</button>
-            )}
-          </div>
-          {s.settings.waitingSound === 'custom' && (
-            <div className="row">
-              <label htmlFor="settings-waiting-volume">{tr('Głośność')}</label>
-              <input id="settings-waiting-volume" type="range" min={0} max={100} value={s.settings.waitingSoundVolume}
-                onChange={(e) => setSetting({ waitingSoundVolume: normalizeWaitingSoundVolume(Number(e.target.value)) })} />
-              <span className="muted">{s.settings.waitingSoundVolume}%</span>
-            </div>
-          )}
-          <span className="muted">{tr('Gra w tym samym momencie co powiadomienie, także dla agentów Codex. Dźwięk systemowy ignoruje głośność.')}</span>
-        </div>
-        <div className="field">
-          <label className="check">
-            <input type="checkbox" checked={s.settings.notifyWhenFocused} onChange={(e) => setSetting({ notifyWhenFocused: e.target.checked })} />
-            {tr('Powiadamiaj i graj dźwięk także w aktywnym oknie')}
-          </label>
-          <span className="muted">{tr('Domyślnie, gdy patrzysz na komórkę w aktywnym oknie aplikacji, nie dostajesz ani powiadomienia, ani dźwięku. Po włączeniu dostaniesz je zawsze, gdy agent skończy pracę i czeka na Ciebie.')}</span>
-        </div>
-        <div className="section-title">{tr('Aktualizacje')}</div>
-        <div className="field">
-          <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>
-          <select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.updateMode}
-            onChange={(e) => setSetting({ updateMode: normalizeUpdateMode(e.target.value) })}>
-            <option value="ask">{tr('Automatycznie (sprawdzaj przy starcie, pytaj przed instalacją)')}</option>
-            <option value="manual">{tr('Ręcznie (przycisk w stopce)')}</option>
-          </select>
-          <span className="muted">{{
-            manual: tr('Aplikacja startuje od razu. Aktualizacje pobierają się w tle, a przycisk w stopce zainstaluje je, gdy zechcesz.'),
-            ask: tr('Przy starcie aplikacja sprawdza aktualizacje i pyta, czy zainstalować od razu. Pobieranie rusza w tle już podczas pytania. „Później” uruchamia obecną wersję, a przycisk w stopce zainstaluje aktualizację.'),
-          }[s.settings.updateMode]}</span>
-        </div>
-        <div className="section-title">{tr('Konta AI')}</div>
-        <label className="check">
-          <input type="checkbox" checked={s.settings.showAiUsage} onChange={(e) => setSetting({ showAiUsage: e.target.checked })} />
-          {tr('Pokazuj limity kont AI')}
-        </label>
-        <div className="field">
-          <label htmlFor="settings-usage-interval">{tr('Odświeżanie limitów')}</label>
-          <select id="settings-usage-interval" className="select" style={{ width: 200 }} value={s.settings.usageIntervalMinutes}
-            onChange={(e) => setSetting({ usageIntervalMinutes: Number(e.target.value) })}>
-            {USAGE_INTERVALS_MINUTES.map((minutes) => <option key={minutes} value={minutes}>{tr('co {count} min', { count: minutes })}</option>)}
-          </select>
-        </div>
-        <div className="section-title">{tr("Profile agentów")}</div>
-        <div className="muted" style={{ fontSize: 11.5 }}>
-
-          {tr("Argumenty są dopisywane do polecenia, np.")} <code>--model opus</code>, <code>--dangerously-skip-permissions</code>, <code>-m gpt-5 -c model_reasoning_effort=high</code>.
-        </div>
-        {s.profiles.map((p) => (
-          <div key={p.id} className="row">
-            <input type="color" value={p.color} onChange={(e) => update((st) => upsertProfile(st, { ...p, color: e.target.value }))}
-              style={{ width: 28, height: 28, padding: 0, border: 0, background: 'none' }} />
-            <input className="input" style={{ width: 150 }} value={p.name} onChange={(e) => update((st) => upsertProfile(st, { ...p, name: e.target.value }))} />
-            <select className="select" value={p.cli} onChange={(e) => update((st) => upsertProfile(st, { ...p, cli: e.target.value as CliKind }))}>
-              <option value="claude">claude</option>
-              <option value="codex">codex</option>
-              <option value="shell">shell</option>
-            </select>
-            <input className="input" style={{ flex: 1, fontFamily: 'Cascadia Mono, Consolas, monospace' }} placeholder={tr("argumenty CLI")} value={p.args}
-              disabled={p.cli === 'shell'} onChange={(e) => update((st) => upsertProfile(st, { ...p, args: e.target.value }))} />
-            <button className="btn ghost icon" title={tr("Usuń profil")} onClick={() => update((st) => removeProfile(st, p.id))}><IX /></button>
-          </div>
-        ))}
-        <div>
-          <button className="btn" onClick={() => update((st) => upsertProfile(st, { id: uid(), name: tr("Nowy profil"), cli: 'claude', args: '', color: '#8b5cf6' }))}>{tr("+ Dodaj profil")}</button>
-        </div>
       </div>
     </div>
   );
