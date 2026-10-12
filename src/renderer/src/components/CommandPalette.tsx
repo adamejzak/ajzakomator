@@ -71,7 +71,7 @@ function PaletteInner() {
     out.push({ kind: tr('Akcja'), title: tr('Skopiuj dziennik statusów'), run: () => {
       if (!statusLog.size) { toast(tr('Dziennik statusów jest jeszcze pusty')); return; }
       window.mc.clipboardWrite(statusLog.toText());
-      toast(tr('Skopiowano dziennik statusów ({count} wpisów)', { count: statusLog.size }));
+      toast(tr('Skopiowano dziennik statusów. Wpisów: {count}', { count: statusLog.size }));
     } });
 
     for (const p of s.projects) out.push({ kind: tr('Projekt'), title: p.name, desc: p.path, run: () => switchProject(p.id) });

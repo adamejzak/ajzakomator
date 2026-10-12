@@ -9,7 +9,9 @@ import { join } from 'path';
 import { SESSION_ID } from '../shared/sessionTrack';
 import type { HookEvent, HookInfo } from '../shared/status';
 
-const EVENTS: HookEvent[] = ['prompt', 'stop', 'stopbg', 'notify', 'busy', 'fail'];
+/** URL events: the status events plus SubagentStop, which reaches the tracker as a "subagent" busy hook. */
+type HookUrlEvent = HookEvent | 'subagent';
+const EVENTS: HookUrlEvent[] = ['prompt', 'stop', 'stopbg', 'notify', 'busy', 'fail', 'subagent'];
 /** Notification types that do not mean "the agent needs you now" (idle_prompt follows Stop, or fires mid-work). */
 const IGNORED_NOTIFICATIONS = new Set(['idle_prompt', 'auth_success']);
 const MAX_BODY = 16 * 1024;
@@ -33,27 +35,43 @@ function parseObject(body: string): Record<string, unknown> | null {
   }
 }
 
-function isActiveTask(t: unknown): boolean {
+/** Long-lived plumbing (a dev server started with run_in_background...) never means "the agent is still working". */
+const PLUMBING_TASK = /shell|bash|command|monitor|process|server/i;
+
+function isRunning(t: unknown): boolean {
   const status = (t as { status?: unknown } | null)?.status;
   return typeof status !== 'string' || !FINISHED_TASK.has(status.trim().toLowerCase());
 }
 
-/** True when a Stop payload lists a background task that is not clearly finished (crons are not work in progress). */
+/** A running task holds the cell "working" unless its type says shell-like plumbing; unknown or missing types hold (conservative). */
+function holdsCell(t: unknown): boolean {
+  if (!isRunning(t)) return false;
+  const type = (t as { type?: unknown } | null)?.type;
+  return typeof type !== 'string' || !PLUMBING_TASK.test(type);
+}
+
+/** True when a Stop payload lists a running background task of agent-like (or unknown) type; crons and shell tasks do not count. */
 export function hasActiveBackgroundWork(body: string): boolean {
   const tasks = parseObject(body)?.background_tasks;
-  return Array.isArray(tasks) && tasks.some(isActiveTask);
+  return Array.isArray(tasks) && tasks.some(holdsCell);
 }
 
 /** Diagnostics for a Stop payload: task counts and the distinct status strings (never ids, commands or text). */
 export function stopInfo(body: string): HookInfo {
   const tasks = parseObject(body)?.background_tasks;
-  if (!Array.isArray(tasks)) return { tasks: 0, active: 0, statuses: [] };
+  const continuation = parseObject(body)?.stop_hook_active === true;
+  if (!Array.isArray(tasks)) return { tasks: 0, active: 0, statuses: [], types: [], continuation };
   const statuses = new Set<string>();
+  const types = new Set<string>();
+  const clean = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase().replace(/[^\w.-]/g, '').slice(0, 24) || '?' : '?');
   for (const t of tasks) {
-    const status = (t as { status?: unknown } | null)?.status;
-    statuses.add(typeof status === 'string' ? status.trim().toLowerCase().replace(/[^\w.-]/g, '').slice(0, 24) || '?' : '?');
+    statuses.add(clean((t as { status?: unknown } | null)?.status));
+    types.add(clean((t as { type?: unknown } | null)?.type));
   }
-  return { tasks: tasks.length, active: tasks.filter(isActiveTask).length, statuses: [...statuses].slice(0, MAX_STATUS_STRINGS) };
+  return {
+    tasks: tasks.length, active: tasks.filter(holdsCell).length,
+    statuses: [...statuses].slice(0, MAX_STATUS_STRINGS), types: [...types].slice(0, MAX_STATUS_STRINGS), continuation,
+  };
 }
 
 /** The StopFailure error code; anything not on the documented list (or malformed) is reported as "unknown". */
@@ -147,7 +165,7 @@ export class HookServer extends EventEmitter {
         res.writeHead(400).end();
         return;
       }
-      const event = parts[3] as HookEvent;
+      const event = parts[3] as HookUrlEvent;
       if (!CELL_ID.test(cellId)) {
         res.writeHead(400).end();
         return;
@@ -196,6 +214,10 @@ export class HookServer extends EventEmitter {
           return;
         }
         if (event === 'stopbg') return; // internal event, only derived from Stop
+        if (event === 'subagent') {
+          this.emit('hook', cellId, 'busy', { subagent: true } satisfies HookInfo);
+          return;
+        }
         this.emit('hook', cellId, event);
       });
     });
@@ -209,7 +231,7 @@ export class HookServer extends EventEmitter {
   }
 
   /** Hook URL for the cell's current spawn (a nonce is created on first use). */
-  url(cellId: string, event: HookEvent): string {
+  url(cellId: string, event: HookUrlEvent): string {
     let nonce = this.nonces.get(cellId);
     if (!nonce) this.nonces.set(cellId, (nonce = randomBytes(8).toString('hex')));
     return `http://127.0.0.1:${this.port}/h/${this.token}/${encodeURIComponent(cellId)}/${event}/${nonce}`;
@@ -220,15 +242,15 @@ export class HookServer extends EventEmitter {
     mkdirSync(dir, { recursive: true });
     this.nonces.set(cellId, randomBytes(8).toString('hex')); // invalidates hooks of the previous process
     // Only Notification, Stop (background_tasks), StopFailure (error) and SessionStart need their payload (JSON on stdin); tool hooks would upload whole files.
-    const withBody = new Set<HookEvent>(['notify', 'stop', 'fail', 'session']);
-    const hook = (event: HookEvent) => [
+    const withBody = new Set<HookUrlEvent>(['notify', 'stop', 'fail', 'session']);
+    const hook = (event: HookUrlEvent) => [
       { hooks: [{ type: 'command', command: `curl -s -m 2 -X POST ${withBody.has(event) ? '--data-binary @- ' : ''}${this.url(cellId, event)}` }] },
     ];
     // PreToolUse/PostToolUse/SubagentStop mark "still busy": the agent keeps working after a Stop
     // that only ended a turn (background tasks) or after a permission prompt was answered.
     const settings = { hooks: {
       UserPromptSubmit: hook('prompt'), Stop: hook('stop'), Notification: hook('notify'),
-      PreToolUse: hook('busy'), PostToolUse: hook('busy'), SubagentStop: hook('busy'),
+      PreToolUse: hook('busy'), PostToolUse: hook('busy'), SubagentStop: hook('subagent'),
       // /resume and /clear start a different conversation; the payload carries its session_id.
       SessionStart: hook('session'),
       // A turn that ends with an API error (rate limit, billing, auth...) fires StopFailure, never Stop.

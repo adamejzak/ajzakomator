@@ -1,7 +1,7 @@
 // Texts of the status diagnostics (command palette). Each row: English, German, Spanish, French, Portuguese.
 export const statusMessages = {
   'Skopiuj dziennik statusów': ['Copy status log', 'Statusprotokoll kopieren', 'Copiar registro de estados', 'Copier le journal des statuts', 'Copiar registo de estados'],
-  'Skopiowano dziennik statusów ({count} wpisów)': [
+  'Skopiowano dziennik statusów. Wpisów: {count}': [
     'Status log copied ({count} entries)',
     'Statusprotokoll kopiert ({count} Einträge)',
     'Registro de estados copiado ({count} entradas)',

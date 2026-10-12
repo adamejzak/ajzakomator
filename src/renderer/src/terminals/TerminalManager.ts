@@ -6,7 +6,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
-import { isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
+import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
 import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
@@ -221,7 +221,7 @@ class TerminalManager {
       // Focus / mouse reports (a click on the cell) and device replies are the terminal's, not the user's: they must not
       // count as typing, and the redraw they make the agent do must not count as work.
       if (isUserInput(d)) this.userInput(entry, d.includes('\r'), d === '\x1b' || d === '\x03');
-      else entry.tracker.terminalReply(performance.now());
+      else if (isFocusOrMouseReport(d)) entry.tracker.terminalReply(performance.now());
       this.post({ t: 'write', id: cellId, data: d });
     });
     term.onBinary((d) => entry.replaying === 0 && this.post({ t: 'write', id: cellId, data: d }));
@@ -484,7 +484,8 @@ class TerminalManager {
         note: result === 'ignored' ? 'ignored' : changed ? undefined : 'no-change', detail: detail || undefined,
       });
     }
-    if (changed) this.statusListeners.forEach((l) => l(e.id, status, prev, lastCause, lastReason, e.tracker.isHooked));
+    // A renotify (the real Stop after a continued turn) is reported as working -> waiting so the alert rules see a transition.
+    if (changed || result === 'renotify') this.statusListeners.forEach((l) => l(e.id, status, changed ? prev : 'working', lastCause, lastReason, e.tracker.isHooked));
   }
 
   private tickStatuses(): void {

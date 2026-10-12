@@ -206,7 +206,7 @@ describe('H2 late busy hooks after a plain Stop', () => {
 });
 
 describe('H3 stale background tasks', () => {
-  it('the background silence net is 4 minutes and ends in a silent waiting', () => {
+  it('the background silence net is 4 minutes and ends in waiting with one late alert', () => {
     expect(BG_STALL_MS).toBe(4 * 60_000);
     const s = sim();
     s.hook(0, 'prompt');
@@ -215,7 +215,7 @@ describe('H3 stale background tasks', () => {
     expect(s.t.status).toBe('working');
     s.run(1000 + BG_STALL_MS - 1000, 1000 + BG_STALL_MS + 1000);
     expect(s.t.status).toBe('waiting');
-    expect(s.alerts()).toBe(0);
+    expect(s.alerts()).toBe(1);
     expect(s.t.lastStallKind).toBe('bg');
   });
 
@@ -266,7 +266,7 @@ describe('H3 stale background tasks', () => {
     // only the prompt hook (or a Stop) ends it: the net still counts from the last real output / hook (t = 1000)
     s.run(100_000, 1000 + BG_STALL_MS + 1000);
     expect(s.t.status).toBe('waiting');
-    expect(s.alerts()).toBe(0);
+    expect(s.alerts()).toBe(1);
   });
 
   it('Esc / Ctrl-C do not end background mode (Esc Esc is rewind in Claude, so it says nothing about the tasks)', () => {
@@ -294,9 +294,9 @@ describe('H3 stale background tasks', () => {
       { id: 'SECRET-ID', type: 'shell', status: 'running', command: 'SECRET-CMD' },
       { status: 'Running' }, { status: 'completed' }, { id: 'x' },
     ], session_crons: [{ id: 'c' }] });
-    expect(stopInfo(body)).toEqual({ tasks: 4, active: 3, statuses: ['running', 'completed', '?'] });
+    expect(stopInfo(body)).toEqual({ tasks: 4, active: 2, statuses: ['running', 'completed', '?'], types: ['shell', '?'], continuation: false });
     expect(JSON.stringify(stopInfo(body))).not.toContain('SECRET');
-    expect(stopInfo('garbage')).toEqual({ tasks: 0, active: 0, statuses: [] });
+    expect(stopInfo('garbage')).toEqual({ tasks: 0, active: 0, statuses: [], types: [], continuation: false });
   });
 
   it('the hook server emits Stop info and a sessionstart event that is never a status hook', async () => {

@@ -21,6 +21,12 @@ export interface HookInfo {
   active?: number;
   /** Stop: distinct task status strings. */
   statuses?: string[];
+  /** Stop: distinct task types (shell, agent...). */
+  types?: string[];
+  /** Stop: the payload said stop_hook_active, i.e. Claude was continuing because a Stop hook blocked the stop. */
+  continuation?: boolean;
+  /** busy: SubagentStop, which never reopens a closed turn. */
+  subagent?: boolean;
   /** StopFailure: the error code. */
   error?: string;
   /** SessionStart: startup | resume | clear | compact | fork. */
@@ -43,8 +49,17 @@ export const STALL_MS = 30_000;
  * Short on purpose: after a restart Claude may still list tasks of the previous session as running.
  */
 export const BG_STALL_MS = 4 * 60_000;
+/** Tool hooks arriving this soon after a Stop / StopFailure are its late siblings (curl requests race), not a new turn. */
+export const END_GRACE_MS = 3000;
+/** A permission notification this soon after the user answered a prompt (or submitted) is the old prompt's late hook. */
+export const ANSWER_GRACE_MS = 600;
 /** Silence after the user pressed Esc / Ctrl-C on a hooked, working agent. */
 export const INTERRUPT_QUIET_MS = 4000;
+
+/** Focus-in / focus-out and mouse reports: what a click on the cell makes the terminal write to the agent. */
+export function isFocusOrMouseReport(data: string): boolean {
+  return /^\x1b\[(?:[IO]|<[\d;]*[Mm]|M[\s\S]{3})$/.test(data);
+}
 
 /** Replies the terminal itself writes to the pty (focus reports, cursor/device reports, mouse) are not user input. */
 export function isUserInput(data: string): boolean {
@@ -62,7 +77,8 @@ export function shouldNotify(prev: CellStatus, next: CellStatus, cause: StatusCa
   return cause === 'hook' || prev === 'working';
 }
 
-export type HookResult = 'applied' | 'ignored';
+/** renotify = a Stop that continued after an earlier Stop (stop_hook_active): the real end of the turn alerts again. */
+export type HookResult = 'applied' | 'ignored' | 'renotify';
 /** What ended a "working" state on a tick: the plain / background / Esc silence net, or a plain heuristic quiet window. */
 export type StallKind = 'plain' | 'bg' | 'interrupt' | 'heuristic';
 
@@ -86,6 +102,8 @@ export class StatusTracker {
   private background = false;
   /** A Stop / StopFailure ended the turn; only a prompt, a background-mode Stop or a permission notification reopens it. */
   private turnEnded = false;
+  private endedAt = -Infinity;
+  private answeredAt = -Infinity;
 
   constructor(private readonly quietMs = 2000) {}
 
@@ -101,12 +119,14 @@ export class StatusTracker {
       this.armed = true;
       this.turnObserved = true;
     }
+    if (submitted && this.status === 'working') this.answeredAt = now;
     if (this.status !== 'waiting') return;
     if (this.hooked) {
       // Any key answers a permission prompt / question (digits, Esc, Enter); the silence net ends it if nothing follows.
       if (this.waitingFromNotify) {
         this.waitingFromNotify = false;
         this.lastOutput = now;
+        this.answeredAt = now;
         this.set('working', 'heuristic');
       }
       // Waiting after Stop: UserPromptSubmit decides (an empty Enter must not fake work).
@@ -160,19 +180,27 @@ export class StatusTracker {
     if (event === 'busy') {
       // A parallel tool finishing must not hide a prompt that still needs the user.
       if (this.status === 'waiting' && this.waitingFromNotify) return 'ignored';
-      // Late PostToolUse / SubagentStop that trail a Stop must not reopen the finished turn.
-      if (this.turnEnded) return 'ignored';
+      // Late tool hooks that trail a Stop must not reopen the finished turn (the curl requests race), and neither must a
+      // background subagent finishing minutes later. After the grace window a tool hook is real work: a Stop hook that
+      // blocked the stop (decision: block) or a lost UserPromptSubmit means the turn continues without a prompt.
+      if (this.turnEnded && (info?.subagent || now - this.endedAt < END_GRACE_MS)) return 'ignored';
     }
+    // A permission notification right after the user answered a prompt is the answered prompt's late hook.
+    if (event === 'notify' && this.status === 'working' && now - this.answeredAt < ANSWER_GRACE_MS) return 'ignored';
+    const alreadyEnded = this.status === 'waiting' && this.turnEnded;
     this.waitingFromNotify = event === 'notify';
     this.lastOutput = now;
     if (event === 'prompt') this.interruptAt = -Infinity;
     if (event === 'stopbg') this.background = true;
     else if (event !== 'busy') this.background = false;
-    if (event === 'prompt' || event === 'stopbg' || event === 'notify') this.turnEnded = false;
-    else if (event === 'stop' || event === 'fail') this.turnEnded = true;
+    if (event === 'prompt' || event === 'stopbg' || event === 'notify' || event === 'busy') this.turnEnded = false;
+    else if (event === 'stop' || event === 'fail') {
+      this.turnEnded = true;
+      this.endedAt = now;
+    }
     if (event === 'prompt' || event === 'busy' || event === 'stopbg') this.set('working', 'hook');
     else this.set('waiting', 'hook', event === 'notify' ? 'attention' : event === 'fail' ? 'error' : 'done');
-    return 'applied';
+    return event === 'stop' && info?.continuation && alreadyEnded ? 'renotify' : 'applied';
   }
 
   /**
@@ -215,6 +243,7 @@ export class StatusTracker {
     this.waitingFromNotify = false;
     this.background = false;
     this.turnEnded = false;
+    this.endedAt = this.answeredAt = -Infinity;
     this.lastReason = 'done';
     this.lastStallKind = null;
     this.lastInput = this.lastFocus = this.lastOutput = this.activityStart = this.lastTick = this.interruptAt = -Infinity;
@@ -237,7 +266,8 @@ export class StatusTracker {
         this.background = false;
         this.interruptAt = -Infinity;
         this.lastStallKind = kind;
-        this.set('waiting', 'heuristic');
+        // The background net ending is the cell's "done" that never arrived: alert once, late rather than never.
+        this.set('waiting', kind === 'bg' ? 'hook' : 'heuristic');
       }
     }
     return this.status;
