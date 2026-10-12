@@ -168,6 +168,19 @@ export function UsagePanel() {
       if (result.ok && alive.current) setSwapPending(false);
     } catch { /* the warning stays */ }
   };
+  const restoreBackup = async () => {
+    const choice = await askChoice(
+      tr('Przywrócić stan sprzed zamiany?'),
+      tr('Logowania z kopii awaryjnej wrócą na swoje miejsca (konto główne i zapisane konto). Tokeny, które zmieniły się od zamiany, mogą już nie działać i konto może wymagać ponownego zalogowania.'),
+      [{ label: tr('Przywróć stan sprzed zamiany'), value: 'yes', danger: true }],
+    );
+    if (choice !== 'yes') return;
+    try {
+      const { result } = await window.mc.restoreSwapBackup();
+      if (result === 'restored') toast(tr('Przywrócono stan sprzed zamiany.'));
+      else toast(tr(swapErrorKey(result === 'busy' ? 'busy' : 'manual')), 'error');
+    } catch { toast(tr(swapErrorKey('manual')), 'error'); }
+  };
   const makeMain = async (target: ProviderUsage) => {
     if (swapping !== null) return;
     const current = providers.find((usage) => usage.accountId === 'claude:main')?.email || tr('obecne konto główne');
@@ -273,6 +286,7 @@ export function UsagePanel() {
           {swapPending && (
             <div className="usage-warning" role="alert">
               <p className="usage-note">{tr('Poprzednia zamiana kont została przerwana. Sprawdź oba konta (w razie potrzeby zaloguj się ponownie). Do czasu wyjaśnienia kolejne zamiany są zablokowane.')}</p>
+              <button className="btn small" onClick={() => void restoreBackup()}>{tr('Przywróć stan sprzed zamiany')}</button>
               <button className="btn small" onClick={() => void clearWarning()}>{tr('Wyczyść ostrzeżenie')}</button>
             </div>
           )}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LoginState, LoginTarget } from '../../../shared/accounts';
+import { swapErrorKey } from '../../../shared/swapMessages';
 import { useI18n } from '../i18n';
 import { closeModal } from '../store';
 import { terminals } from '../terminals/TerminalManager';
@@ -14,6 +15,8 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   const [ptyId, setPtyId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startFailed, setStartFailed] = useState(false);
+  /** Why the main process refused to start the login (a swap runs or is unresolved), if it did. */
+  const [refusal, setRefusal] = useState<'busy' | 'pending' | null>(null);
   // The latest state may arrive before startLogin resolves, so it is matched to the session at render time.
   const [state, setState] = useState<LoginState | null>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -26,7 +29,7 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
     const off = window.mc.on('auth:state', (s) => setState(s));
     void window.mc.startLogin({ provider, target }).then((res) => {
       if (!res.ok) {
-        if (!cancelled) setStartFailed(true);
+        if (!cancelled) { setStartFailed(true); if (res.error === 'busy' || res.error === 'pending') setRefusal(res.error); }
         return;
       }
       if (cancelled) {
@@ -76,6 +79,7 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   let line: string;
   if (status === 'success') line = email ? tr('Zalogowano jako {email}', { email }) : tr('Zalogowano.');
   else if (status === 'duplicate' && email) line = tr('To konto jest już dodane ({email}).', { email });
+  else if (startFailed && refusal) line = tr(swapErrorKey(refusal));
   else if (status === 'failed' || status === 'duplicate') {
     line = current?.error === 'timeout' ? tr('Upłynął czas na logowanie.')
       : current?.error === 'identity' ? tr('Nie udało się odczytać konta po zalogowaniu.')

@@ -26,11 +26,11 @@ import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, saf
 import { createUpdaterLogger } from './updaterLog';
 import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
-import { refreshClaudeProfile } from './accounts/refresh';
+import { refreshClaudeProfile, type RefreshOutcome } from './accounts/refresh';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
-import { handleRemoveAccount, loginBlock } from './accounts/guards';
-import { clearPendingSwap, hasPendingSwap, isSwapRunning, recoverInterruptedSwap, swapMainAccount, type SwapDeps } from './accounts/swap';
+import { gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
+import { clearPendingSwap, hasPendingSwap, isSwapRunning, recoverInterruptedSwap, restoreSwapBackup, swapMainAccount, type SwapDeps } from './accounts/swap';
 import { readManagedIdentity } from './accounts/identity';
 import { LoginManager } from './auth/login';
 import { isAccountId, type LoginRequest } from '../shared/accounts';
@@ -84,7 +84,6 @@ const usageDeps: FetcherDeps = {
   claudeUrl: (!app.isPackaged && process.env.MC_USAGE_CLAUDE_URL) || 'https://api.anthropic.com/api/oauth/usage',
   codexUrl: (!app.isPackaged && process.env.MC_USAGE_CODEX_URL) || 'https://chatgpt.com/backend-api/wham/usage',
 };
-usageDeps.refreshClaude = (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL });
 const accounts = new AccountsStore(join(DATA_DIR, 'accounts'));
 const usage = new UsageService({
   accounts: () => [
@@ -152,6 +151,8 @@ const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwa
 async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
 }
+// Background refreshes never write into a managed profile while a swap runs or is unresolved.
+usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }), { kind: 'transient' });
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();
@@ -527,6 +528,13 @@ ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
   return result;
 });
 ipcMain.handle('accounts:swapPending', () => hasPendingSwap(swapDeps()).catch(() => true));
+/** The user confirmed: put the logins from the emergency copy back where they were before the interrupted swap. */
+ipcMain.handle('accounts:restoreSwapBackup', async () => {
+  const result = await restoreSwapBackup(swapDeps());
+  void pushSwapPending();
+  if (result === 'restored') void usage.refresh(true, true);
+  return { result };
+});
 /** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
 ipcMain.handle('accounts:clearSwapPending', async () => {
   const cleared = await clearPendingSwap(swapDeps());

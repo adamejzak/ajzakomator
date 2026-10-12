@@ -33,7 +33,14 @@ export async function handleRemoveAccount(deps: RemoveDeps, id: unknown): Promis
 
 /** `auth:start` re-logins touch the files a swap moves (main login or a saved account), so they wait too. */
 export async function loginBlock(deps: GuardDeps, request: unknown): Promise<'busy' | 'pending' | null> {
-  const target = (request as { target?: { type?: unknown } } | null)?.target;
+  const req = request as { provider?: unknown; target?: { type?: unknown } } | null;
+  if (req?.provider !== 'claude') return null; // Codex logins never touch the files a swap moves
+  const target = req.target;
   if (target?.type !== 'main' && target?.type !== 'account') return null;
   return accountMutationBlock(deps);
+}
+
+/** Background refreshes must not write into a managed profile while a swap runs or is unresolved. */
+export function gateProfileRefresh<R>(deps: GuardDeps, refresh: (dir: string) => Promise<R>, blocked: R): (dir: string) => Promise<R> {
+  return async (dir) => ((await accountMutationBlock(deps)) ? blocked : refresh(dir));
 }

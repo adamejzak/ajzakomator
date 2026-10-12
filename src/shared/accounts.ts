@@ -43,3 +43,6 @@ export function isSwapError(value: unknown): value is SwapError {
 
 /** Outcome of `recoverInterruptedSwap`: nothing to do, state repaired, or ambiguous (nothing modified; backup kept; tell the user to check). */
 export type SwapRecovery = 'none' | 'recovered' | 'manual';
+
+/** Outcome of restoring the pre-swap backup: done, refused (a swap runs) or not possible (nothing was changed, or check the accounts). */
+export type SwapRestore = 'restored' | 'busy' | 'manual';

@@ -1,10 +1,11 @@
+import type { RefreshOutcome } from '../src/main/accounts/refresh';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { accountMutationBlock, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
+import { accountMutationBlock, gateProfileRefresh, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
 import { AccountsStore } from '../src/main/accounts/store';
-import { clearPendingSwap, hasPendingSwap, nodeSwapFs, recoverInterruptedSwap, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
+import { clearPendingSwap, hasPendingSwap, nodeSwapFs, recoverInterruptedSwap, restoreSwapBackup, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
 
 const FUTURE = Date.parse('2026-10-11T12:00:00Z') + 3_600_000;
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -191,6 +192,11 @@ describe('rollback follows the position of a token', () => {
     fs = nodeSwapFs;
     const before = snapshot();
     const files = backupFiles().map((n) => [n, readFileSync(join(backup(), n), 'utf8')]);
+    // T1: the old main login is still live in the target profile, the target login only in main (never duplicated)
+    expect(token(mainCreds())).toBe('tok-X');
+    expect(token(tCreds())).toBe('tok-A');
+    expect(json(join(backup(), 'main-credentials.json')).claudeAiOauth.accessToken).toBe('tok-A');
+    expect(json(join(backup(), 'target-credentials.json')).claudeAiOauth.accessToken).toBe('tok-X');
     expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'pending' });
     expect(snapshot()).toEqual(before);
     expect(backupFiles().map((n) => [n, readFileSync(join(backup(), n), 'utf8')])).toEqual(files);
@@ -209,9 +215,12 @@ describe('rollback follows the position of a token', () => {
     });
     // n=1: forward write (main refreshed meanwhile, guard trips), n=2: forward again, n=3: the rollback write fails.
     expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
-    expect(calls).toEqual([1, 2, 3]);
+    // the displaced blob (A, rotated to A2) is written back into the target at once (n=4); X is never duplicated
+    expect(calls).toEqual([1, 2, 3, 4]);
     expect(token(mainCreds())).toBe('tok-X');
     expect(token(tCreds())).toBe('tok-A2');
+    expect(json(join(backup(), 'main-credentials.json')).claudeAiOauth.accessToken).toBe('tok-A2');
+    expect(json(join(backup(), 'target-credentials.json')).claudeAiOauth.accessToken).toBe('tok-X');
     expect(existsSync(journalPath())).toBe(true);
     expect(json(journalPath()).phase).toBe('rolling-back');
     expect(backupFiles()).toContain('main-credentials.json');
@@ -307,5 +316,92 @@ describe('account mutation guards', () => {
     expect(await loginBlock(base(true, false), { provider: 'claude', target: { type: 'account', id: ID } })).toBe('busy');
     expect(await loginBlock(base(false, true), { provider: 'claude', target: { type: 'new' } })).toBeNull();
     expect(await accountMutationBlock({ swapRunning: () => false, swapPending: async () => { throw new Error('io'); } })).toBe('pending');
+  });
+});
+
+describe('identical tokens after a crash', () => {
+  it('forward: A2 in main and target, the target gets its own login back from the backup', async () => {
+    await crashed('main-creds-written');
+    put(mainCreds(), creds('A2')); put(tCreds(), creds('A2'));
+    expect(await recoverInterruptedSwap(deps())).toBe('recovered');
+    expect(token(mainCreds())).toBe('tok-A2');
+    expect(token(tCreds())).toBe('tok-X');
+    expect(acct(mainJson())).toBe('a@x.com');
+    expect(acct(tJson())).toBe('x@x.com');
+    expect(backupFiles()).toEqual([]);
+  });
+
+  it('reverse: X in both, the old main login returns to the target from the backup', async () => {
+    await crashed('rolling-back');
+    put(tCreds(), creds('X'));
+    expect(await recoverInterruptedSwap(deps())).toBe('recovered');
+    expect(token(mainCreds())).toBe('tok-X');
+    expect(token(tCreds())).toBe('tok-A');
+    expect(acct(mainJson())).toBe('x@x.com');
+    expect(acct(tJson())).toBe('a@x.com');
+  });
+});
+
+describe('restoreSwapBackup', () => {
+  const failing = (): SwapFs => {
+    const seen = new Map<string, number>();
+    return { ...nodeSwapFs, rename: async (from, to) => {
+      const n = (seen.get(to) ?? 0) + 1; seen.set(to, n);
+      if (to === mainJson()) throw Object.assign(new Error('boom'), { code: 'EIO' });
+      if (to === mainCreds() && n >= 2) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      return nodeSwapFs.rename(from, to);
+    } };
+  };
+
+  it('puts both logins and identities back from the T1 state and deletes the backup', async () => {
+    fs = failing();
+    expect(await swapMainAccount(deps(), ID)).toEqual({ ok: false, error: 'manual' });
+    fs = nodeSwapFs;
+    expect(await restoreSwapBackup(deps())).toBe('restored');
+    expect(token(mainCreds())).toBe('tok-A');
+    expect(token(tCreds())).toBe('tok-X');
+    expect(acct(mainJson())).toBe('a@x.com');
+    expect(acct(tJson())).toBe('x@x.com');
+    expect(json(mainCreds()).mcpOAuth).toEqual({ server: 'A' }); // only the blob key was written
+    expect(existsSync(backup())).toBe(false);
+    expect(store.list()[0].email).toBe('x@x.com');
+    expect((await swapMainAccount(deps(), ID)).ok).toBe(true);
+  });
+
+  it('changes nothing when the backup is incomplete', async () => {
+    await crashed('main-json-written');
+    rmSync(join(backup(), 'target-credentials.json'));
+    const before = snapshot();
+    expect(await restoreSwapBackup(deps())).toBe('manual');
+    expect(snapshot()).toEqual(before);
+    expect(existsSync(journalPath())).toBe(true);
+  });
+
+  it('refuses without a journal', async () => {
+    expect(await restoreSwapBackup(deps())).toBe('manual');
+  });
+});
+
+describe('cleanup order and guards', () => {
+  it('deletes the journal before the backup files', async () => {
+    const order: string[] = [];
+    fs = { ...nodeSwapFs, rm: async (p) => { if (p.includes('swap-backup')) order.push(basename(p)); return nodeSwapFs.rm(p); } };
+    expect((await swapMainAccount(deps(), ID)).ok).toBe(true);
+    expect(order[0]).toBe('swap-journal.json');
+  });
+
+  it('keeps managed profiles untouched by background refreshes while a swap runs or is pending', async () => {
+    let calls = 0;
+    const refresh = async (): Promise<RefreshOutcome> => { calls++; return { kind: 'ok' }; };
+    const blocked: RefreshOutcome = { kind: 'transient' };
+    expect(await gateProfileRefresh({ swapRunning: () => true, swapPending: async () => false }, refresh, blocked)('d')).toEqual(blocked);
+    expect(await gateProfileRefresh({ swapRunning: () => false, swapPending: async () => true }, refresh, blocked)('d')).toEqual(blocked);
+    expect(calls).toBe(0);
+    expect(await gateProfileRefresh({ swapRunning: () => false, swapPending: async () => false }, refresh, blocked)('d')).toEqual({ kind: 'ok' });
+    expect(calls).toBe(1);
+  });
+
+  it('does not block Codex logins', async () => {
+    expect(await loginBlock({ swapRunning: () => true, swapPending: async () => true }, { provider: 'codex', target: { type: 'main' } })).toBeNull();
   });
 });
