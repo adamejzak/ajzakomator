@@ -33,7 +33,7 @@ Przełączaj projekty, gdy terminale nadal pracują w tle.
 - **Terminale systemowe**: Windows korzysta z PowerShella i ConPTY, macOS z zsh/bash i PTY. Na Macu działają `Cmd+C` / `Cmd+V`, a powłoka logowania wczytuje `PATH` agentów
 - **Na Windowsie terminal jak w Windows Terminal**: kolory agentów, klikanie myszą, AltGr, wklejanie obrazków i **przytrzymanie spacji do dyktowania**
 - **Języki aplikacji**: polski, angielski, niemiecki, hiszpański, francuski i portugalski. Wybór po pierwszym uruchomieniu po instalacji, późniejsza zmiana od razu w ustawieniach
-- **Automatyczne aktualizacje** zainstalowanej wersji Windows; Mac i wersja portable wskazują stronę pobierania
+- **Aktualizacje** zainstalowanej wersji Windows i aplikacji na Macu (nigdy bez Twojego kliknięcia); wersja portable wskazuje stronę pobierania
 
 <img src="docs/screenshots/editor.png" alt="Zakładka edytora kodu z otwartym katalogiem produktów Atlas i drzewem plików" width="100%" />
 
@@ -58,7 +58,7 @@ Zrzuty przedstawiają rzeczywistą aplikację w języku angielskim, z jednorazow
 2. Otwórz DMG i przeciągnij **ajzakomator** do **Aplikacji**. Dostępne są też archiwa ZIP.
 3. Uruchom aplikację, wybierz język, dodaj projekt i otwórz grid.
 
-Buildy Maca mają podpis ad hoc bez certyfikatu Apple Developer i nie są notaryzowane. macOS może wymagać opcji **Otwórz mimo to** w **Ustawienia systemowe → Prywatność i ochrona**. Aktualizacje instaluje się ręcznie; automatyczne aktualizacje potrzebują podpisu wydawcy. Zobacz [wymagania podpisywania Electrona](https://www.electronjs.org/docs/latest/tutorial/code-signing#macos-apis-that-require-code-signing).
+Buildy Maca mają podpis ad hoc bez certyfikatu Apple Developer i nie są notaryzowane. macOS może wymagać opcji **Otwórz mimo to** w **Ustawienia systemowe → Prywatność i ochrona**. Aplikacja aktualizuje się sama bez certyfikatu (zobacz [Aktualizacje](#aktualizacje); pierwsza aktualizacja do wersji z tą funkcją jest nadal ręczna). Zobacz [wymagania podpisywania Electrona](https://www.electronjs.org/docs/latest/tutorial/code-signing#macos-apis-that-require-code-signing).
 
 Wymagania: Windows 10 1809+ lub 11 (zalecany PowerShell 7) albo macOS z zsh/bash, `claude` i/lub `codex` w `PATH` powłoki, `git` tylko do worktree.
 
@@ -77,7 +77,11 @@ Zainstalowana wersja Windows sprawdza GitHub Releases. **Ustawienia → Aktualiz
 
 Ręczne sprawdzenie: kliknij prawym przyciskiem nazwę i wersję **ajzakomator**, a następnie wybierz **Sprawdź aktualizacje**. Po błędzie nagłówek pokazuje jego treść i pozwala ponowić próbę.
 
-Wersja portable Windows i aplikacja macOS otwierają stronę pobierania. Zastąp aplikację nowym wydaniem; dane są przechowywane osobno. Wersja deweloperska nie instaluje aktualizacji.
+Wersja portable Windows otwiera stronę pobierania. Zastąp aplikację nowym wydaniem; dane są przechowywane osobno. Wersja deweloperska nie instaluje aktualizacji.
+
+**macOS.** Squirrel.Mac (electron-updater) odrzuca aktualizacje podpisane tylko ad hoc, dlatego aplikacja na Macu ma własny mechanizm z tymi samymi dwoma trybami i tą samą zasadą: nic nie instaluje się bez Twojego kliknięcia. Czyta `latest-mac.yml` z najnowszego wydania na GitHubie, pobiera `.zip` dla Twojego procesora (Apple Silicon lub Intel) do `~/Library/Application Support/ajzakomator/updates/mac`, sprawdza rozmiar i SHA-512, rozpakowuje przez `ditto` i weryfikuje pakiet (wersja, identyfikator, plik wykonywalny i `codesign --verify`). Po kliknięciu instalacji mały skrypt czeka, aż aplikacja się zamknie, odkłada starą aplikację, wstawia nową (przy jakimkolwiek błędzie przywraca starą), usuwa znacznik kwarantanny i uruchamia nową wersję. Dziennik to `updates/mac/update.log`. W trybie **Automatycznie** pytanie przy starcie działa jak w Windows, a pobieranie rusza w trakcie namysłu. Aplikacja podmienia się sama tylko wtedy, gdy działa ze zwykłego, zapisywalnego pakietu `.app` należącego do Ciebie (np. w **Programach**). Z zamontowanego obrazu DMG, z kopii uruchomionej z tymczasowej lokalizacji (kwarantanna), z miejsca tylko do odczytu lub należącego do administratora, a także gdy macOS odmówi uprawnienia **Zarządzanie aplikacjami**, stopka pokazuje stronę pobierania, a podpowiedź mówi dlaczego.
+
+Pierwsza aktualizacja do wersji macOS zawierającej ten mechanizm jest nadal ręczna (starsze wersje tego nie potrafią), a sam mechanizm nie został jeszcze sprawdzony na prawdziwym Macu; lista kontrolna jest w `docs/RELEASING.md`.
 
 ## Po co włączać MCP?
 
