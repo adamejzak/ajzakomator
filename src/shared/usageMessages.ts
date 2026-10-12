@@ -17,6 +17,7 @@ export const usageMessages = {
   'stan z ostatniej sesji, sprzed {age}': ['from the last session, {age} ago', 'aus der letzten Sitzung, vor {age}', 'de la última sesión, hace {age}', 'de la dernière session, il y a {age}', 'da última sessão, há {age}'],
   'Dodaj konto': ['Add account', 'Konto hinzufügen', 'Añadir cuenta', 'Ajouter un compte', 'Adicionar conta'],
   'Dodaj konto Claude': ['Add a Claude account', 'Claude-Konto hinzufügen', 'Añadir una cuenta de Claude', 'Ajouter un compte Claude', 'Adicionar uma conta Claude'],
+  'Zaloguj się do Claude': ['Sign in to Claude', 'Bei Claude anmelden', 'Iniciar sesión en Claude', 'Se connecter à Claude', 'Iniciar sessão no Claude'],
   'Zaloguj się do Codex': ['Sign in to Codex', 'Bei Codex anmelden', 'Iniciar sesión en Codex', 'Se connecter à Codex', 'Iniciar sessão no Codex'],
   'Zaloguj ponownie do Claude': ['Sign in to Claude again', 'Erneut bei Claude anmelden', 'Volver a iniciar sesión en Claude', 'Se reconnecter à Claude', 'Iniciar sessão novamente no Claude'],
   'Zaloguj ponownie': ['Sign in again', 'Erneut anmelden', 'Iniciar sesión de nuevo', 'Se reconnecter', 'Iniciar sessão novamente'],

@@ -103,3 +103,20 @@ export function usageSummary(providers: ProviderUsage[], nowMs: number): string 
     return `${name} ${Math.round(worstPercent(u, nowMs))}%`;
   }).join(' · ');
 }
+
+/** What the usage panel offers for logging in to Claude on a platform (macOS cannot use isolated profiles: Keychain). */
+export function claudeLoginActions(platform: string, hasMainClaude: boolean): {
+  /** Entry in the "+" menu: sign in the main login (macOS) or add a managed account (elsewhere), or null. */
+  menu: 'main' | 'new' | null;
+  /** Login target of the empty-state Claude button. */
+  emptyTarget: 'main' | 'new';
+  /** Managed-account actions (make main, relogin of saved accounts) are available. */
+  managedAccounts: boolean;
+} {
+  const mac = platform === 'darwin';
+  return {
+    menu: mac ? (hasMainClaude ? null : 'main') : 'new',
+    emptyTarget: mac ? 'main' : 'new',
+    managedAccounts: !mac,
+  };
+}

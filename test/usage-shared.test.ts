@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { sanitizeUsage } from '../src/main/usage/sanitize';
-import { MAIN_ACCOUNTS, clampPercent, effectivePercent, formatDuration, usageBand, worstPercent, type ProviderUsage } from '../src/shared/usage';
+import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, usageBand, worstPercent, type ProviderUsage } from '../src/shared/usage';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 
@@ -85,5 +85,18 @@ describe('sanitizeUsage accounts', () => {
     expect(sanitizeUsage({ ...valid, managed: 'yes', org: 5 })).not.toHaveProperty('managed');
     expect(sanitizeUsage({ ...valid, managed: 'yes', org: 5 })).not.toHaveProperty('org');
     expect(sanitizeUsage({ ...valid, managed: false })?.managed).toBe(false);
+  });
+});
+
+describe('claudeLoginActions', () => {
+  it('on macOS offers the main login only and hides managed-account actions', () => {
+    expect(claudeLoginActions('darwin', false)).toEqual({ menu: 'main', emptyTarget: 'main', managedAccounts: false });
+    expect(claudeLoginActions('darwin', true)).toEqual({ menu: null, emptyTarget: 'main', managedAccounts: false });
+  });
+
+  it('keeps Windows and Linux behaviour: add account, managed actions available', () => {
+    for (const platform of ['win32', 'linux']) {
+      for (const has of [false, true]) expect(claudeLoginActions(platform, has)).toEqual({ menu: 'new', emptyTarget: 'new', managedAccounts: true });
+    }
   });
 });

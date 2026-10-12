@@ -112,6 +112,7 @@ const login = new LoginManager({
     env: { ...cleanEnv(process.env), ...spec.env }, shell: state.settings.shell, command: spec.command,
   }),
   killPty: (id) => ptyHost.kill(id),
+  resetCredentialCache: () => usageDeps.credentials.resetKeychainCache?.(),
   fingerprint: async (provider, configDir) => {
     if (provider === 'claude') {
       const credentials = await readClaudeCredentials(configDir ? profileSource(usageDeps.credentials, configDir) : usageDeps.credentials);

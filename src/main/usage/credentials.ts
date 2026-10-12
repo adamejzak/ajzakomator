@@ -14,32 +14,42 @@ export interface CredentialSource {
   readFile(path: string): Promise<string | null>;
   /** Claude Code's Keychain secret on macOS, or null. */
   keychain(): Promise<string | null>;
+  /** Forgets a remembered failed Keychain read (login flows need fresh reads). */
+  resetKeychainCache?(): void;
 }
 
-/** Remembers a null result (denied, missing, timed out) for `holdMs` so a system prompt is not raised on every poll. */
-export function withFailureCache(read: () => Promise<string | null>, holdMs: number, now: () => number = Date.now): () => Promise<string | null> {
+/**
+ * Remembers a null result (denied, missing, timed out) for `holdMs` so a system prompt is not raised on every
+ * regular usage poll. The cache can be dropped with `reset()`: a login flow must see the credentials the moment
+ * they are written, so it resets before every read it makes (the user is actively logging in then, so a
+ * Keychain prompt is expected, and login polls run at most every 1.5 s for 10 min).
+ */
+export function withFailureCache(read: () => Promise<string | null>, holdMs: number, now: () => number = Date.now): (() => Promise<string | null>) & { reset(): void } {
   let holdUntil = 0;
-  return async () => {
+  const cached = async () => {
     if (now() < holdUntil) return null;
     const value = await read();
     if (value === null) holdUntil = now() + holdMs;
     return value;
   };
+  return Object.assign(cached, { reset: () => { holdUntil = 0; } });
 }
 
 const KEYCHAIN_HOLD_MS = 30 * 60_000;
 
 export function systemCredentialSource(): CredentialSource {
+  const keychain = withFailureCache(() => new Promise((resolve) => {
+    execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { timeout: 5000, maxBuffer: 64 * 1024, windowsHide: true }, (error, stdout) => {
+      resolve(error ? null : stdout.trim() || null);
+    });
+  }), KEYCHAIN_HOLD_MS);
   return {
     env: process.env,
     home: homedir(),
     platform: process.platform,
     readFile: (path) => readFile(path, 'utf8').catch(() => null),
-    keychain: withFailureCache(() => new Promise((resolve) => {
-      execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { timeout: 5000, maxBuffer: 64 * 1024, windowsHide: true }, (error, stdout) => {
-        resolve(error ? null : stdout.trim() || null);
-      });
-    }), KEYCHAIN_HOLD_MS),
+    keychain,
+    resetKeychainCache: () => keychain.reset(),
   };
 }
 

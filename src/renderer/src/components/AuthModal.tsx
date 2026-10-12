@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { LoginState, LoginTarget } from '../../../shared/accounts';
 import { swapErrorKey } from '../../../shared/swapMessages';
 import { useI18n } from '../i18n';
+import { useUsage } from '../usage';
 import { closeModal } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { IX } from './icons';
@@ -19,6 +20,9 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   const [refusal, setRefusal] = useState<'busy' | 'pending' | null>(null);
   // The latest state may arrive before startLogin resolves, so it is matched to the session at render time.
   const [state, setState] = useState<LoginState | null>(null);
+  // A first main Claude login (nothing detected when the window opened) gets "sign in" instead of "sign in again".
+  const { providers } = useUsage();
+  const [hadMain] = useState(() => providers.some((usage) => usage.accountId === 'claude:main' && usage.status !== 'signedOut'));
   const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -72,7 +76,7 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
 
   const title = provider === 'codex'
     ? tr('Zaloguj się do Codex')
-    : target.type === 'new' ? tr('Dodaj konto Claude') : tr('Zaloguj ponownie do Claude');
+    : target.type === 'new' ? tr('Dodaj konto Claude') : target.type === 'main' && !hadMain ? tr('Zaloguj się do Claude') : tr('Zaloguj ponownie do Claude');
   const email = current?.email ?? '';
   const waiting = status === 'waiting';
   /** Login refused up front: no terminal session exists, so only the refusal message is shown. */

@@ -109,6 +109,17 @@ describe('withFailureCache', () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
+  it('forgets a remembered failure on reset (a login must see fresh credentials)', async () => {
+    const results: (string | null)[] = [null, 'secret'];
+    const read = vi.fn(async () => results.shift() ?? null);
+    const cached = withFailureCache(read, 30 * 60_000, () => 0);
+    expect(await cached()).toBeNull();
+    expect(await cached()).toBeNull();
+    expect(read).toHaveBeenCalledOnce();
+    cached.reset();
+    expect(await cached()).toBe('secret');
+  });
+
   it('does not cache a successful read', async () => {
     const read = vi.fn(async () => 'secret');
     const cached = withFailureCache(read, 500, () => 0);

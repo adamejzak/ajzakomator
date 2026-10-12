@@ -10,6 +10,8 @@ export interface LoginDeps {
   killPty(id: string): void;
   /** Fingerprint (never the token) of the credentials the login writes, or null when there are none yet. */
   fingerprint(provider: 'claude' | 'codex', configDir: string | undefined): Promise<string | null>;
+  /** Drops cached failed credential reads (macOS Keychain) so the login sees fresh credentials. Called before each fingerprint read. */
+  resetCredentialCache?(): void;
   identity(provider: 'claude' | 'codex', configDir: string | undefined): Promise<{ email?: string; org?: string }>;
   /** Lower-cased e-mails of the machine's own Claude login and of every managed account. */
   knownEmails(): Promise<string[]>;
@@ -43,6 +45,9 @@ interface Session {
   timeout?: Timer;
   sleeps: Set<Timer>;
 }
+
+/** `claude auth login` signs in with a Claude subscription by default (`--console` is the API-billing alternative); `--claudeai` is not in the CLI reference, so it is not used. */
+export const loginCommand = (provider: 'claude' | 'codex'): string => (provider === 'claude' ? 'claude auth login' : 'codex login');
 
 const IDENTITY_TRIES = 5;
 const IDENTITY_GAP_MS = 1000;
@@ -95,6 +100,7 @@ export class LoginManager {
     this.current = session;
 
     try {
+      this.deps.resetCredentialCache?.();
       session.initial = await this.deps.fingerprint(provider, session.configDir);
     } catch {
       session.initial = null;
@@ -106,7 +112,7 @@ export class LoginManager {
         id: session.ptyId,
         // A user-level token or API key must not override the profile's own login.
         env: session.configDir ? { CLAUDE_CONFIG_DIR: session.configDir, CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' } : {},
-        command: provider === 'claude' ? 'claude auth login --claudeai' : 'codex login',
+        command: loginCommand(provider),
       });
     } catch {
       this.end(session);
@@ -158,6 +164,7 @@ export class LoginManager {
     session.polling = true;
     let fingerprint: string | null = null;
     try {
+      this.deps.resetCredentialCache?.();
       fingerprint = await this.deps.fingerprint(session.provider, session.configDir);
     } catch {
       fingerprint = null;

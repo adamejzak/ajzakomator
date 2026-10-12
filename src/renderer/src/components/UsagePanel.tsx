@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { LoginTarget } from '../../../shared/accounts';
-import { effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { claudeLoginActions, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { useI18n } from '../i18n';
 import { swapErrorKey } from '../../../shared/swapMessages';
 import { askChoice, setUi, toast, update, useStore } from '../store';
@@ -59,7 +59,7 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
   const { tr } = useI18n();
   const busy = swapping !== null;
   // On macOS Claude keeps its tokens in the Keychain, so the main login cannot be exchanged there.
-  const canMakeMain = usage.managed && usage.provider === 'claude' && window.mc.platform !== 'darwin';
+  const canMakeMain = usage.managed && usage.provider === 'claude' && claudeLoginActions(window.mc.platform, true).managedAccounts;
   const providerName = NAMES[usage.provider];
   const name = usage.email || providerName;
   const age = formatDuration((now - usage.fetchedAt) / 1000);
@@ -215,7 +215,7 @@ export function UsagePanel() {
   const claudeCount = visible.filter((usage) => usage.provider === 'claude').length;
   const hasCodex = visible.some((usage) => usage.provider === 'codex');
   // On macOS Claude keeps its tokens in the Keychain, so isolated profiles cannot work there.
-  const canAddClaude = window.mc.platform !== 'darwin';
+  const claudeLogin = claudeLoginActions(window.mc.platform, visible.some((usage) => usage.accountId === 'claude:main'));
 
   if (rail) {
     if (!shown.length) return null;
@@ -242,7 +242,8 @@ export function UsagePanel() {
   const collapsed = settings.usageCollapsed;
   const toggle = () => update((st) => updateSettings(st, { usageCollapsed: !collapsed }));
   const openAddMenu = (el: HTMLElement) => openMenuAt(el, [
-    ...(canAddClaude ? [{ label: tr('Dodaj konto Claude'), onClick: () => openAuth('claude', { type: 'new' }) }] : []),
+    ...(claudeLogin.menu === 'new' ? [{ label: tr('Dodaj konto Claude'), onClick: () => openAuth('claude', { type: 'new' }) }] : []),
+    ...(claudeLogin.menu === 'main' ? [{ label: tr('Zaloguj się do Claude'), onClick: () => openAuth('claude', { type: 'main' }) }] : []),
     ...(hasCodex ? [] : [{ label: tr('Zaloguj się do Codex'), onClick: () => openAuth('codex', { type: 'main' }) }]),
   ]);
   return (
@@ -302,7 +303,7 @@ export function UsagePanel() {
             <div className="usage-empty">
               <p className="usage-note">{tr('Brak podłączonych kont. Dodaj konto, aby zobaczyć limity.')}</p>
               <div className="usage-empty-buttons">
-                {canAddClaude && <button className="btn small" onClick={() => openAuth('claude', { type: 'new' })}><ProviderIcon provider="claude" size={14} />Claude</button>}
+                <button className="btn small" onClick={() => openAuth('claude', { type: claudeLogin.emptyTarget })}><ProviderIcon provider="claude" size={14} />Claude</button>
                 <button className="btn small" onClick={() => openAuth('codex', { type: 'main' })}><ProviderIcon provider="codex" size={14} />Codex</button>
               </div>
             </div>
