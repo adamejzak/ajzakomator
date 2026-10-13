@@ -3,6 +3,7 @@ import type { GitFileChange, GitOpResult, GitResult, GitStatus } from '../../../
 import { useI18n } from '../i18n';
 import { baseName, CONFLICT_LETTER, dirName, groupChanges, letterOf, newRequestId, type ChangeGroup, type Letter } from '../../../shared/gitUi';
 import { IChevron } from './icons';
+import { matchesShortcut, titleWithShortcut } from '../shortcuts';
 
 type Source = 'working' | 'staged' | 'untracked';
 
@@ -102,9 +103,9 @@ export function GitChanges({ projectId, status, busy, opts, run, onOpen, onMenu 
             placeholder={tr('Opis commita')}
             aria-label={tr('Opis commita')}
             onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void commit(); } }}
+            onKeyDown={(e) => { if (matchesShortcut('git.commit', e)) { e.preventDefault(); void commit(); } }}
           />
-          <button className="btn small primary" disabled={busy || !message.trim()} onClick={() => void commit()} title={tr('Zatwierdź dodane pliki (Ctrl+Enter)')}>
+          <button className="btn small primary" disabled={busy || !message.trim()} onClick={() => void commit()} title={titleWithShortcut(tr('Zatwierdź dodane pliki'), 'git.commit')}>
             {tr('Commit')} ({staged})
           </button>
         </div>

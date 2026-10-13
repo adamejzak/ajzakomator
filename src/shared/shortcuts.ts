@@ -28,8 +28,18 @@ const MODIFIER_NAMES: Record<string, 'ctrl' | 'alt' | 'shift' | 'meta'> = {
   ctrl: 'ctrl', control: 'ctrl', alt: 'alt', option: 'alt', opt: 'alt', shift: 'shift', meta: 'meta', cmd: 'meta', command: 'meta', win: 'meta', super: 'meta',
 };
 
-/** Canonical key token of a `KeyboardEvent.code` (layout independent), or null for keys that cannot be a shortcut (modifiers, numpad, media...). */
-export function keyFromCode(code: string): string | null {
+/** The numpad with NumLock off reports the navigation key in `key` (code Numpad4, key ArrowLeft): those count as the navigation key. */
+const NUMPAD_NAVIGATION: Record<string, string> = {
+  Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+  ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'Up', ArrowDown: 'Down',
+};
+
+/**
+ * Canonical key token of a `KeyboardEvent.code` (layout independent), or null for keys that cannot be a shortcut (modifiers, numpad
+ * digits, media...). With `key` given, a numpad key that acts as Delete, an arrow, Home... (NumLock off) maps to that key.
+ */
+export function keyFromCode(code: string, key?: string): string | null {
+  if (key && code.startsWith('Numpad') && code !== 'NumpadEnter' && Object.hasOwn(NUMPAD_NAVIGATION, key)) return NUMPAD_NAVIGATION[key];
   const letter = /^Key([A-Z])$/.exec(code);
   if (letter) return letter[1];
   const digit = /^Digit(\d)$/.exec(code);
@@ -95,13 +105,13 @@ export function comboParts(combo: Combo, platform: AppPlatform): string[] {
 export const displayCombo = (combo: Combo, platform: AppPlatform): string => comboParts(combo, platform).join('+');
 
 interface KeyEventLike {
-  code: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean;
+  code: string; key?: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean;
   getModifierState?(key: string): boolean;
 }
 
 /** The combo a key press makes, or null while only modifiers are held (or for a key that cannot be a shortcut). */
 export function eventToCombo(event: KeyEventLike): Combo | null {
-  const key = keyFromCode(event.code);
+  const key = keyFromCode(event.code, event.key);
   return key ? { key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey } : null;
 }
 
@@ -110,7 +120,7 @@ export function matchCombo(event: KeyEventLike, combo: Combo | null | undefined)
   if (!combo) return false;
   if (event.ctrlKey !== combo.ctrl || event.altKey !== combo.alt || event.shiftKey !== combo.shift || event.metaKey !== combo.meta) return false;
   if (combo.ctrl && combo.alt && event.getModifierState?.('AltGraph')) return false;
-  return keyFromCode(event.code) === combo.key;
+  return keyFromCode(event.code, event.key) === combo.key;
 }
 
 /** Defaults are written with `Mod`: Ctrl on Windows and Linux, Cmd on macOS. */
@@ -121,7 +131,7 @@ export function parseDefault(template: string, platform: AppPlatform): Combo | n
 // ---------------------------------------------------------------------------------------------------------------------
 // Registry
 
-export type ShortcutScope = 'global' | 'cell' | 'files-tree' | 'editor' | 'modal' | 'terminal-passthrough';
+export type ShortcutScope = 'global' | 'cell' | 'files-tree' | 'editor' | 'modal' | 'git-panel' | 'terminal-passthrough';
 export type ShortcutGroup = 'general' | 'grid' | 'files' | 'panels' | 'terminal';
 export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['general', 'grid', 'panels', 'files', 'terminal'];
 export const GROUP_LABEL: Record<ShortcutGroup, MessageKey> = {
@@ -141,6 +151,11 @@ export interface ShortcutDef {
   /** The action is meaningless without an open project / is not available on the Settings screen. */
   requiresProject?: boolean;
   blockedInSettings?: boolean;
+  /**
+   * Older keys that keep working while the action is on its default (not shown in Settings), as templates like `default`:
+   * on macOS the file tree and dialogs used to accept Ctrl as well as Cmd.
+   */
+  aliases?: readonly string[];
   /** Why a read-only row cannot be changed. */
   reason?: MessageKey;
   /** Read-only row that is not a key press at all (Ctrl+wheel); `Mod` as above. */
@@ -150,7 +165,7 @@ export interface ShortcutDef {
 export const SHORTCUTS = [
   { id: 'palette.open', label: 'Otwórz paletę poleceń', group: 'general', scope: 'global', default: 'Mod+K', rebindable: true },
   { id: 'palette.openAlt', label: 'Otwórz paletę poleceń (drugi skrót)', group: 'general', scope: 'global', default: 'Mod+Shift+P', rebindable: true },
-  { id: 'modal.save', label: 'Zapisz w oknie dialogowym (np. snippet, projekt)', group: 'general', scope: 'modal', default: 'Mod+Enter', rebindable: true },
+  { id: 'modal.save', label: 'Zapisz w oknie dialogowym (np. snippet, projekt)', group: 'general', scope: 'modal', default: 'Mod+Enter', rebindable: true, aliases: ['Ctrl+Enter'] },
   { id: 'terminal.new', label: 'Nowa zakładka z jednym terminalem', group: 'grid', scope: 'global', default: 'Mod+Shift+T', rebindable: true },
   { id: 'agent.add', label: 'Dodaj agenta do siatki', group: 'grid', scope: 'global', default: 'Mod+Shift+N', rebindable: true },
   { id: 'grid.new', label: 'Nowy grid lub preset', group: 'grid', scope: 'global', default: 'Mod+Shift+G', rebindable: true, requiresProject: true },
@@ -169,14 +184,15 @@ export const SHORTCUTS = [
   { id: 'cell.move.down', label: 'Przesuń komórkę w dół', group: 'grid', scope: 'cell', default: 'Mod+Alt+Shift+Down', rebindable: true, blockedInSettings: true },
   { id: 'snippets.toggle', label: 'Pokaż lub ukryj snippety', group: 'panels', scope: 'global', default: 'Mod+Shift+B', rebindable: true },
   { id: 'sidebar.toggle', label: 'Pokaż lub ukryj panel boczny', group: 'panels', scope: 'global', default: 'Mod+Shift+E', rebindable: true },
+  { id: 'git.commit', label: 'Git: zatwierdź zmiany (commit)', group: 'panels', scope: 'git-panel', default: 'Mod+Enter', rebindable: true, aliases: ['Ctrl+Enter'] },
   { id: 'editor.save', label: 'Zapisz plik w edytorze', group: 'files', scope: 'editor', default: 'Mod+S', rebindable: true },
   { id: 'tree.rename', label: 'Drzewo plików: zmień nazwę', group: 'files', scope: 'files-tree', default: 'F2', rebindable: true },
   { id: 'tree.delete', label: 'Drzewo plików: przenieś do kosza', group: 'files', scope: 'files-tree', default: 'Delete', rebindable: true },
-  { id: 'tree.copy', label: 'Drzewo plików: kopiuj', group: 'files', scope: 'files-tree', default: 'Mod+C', rebindable: true },
-  { id: 'tree.cut', label: 'Drzewo plików: wytnij', group: 'files', scope: 'files-tree', default: 'Mod+X', rebindable: true },
-  { id: 'tree.paste', label: 'Drzewo plików: wklej', group: 'files', scope: 'files-tree', default: 'Mod+V', rebindable: true },
-  { id: 'tree.undo', label: 'Drzewo plików: cofnij ostatnią operację', group: 'files', scope: 'files-tree', default: 'Mod+Z', rebindable: true },
-  { id: 'tree.selectAll', label: 'Drzewo plików: zaznacz wszystko', group: 'files', scope: 'files-tree', default: 'Mod+A', rebindable: true },
+  { id: 'tree.copy', label: 'Drzewo plików: kopiuj', group: 'files', scope: 'files-tree', default: 'Mod+C', rebindable: true, aliases: ['Ctrl+C'] },
+  { id: 'tree.cut', label: 'Drzewo plików: wytnij', group: 'files', scope: 'files-tree', default: 'Mod+X', rebindable: true, aliases: ['Ctrl+X'] },
+  { id: 'tree.paste', label: 'Drzewo plików: wklej', group: 'files', scope: 'files-tree', default: 'Mod+V', rebindable: true, aliases: ['Ctrl+V'] },
+  { id: 'tree.undo', label: 'Drzewo plików: cofnij ostatnią operację', group: 'files', scope: 'files-tree', default: 'Mod+Z', rebindable: true, aliases: ['Ctrl+Z'] },
+  { id: 'tree.selectAll', label: 'Drzewo plików: zaznacz wszystko', group: 'files', scope: 'files-tree', default: 'Mod+A', rebindable: true, aliases: ['Ctrl+A'] },
   {
     id: 'terminal.copy', label: 'Kopiuj zaznaczenie w terminalu', group: 'terminal', scope: 'terminal-passthrough', default: 'Mod+C', rebindable: false,
     reason: 'Kopiuje zaznaczony tekst. Bez zaznaczenia klawisz trafia do programu w terminalu (np. przerwanie).',
@@ -188,6 +204,10 @@ export const SHORTCUTS = [
   {
     id: 'terminal.paste', label: 'Wklej do terminala', group: 'terminal', scope: 'terminal-passthrough', default: 'Mod+V', rebindable: false,
     reason: 'Wkleja tekst ze schowka. Bez tekstu (np. obraz) klawisz trafia do agenta.',
+  },
+  {
+    id: 'terminal.pasteShift', label: 'Wklej do terminala (z Shift)', group: 'terminal', scope: 'terminal-passthrough', default: 'Mod+Shift+V', rebindable: false,
+    reason: 'Wkleja tekst ze schowka tak samo jak skrót bez Shift.',
   },
   {
     id: 'terminal.zoom', label: 'Powiększ lub pomniejsz czcionkę komórki', group: 'terminal', scope: 'terminal-passthrough', default: null, rebindable: false,
@@ -253,15 +273,20 @@ export function reservedReason(combo: Combo, platform: AppPlatform, scope: Short
   const mod = mac ? meta && !ctrl && !alt : ctrl && !alt && !meta;
   if (mac && (scope === 'global' || scope === 'cell') && meta && !ctrl && !alt && !shift && EDIT_LETTERS.has(key)) return 'Standardowe skróty edycji tekstu (kopiuj, wklej, cofnij, zaznacz).';
   if (scope === 'global' || scope === 'cell') {
+    // The terminal pastes on Ctrl+V (Cmd+V) with or without Shift (see TerminalManager.handleKey).
+    if (key === 'V' && ((ctrl && !alt && !meta) || (mac && meta && !ctrl && !alt))) return 'Wklejanie w terminalu należy do terminala (także z Shift).';
     // These reach the program in the focused terminal (Claude Code, Codex, the shell).
     if (ctrl && !alt && !shift && !meta && (isLetter(key) || ['[', '\\', ']', '/', '-', 'Space'].includes(key))) {
       return 'Skróty Ctrl+litera należą do terminala i agentów (Claude Code, Codex).';
     }
-    if (ctrl && !alt && !shift && !meta && ['Left', 'Right', 'Up', 'Down', 'Home', 'End', 'Backspace', 'Delete', 'Enter', 'PageUp', 'PageDown'].includes(key)) {
+    // Also with Shift: PSReadLine and readline select text with Ctrl+Shift+arrows.
+    if (ctrl && !alt && !meta && ['Left', 'Right', 'Up', 'Down', 'Home', 'End', 'Backspace', 'Delete', 'Enter', 'PageUp', 'PageDown'].includes(key)) {
       return 'Ctrl ze strzałkami, Home, End, Backspace i Enter należy do terminala.';
     }
+    // Ctrl+2..8 are the control codes NUL, FS, GS, RS and US of the terminal.
+    if (ctrl && !alt && !meta && /^[2-8]$/.test(key)) return 'Ctrl z cyframi 2-8 wysyła do terminala znaki sterujące.';
     if (alt && !ctrl && !meta) return 'Skróty z samym Alt (Option) należą do terminala i agentów.';
-  } else if (scope === 'modal' || scope === 'editor') {
+  } else if (scope === 'modal' || scope === 'editor' || scope === 'git-panel') {
     if (mod && !shift && EDIT_LETTERS.has(key)) return 'Standardowe skróty edycji tekstu (kopiuj, wklej, cofnij, zaznacz).';
     if (mod && key === 'Z' && shift) return 'Standardowe skróty edycji tekstu (kopiuj, wklej, cofnij, zaznacz).';
     if (scope === 'editor' && mod && EDITOR_LETTERS.has(key)) return 'Ten skrót jest używany przez edytor kodu.';
@@ -283,6 +308,8 @@ export interface ShortcutResolution {
   source: Record<string, 'default' | 'custom' | 'disabled'>;
   /** Overrides found in the saved settings that cannot be used (they fall back to the default). */
   problems: Record<string, ShortcutProblem>;
+  /** The older keys that still work for an action on its default (see `ShortcutDef.aliases`). */
+  aliases: Record<string, Combo[]>;
   /** The overrides that survive: exactly what normalisation writes back. */
   overrides: Overrides;
 }
@@ -338,7 +365,41 @@ export function resolveShortcuts(raw: unknown, platform: AppPlatform, defs: read
     source[def.id] = !candidates.has(def.id) ? 'default' : combo ? 'custom' : 'disabled';
     if (candidates.has(def.id)) overrides[def.id] = combo ? formatCombo(combo) : null;
   }
-  return { combos, source, problems, overrides };
+  const aliases: ShortcutResolution['aliases'] = {};
+  for (const def of defs) {
+    if (source[def.id] !== 'default' || !def.aliases) continue;
+    const extra = def.aliases.map((text) => parseDefault(text, platform)).filter((alias): alias is Combo => !!alias && !sameCombo(alias, combos[def.id]));
+    if (extra.length) aliases[def.id] = extra;
+  }
+  return { combos, source, problems, aliases, overrides };
+}
+
+/** Does this key press trigger the action: its combo, or (on its default) one of the older aliases. */
+export function matchShortcut(event: KeyEventLike, resolution: ShortcutResolution, id: string): boolean {
+  return matchCombo(event, resolution.combos[id]) || (resolution.aliases[id] ?? []).some((alias) => matchCombo(event, alias));
+}
+
+/** Bare Backspace switches a shortcut off while recording, except in the file tree, where Backspace is a key that can be assigned. */
+export const backspaceDisables = (def: ShortcutDef): boolean => def.scope !== 'files-tree';
+
+/**
+ * Keeps auto-repeat of the keys that just finished recording from firing the new action: armed when a recording ends, it swallows
+ * repeated key presses until a fresh press or the release of a non-modifier key.
+ */
+export class RepeatGuard {
+  private armed = false;
+  arm(): void { this.armed = true; }
+  /** For a keydown: true when it is an auto-repeat to ignore. */
+  swallow(event: { repeat?: boolean }): boolean {
+    if (!this.armed) return false;
+    if (event.repeat) return true;
+    this.armed = false;
+    return false;
+  }
+  /** For a keyup. */
+  release(event: { code: string }): void {
+    if (!/^(Control|Shift|Alt|Meta|OS)(Left|Right)?$/.test(event.code)) this.armed = false;
+  }
 }
 
 /** The overrides that may be stored: what `resolveShortcuts` keeps. */

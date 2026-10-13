@@ -255,7 +255,7 @@ function SnippetEditor({ snippetId, projectId }: { snippetId: string | null; pro
         {existing && <button className="btn danger" onClick={() => { update((st) => removeSnippet(st, existing.id)); closeModal(); }}>{tr("Usuń")}</button>}
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={closeModal}>{tr("Anuluj")}</button>
-        <button className="btn primary" onClick={save}>{tr("Zapisz")} <span className="kbd">{shortcutText('modal.save')}</span></button>
+        <button className="btn primary" onClick={save}>{tr("Zapisz")} {shortcutText('modal.save') && <span className="kbd">{shortcutText('modal.save')}</span>}</button>
       </div>
     </div>
   );

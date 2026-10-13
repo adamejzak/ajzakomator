@@ -5,7 +5,7 @@ import { useI18n } from '../i18n';
 import { askChoice, update, useStore } from '../store';
 import { updateSettings } from '../../../shared/state';
 import {
-  checkAssignment, comboParts, eventToCombo, GROUP_LABEL, resolveShortcuts, setOverride, SHORTCUT_DEFS, SHORTCUT_GROUPS, swapShortcut,
+  backspaceDisables, checkAssignment, comboParts, eventToCombo, GROUP_LABEL, resolveShortcuts, setOverride, SHORTCUT_DEFS, SHORTCUT_GROUPS, swapShortcut,
   type Combo, type Overrides, type ShortcutCheck, type ShortcutDef, type ShortcutResolution,
 } from '../../../shared/shortcuts';
 import type { MessageKey } from '../../../shared/i18n';
@@ -73,7 +73,7 @@ function Recorder({ def, resolution, onCommit, onCancel }: RecorderProps) {
       event.stopPropagation();
       if (event.repeat) return;
       if (bare && event.key === 'Escape') { cancel(); return; }
-      if (bare && event.key === 'Backspace') { commit(null); return; }
+      if (bare && event.key === 'Backspace' && backspaceDisables(def)) { commit(null); return; }
       const combo = eventToCombo(event);
       if (!combo) {
         // Only modifiers so far: show what is held.
@@ -97,7 +97,7 @@ function Recorder({ def, resolution, onCommit, onCancel }: RecorderProps) {
     <div className="shortcut-recorder" ref={box} tabIndex={-1} role="group" aria-label={tr('Nagrywanie skrótu: {name}', { name: tr(def.label) })}
       onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) latest.current.onCancel(); }}>
       {!conflict && <>
-        <div className="shortcut-prompt">{tr('Naciśnij nowy skrót… Esc anuluje, Backspace wyłącza')}</div>
+        <div className="shortcut-prompt">{backspaceDisables(def) ? tr('Naciśnij nowy skrót… Esc anuluje, Backspace wyłącza') : tr('Naciśnij nowy skrót… Esc anuluje, przycisk „Wyłącz” wyłącza skrót')}</div>
         {held && <div className="shortcut-held" aria-hidden="true">{held}+…</div>}
         {warning && <div className="shortcut-warning" role="alert"><Warn /><span>{warning}</span></div>}
       </>}

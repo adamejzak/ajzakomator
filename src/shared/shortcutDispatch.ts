@@ -1,9 +1,9 @@
 // Which app-wide action (if any) a key press triggers: the pure decision behind the renderer's global keydown listener.
 // Scope rules live here so they can be tested with fake events.
-import { matchCombo, SHORTCUT_DEFS, type ShortcutDef, type ShortcutResolution } from './shortcuts';
+import { matchShortcut, SHORTCUT_DEFS, type ShortcutDef, type ShortcutResolution } from './shortcuts';
 
 export interface DispatchEvent {
-  code: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean;
+  code: string; key?: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean;
   getModifierState?(key: string): boolean;
 }
 
@@ -33,7 +33,7 @@ export function decideShortcut(event: DispatchEvent, ctx: DispatchContext): stri
   const defs = ctx.defs ?? SHORTCUT_DEFS;
   const modified = event.ctrlKey || event.altKey || event.metaKey;
   for (const def of defs) {
-    if (!DISPATCHED.has(def.scope) || !matchCombo(event, ctx.resolution.combos[def.id])) continue;
+    if (!DISPATCHED.has(def.scope) || !matchShortcut(event, ctx.resolution, def.id)) continue;
     // Over a dialog, modal or the palette itself only the palette key works, and it closes the palette.
     if (ctx.overlayOpen || ctx.paletteOpen) return ctx.paletteOpen && PALETTE.has(def.id) ? def.id : null;
     // Plain keys (F-keys) belong to the terminal and to text fields.

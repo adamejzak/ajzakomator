@@ -13,6 +13,12 @@ import { areaStyle, GridDividers } from './GridDividers';
 import { IHistory, IPlus, Logo } from './icons';
 import { ProjectIconView } from './ProjectIcon';
 
+/** The key of an action as a chip; nothing while the shortcut is switched off. */
+function Kbd({ id }: { id: string }) {
+  const text = shortcutText(id);
+  return text ? <span className="kbd">{text}</span> : null;
+}
+
 export function GridView() {
   const { tr } = useI18n();
   const s = useStore((st) => st.s);
@@ -45,9 +51,9 @@ export function GridView() {
           <div className="sub">{tr("Dodaj projekt, otwórz w nim grid terminali i odpal tyle Claude i Codexów, ile potrzebujesz.")}</div>
           <button className="btn white lg" onClick={() => void createProject()}><IPlus />  {tr("Nowy projekt")}</button>
           <div className="keys">
-            <span><span className="kbd">{shortcutText('palette.open')}</span>  {tr("Szukaj")}</span>
-            <span><span className="kbd">{shortcutText('grid.new')}</span>  {tr("Nowy grid")}</span>
-            <span><span className="kbd">{shortcutText('agent.add')}</span>  {tr("Dodaj agenta")}</span>
+            <span><Kbd id="palette.open" />  {tr("Szukaj")}</span>
+            <span><Kbd id="grid.new" />  {tr("Nowy grid")}</span>
+            <span><Kbd id="agent.add" />  {tr("Dodaj agenta")}</span>
           </div>
         </div>
       </div>
@@ -73,9 +79,9 @@ export function GridView() {
             <IHistory />  {tr("Historia czatów i gridów")}
           </button>
           <div className="keys">
-            <span><span className="kbd">{shortcutText('palette.open')}</span>  {tr("Szukaj")}</span>
-            <span><span className="kbd">{shortcutText('terminal.new')}</span>  {tr("Terminal")}</span>
-            <span><span className="kbd">{shortcutText('grid.new')}</span>  {tr("Grid")}</span>
+            <span><Kbd id="palette.open" />  {tr("Szukaj")}</span>
+            <span><Kbd id="terminal.new" />  {tr("Terminal")}</span>
+            <span><Kbd id="grid.new" />  {tr("Grid")}</span>
           </div>
         </div>
       </div>
