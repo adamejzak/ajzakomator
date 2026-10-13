@@ -2,6 +2,7 @@ import { tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
+import { isAuxPtyId } from '../../shared/cliInstall';
 import { alertForStatus } from './alerts';
 import { applyCliStatus, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
@@ -79,7 +80,7 @@ async function boot(): Promise<void> {
   });
 
   terminals.onStatus((cellId, status, prev, cause, reason, hooked, info) => {
-    if (cellId.startsWith('auth:')) return; // login windows are not cells
+    if (isAuxPtyId(cellId)) return; // login and install windows are not cells
     window.mc.reportCellStatus(cellId, status, reason, hooked);
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
     if (status !== 'waiting') return;
@@ -90,7 +91,7 @@ async function boot(): Promise<void> {
     if (found && !found.cell.name) refreshSessionTitles(found.project.path, 3000);
   });
   terminals.onExit((cellId) => {
-    if (cellId.startsWith('auth:')) return; // login windows are not cells
+    if (isAuxPtyId(cellId)) return; // login and install windows are not cells
     // Shell exited (e.g. user typed `exit`) - keep the cell, offer a restart from its header.
     setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: 'exited' } }));
   });

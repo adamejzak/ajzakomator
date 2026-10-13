@@ -45,8 +45,10 @@ import { AutomationService } from './automation';
 import { AjzakomatorMcpServer } from './mcp';
 import { queueCodexMessage } from './agentDelivery';
 import { CliDetector } from './cliDetect';
-import { createCliHandlers } from './cliIpc';
-import { systemCliDeps } from './cliSystem';
+import { createCliHandlers, createInstallHandlers } from './cliIpc';
+import { InstallManager } from './cliInstall';
+import { killProcessTree, runProgram, systemCliDeps } from './cliSystem';
+import { INSTALL_PTY_PREFIX } from '../shared/cliInstall';
 import { cliForProfile, CLI_NAMES, isCliId, missingCli, spawnDecision, type CliId, type CliStatus } from '../shared/cliStatus';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
@@ -209,6 +211,21 @@ const updateStrings = (): UpdateStrings => ({
 
 const send = (channel: string, ...args: unknown[]) => { safeSend(win, channel, ...args); };
 cliDetector.onChange((map) => send('cli:changed', map));
+/** Guided install of the agent CLIs in a visible terminal (`install:` ptys are not cells). */
+const install = new InstallManager({
+  platform: process.platform,
+  home: homedir(),
+  shell: () => state.settings.shell,
+  env: () => process.env,
+  exec: runProgram,
+  detector: cliDetector,
+  spawnPty: (spec) => ptyHost.spawn({ id: spec.id, cwd: homedir(), cols: 100, rows: 28, env: spec.env, shell: state.settings.shell, command: spec.command, tap: true }),
+  killPty: (id) => ptyHost.kill(id),
+  killTree: killProcessTree,
+  emit: (installState) => send('install:state', installState),
+  // Test hook of unpackaged builds: a harmless local script instead of the vendor's installer.
+  commandOverride: app.isPackaged ? undefined : () => process.env.MC_INSTALL_COMMAND_OVERRIDE || undefined,
+});
 
 const controller = new StateController(state, (snapshot) => {
   for (const project of state.projects) for (const tab of project.tabs) for (const cell of tab.cells) {
@@ -308,6 +325,7 @@ function createWindow(): void {
 // ── pty host ────────────────────────────────────────────────────────────────
 
 ptyHost.on('message', (m: HostToMain) => {
+  if ('id' in m && m.id.startsWith(INSTALL_PTY_PREFIX)) { install.onHostMessage(m); return; } // the install window is not a cell
   if ('id' in m && m.id.startsWith('auth:')) return; // login windows are not cells
   if (m.t === 'spawned') { automation.runtimeStarted(m.id); alive.add(m.id); automation.statuses.set(m.id, 'unknown'); }
   else if (m.t === 'exit') {
@@ -324,6 +342,7 @@ ptyHost.on('message', (m: HostToMain) => {
 });
 ptyHost.on('crashed', () => {
   login.failActive('spawn');
+  install.failActive();
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
   verifiedCodex.clear();
   alive.clear();
@@ -475,6 +494,10 @@ const cliHandlers = createCliHandlers(cliDetector, (url) => { void shell.openExt
 ipcMain.handle('cli:status', () => cliHandlers.status());
 ipcMain.handle('cli:recheck', (_e, id?: unknown) => cliHandlers.recheck(id));
 ipcMain.on('cli:openDocs', (_e, id?: unknown) => { cliHandlers.openDocs(id); });
+const installHandlers = createInstallHandlers(install);
+ipcMain.handle('install:options', (_e, cli?: unknown) => installHandlers.options(cli));
+ipcMain.handle('install:start', (_e, request?: unknown) => installHandlers.start(request));
+ipcMain.on('install:cancel', (_e, id?: unknown) => { installHandlers.cancel(id); });
 ipcMain.on('cell:runtime', (_e, cellId: string, status: string, reason?: string, hooked?: boolean) => {
   const found = findCell(state, cellId);
   if (!found || !alive.has(cellId)) return;
@@ -769,6 +792,7 @@ app.on('before-quit', (e) => {
   const shutdownLimit = setTimeout(() => { crashLog.warn('shutdown overran its limit, exiting'); ptyHost.forceKill(); exitNow(); }, SHUTDOWN_HARD_LIMIT_MS);
   usage.stop();
   login.dispose();
+  install.dispose();
   send('app:before-quit');
   // Give the renderer a moment to push its final state, then wind down terminals cleanly.
   setTimeout(async () => {

@@ -10,6 +10,7 @@ import type { ProjectIcon, SessionInfo, Snippet } from '../../../shared/types';
 import { restoreArchived, resumeSession } from '../actions';
 import { closeDialog, closeModal, setUi, toast, update, useStore, type Dialog } from '../store';
 import { AuthModal } from './AuthModal';
+import { closeInstall, InstallModal } from './InstallModal';
 import { ChangelogModal } from './Changelog';
 import { FindReplaceModal } from './FindReplace';
 import { GridDialog } from './GridDialog';
@@ -21,18 +22,21 @@ import { formatAgo } from '../../../shared/i18n';
 export function Modals() {
   const modal = useStore((st) => st.ui.modal);
   const dialog = useStore((st) => st.ui.dialog);
+  const install = useStore((st) => st.ui.install);
 
   useEffect(() => {
-    if (!modal && !dialog) return;
+    if (!modal && !dialog && !install) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.stopPropagation();
       if (dialog) closeDialog();
+      // A running install is never dismissed by accident (its X asks to cancel).
+      else if (install) { if (!install.locked) closeInstall(); }
       else closeModal();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [modal, dialog]);
+  }, [modal, dialog, install]);
 
   return (
     <>
@@ -46,6 +50,11 @@ export function Modals() {
           {modal.kind === 'project' && <ProjectEditor key={modal.projectId} projectId={modal.projectId} />}
           {modal.kind === 'file' && <FilePreview projectId={modal.projectId} relativePath={modal.relativePath} />}
           {modal.kind === 'auth' && <AuthModal key={`${modal.provider}:${JSON.stringify(modal.target)}`} provider={modal.provider} target={modal.target} />}
+        </div>
+      )}
+      {install && (
+        <div className="overlay" style={{ zIndex: 54 }} onMouseDown={(e) => e.target === e.currentTarget && !install.locked && closeInstall()}>
+          <InstallModal key={install.cli} cli={install.cli} />
         </div>
       )}
       {dialog && (

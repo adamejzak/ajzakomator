@@ -46,6 +46,14 @@ function killTree(child: ReturnType<typeof spawn>): void {
   } catch { /* already gone */ }
 }
 
+/** Kills a process and everything it started (the install terminal's shell and its installer). */
+export function killProcessTree(pid: number): void {
+  try {
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => undefined);
+    else process.kill(-pid, 'SIGKILL'); // the pty shell leads its own session and process group
+  } catch { /* already gone */ }
+}
+
 /** Raw Machine / User PATH from the registry (REG_EXPAND_SZ stays unexpanded); chcp keeps non-ASCII folders intact. */
 async function readRegistryPath(): Promise<{ machine: string | null; user: string | null } | null> {
   const query = async (key: string): Promise<string | null> => {

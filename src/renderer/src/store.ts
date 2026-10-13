@@ -6,7 +6,7 @@ import { OptimisticState } from '../../shared/optimisticState';
 import type { StateSnapshot } from '../../shared/stateEdits';
 import type { McpInfo } from '../../shared/automation';
 import type { LoginTarget } from '../../shared/accounts';
-import type { CliStatusMap } from '../../shared/cliStatus';
+import type { CliId, CliStatusMap } from '../../shared/cliStatus';
 
 export type Modal =
   | { kind: 'grid'; projectId: string }
@@ -49,6 +49,8 @@ export interface Ui {
   mcpInfo: McpInfo;
   /** Detected Claude Code / Codex binaries; a missing entry means "not checked yet" (never blocks a start). */
   cliStatus: CliStatusMap;
+  /** The install window of a missing CLI; it sits above every modal. `locked` = an install runs (it cannot be dismissed by accident). */
+  install: { cli: CliId; locked: boolean } | null;
 }
 
 interface Store {
@@ -83,6 +85,7 @@ export const useStore = create<Store>((set, get) => ({
     settingsActive: false,
     mcpInfo: { running: false },
     cliStatus: {},
+    install: null,
   },
   ready: false,
   update(fn) {

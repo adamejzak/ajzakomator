@@ -10,6 +10,8 @@ export interface SpawnRequest {
   shell: ShellKind;
   /** Typed into the shell once it printed its first output (agent launch command). */
   command?: string;
+  /** Also forward the output to the main process (only the install window, which parses an end marker). */
+  tap?: boolean;
 }
 
 export type MainToHost =
@@ -21,6 +23,8 @@ export type HostToMain =
   | { t: 'spawned'; id: string; pid: number }
   | { t: 'spawnError'; id: string; message: string }
   | { t: 'exit'; id: string; code: number }
+  /** Output of a terminal spawned with `tap`. */
+  | { t: 'tap'; id: string; data: string }
   | { t: 'killed'; id: string }
   | { t: 'killedAll' };
 

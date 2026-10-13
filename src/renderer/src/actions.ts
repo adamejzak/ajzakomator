@@ -145,12 +145,10 @@ export function showCliInstructions(cli: CliId): void {
   window.mc.cliOpenDocs(cli);
 }
 
-/**
- * "Zainstaluj": the single entry point of the install flow (cell card, new-grid banner). The guided installer
- * plugs in here later; until then it shows the official instructions.
- */
+/** "Zainstaluj": the single entry point of the install flow (cell card, new-grid banner, menus, palette). Opens the install window; nothing runs until the user confirms there. */
 export function offerInstall(cli: CliId): void {
-  showCliInstructions(cli);
+  if (getUi().install?.locked) return; // an install is running: it is never replaced behind the user's back
+  setUi({ install: { cli, locked: false } });
 }
 
 export function restartCell(cellId: string, mode: 'new' | 'resume'): void {

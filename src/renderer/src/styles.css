@@ -941,6 +941,26 @@ body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-sel
 .auth-status.ok { color: var(--waiting); }
 .auth-status.bad { color: var(--error); }
 .auth-status.wait { color: var(--muted); }
+.modal.install { width: 720px; }
+.install-body { display: flex; flex-direction: column; min-height: 0; overflow: auto; padding-bottom: 6px; }
+.install-step { padding: 2px 16px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); }
+.install-lead { padding-top: 0; }
+.install-options { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 6px; }
+.install-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--bg-1); cursor: pointer; }
+.install-option:hover { background: var(--bg-hover); }
+.install-option.selected { border-color: var(--accent); background: var(--accent-soft); }
+.install-option input { margin: 3px 0 0; accent-color: var(--accent); }
+.install-option-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.install-option-name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.install-tag { padding: 0 6px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-text); font-size: 10.5px; font-weight: 500; }
+.install-option-text { font-size: 11.5px; line-height: 1.4; }
+.install-cmd { display: block; padding: 6px 8px; border: 1px solid var(--border-2); border-radius: 6px; background: #0d0d0d; color: var(--text); font-family: 'Cascadia Mono', Consolas, monospace; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.install-cmd.inline { display: inline-block; }
+.install-ran { padding: 0 16px 8px; }
+.install-warn { color: var(--working); }
+.install-result { display: flex; flex-direction: column; }
+.install-pathnote { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 16px 12px; font-size: 11.5px; line-height: 1.45; }
+.install-pathnote .btn { flex: none; }
 .grid-tab .badges { display: inline-flex; gap: 3px; margin-left: 4px; }
 .settings-card .alert-events { display: flex; flex-direction: column; gap: 16px; container-type: inline-size; }
 .alert-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 14px; min-width: 0; }

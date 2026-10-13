@@ -1,6 +1,7 @@
 import type { HookEvent, HookInfo } from '../shared/status';
 import type { CellStatus, StatusReason } from '../shared/status';
 import type { CliId, CliStatus, CliStatusMap } from '../shared/cliStatus';
+import type { InstallOptions, InstallRequest, InstallStartResult, InstallState } from '../shared/cliInstall';
 import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { AppPlatform } from '../shared/platform';
@@ -41,6 +42,11 @@ export interface McApi {
   cliRecheck(id?: CliId): Promise<CliStatusMap>;
   /** Opens the official documentation of the CLI (address comes from an allow-list in main). */
   cliOpenDocs(id: CliId): void;
+  /** Install methods that can work on this machine, each with the exact command (nothing runs). Null for an unknown CLI. */
+  installOptions(cli: CliId): Promise<InstallOptions | null>;
+  /** Starts the guided install in a visible terminal; main validates {cli, method} against its allow-list. */
+  startInstall(request: InstallRequest): Promise<InstallStartResult>;
+  cancelInstall(sessionId: string): void;
   killCell(cellId: string): void;
   killCellAndWait(cellId: string): Promise<void>;
   /** Binds the freshest unclaimed Codex session in `cwd` to the cell (emits cell:session). */
@@ -87,6 +93,7 @@ export interface McApi {
   swapPending(): Promise<boolean>;
   clearSwapPending(): Promise<{ ok: boolean }>;
   on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
+  on(channel: 'install:state', cb: (state: InstallState) => void): () => void;
   on(channel: 'cli:changed', cb: (status: CliStatusMap) => void): () => void;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent, info?: HookInfo) => void): () => void;
