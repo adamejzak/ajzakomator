@@ -6,7 +6,7 @@ import {
   type ConflictPolicy, type FileMoveRecord, type FileOpRequest, type FileOpResult,
 } from '../../shared/fileOps';
 import { fullProjectPath } from '../../shared/platform';
-import { forgetDeletedFiles, holdTreeFocus, openFile, retargetOpenFiles } from './files';
+import { forgetDeletedFiles, holdTreeFocus, openFile, refreshReplacedFiles, retargetOpenFiles } from './files';
 import { tr } from './i18n';
 import { translateError } from '../../shared/i18n';
 import { askChoice, askText, getS, setUi, toast, update } from './store';
@@ -83,10 +83,11 @@ export function locateInFiles(projectId: string, path: string): void {
 
 // ---------- applying results to the UI ----------
 
-function applyMoves(projectId: string, moves: FileMoveRecord[], remember = true): void {
-  if (!moves.length) return;
+function applyMoves(projectId: string, moves: FileMoveRecord[], remember = true, replaced: string[] = []): void {
+  if (!moves.length && !replaced.length) return;
   holdTreeFocus();
-  retargetOpenFiles(projectId, moves);
+  retargetOpenFiles(projectId, moves, replaced);
+  if (!moves.length) return;
   set((s) => ({
     expanded: { ...s.expanded, [projectId]: [...new Set((s.expanded[projectId] ?? []).map((p) => retargetByMoves(p, moves)))] },
     clipboard: s.clipboard && s.clipboard.projectId === projectId ? { ...s.clipboard, paths: s.clipboard.paths.map((p) => retargetByMoves(p, moves)) } : s.clipboard,
@@ -154,7 +155,7 @@ export async function transferEntries(input: TransferInput): Promise<FileMoveRec
       if (result.code === 'conflict') {
         const choice = await askChoice(tr('Konflikt nazw'),
           tr('W folderze docelowym już istnieje: {names}. Zastąpiony element trafi do kosza.', { names: names(result.conflicts.map((c) => c.path)) }), [
-            { label: tr('Zastąp'), value: 'replace', danger: true },
+            ...(result.conflicts.every((c) => c.internal) ? [] : [{ label: tr('Zastąp'), value: 'replace', danger: true }]),
             { label: tr('Zachowaj oba'), value: 'keepBoth', primary: true },
             { label: tr('Pomiń'), value: 'skip' },
           ]);
@@ -174,7 +175,8 @@ export async function transferEntries(input: TransferInput): Promise<FileMoveRec
       toast(errorText(result.error), 'error');
       return [];
     }
-    if (kind === 'move') applyMoves(projectId, result.done);
+    if (kind === 'move') applyMoves(projectId, result.done, true, result.replaced);
+    else refreshReplacedFiles(projectId, result.replaced);
     bumpRefresh();
     const targets = result.done.map((m) => m.to);
     if (targets.length) {

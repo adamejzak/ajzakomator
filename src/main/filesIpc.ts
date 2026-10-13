@@ -43,7 +43,7 @@ export function registerFileOpsIpc(deps: FilesIpcDeps): void {
   ipcMain.handle('fs:transfer', async (_e, projectId: string, request: FileOpRequest) => {
     const root = deps.projectPath(projectId);
     if (!root) return { ok: false, error: GONE };
-    const opId = typeof request?.opId === 'string' ? request.opId : undefined;
+    const opId = typeof request?.opId === 'string' && request.opId.length <= 100 ? request.opId : undefined;
     const controller = new AbortController();
     if (opId) running.set(opId, controller);
     try {

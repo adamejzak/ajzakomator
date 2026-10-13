@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import type { AppPlatform } from '../shared/platform';
 import {
-  copyName, joinPath, LARGE_COPY_BYTES, LARGE_COPY_ENTRIES, parentPath, toPosix, topLevelPaths, validateEntryName,
+  copyName, joinPath, LARGE_COPY_BYTES, LARGE_COPY_ENTRIES, MAX_OP_PATH_LENGTH, parentPath, toPosix, topLevelPaths, validPathList, validateEntryName,
   type ConflictPolicy, type CreateResult, type DeleteResult, type FileConflict, type FileMoveRecord, type FileOpFailure,
   type FileOpProgress, type FileOpRequest, type FileOpResult, type RenameResult,
 } from '../shared/fileOps';
@@ -21,6 +21,8 @@ export interface FileOpOptions {
   signal?: AbortSignal;
   onProgress?: (progress: Omit<FileOpProgress, 'opId'>) => void;
   limits?: { bytes: number; entries: number };
+  /** Test hooks: replace the filesystem calls that cannot be provoked portably (EXDEV, link creation). */
+  hooks?: { rename?: typeof rename; symlink?: typeof symlink };
 }
 
 const CASE_INSENSITIVE = process.platform === 'win32' || process.platform === 'darwin';
@@ -59,7 +61,7 @@ async function context(projectRoot: string): Promise<Context> {
 
 /** Resolves an entry of the project (never the root itself). The entry may itself be a link: only its parent is resolved. */
 async function entryOf(ctx: Context, relPath: unknown): Promise<Entry> {
-  if (typeof relPath !== 'string' || relPath.includes('\0') || isAbsolute(relPath) || /^[a-z]:/i.test(relPath)) throw new OpError('Ścieżka jest poza projektem.');
+  if (typeof relPath !== 'string' || relPath.length > MAX_OP_PATH_LENGTH || relPath.includes('\0') || isAbsolute(relPath) || /^[a-z]:/i.test(relPath)) throw new OpError('Ścieżka jest poza projektem.');
   const rel = toPosix(relPath);
   if (!rel) throw new OpError('Nie można zmieniać katalogu głównego projektu.');
   if (rel.split('/').some((part) => part === '..' || part === '.')) throw new OpError('Ścieżka jest poza projektem.');
@@ -73,7 +75,7 @@ async function entryOf(ctx: Context, relPath: unknown): Promise<Entry> {
 
 /** An existing folder inside the project ('' = the root), as a real path. */
 async function folderOf(ctx: Context, relPath: unknown): Promise<{ rel: string; real: string }> {
-  if (typeof relPath !== 'string' || relPath.includes('\0') || isAbsolute(relPath) || /^[a-z]:/i.test(relPath)) throw new OpError('Ścieżka jest poza projektem.');
+  if (typeof relPath !== 'string' || relPath.length > MAX_OP_PATH_LENGTH || relPath.includes('\0') || isAbsolute(relPath) || /^[a-z]:/i.test(relPath)) throw new OpError('Ścieżka jest poza projektem.');
   const rel = toPosix(relPath);
   if (rel.split('/').some((part) => part === '..' || part === '.')) throw new OpError('Ścieżka jest poza projektem.');
   const requested = resolve(ctx.root, rel);
@@ -144,9 +146,10 @@ export async function createProjectEntry(projectRoot: string, directory: string,
 export async function deleteProjectEntries(projectRoot: string, paths: string[], options: Pick<FileOpOptions, 'trash'>): Promise<DeleteResult> {
   try {
     if (!Array.isArray(paths) || !paths.length) throw new OpError('Nie wybrano żadnych elementów.');
+    if (!validPathList(paths)) throw new OpError('Zbyt wiele elementów lub zbyt długa ścieżka.');
     const ctx = await context(projectRoot);
     const entries: Entry[] = [];
-    for (const path of topLevelPaths(paths.map((p) => toPosix(String(p))))) entries.push(await entryOf(ctx, path));
+    for (const path of topLevelPaths(paths.map((p) => toPosix(p)))) entries.push(await entryOf(ctx, path));
     const trashed: string[] = [];
     const failed: FileOpFailure[] = [];
     for (const entry of entries) {
@@ -185,7 +188,7 @@ async function measure(paths: string[], limits: { bytes: number; entries: number
 
 class Counter {
   entries = 0; bytes = 0; notes: string[] = []; private last = 0;
-  constructor(private options: FileOpOptions) {}
+  constructor(readonly options: FileOpOptions) {}
   tick(): void {
     if (this.options.signal?.aborted) throw new OpError('Operacja została anulowana.');
     const now = Date.now();
@@ -203,7 +206,7 @@ async function copyTree(source: string, target: string, counter: Counter): Promi
       const destination = await readlink(source);
       let type: 'file' | 'dir' | 'junction' | undefined;
       if (process.platform === 'win32') type = (await stat(source).catch(() => null))?.isDirectory() ? 'junction' : 'file';
-      await symlink(destination, target, type);
+      await (counter.options.hooks?.symlink ?? symlink)(destination, target, type);
     } catch { counter.notes.push(basename(source)); }
     return;
   }
@@ -229,15 +232,18 @@ async function freeName(dir: string, name: string, directory: boolean, claimed: 
 
 export async function transferProjectEntries(projectRoot: string, request: FileOpRequest, options: FileOpOptions): Promise<FileOpResult> {
   try {
-    if (!request || !Array.isArray(request.paths) || !request.paths.length) throw new OpError('Nie wybrano żadnych elementów.');
+    if (!request || typeof request !== 'object' || !Array.isArray(request.paths) || !request.paths.length) throw new OpError('Nie wybrano żadnych elementów.');
+    if (!validPathList(request.paths)) throw new OpError('Zbyt wiele elementów lub zbyt długa ścieżka.');
     if (request.kind !== 'move' && request.kind !== 'copy') throw new OpError('Nieznana operacja.');
+    const policy = request.conflict ?? 'ask';
+    if (policy !== 'ask' && policy !== 'skip' && policy !== 'keepBoth' && policy !== 'replace') throw new OpError('Nieznana operacja.');
     const copying = request.kind === 'copy';
     const ctx = await context(projectRoot);
     const destination = await folderOf(ctx, request.destination ?? '');
     const plans: Plan[] = [];
     const conflicts: FileConflict[] = [];
     const claimed = new Set<string>();
-    for (const path of topLevelPaths(request.paths.map((p) => toPosix(String(p))))) {
+    for (const path of topLevelPaths(request.paths.map((p) => toPosix(p)))) {
       const entry = await entryOf(ctx, path);
       const info = await lstatOrNull(entry.real);
       if (!info) throw new OpError('Plik lub folder już nie istnieje. Odśwież listę.');
@@ -246,10 +252,10 @@ export async function transferProjectEntries(projectRoot: string, request: FileO
       const target = join(destination.real, entry.name);
       const same = norm(target) === norm(entry.real);
       plans.push({ entry, directory, link: info.isSymbolicLink(), target, targetRel: joinPath(destination.rel, entry.name), same });
-      if (!same && (claimed.has(norm(entry.name)) || await lstatOrNull(target))) conflicts.push({ path: joinPath(destination.rel, entry.name), name: entry.name, directory });
+      const internal = claimed.has(norm(entry.name));
+      if (!same && (internal || await lstatOrNull(target))) conflicts.push({ path: joinPath(destination.rel, entry.name), name: entry.name, directory, ...(internal ? { internal: true } : {}) });
       claimed.add(norm(entry.name));
     }
-    const policy: ConflictPolicy = request.conflict ?? 'ask';
     if (conflicts.length && policy === 'ask') return { ok: false, code: 'conflict', error: 'Element o takiej nazwie już istnieje.', conflicts };
     if (copying && !request.force) {
       const limits = options.limits ?? { bytes: LARGE_COPY_BYTES, entries: LARGE_COPY_ENTRIES };
@@ -262,6 +268,7 @@ export async function transferProjectEntries(projectRoot: string, request: FileO
     const failed: FileOpFailure[] = [];
     const counter = new Counter(options);
     const taken = new Set<string>();
+    const replaced: string[] = [];
     let cancelled = false;
     for (const plan of plans) {
       let target = plan.target;
@@ -270,12 +277,13 @@ export async function transferProjectEntries(projectRoot: string, request: FileO
       try {
         counter.tick();
         if (plan.same) {
-          if (!copying) { skipped.push(plan.entry.rel); continue; }
+          if (!copying) { taken.add(norm(plan.entry.name)); skipped.push(plan.entry.rel); continue; }
           const name = await freeName(destination.real, plan.entry.name, plan.directory, taken);
           target = join(destination.real, name); targetRel = joinPath(destination.rel, name);
         } else if (taken.has(norm(plan.entry.name)) || await lstatOrNull(target)) {
           if (policy === 'skip') { skipped.push(plan.entry.rel); continue; }
-          if (policy === 'keepBoth') {
+          // An item that this very operation produced is never replaced: the second one gets a free name instead.
+          if (policy === 'keepBoth' || taken.has(norm(plan.entry.name))) {
             const name = await freeName(destination.real, plan.entry.name, plan.directory, taken);
             target = join(destination.real, name); targetRel = joinPath(destination.rel, name);
           } else {
@@ -283,6 +291,7 @@ export async function transferProjectEntries(projectRoot: string, request: FileO
             if (sameOrInside(target, plan.entry.real)) throw new OpError('Nie można zastąpić folderu, który zawiera przenoszony element.');
             if (!await lstatOrNull(target)) throw new OpError('Element o takiej nazwie już istnieje.');
             await options.trash(target);
+            replaced.push(targetRel);
           }
         }
         taken.add(norm(basename(target)));
@@ -290,11 +299,17 @@ export async function transferProjectEntries(projectRoot: string, request: FileO
           created = true;
           await copyTree(plan.entry.real, target, counter);
         } else {
-          try { await rename(plan.entry.real, target); }
+          try { await (options.hooks?.rename ?? rename)(plan.entry.real, target); }
           catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error;
             created = true;
+            const notes = counter.notes.length;
             await copyTree(plan.entry.real, target, counter);
+            if (counter.notes.length > notes) {
+              // Something could not be copied: removing the source would destroy it. Keep it and undo the copy.
+              counter.notes.length = notes;
+              throw new OpError('Nie można przenieść: część elementów (linki lub pliki specjalne) nie daje się skopiować.');
+            }
             created = false;
             await rm(plan.entry.real, { recursive: true, force: true });
           }
@@ -309,6 +324,6 @@ export async function transferProjectEntries(projectRoot: string, request: FileO
       }
     }
     options.onProgress?.({ entries: counter.entries, bytes: counter.bytes });
-    return { ok: true, done, skipped, failed, notes: counter.notes, cancelled };
+    return { ok: true, done, skipped, failed, notes: counter.notes, cancelled, replaced };
   } catch (error) { return { ok: false, error: opMessage(error) }; }
 }

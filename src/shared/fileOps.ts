@@ -19,10 +19,10 @@ export interface FileOpRequest {
   opId?: string;
 }
 
-export interface FileConflict { path: string; name: string; directory: boolean }
+export interface FileConflict { path: string; name: string; directory: boolean; /** Collides with another item of the same operation: Replace is never offered for it. */ internal?: boolean }
 
 export type FileOpResult =
-  | { ok: true; done: FileMoveRecord[]; skipped: string[]; failed: FileOpFailure[]; notes: string[]; cancelled: boolean }
+  | { ok: true; done: FileMoveRecord[]; skipped: string[]; failed: FileOpFailure[]; notes: string[]; cancelled: boolean; /** Destination paths whose previous item went to the trash (Replace). */ replaced: string[] }
   | { ok: false; code: 'conflict'; error: string; conflicts: FileConflict[] }
   | { ok: false; code: 'large'; error: string; entries: number; bytes: number }
   | { ok: false; code?: 'failed'; error: string };
@@ -62,10 +62,24 @@ export function retargetByMoves(path: string, moves: FileMoveRecord[]): string {
   return best ? retargetPath(path, best.from, best.to) ?? path : path;
 }
 
-/** Drops entries that live inside another listed entry (moving a folder already moves its content). */
+/** Drops entries that live inside another listed entry (moving a folder already moves its content). Linear in the number of paths. */
 export function topLevelPaths(paths: string[]): string[] {
-  const unique = [...new Set(paths)];
-  return unique.filter((path) => !unique.some((other) => other !== path && isSameOrDescendant(other, path)));
+  const unique = new Set(paths);
+  const result: string[] = [];
+  for (const path of unique) {
+    let covered = path !== '' && unique.has('');
+    for (let i = path.lastIndexOf('/'); !covered && i > 0; i = path.lastIndexOf('/', i - 1)) covered = unique.has(path.slice(0, i));
+    if (!covered) result.push(path);
+  }
+  return result;
+}
+
+/** Limits for lists and strings coming from the renderer. */
+export const MAX_OP_PATHS = 5000;
+export const MAX_OP_PATH_LENGTH = 4096;
+export function validPathList(paths: unknown): paths is string[] {
+  return Array.isArray(paths) && paths.length > 0 && paths.length <= MAX_OP_PATHS
+    && paths.every((p) => typeof p === 'string' && p.length <= MAX_OP_PATH_LENGTH);
 }
 
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;
@@ -101,15 +115,36 @@ export function renameSelectionEnd(name: string, directory: boolean): number {
 
 export interface DocumentLike { id: string; projectId: string; relativePath: string; name: string }
 
+export interface RetargetOptions {
+  /** Tabs with unsaved text are never dropped: when their file was replaced they stay as detached tabs. */
+  isDirty?: (doc: any) => boolean;
+  /** Paths that were sent to the trash by a Replace (their old tabs are stale). */
+  replaced?: string[];
+}
+export interface RetargetResult<T> {
+  documents: T[];
+  activeId: string | null;
+  changed: boolean;
+  /** Old tab id -> new tab id for every tab that was moved or detached. */
+  idMap: Map<string, string>;
+  /** Ids of stale tabs that were closed (clean tabs on a replaced target). */
+  closed: string[];
+  /** Ids (new) of dirty tabs whose file was replaced on disk: kept so the draft is not lost. */
+  detached: string[];
+}
+
 /**
  * Open editor tabs follow renamed or moved files and folders: path, name and id change, everything else
- * (text, dirty state) stays. A moved tab replaces an unrelated tab that was open on the overwritten target.
+ * (text, dirty state) stays. A moved tab takes over the slot of a stale tab on an overwritten target; a stale tab
+ * with unsaved text is never dropped (it is detached under a unique id), a clean one is closed.
  */
 export function retargetDocuments<T extends DocumentLike>(
-  documents: T[], activeId: string | null, projectId: string, moves: FileMoveRecord[],
-): { documents: T[]; activeId: string | null; changed: boolean } {
-  if (!moves.length) return { documents, activeId, changed: false };
+  documents: T[], activeId: string | null, projectId: string, moves: FileMoveRecord[], options: RetargetOptions = {},
+): RetargetResult<T> {
   const idMap = new Map<string, string>();
+  const unchanged = { documents, activeId, changed: false, idMap, closed: [] as string[], detached: [] as string[] };
+  const replaced = options.replaced ?? [];
+  if (!moves.length && !replaced.length) return unchanged;
   const moved = new Set<T>();
   const mapped = documents.map((doc) => {
     if (doc.projectId !== projectId) return doc;
@@ -121,19 +156,35 @@ export function retargetDocuments<T extends DocumentLike>(
     moved.add(next);
     return next;
   });
-  if (!idMap.size) return { documents, activeId, changed: false };
-  const seen = new Set<string>();
+  const movedIds = new Set([...moved].map((doc) => doc.id));
+  const detached: string[] = [];
+  const closed = new Set<string>();
   const result: T[] = [];
-  // Moved tabs win over stale tabs with the same id.
+  const seen = new Set<string>();
+  let counter = 0;
   for (const doc of mapped) {
-    if (!moved.has(doc) && mapped.some((other) => other !== doc && other.id === doc.id && moved.has(other))) continue;
+    if (!moved.has(doc) && doc.projectId === projectId) {
+      const stale = movedIds.has(doc.id) || replaced.some((path) => isSameOrDescendant(path, doc.relativePath));
+      if (stale) {
+        if (!options.isDirty?.(doc)) { closed.add(doc.id); continue; }
+        let id: string;
+        do { id = JSON.stringify([projectId, doc.relativePath, 'detached', ++counter]); } while (documents.some((d) => d.id === id));
+        idMap.set(doc.id, id);
+        detached.push(id);
+        result.push({ ...doc, id });
+        seen.add(id);
+        continue;
+      }
+    }
     if (seen.has(doc.id)) continue;
     seen.add(doc.id);
     result.push(doc);
   }
-  let nextActive = activeId ? idMap.get(activeId) ?? activeId : null;
-  if (nextActive && !result.some((doc) => doc.id === nextActive)) nextActive = result.filter((doc) => doc.projectId === projectId).at(-1)?.id ?? null;
-  return { documents: result, activeId: nextActive, changed: true };
+  if (!idMap.size && !closed.size) return unchanged;
+  let nextActive = activeId && !closed.has(activeId) ? (idMap.get(activeId) ?? activeId) : null;
+  if (nextActive && !result.some((doc) => doc.id === nextActive)) nextActive = null;
+  if (!nextActive && activeId && closed.has(activeId)) nextActive = result.filter((doc) => doc.projectId === projectId).at(-1)?.id ?? null;
+  return { documents: result, activeId: nextActive, changed: true, idMap, closed: [...closed], detached };
 }
 
 /** Ids of the open tabs that belong to deleted (trashed) paths. */

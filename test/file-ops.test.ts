@@ -313,3 +313,92 @@ describe('delete (to the trash only)', () => {
     expect(trashed).toEqual([]);
   });
 });
+
+describe('one operation never replaces what it just produced', () => {
+  it('two sources with the same name: Replace gives the second a free name and trashes nothing', async () => {
+    await mkdir(fs('a'));
+    await mkdir(fs('b'));
+    await mkdir(fs('c'));
+    await writeFile(fs('a/x.txt'), 'from a');
+    await writeFile(fs('b/x.txt'), 'from b');
+    const asked = await move(['a/x.txt', 'b/x.txt'], 'c');
+    expect(asked).toMatchObject({ ok: false, code: 'conflict', conflicts: [{ name: 'x.txt', internal: true }] });
+    const result = await move(['a/x.txt', 'b/x.txt'], 'c', 'replace');
+    expect(result).toMatchObject({ ok: true, replaced: [], done: [{ from: 'a/x.txt', to: 'c/x.txt' }, { from: 'b/x.txt', to: 'c/x copy.txt' }] });
+    expect(trashed).toEqual([]);
+    expect(await readFile(fs('c/x.txt'), 'utf8')).toBe('from a');
+    expect(await readFile(fs('c/x copy.txt'), 'utf8')).toBe('from b');
+  });
+
+  it('an existing target is still replaced once (and reported), the duplicate keeps both', async () => {
+    await mkdir(fs('a')); await mkdir(fs('b')); await mkdir(fs('c'));
+    await writeFile(fs('a/x.txt'), 'from a'); await writeFile(fs('b/x.txt'), 'from b'); await writeFile(fs('c/x.txt'), 'old');
+    const result = await move(['a/x.txt', 'b/x.txt'], 'c', 'replace');
+    expect(result).toMatchObject({ ok: true, replaced: ['c/x.txt'], done: [{ to: 'c/x.txt' }, { to: 'c/x copy.txt' }] });
+    expect(trashed.length).toBe(1);
+    expect(await readFile(fs('c/x.txt'), 'utf8')).toBe('from a');
+  });
+
+  it('Skip skips the duplicate and copies behave the same', async () => {
+    await mkdir(fs('a')); await mkdir(fs('b')); await mkdir(fs('c'));
+    await writeFile(fs('a/x.txt'), 'from a'); await writeFile(fs('b/x.txt'), 'from b');
+    expect(await copy(['a/x.txt', 'b/x.txt'], 'c', 'skip')).toMatchObject({ ok: true, skipped: ['b/x.txt'], done: [{ to: 'c/x.txt' }] });
+    expect(await copy(['a/x.txt', 'b/x.txt'], 'c', 'replace')).toMatchObject({ ok: true, replaced: ['c/x.txt'], done: [{ to: 'c/x.txt' }, { to: 'c/x copy.txt' }] });
+  });
+});
+
+describe('hostile requests', () => {
+  it('rejects unknown conflict policies instead of replacing', async () => {
+    for (const conflict of ['bogus', 'REPLACE', '', 1, {}] as unknown[]) {
+      const result = await transferProjectEntries(root, { kind: 'move', paths: ['a.txt'], destination: 'docs', conflict: conflict as never }, { trash });
+      expect(result, String(conflict)).toMatchObject({ ok: false });
+    }
+    expect(trashed).toEqual([]);
+    expect(await readFile(fs('docs/a.txt'), 'utf8')).toBe('other A');
+  });
+
+  it('rejects non-string, oversized and too many paths', async () => {
+    const run = (paths: unknown, destination: unknown = 'docs') => transferProjectEntries(root, { kind: 'copy', paths: paths as string[], destination: destination as string, conflict: 'ask' }, { trash });
+    expect(await run([{ toString: () => 'a.txt' }])).toMatchObject({ ok: false });
+    expect(await run([42])).toMatchObject({ ok: false });
+    expect(await run(['a'.repeat(5000)])).toMatchObject({ ok: false });
+    expect(await run(Array.from({ length: 5001 }, (_, i) => `f${i}`))).toMatchObject({ ok: false, error: 'Zbyt wiele elementów lub zbyt długa ścieżka.' });
+    expect(await run(['a.txt'], 'd'.repeat(5000))).toMatchObject({ ok: false });
+    expect(await run(['a.txt'], 5)).toMatchObject({ ok: false });
+    expect(await run('a.txt')).toMatchObject({ ok: false });
+    expect(await deleteProjectEntries(root, Array.from({ length: 5001 }, (_, i) => `f${i}`), { trash })).toMatchObject({ ok: false });
+    expect(await deleteProjectEntries(root, [{ x: 1 } as unknown as string], { trash })).toMatchObject({ ok: false });
+    expect(await renameProjectEntry(root, 'a'.repeat(5000), 'x')).toMatchObject({ ok: false });
+    expect(await renameProjectEntry(root, 'a.txt', 5 as unknown as string)).toMatchObject({ ok: false });
+    expect(trashed).toEqual([]);
+  });
+
+  it('handles a large selection quickly (linear de-duplication)', async () => {
+    const paths = Array.from({ length: 5000 }, (_, i) => `ghost/${i}`);
+    const started = Date.now();
+    await transferProjectEntries(root, { kind: 'copy', paths, destination: 'docs', conflict: 'ask' }, { trash });
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+});
+
+describe('cross-device move (EXDEV)', () => {
+  const exdev: typeof rename = async () => { throw Object.assign(new Error('cross-device'), { code: 'EXDEV' }); };
+
+  it('copies and then removes the source when everything could be copied', async () => {
+    const result = await transferProjectEntries(root, { kind: 'move', paths: ['src'], destination: 'docs', conflict: 'ask' }, { trash, hooks: { rename: exdev } });
+    expect(result).toMatchObject({ ok: true, done: [{ from: 'src', to: 'docs/src' }] });
+    expect(await readFile(fs('docs/src/deep/c.txt'), 'utf8')).toBe('C');
+    expect(await names()).not.toContain('src');
+  });
+
+  it('keeps the source and leaves no partial copy when a link could not be copied', async () => {
+    await mkdir(join(fixture, 'external'));
+    try { await symlink(join(fixture, 'external'), fs('src/link'), process.platform === 'win32' ? 'junction' : 'dir'); } catch { return; }
+    const failing = (async () => { throw new Error('EPERM'); }) as unknown as typeof symlink;
+    const result = await transferProjectEntries(root, { kind: 'move', paths: ['src'], destination: 'docs', conflict: 'ask' }, { trash, hooks: { rename: exdev, symlink: failing } });
+    expect(result).toMatchObject({ ok: true, done: [], failed: [{ path: 'src' }], notes: [] });
+    expect(await names('src')).toEqual(['b.txt', 'deep', 'link']);
+    expect(await readFile(fs('src/deep/c.txt'), 'utf8')).toBe('C');
+    expect(await names('docs')).toEqual(['a.txt']);
+  });
+});

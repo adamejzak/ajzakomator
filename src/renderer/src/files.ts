@@ -51,8 +51,14 @@ function restoreDrafts(): FileDocument[] {
   } catch { return []; }
 }
 export const useFileStore = create<{ documents: FileDocument[]; activeFileId: string | null }>(() => ({ documents: restoreDrafts(), activeFileId: null }));
+/** Old tab id -> new tab id after a rename: an in-flight save or load still reports under the old id. */
+const aliases = new Map<string, string>();
 function patch(id: string, changes: Partial<FileDocument>): void {
-  useFileStore.setState((s) => ({ documents: s.documents.map((d) => d.id === id ? { ...d, ...changes } : d) }));
+  useFileStore.setState((s) => {
+    let target = id;
+    for (let hops = 0; hops < 8 && !s.documents.some((d) => d.id === target) && aliases.has(target); hops++) target = aliases.get(target)!;
+    return { documents: s.documents.map((d) => d.id === target ? { ...d, ...changes } : d) };
+  });
 }
 /** Set by the Files panel when a file is opened with the keyboard (Enter): the editor then takes focus. */
 export const treeOpen = { keyboard: false, hold: false };
@@ -147,15 +153,31 @@ useFileStore.subscribe((s) => {
 });
 
 /** Open tabs follow renamed or moved files and folders (their text and unsaved changes stay untouched). */
-export function retargetOpenFiles(projectId: string, moves: FileMoveRecord[]): void {
+export function retargetOpenFiles(projectId: string, moves: FileMoveRecord[], replaced: string[] = []): void {
   const before = useFileStore.getState();
-  const result = retargetDocuments(before.documents, before.activeFileId, projectId, moves);
+  const result = retargetDocuments(before.documents, before.activeFileId, projectId, moves, { isDirty: isFileDirty, replaced });
   if (!result.changed) return;
-  const oldIds = new Set(before.documents.map((d) => d.id));
-  const reload = result.documents.filter((d) => d.status === 'loading' && !oldIds.has(d.id)).map((d) => d.id);
-  for (const doc of before.documents) loads.delete(doc.id);
-  useFileStore.setState({ documents: result.documents, activeFileId: result.activeId });
+  const detached = new Set(result.detached);
+  // Only the tabs that changed lose their in-flight load; the others keep loading. A tab that is saving keeps its state
+  // and its save reports under the old id, which now points to the new one.
+  const reload: string[] = [];
+  for (const [oldId, newId] of result.idMap) {
+    loads.delete(oldId);
+    aliases.set(oldId, newId);
+    if (!detached.has(newId) && result.documents.some((d) => d.id === newId && d.status === 'loading')) reload.push(newId);
+  }
+  for (const id of result.closed) loads.delete(id);
+  useFileStore.setState({
+    documents: result.documents.map((d) => detached.has(d.id) ? { ...d, error: 'Ten plik został usunięty z dysku. Niezapisany szkic został zachowany.' } : d),
+    activeFileId: result.activeId,
+  });
   for (const id of reload) void retryFile(id);
+}
+
+/** After a copy replaced files: clean tabs on them reload the new content (unsaved ones keep their text; saving them reports the conflict). */
+export function refreshReplacedFiles(projectId: string, replaced: string[]): void {
+  if (!replaced.length) return;
+  for (const id of documentsUnder(useFileStore.getState().documents, projectId, replaced)) void retryFile(id);
 }
 
 /** Tabs of trashed files: clean ones close, tabs with unsaved changes stay (marked) so the draft is not lost. */
