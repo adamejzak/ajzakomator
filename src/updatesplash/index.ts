@@ -9,7 +9,7 @@ import { join } from 'path';
 import { safeSend } from '../main/safeWindow';
 import { closeAction, UpdateProgressModel, type UpdateSplashConfig, type UpdateStage } from '../shared/updateProgress';
 
-// The installer replaces resourcespp.asar while this window is alive: reading an archive as a file (directoryBytes
+// The installer replaces resources/app.asar while this window is alive: reading an archive as a file (directoryBytes
 // stats the install dir) would make Electron keep it open without delete sharing and block the installer.
 process.noAsar = true;
 

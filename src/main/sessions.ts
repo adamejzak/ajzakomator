@@ -148,7 +148,7 @@ export function listClaudeSessions(home: string, projectPath: string): SessionIn
     }
   }
   pruneClaudeCache(dir, seen);
-  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out.sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 const CONCURRENCY = 4;
@@ -185,7 +185,7 @@ export async function listClaudeSessionsAsync(home: string, projectPath: string)
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, names.length) }, worker));
   pruneClaudeCache(dir, seen);
-  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out.sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 // ── Codex ───────────────────────────────────────────────────────────────────
@@ -279,7 +279,7 @@ export function listCodexSessions(home: string, projectPath: string): SessionInf
       // skip
     }
   }
-  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out.sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 /**
@@ -311,5 +311,5 @@ export function listSessions(home: string, projectPath: string): SessionInfo[] {
 /** Non-blocking variant for the IPC handler (Codex listing is cached and only stats files). */
 export async function listSessionsAsync(home: string, projectPath: string): Promise<SessionInfo[]> {
   const claude = await listClaudeSessionsAsync(home, projectPath);
-  return [...claude, ...listCodexSessions(home, projectPath)].sort((a, b) => b.updatedAt - a.updatedAt);
+  return [...claude, ...listCodexSessions(home, projectPath)].sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
