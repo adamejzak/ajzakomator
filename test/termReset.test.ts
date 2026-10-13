@@ -1,12 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
-  countMouseEchoes, MOUSE_ECHO_FLOOD_PER_SECOND, INPUT_MODE_PARAMS, INPUT_MODES_OFF, isMouseReport, MOUSE_ECHO_PROOF, MOUSE_FLOOD_PER_SECOND, MouseFloodGuard, resetTail, terminalModeReset,
+  echoCandidates, INPUT_MODE_PARAMS, INPUT_MODES_OFF, inputModesOff, isMouseReport, MOUSE_ECHO_PROOF, MOUSE_FLOOD_PER_SECOND, MouseFloodGuard,
+  reportPosition, terminalModeReset, withResetTail,
 } from '../src/shared/termReset';
+
+const report = (x: number, y: number, cb = 35) => `\x1b[<${cb};${x};${y}M`;
 
 describe('mode reset sequences', () => {
   it('switches off mouse, focus, paste and kitty keyboard modes and nothing else', () => {
     expect(INPUT_MODE_PARAMS).toEqual([1000, 1002, 1003, 1005, 1006, 1015, 1004, 2004]);
     expect(INPUT_MODES_OFF).toBe('\x1b[?1000;1002;1003;1005;1006;1015;1004;2004l\x1b[<u');
+  });
+  it('never clears ?1004 on Windows, where ConPTY owns focus reports, nor ?9001 anywhere', () => {
+    expect(inputModesOff(true)).toBe('\x1b[?1000;1002;1003;1005;1006;1015;2004l\x1b[<u');
+    expect(inputModesOff(false)).toContain('1004');
+    expect(terminalModeReset(false, true)).not.toContain('1004');
+    expect(terminalModeReset(true, true)).not.toContain('1004');
+    expect(terminalModeReset(false, false)).toContain('1004');
+    for (const win of [true, false]) expect(terminalModeReset(true, win)).not.toContain('9001');
   });
   it('the manual reset keeps the buffer and leaves the alternate screen only when needed', () => {
     expect(terminalModeReset(false)).not.toContain('1049');
@@ -14,81 +25,112 @@ describe('mode reset sequences', () => {
     for (const reset of [terminalModeReset(false), terminalModeReset(true)]) {
       expect(reset).toContain(INPUT_MODES_OFF);
       expect(reset).not.toMatch(/\x1b\[[23]J|\x1bc/); // no erase of scrollback, no RIS
-      expect(reset).not.toContain('9001');
     }
   });
-  it('tails per shell write the escape character through the shell, not literally', () => {
-    expect(resetTail('pwsh')).toBe(resetTail('powershell'));
-    expect(resetTail('pwsh')).toBe("; [Console]::Write([char]27+'[?1000;1002;1003;1005;1006;1015;1004;2004l'+[char]27+'[<u')");
-    expect(resetTail('cmd')).toBe(` & powershell -NoProfile -NonInteractive -Command "[Console]::Write([char]27+'[?1000;1002;1003;1005;1006;1015;1004;2004l'+[char]27+'[<u')" 2>nul`);
-    expect(resetTail('zsh')).toBe(resetTail('bash'));
-    expect(resetTail('bash')).toBe("; printf '\\033[?1000;1002;1003;1005;1006;1015;1004;2004l\\033[<u'");
-    for (const shell of ['pwsh', 'powershell', 'cmd', 'zsh', 'bash'] as const) expect(resetTail(shell)).not.toMatch(/[\x00-\x1f]/);
+  it('wraps the CLI per shell and writes the escape character through the shell, not literally', () => {
+    const cli = "claude --settings 'C:\\a b\\x.json'";
+    const ps = `try { ${cli} } finally { [Console]::Write([char]27+'[?1000;1002;1003;1005;1006;1015;2004l'+[char]27+'[<u') }`;
+    expect(withResetTail(cli, 'pwsh')).toBe(ps);
+    expect(withResetTail(cli, 'powershell')).toBe(ps);
+    expect(withResetTail(cli)).toBe(ps);
+    expect(withResetTail(cli, 'cmd')).toBe(`${cli} & powershell -NoProfile -NonInteractive -Command "[Console]::Write([char]27+'[?1000;1002;1003;1005;1006;1015;2004l'+[char]27+'[<u')" 2>nul`);
+    expect(withResetTail(cli, 'zsh')).toBe(withResetTail(cli, 'bash'));
+    expect(withResetTail(cli, 'bash')).toBe(`trap : INT; ${cli}; printf '\\033[?1000;1002;1003;1005;1006;1015;1004;2004l\\033[<u'; trap - INT`);
+    for (const shell of ['pwsh', 'powershell', 'cmd', 'zsh', 'bash'] as const) expect(withResetTail(cli, shell)).not.toMatch(/[\x00-\x1f]/);
   });
 });
 
-describe('mouse report detection', () => {
+describe('mouse report parsing', () => {
   it('recognises SGR and X10 reports only', () => {
     for (const r of ['\x1b[<35;12;6M', '\x1b[<0;12;6m', '\x1b[M !!']) expect(isMouseReport(r)).toBe(true);
     for (const r of ['\x1b[I', '\x1b[A', 'a', '\x1b[<35;12;6Mx', '\x1b']) expect(isMouseReport(r)).toBe(false);
   });
-  it('counts printed echoes, including the ones PSReadLine coloured or mangled, but not real sequences', () => {
-    expect(countMouseEchoes('^[[<35;12;6M^[[<35;13;6M')).toBe(2);
-    expect(countMouseEchoes('\x1b[5;32H\x1b[93m[555\x1b[37m;\x1b[97m12\x1b[37m;\x1b[93m6M\x1b[39;49m')).toBe(1);
-    expect(countMouseEchoes('\x1b[<35;12;6M plain text [1;2] ls -l')).toBe(0);
+  it('reads the position of SGR reports', () => {
+    expect(reportPosition('\x1b[<35;12;6M')).toBe('12;6');
+    expect(reportPosition('\x1b[M !!')).toBeNull();
+    expect(reportPosition('\x1b[I')).toBeNull();
+  });
+  it('finds printed echoes (also coloured or mangled by PSReadLine) but not real escape sequences', () => {
+    expect(echoCandidates('^[[<35;12;6M^[[<35;13;6M')).toEqual(['12;6', '13;6']);
+    expect(echoCandidates('\x1b[5;32H\x1b[93m[555\x1b[37m;\x1b[97m12\x1b[37m;\x1b[93m6M\x1b[39;49m')).toEqual(['12;6']);
+    expect(echoCandidates('\x1b[<35;12;6M plain text [1;2] ls -l')).toEqual([]);
   });
 });
 
 describe('MouseFloodGuard', () => {
-  const burst = (g: MouseFloodGuard, from: number, n: number, gone: boolean, step = 10) => {
+  /** Sends `n` reports 10 ms apart moving across the row, each echoed by a shell as `^[[<35;x;yM`. */
+  const flood = (g: MouseFloodGuard, from: number, n: number, opts: { echo?: boolean; alt?: boolean; text?: (x: number, y: number) => string } = {}) => {
     const dropped: boolean[] = [];
-    for (let i = 0; i < n; i++) dropped.push(g.report(from + i * step, gone));
+    for (let i = 0; i < n; i++) {
+      const t = from + i * 10;
+      const x = 10 + i, y = 5 + Math.floor(i / 20);
+      dropped.push(g.report(t, report(x, y), opts.alt));
+      g.output(t + 2, opts.text ? opts.text(x, y) : opts.echo ? `^[[<35;${x};${y}M` : '', opts.alt);
+    }
     return dropped;
   };
 
-  it('never trips on a busy TUI that tracks the mouse (rate alone is not proof)', () => {
+  it('trips on a real echo flood: positions that were just sent come back as text at several positions', () => {
     const g = new MouseFloodGuard();
-    expect(burst(g, 1000, 500, false, 8).some(Boolean)).toBe(false);
+    const dropped = flood(g, 1000, 60, { echo: true });
+    expect(g.tripped).toBe(true);
+    expect(dropped.slice(0, MOUSE_FLOOD_PER_SECOND)).not.toContain(true);
+    expect(dropped.some(Boolean)).toBe(true);
+    expect(g.report(9999, report(1, 1))).toBe(true); // stays muted until reset
+    g.reset();
+    expect(g.report(10_000, report(1, 1))).toBe(false);
+  });
+  it('trips on PSReadLine-mangled echoes (`[555;12;6M` with colour codes between the characters)', () => {
+    const g = new MouseFloodGuard();
+    flood(g, 0, 60, { text: (x, y) => `\x1b[93m[555\x1b[37m;\x1b[97m${x}\x1b[37m;\x1b[93m${y}M\x1b[39;49m` });
+    expect(g.tripped).toBe(true);
+  });
+  it('never trips on a busy TUI (rate alone is no proof), however fast the reports come', () => {
+    const g = new MouseFloodGuard();
+    expect(flood(g, 0, 500).some(Boolean)).toBe(false);
     expect(g.tripped).toBe(false);
   });
-  it('trips once the CLI is gone and more than the limit arrives within a second', () => {
-    const g = new MouseFloodGuard();
-    const dropped = burst(g, 1000, MOUSE_FLOOD_PER_SECOND + 5, true, 10);
-    expect(dropped.slice(0, MOUSE_FLOOD_PER_SECOND)).not.toContain(true);
-    expect(dropped[MOUSE_FLOOD_PER_SECOND]).toBe(true);
-    expect(g.tripped).toBe(true);
-    expect(g.report(5000, false)).toBe(true); // stays muted until reset
-    g.reset();
-    expect(g.report(6000, true)).toBe(false);
+  it('does not trip on colour codes split after ESC or on literal report text in the output of a TUI', () => {
+    for (const text of [
+      (_x: number, _y: number) => '[38;5;123m',
+      (_x: number, _y: number) => '[<35;77;38M [<35;77;38m',        // a file/test showing a report: the position was never sent
+      (_x: number, _y: number) => 'echo "[<0;1;1M" [1;2;3m [48;2;1;2;3m',
+    ]) {
+      const g = new MouseFloodGuard();
+      flood(g, 0, 300, { text });
+      expect(g.tripped).toBe(false);
+    }
   });
-  it('trips on printed echoes of the reports, whatever the status says', () => {
+  it('needs several distinct positions: one repeated literal that happens to match is no proof', () => {
     const g = new MouseFloodGuard();
-    burst(g, 1000, 30, false, 10);
-    for (let i = 0; i < MOUSE_ECHO_PROOF; i++) g.output(1300 + i, `^[[<35;${i};6M`);
-    const dropped = burst(g, 1310, 20, false, 10);
-    expect(dropped.some(Boolean)).toBe(true);
-    expect(g.tripped).toBe(true);
-    // proof of an echo lowers the limit, but still needs a real burst
-    const slow = new MouseFloodGuard();
-    burst(slow, 0, MOUSE_ECHO_FLOOD_PER_SECOND - 5, false, 20);
-    for (let i = 0; i < MOUSE_ECHO_PROOF; i++) slow.output(400 + i, '^[[<35;1;1M');
-    expect(burst(slow, 410, 4, false, 20).some(Boolean)).toBe(false);
+    for (let i = 0; i < 100; i++) {
+      g.report(i * 10, report(10 + i, 5));
+      g.output(i * 10 + 2, '[<35;10;5M');
+    }
+    expect(g.tripped).toBe(false);
   });
-  it('slow reports (clicks, a few hovers) never trip, and old reports expire', () => {
+  it('never trips while the terminal shows the alternate screen', () => {
     const g = new MouseFloodGuard();
-    expect(burst(g, 0, 200, true, 100).some(Boolean)).toBe(false); // 10 per second
+    flood(g, 0, 200, { echo: true, alt: true });
+    expect(g.tripped).toBe(false);
+  });
+  it('slow reports never trip, and old reports and echoes expire', () => {
+    const g = new MouseFloodGuard();
+    for (let i = 0; i < 100; i++) {
+      g.report(i * 100, report(10 + i, 5));
+      g.output(i * 100 + 2, `^[[<35;${10 + i};5M`);
+    }
+    expect(g.tripped).toBe(false); // 10 per second
     const h = new MouseFloodGuard();
-    burst(h, 0, 30, true, 10);
-    expect(burst(h, 10_000, 30, true, 10).some(Boolean)).toBe(false);
+    flood(h, 0, MOUSE_FLOOD_PER_SECOND, { echo: true });
+    expect(MOUSE_ECHO_PROOF).toBeGreaterThan(1);
+    expect(flood(h, 20_000, 5, { echo: true }).some(Boolean)).toBe(false);
   });
   it('only scans output while reports are being sent', () => {
     const g = new MouseFloodGuard();
     expect(g.watching(0)).toBe(false);
-    g.report(0, false);
+    g.report(0, report(1, 1));
     expect(g.watching(500)).toBe(true);
-    expect(g.watching(5000)).toBe(false);
-    for (let i = 0; i < 10; i++) g.output(5000, '[<1;2;3M'); // not watching: ignored
-    burst(g, 5001, 60, false, 5);
-    expect(g.tripped).toBe(false);
+    expect(g.watching(10_000)).toBe(false);
   });
 });

@@ -10,7 +10,7 @@ import type { BoundThread } from '../../../shared/codexHooks';
 import { FailureScanner } from '../../../shared/outputFailure';
 import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
 import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
-import { INPUT_MODES_OFF, isMouseReport, MouseFloodGuard, terminalModeReset } from '../../../shared/termReset';
+import { inputModesOff, isMouseReport, MouseFloodGuard, terminalModeReset } from '../../../shared/termReset';
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
 import { confirmTerminalLink } from '../terminalLinks';
@@ -134,7 +134,7 @@ class TerminalManager {
       this.exited.add(m.id);
       const e = this.entries.get(m.id);
       if (e) {
-        e.term.write(`${INPUT_MODES_OFF}\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
+        e.term.write(`${inputModesOff(window.mc.platform === 'win32')}\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
         this.setStatus(e, () => e.tracker.exited(), 'exit');
       }
       this.exitListeners.forEach((l) => l(m.id));
@@ -162,7 +162,7 @@ class TerminalManager {
       this.writeReplay(e, m.data);
     } else {
       e.term.write(m.data, () => this.ack(m));
-      e.guard.output(performance.now(), m.data);
+      if (e.guard.watching(performance.now())) e.guard.output(performance.now(), m.data, this.inAlternate(e));
       // Published right away: output alone can flip the status to "working" (it used to surface only later).
       this.setStatus(e, () => { e.tracker.output(performance.now()); return e.tracker.takeRenotify() ? 'renotify' : undefined; }, 'output');
       // Live output only (a replay never comes through here): a failed Codex turn prints a red error line and fires no hook.
@@ -268,7 +268,7 @@ class TerminalManager {
       // A shell that prints every mouse report (the CLI died and left tracking on) must not be fed more of them.
       if (isMouseReport(d)) {
         const wasTripped = entry.guard.tripped;
-        if (entry.guard.report(performance.now(), entry.tracker.status === 'exited')) {
+        if (entry.guard.report(performance.now(), d, this.inAlternate(entry))) {
           if (!wasTripped) this.mouseFlood(entry);
           return;
         }
@@ -517,11 +517,16 @@ class TerminalManager {
     const e = this.entries.get(cellId);
     if (!e) return;
     e.guard.reset();
-    e.term.write(terminalModeReset(e.term.buffer.active.type === 'alternate'));
+    e.term.write(terminalModeReset(this.inAlternate(e), window.mc.platform === 'win32'));
+  }
+
+  /** A full-screen program (a TUI) owns the terminal: it is not a shell prompt echoing mouse reports. */
+  private inAlternate(e: Entry): boolean {
+    return e.term.buffer.active.type === 'alternate';
   }
 
   private mouseFlood(e: Entry): void {
-    e.term.write(INPUT_MODES_OFF);
+    e.term.write(inputModesOff(window.mc.platform === 'win32'));
     this.floodListeners.forEach((l) => l(e.id));
   }
 

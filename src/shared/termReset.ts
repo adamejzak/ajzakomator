@@ -1,7 +1,7 @@
 // Terminal input modes (mouse / focus / bracketed paste / kitty keyboard) are switched on by the agent CLI with DEC private
 // modes and are the CLI's to switch off again. A CLI that dies hard (crash, kill) never does, so the terminal keeps sending
 // mouse and focus reports to whatever runs next - the shell prompt then prints them as `[<35;77;38M` garbage.
-// These helpers build the reset that is typed after the CLI command (it runs when the CLI returns, however it ended),
+// These helpers build the reset that is typed around the CLI command (it runs when the CLI returns, however it ended),
 // the same reset for the terminal emulator itself, and the guard that stops a mouse-report flood into a shell.
 
 import type { ShellKind } from './types';
@@ -13,28 +13,43 @@ import type { ShellKind } from './types';
  */
 export const INPUT_MODE_PARAMS = [1000, 1002, 1003, 1005, 1006, 1015, 1004, 2004] as const;
 
+/** On Windows ConPTY owns 1004 (its focus events feed later programs, e.g. focus-gated notifications): never cleared there. */
+const WIN32_PARAMS = INPUT_MODE_PARAMS.filter((m) => m !== 1004);
+
+const paramsFor = (win32: boolean): readonly number[] => (win32 ? WIN32_PARAMS : INPUT_MODE_PARAMS);
+
 /** Mode reset plus "pop one level of kitty keyboard flags". Only CSI sequences: safe to write to a terminal at any time. */
-export const INPUT_MODES_OFF = `\x1b[?${INPUT_MODE_PARAMS.join(';')}l\x1b[<u`;
+export function inputModesOff(win32: boolean): string {
+  return `\x1b[?${paramsFor(win32).join(';')}l\x1b[<u`;
+}
+
+/** The reset for macOS / Linux (all modes, including focus reports). */
+export const INPUT_MODES_OFF = inputModesOff(false);
 
 /**
  * Full mode reset of the terminal emulator for the manual "reset terminal" action: input modes, application cursor keys and
  * keypad, visible cursor, default attributes. Never touches the buffer, so scrollback survives. `inAlternateScreen` adds the
  * leave-alternate-screen request (only then: DECRC of an unmatched save would move the cursor).
  */
-export function terminalModeReset(inAlternateScreen: boolean): string {
-  return `${INPUT_MODES_OFF}\x1b[?1l\x1b>\x1b[?25h\x1b[0m${inAlternateScreen ? '\x1b[?1049l' : ''}`;
+export function terminalModeReset(inAlternateScreen: boolean, win32 = false): string {
+  return `${inputModesOff(win32)}\x1b[?1l\x1b>\x1b[?25h\x1b[0m${inAlternateScreen ? '\x1b[?1049l' : ''}`;
 }
 
-const PS_ESC = `[char]27+'[?${INPUT_MODE_PARAMS.join(';')}l'+[char]27+'[<u'`;
+const psEsc = () => `[char]27+'[?${WIN32_PARAMS.join(';')}l'+[char]27+'[<u'`;
 
 /**
- * Appended to the typed CLI command; runs after the CLI returned. PowerShell and POSIX shells run it unconditionally with `;`,
- * cmd with `&` (cmd has no ESC literal, so a throwaway PowerShell writes it). Prints nothing visible.
+ * The typed line that runs the CLI and then switches the input modes off, however the CLI ended:
+ * - PowerShell: `try { cli } finally { ... }` - the finally block also runs after Ctrl+C and after a terminating error
+ *   (a plain `; tail` is skipped by Ctrl+C);
+ * - cmd: `cli & powershell ...` (cmd has no ESC literal, so a throwaway PowerShell writes it; `&` runs after any exit);
+ * - bash / zsh: `trap : INT; cli; printf ...; trap - INT` (a no-op INT handler keeps the list going when the CLI is killed by
+ *   SIGINT; without it the shell abandons the rest of the line).
+ * One line, the CLI command verbatim inside. Prints nothing visible. Windows shells never clear `?1004` (see WIN32_PARAMS).
  */
-export function resetTail(shell: ShellKind = 'pwsh'): string {
-  if (shell === 'cmd') return ` & powershell -NoProfile -NonInteractive -Command "[Console]::Write(${PS_ESC})" 2>nul`;
-  if (shell === 'zsh' || shell === 'bash') return `; printf '\\033[?${INPUT_MODE_PARAMS.join(';')}l\\033[<u'`;
-  return `; [Console]::Write(${PS_ESC})`;
+export function withResetTail(cli: string, shell: ShellKind = 'pwsh'): string {
+  if (shell === 'cmd') return `${cli} & powershell -NoProfile -NonInteractive -Command "[Console]::Write(${psEsc()})" 2>nul`;
+  if (shell === 'zsh' || shell === 'bash') return `trap : INT; ${cli}; printf '\\033[?${INPUT_MODE_PARAMS.join(';')}l\\033[<u'; trap - INT`;
+  return `try { ${cli} } finally { [Console]::Write(${psEsc()}) }`;
 }
 
 /** SGR / normal / X10 mouse reports (`ESC[<Cb;Cx;CyM|m`, `ESC[M` + 3 bytes): what a terminal in mouse-tracking mode writes. */
@@ -42,62 +57,76 @@ export function isMouseReport(data: string): boolean {
   return /^\x1b\[(?:<[\d;]*[Mm]|M[\s\S]{3})$/.test(data);
 }
 
-const ECHO_RE = /\[(?:<)?\d+;\d+;\d+[Mm]/g;
+const SGR_REPORT_RE = /^\x1b\[<\d+;(\d+);(\d+)[Mm]$/;
+const ECHO_RE = /\[(?:<)?\d+;(\d+);(\d+)[Mm]/g;
 // eslint-disable-next-line no-control-regex
 const CSI_RE = /\x1b\[[\d;?<>= ]*[A-Za-z]/g;
 
-/**
- * How many printed copies of a mouse report the output holds (`^[[<35;12;6M`, or `[555;12;6M` once PSReadLine ate part of it).
- * Control sequences are stripped first, so a real escape sequence in the output never counts and syntax colouring between
- * the characters of an echo does not hide it.
- */
-export function countMouseEchoes(output: string): number {
-  return (output.replace(CSI_RE, '').match(ECHO_RE) ?? []).length;
+/** `col;row` of an SGR mouse report, or null (X10 reports and everything else carry no readable position). */
+export function reportPosition(data: string): string | null {
+  const m = SGR_REPORT_RE.exec(data);
+  return m ? `${m[1]};${m[2]}` : null;
 }
 
-/** More mouse reports than this per second are a flood once the status says the CLI is gone. */
-export const MOUSE_FLOOD_PER_SECOND = 40;
-/** Printed copies of reports within the window that prove the receiver is a shell and not a program using the mouse. */
+/**
+ * Positions (`col;row`) of the printed copies of mouse reports in the output (`^[[<35;12;6M`, or `[555;12;6M` once PSReadLine
+ * ate part of it). Control sequences are stripped first, so a real escape sequence never counts and syntax colouring between
+ * the characters of an echo does not hide it. Which of them really are echoes is for the guard to say (see below).
+ */
+export function echoCandidates(output: string): string[] {
+  return [...output.replace(CSI_RE, '').matchAll(ECHO_RE)].map((m) => `${m[1]};${m[2]}`);
+}
+
+/** More mouse reports than this per second, that a shell prints back, are a flood. */
+export const MOUSE_FLOOD_PER_SECOND = 15;
+/** Different positions among the printed copies that prove it (a pointer drifting across cells, not one repeated literal). */
 export const MOUSE_ECHO_PROOF = 3;
-/** With that proof a much lower rate already is a flood: every report is a line of garbage in the prompt. */
-export const MOUSE_ECHO_FLOOD_PER_SECOND = 15;
 const WINDOW_MS = 1000;
+const MATCH_MS = 3000;
 const CAP = 400;
 
+interface Stamp { t: number; pos: string | null }
+
 /**
- * Stops mouse reports from flooding a shell. A TUI that tracks the mouse legitimately receives far more than 40 motion
- * reports a second, so the rate alone never trips it: it also needs proof that the CLI is gone (the cell's status says so,
- * more than 40 a second) or that the reports come back as printed text, which only a shell prompt does (more than 15 a second). Clock injected for tests.
+ * Stops mouse reports from flooding a shell. A TUI that tracks the mouse legitimately receives far more than 15 motion or
+ * wheel reports a second, so the rate alone never trips it. The proof is that the reports come back as printed text: output
+ * showing the very positions that were just sent, at several different positions. A literal `[<35;77;38M` in a file the TUI
+ * shows, or a split colour code `[38;5;123m`, does not carry those positions. It never trips while the terminal shows the
+ * alternate screen (a TUI, not a prompt, is the receiver). Clock injected for tests.
  */
 export class MouseFloodGuard {
-  private sent: number[] = [];
-  private echoes: number[] = [];
+  private sent: Stamp[] = [];
+  private echoes: Array<{ t: number; pos: string }> = [];
   tripped = false;
 
   /** True while recent reports make a scan of the output for echoes worthwhile (keeps the scan off the hot path). */
   watching(now: number): boolean {
-    return !this.tripped && this.sent.length > 0 && now - this.sent[this.sent.length - 1] < 2 * WINDOW_MS;
+    return !this.tripped && this.sent.length > 0 && now - this.sent[this.sent.length - 1].t < MATCH_MS;
   }
 
-  /** A mouse report is about to be forwarded. Returns true when it must be dropped instead. */
-  report(now: number, cliGone: boolean): boolean {
+  /** A mouse report (raw terminal data) is about to be forwarded. Returns true when it must be dropped instead. */
+  report(now: number, data: string, inAlternateScreen = false): boolean {
     if (this.tripped) return true;
-    prune(this.sent, now);
-    prune(this.echoes, now);
-    if (this.sent.length < CAP) this.sent.push(now);
-    const echoed = this.echoes.length >= MOUSE_ECHO_PROOF;
-    if ((cliGone && this.sent.length > MOUSE_FLOOD_PER_SECOND) || (echoed && this.sent.length > MOUSE_ECHO_FLOOD_PER_SECOND)) {
+    prune(this.sent, now, MATCH_MS);
+    prune(this.echoes, now, MATCH_MS);
+    if (this.sent.length < CAP) this.sent.push({ t: now, pos: reportPosition(data) });
+    if (inAlternateScreen) return false;
+    const recent = this.sent.filter((s) => now - s.t <= WINDOW_MS).length;
+    const distinct = new Set(this.echoes.filter((e) => now - e.t <= MATCH_MS).map((e) => e.pos));
+    if (recent > MOUSE_FLOOD_PER_SECOND && distinct.size >= MOUSE_ECHO_PROOF) {
       this.tripped = true;
       return true;
     }
     return false;
   }
 
-  /** Output of the pty arrived: remember how many printed mouse reports it held. */
-  output(now: number, text: string): void {
-    if (!this.watching(now)) return;
-    const n = countMouseEchoes(text);
-    for (let i = 0; i < n && this.echoes.length < CAP; i++) this.echoes.push(now);
+  /** Output of the pty arrived: remember the printed reports that show a position sent a moment ago. */
+  output(now: number, text: string, inAlternateScreen = false): void {
+    if (inAlternateScreen || !this.watching(now)) return;
+    const sentPositions = new Set(this.sent.map((s) => s.pos));
+    for (const pos of echoCandidates(text)) {
+      if (sentPositions.has(pos) && this.echoes.length < CAP) this.echoes.push({ t: now, pos });
+    }
   }
 
   reset(): void {
@@ -107,8 +136,8 @@ export class MouseFloodGuard {
   }
 }
 
-function prune(list: number[], now: number): void {
+function prune(list: Array<{ t: number }>, now: number, maxAge: number): void {
   let i = 0;
-  while (i < list.length && now - list[i] > WINDOW_MS) i++;
+  while (i < list.length && now - list[i].t > maxAge) i++;
   if (i) list.splice(0, i);
 }

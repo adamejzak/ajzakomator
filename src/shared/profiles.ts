@@ -1,5 +1,5 @@
 import { codexHookOverrides } from './codexHooks';
-import { resetTail } from './termReset';
+import { withResetTail } from './termReset';
 import type { Profile, ShellKind } from './types';
 
 export const DEFAULT_PROFILES: Profile[] = [
@@ -86,5 +86,5 @@ export function buildCliCommand(profile: Profile, opts: LaunchOptions): string |
  */
 export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): string | null {
   const command = buildCliCommand(profile, opts);
-  return command === null ? null : command + resetTail(opts.shell);
+  return command === null ? null : withResetTail(command, opts.shell);
 }

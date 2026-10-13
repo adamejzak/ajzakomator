@@ -66,24 +66,29 @@ describe('buildCliCommand', () => {
   });
 });
 
-describe('buildLaunchCommand (typed line with the terminal reset tail)', () => {
-  it('keeps the exact CLI command first and appends the reset per shell', () => {
+describe('buildLaunchCommand (typed line with the terminal reset)', () => {
+  const PS_TAIL = / finally \{ \[Console\]::Write\(\[char\]27\+'\[\?1000;1002;1003;1005;1006;1015;2004l'\+\[char\]27\+'\[<u'\) \}$/;
+  it('carries the exact CLI command inside, on one line, for every shell', () => {
     for (const shell of ['pwsh', 'powershell', 'cmd', 'zsh', 'bash'] as const) {
       for (const profile of [P.claude, P.codex]) {
         const opts = { mode: 'resume' as const, sessionId: 's1', shell, claudeSettingsPath: 'C:/a b/x.json' };
         const cli = buildCliCommand(profile, opts)!;
         const line = buildLaunchCommand(profile, opts)!;
-        expect(line.startsWith(cli)).toBe(true);
-        expect(line.slice(cli.length)).toContain('1000;1002;1003;1005;1006;1015;1004;2004l');
+        expect(line).toContain(cli);
+        expect(line).toContain('1000;1002;1003;1005;1006;1015;');
         expect(line).not.toMatch(/[\r\n]/);
       }
     }
   });
-  it('runs the reset after the CLI also when it fails, with the separator of the shell', () => {
-    expect(buildLaunchCommand(P.claude, { mode: 'new' })).toMatch(/^claude; \[Console\]::Write\(/);
-    expect(buildLaunchCommand(P.claude, { mode: 'new', shell: 'powershell' })).toMatch(/^claude; \[Console\]::Write\(/);
+  it('wraps PowerShell in try/finally (also runs after Ctrl+C), cmd with & and POSIX shells with ;', () => {
+    for (const shell of ['pwsh', 'powershell'] as const) {
+      const line = buildLaunchCommand(P.claude, { mode: 'new', shell })!;
+      expect(line.startsWith('try { claude } finally { ')).toBe(true);
+      expect(line).toMatch(PS_TAIL);
+    }
+    expect(buildLaunchCommand(P.claude, { mode: 'new' })).toMatch(PS_TAIL);
     expect(buildLaunchCommand(P.claude, { mode: 'new', shell: 'cmd' })).toMatch(/^claude & powershell -NoProfile -NonInteractive -Command "\[Console\]::Write\(.*\)" 2>nul$/);
-    for (const shell of ['zsh', 'bash'] as const) expect(buildLaunchCommand(P.codex, { mode: 'new', shell })).toMatch(/^codex -c tui\.notifications=true; printf '\\033\[\?1000;/);
+    for (const shell of ['zsh', 'bash'] as const) expect(buildLaunchCommand(P.codex, { mode: 'new', shell })).toMatch(/^trap : INT; codex -c tui\.notifications=true; printf '\\033\[\?1000;.*1004;2004l.*; trap - INT$/);
   });
   it('writes the escape character through the shell, never typed into the line', () => {
     for (const shell of ['pwsh', 'cmd', 'zsh'] as const) expect(buildLaunchCommand(P.claude, { mode: 'new', shell })).not.toContain('\x1b');
@@ -92,12 +97,17 @@ describe('buildLaunchCommand (typed line with the terminal reset tail)', () => {
   });
   it('leaves the initial prompt and its quoting alone', () => {
     const initialPrompt = { file: 'C:/p/c1.txt', text: 'napraw "bug"' };
-    expect(buildLaunchCommand(P.claude, { mode: 'new', initialPrompt })!).toContain("claude (Get-Content -Raw -Encoding utf8 -LiteralPath 'C:/p/c1.txt'); ");
+    expect(buildLaunchCommand(P.claude, { mode: 'new', initialPrompt })!).toContain("try { claude (Get-Content -Raw -Encoding utf8 -LiteralPath 'C:/p/c1.txt') } finally {");
     expect(buildLaunchCommand(P.claude, { mode: 'new', shell: 'cmd', initialPrompt })!.startsWith(`claude "napraw 'bug'" & `)).toBe(true);
   });
-  it('never clears win32-input-mode, which ConPTY owns', () => {
+  it('never clears win32-input-mode (ConPTY owns it) nor, on Windows shells, focus reports', () => {
     expect(INPUT_MODES_OFF).not.toContain('9001');
-    expect(buildLaunchCommand(P.claude, { mode: 'new' })).not.toContain('9001');
+    for (const shell of ['pwsh', 'powershell', 'cmd'] as const) {
+      const line = buildLaunchCommand(P.claude, { mode: 'new', shell })!;
+      expect(line).not.toContain('9001');
+      expect(line).not.toContain('1004');
+    }
+    expect(buildLaunchCommand(P.claude, { mode: 'new', shell: 'zsh' })).toContain('1004');
   });
   it('adds nothing for plain shell profiles', () => {
     expect(buildLaunchCommand(P.shell, { mode: 'new', shell: 'cmd' })).toBeNull();
