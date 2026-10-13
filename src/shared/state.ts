@@ -4,6 +4,7 @@ import { DEFAULT_PROFILES, RETIRED_PROFILES } from './profiles';
 import { isLanguage } from './languages';
 import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
 import { normalizePanelWidth, PANEL_LIMITS } from './panels';
+import { normalizePathMode } from './pathDrop';
 import { defaultAutomation } from './automation';
 import { USAGE_INTERVALS_MINUTES } from './usage';
 import { defaultAlerts, LEGACY_ALERT_KEYS, readAlerts } from './alerts';
@@ -292,6 +293,12 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
   const d = defaultState(platform);
   const remap = (id: string) => RETIRED_PROFILES[id] ?? id;
   const remapCells = <T extends { profileId: string }>(cells: T[]) => cells.map((c) => ({ ...c, profileId: remap(c.profileId) }));
+  // A cell's path format override survives only as one of the known values.
+  const cleanCells = (cells: Cell[]) => remapCells(cells).map((c) => {
+    const { pathMode: raw, ...rest } = c;
+    const pathMode = normalizePathMode(raw);
+    return pathMode ? { ...rest, pathMode } : rest;
+  });
   const profiles = (Array.isArray(r.profiles) && r.profiles.length ? r.profiles : d.profiles).filter((p) => !(p.id in RETIRED_PROFILES));
   const normalized = {
     ...d,
@@ -325,8 +332,8 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
     },
     projects: r.projects.map((p) => ({
       ...p,
-      tabs: (p.tabs ?? []).map((t) => ({ ...t, cells: remapCells(t.cells) })),
-      archive: (p.archive ?? []).map((t) => ({ ...t, cells: remapCells(t.cells) })),
+      tabs: (p.tabs ?? []).map((t) => ({ ...t, cells: cleanCells(t.cells) })),
+      archive: (p.archive ?? []).map((t) => ({ ...t, cells: cleanCells(t.cells) })),
     })),
   } as AppState;
   for (const key of LEGACY_ALERT_KEYS) delete (normalized.settings as unknown as Record<string, unknown>)[key];

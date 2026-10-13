@@ -6,6 +6,8 @@ import type { AgentRole, AutomationState } from './automation';
 import type { BackgroundLoadMode } from './backgroundLoad';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
+/** A forced path format of a shell cell: Claude (@path), Codex (plain path) or the quoted shell form. */
+export type PathMode = 'claude' | 'codex' | 'shell';
 
 export interface Profile {
   id: string;
@@ -44,6 +46,8 @@ export interface Cell {
   fontSize?: number;
   /** The user muted this cell's alerts (notification and sound); its status is still shown. */
   muted?: boolean;
+  /** Format of paths inserted into a shell cell (drop from the Files tree, "Add to conversation"); absent = detect the agent running in it. */
+  pathMode?: PathMode;
 }
 
 export interface Tab {

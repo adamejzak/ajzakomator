@@ -2,7 +2,7 @@
 // cell's input. Everything here is pure; the DOM event data is untrusted and never reaches a terminal unchecked.
 import { fullProjectPath, type AppPlatform } from './platform';
 import type { CellStatus } from './status';
-import type { ShellKind } from './types';
+import type { CliKind, PathMode, ShellKind } from './types';
 
 export const PATH_MIME = 'application/x-ajz-path';
 export const MAX_DROP_ITEMS = 100;
@@ -91,6 +91,19 @@ export function quoteForShell(text: string, shell: ShellKind): string | null {
 }
 
 export type DropTarget = 'claude' | 'codex' | 'shell';
+
+/** What the user may force for a shell cell (Cell.pathMode); no override means "auto". */
+export const PATH_MODES: readonly PathMode[] = ['claude', 'codex', 'shell'];
+export const normalizePathMode = (value: unknown): PathMode | undefined => (PATH_MODES as readonly unknown[]).includes(value) ? (value as PathMode) : undefined;
+
+/**
+ * The format of the inserted paths. A real agent cell always gets its agent's format; a shell cell gets the user's override,
+ * else the agent that was seen starting in it (see agentInfer.ts), else the quoted shell format.
+ */
+export function resolveDropTarget(cli: CliKind, override: unknown, inferred: 'claude' | 'codex' | null): DropTarget {
+  if (cli !== 'shell') return cli;
+  return normalizePathMode(override) ?? inferred ?? 'shell';
+}
 
 export interface DropText { text: string; /** Items left out (control characters, too long, not expressible). */ skipped: number }
 

@@ -11,8 +11,9 @@ import type { Cell } from '../../../shared/types';
 import {
   changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, setCellColor, toggleMaximize,
 } from '../actions';
-import { PATH_MIME } from '../../../shared/pathDrop';
-import { addPathsToCell, cellRefusesPaths, readDroppedPaths } from '../pathDrop';
+import { PATH_MIME, type DropTarget } from '../../../shared/pathDrop';
+import type { PathMode } from '../../../shared/types';
+import { addPathsToCell, cellDropFormat, cellRefusesPaths, readDroppedPaths } from '../pathDrop';
 import { setUi, toast, update, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { openMenu, openMenuAt, type MenuItem } from './ContextMenu';
@@ -46,7 +47,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
   const [drop, setDrop] = useState(false);
   /** A file or folder from the Files tree is over the cell (blocked: the cell is not running and would refuse it). */
-  const [pathDrop, setPathDrop] = useState<{ blocked: boolean } | null>(null);
+  const [pathDrop, setPathDrop] = useState<{ blocked: boolean; target: DropTarget } | null>(null);
   const [editing, setEditing] = useState(false);
   const [floodHint, setFloodHint] = useState(false);
 
@@ -78,6 +79,21 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
     { label: profile.cli === 'shell' ? tr("Uruchom ponownie") : tr("Nowa rozmowa"), onClick: () => restartCell(cell.id, 'new') },
   ];
 
+  /** What a shell cell inserts for dropped files: detected from the agent running in it, or forced by the user. */
+  const pathModeItems = (): MenuItem[] => {
+    const choose = (mode: PathMode | undefined) => () => update((s) => updateCell(s, cell.id, { pathMode: mode }));
+    const mark = (mode: PathMode | undefined) => (cell.pathMode === mode ? '✓' : undefined);
+    return [
+      { header: tr("Wstawianie ścieżek") },
+      { label: tr("Automatycznie (wykryj Claude lub Codex)"), hint: mark(undefined), onClick: choose(undefined) },
+      { label: tr("Claude: @ścieżka"), hint: mark('claude'), onClick: choose('claude') },
+      { label: tr("Codex: zwykła ścieżka"), hint: mark('codex'), onClick: choose('codex') },
+      { label: tr("Powłoka: ścieżka w cudzysłowie"), hint: mark('shell'), onClick: choose('shell') },
+    ];
+  };
+
+  const dropLabel = (target: DropTarget) => tr(target === 'claude' ? 'Upuść: @ścieżka (Claude)' : target === 'codex' ? 'Upuść: ścieżka (Codex)' : 'Upuść: ścieżka w cudzysłowie (powłoka)');
+
   const headerMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     openMenu(e.clientX, e.clientY, [
@@ -88,6 +104,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       ...(cell.color ? [{ label: tr("Usuń kolor"), onClick: () => setCellColor(cell.id, undefined) }] : []),
       { sep: true },
       ...restartItems(),
+      ...(profile.cli === 'shell' ? [{ sep: true as const }, ...pathModeItems()] : []),
       ...(profile.cli !== 'shell' ? [
         { label: cell.muted ? tr("Włącz alerty tej komórki") : tr("Wycisz alerty tej komórki"), onClick: () => update((s) => updateCell(s, cell.id, { muted: cell.muted ? undefined : true })) },
       ] : []),
@@ -118,7 +135,8 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
           e.preventDefault();
           e.dataTransfer.dropEffect = 'copy';
           const blocked = cellRefusesPaths(cell.id);
-          if (pathDrop?.blocked !== blocked) setPathDrop({ blocked });
+          const target = cellDropFormat(cell.id)?.target ?? 'shell';
+          if (pathDrop?.blocked !== blocked || pathDrop.target !== target) setPathDrop({ blocked, target });
           return;
         }
         if (!e.dataTransfer.types.includes(SNIPPET_MIME)) return;
@@ -220,7 +238,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         </span>
       </div>
       <div className="cell-body" ref={bodyRef} style={lackingCli ? { visibility: 'hidden' } : undefined} />
-      {pathDrop && <div className={`cell-path-drop ${pathDrop.blocked ? 'blocked' : ''}`} role="status">{pathDrop.blocked ? tr('Komórka nie jest uruchomiona') : tr('Upuść, aby dodać ścieżkę')}</div>}
+      {pathDrop && <div className={`cell-path-drop ${pathDrop.blocked ? 'blocked' : ''}`} role="status">{pathDrop.blocked ? tr('Komórka nie jest uruchomiona') : dropLabel(pathDrop.target)}</div>}
       {lackingCli && <CliMissingCard cli={lackingCli} cellId={cell.id} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
       {floodHint && !error && (
         <div className="cell-hint" role="status">

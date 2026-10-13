@@ -1,6 +1,6 @@
 // Puts files and folders (dragged from the Files tree, or added from its context menu) into a cell's input, never submitting.
 import { fullProjectPath } from '../../shared/platform';
-import { buildPathText, dropBlock, parsePathPayload, validRelPath, type PathItem } from '../../shared/pathDrop';
+import { buildPathText, dropBlock, parsePathPayload, resolveDropTarget, validRelPath, type DropTarget, type PathItem } from '../../shared/pathDrop';
 import { activeProject, activeTab, findCell, getProfile } from '../../shared/state';
 import { ensureStarted, focusCell, isStarted } from './actions';
 import { kindOf } from './explorer';
@@ -12,6 +12,18 @@ import { terminals } from './terminals/TerminalManager';
 export function cellRefusesPaths(cellId: string): boolean {
   const ui = getUi();
   return dropBlock({ held: ui.heldCells[cellId] === true, error: !!ui.cellErrors[cellId], started: isStarted(cellId), status: ui.statuses[cellId] ?? 'idle' }) !== null;
+}
+
+/** The format that a drop on this cell would insert, and the folder it is relative to: the agent's for an agent cell, else the user's override, else the agent seen running in the shell. */
+export function cellDropFormat(cellId: string): { target: DropTarget; cwd: string } | null {
+  const state = getS();
+  const found = findCell(state, cellId);
+  if (!found) return null;
+  const profile = getProfile(state, found.cell.profileId);
+  const inferred = profile.cli === 'shell' ? terminals.inferredAgent(cellId) : null;
+  const target = resolveDropTarget(profile.cli, found.cell.pathMode, inferred?.agent ?? null);
+  const cellCwd = found.cell.worktree?.path ?? found.project.path;
+  return { target, cwd: inferred && inferred.agent === target && inferred.cwd ? inferred.cwd : cellCwd };
 }
 
 /** Validated items of a drag payload (the raw string comes from the DOM and is untrusted). */
@@ -40,10 +52,8 @@ export function addPathsToCell(cellId: string, items: PathItem[], rejected = 0):
     if (!project) { rejected++; continue; }
     resolved.push({ kind: item.kind, abs: fullProjectPath(project.path, item.relPath, platform) });
   }
-  const profile = getProfile(state, found.cell.profileId);
-  const { text, skipped } = buildPathText(profile.cli, resolved, {
-    cwd: found.cell.worktree?.path ?? found.project.path, platform, shell: state.settings.shell,
-  });
+  const format = cellDropFormat(cellId)!;
+  const { text, skipped } = buildPathText(format.target, resolved, { cwd: format.cwd, platform, shell: state.settings.shell });
   rejected += skipped;
   if (rejected > 0) toast(tr('Pominięto elementy, których nie można dodać: {count}', { count: rejected }), 'error');
   if (!text) return;

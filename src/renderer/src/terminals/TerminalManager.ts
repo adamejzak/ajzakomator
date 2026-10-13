@@ -7,6 +7,7 @@ import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
 import type { BoundThread } from '../../../shared/codexHooks';
+import { AgentInference, keySequence, type InferredAgent, type ScreenLine, type ScreenState } from '../../../shared/agentInfer';
 import { FailureScanner } from '../../../shared/outputFailure';
 import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
 import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
@@ -45,6 +46,8 @@ interface Entry {
   scanner: FailureScanner;
   /** Stops mouse reports that only a shell prompt is echoing (see termReset.ts). */
   guard: MouseFloodGuard;
+  /** Which agent the user started by hand in this (shell) cell, guessed from the typed lines and the screen (see agentInfer.ts). */
+  infer: AgentInference;
   attachedTo: HTMLElement | null;
   resizeObs: ResizeObserver | null;
   /** >0 while replayed history is being parsed: terminal query replies must not reach the pty. */
@@ -134,6 +137,7 @@ class TerminalManager {
       this.exited.add(m.id);
       const e = this.entries.get(m.id);
       if (e) {
+        e.infer.exited();
         e.term.write(`${inputModesOff(window.mc.platform === 'win32')}\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
         this.setStatus(e, () => e.tracker.exited(), 'exit');
       }
@@ -162,6 +166,7 @@ class TerminalManager {
       this.writeReplay(e, m.data);
     } else {
       e.term.write(m.data, () => this.ack(m));
+      if (!e.agent) e.infer.output(performance.now());
       if (e.guard.watching(performance.now())) e.guard.output(performance.now(), m.data, this.inAlternate(e));
       // Published right away: output alone can flip the status to "working" (it used to surface only later).
       this.setStatus(e, () => { e.tracker.output(performance.now()); return e.tracker.takeRenotify() ? 'renotify' : undefined; }, 'output');
@@ -231,7 +236,7 @@ class TerminalManager {
 
     const entry: Entry = {
       id: cellId, term, fit, webgl: null, shownAt: 0, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
-      codex: opts.codex === true, scanner: new FailureScanner(), guard: new MouseFloodGuard(), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
+      codex: opts.codex === true, scanner: new FailureScanner(), guard: new MouseFloodGuard(), infer: new AgentInference(window.mc.platform === 'win32'), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
       parkedSelection: null, applySelection: null,
     };
     entry.tracker.setCodex(entry.codex);
@@ -254,6 +259,7 @@ class TerminalManager {
     // Codex (tui.notifications) and others signal "needs attention" with OSC 9.
     term.parser.registerOscHandler(9, (payload) => {
       // 9;4;... = progress, 9;9;... = cwd reporting (oh-my-posh etc.) - not notifications.
+      if (payload.startsWith('9;')) entry.infer.reportCwd(payload.slice(2));
       if (/^(4|9);/.test(payload)) return true;
       if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9(), 'osc9');
       return true;
@@ -262,6 +268,7 @@ class TerminalManager {
       if (entry.agent && entry.replaying === 0) this.setStatus(entry, () => entry.tracker.osc9(), 'osc9');
     });
 
+    term.onTitleChange((title) => { if (!entry.agent) entry.infer.title(title, performance.now()); });
     term.attachCustomKeyEventHandler((ev) => this.handleKey(entry, ev));
     term.onData((d) => {
       if (entry.replaying > 0) return;
@@ -275,7 +282,10 @@ class TerminalManager {
       }
       // Focus / mouse reports (a click on the cell) and device replies are the terminal's, not the user's: they must not
       // count as typing, and the redraw they make the agent do must not count as work.
-      if (isUserInput(d)) this.userInput(entry, d.includes('\r'), d === '\x1b' || d === '\x03');
+      if (isUserInput(d)) {
+        this.inferInput(entry, d);
+        this.userInput(entry, d.includes('\r'), d === '\x1b' || d === '\x03');
+      }
       else if (isFocusOrMouseReport(d)) entry.tracker.terminalReply(performance.now());
       this.post({ t: 'write', id: cellId, data: d });
     });
@@ -362,6 +372,7 @@ class TerminalManager {
       if (!seq) return true;
       ev.preventDefault();
       if (ev.type === 'keydown' && !['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(ev.key)) {
+        this.inferInput(entry, keySequence(ev));
         this.userInput(entry, ev.code === 'Enter' || ev.code === 'NumpadEnter', ev.key === 'Escape' || (ctrl && ev.code === 'KeyC'));
       }
       this.post({ t: 'write', id: entry.id, data: seq });
@@ -382,6 +393,7 @@ class TerminalManager {
     if (submit) {
       // Separate write so TUIs see Enter after the paste block, not inside it.
       setTimeout(() => {
+        this.inferInput(e, '\r');
         this.userInput(e, true);
         this.post({ t: 'write', id: cellId, data: e.win32 ? '\x1b[13;28;13;1;0;1_\x1b[13;28;13;0;0;1_' : '\r' });
       }, 60);
@@ -544,6 +556,7 @@ class TerminalManager {
     e.win32 = false;
     e.guard.reset();
     e.scanner.reset();
+    e.infer.exited();
     e.term.reset();
     this.setStatus(e, () => e.tracker.reset(), 'restore');
     e.tracker.threads.begin(session);
@@ -619,9 +632,46 @@ class TerminalManager {
     }
   }
 
+  // ── agent inference (shell cells) ─────────────────────────────────────────
+
+  /** Feeds what the user typed into a shell cell to the inference; agent cells need none. */
+  private inferInput(e: Entry, data: string): void {
+    if (!e.agent && data) e.infer.input(data, performance.now(), () => this.screenLine(e));
+  }
+
+  /** The logical line of the cursor in the normal buffer (wrapped rows joined), null in a full-screen program. */
+  private screenLine(e: Entry): ScreenLine | null {
+    const buffer = e.term.buffer.active;
+    if (buffer.type === 'alternate') return null;
+    let row = buffer.baseY + buffer.cursorY;
+    let line = buffer.getLine(row);
+    if (!line) return null;
+    let text = line.translateToString(true);
+    for (let up = 0; line?.isWrapped && row > 0 && up < 20; up++) {
+      row--;
+      line = buffer.getLine(row);
+      if (!line) break;
+      text = line.translateToString(false) + text;
+    }
+    return { text, row };
+  }
+
+  private screenState(e: Entry): ScreenState {
+    return { line: this.screenLine(e), alternate: this.inAlternate(e), mouse: e.term.modes.mouseTrackingMode !== 'none' };
+  }
+
+  /** The agent the user started by hand in a shell cell (and the folder it started in, when known); null when none is believed to run. */
+  inferredAgent(cellId: string): { agent: InferredAgent; cwd: string | null } | null {
+    const e = this.entries.get(cellId);
+    if (!e || e.agent) return null;
+    e.infer.observe(performance.now(), this.screenState(e));
+    return e.infer.agent ? { agent: e.infer.agent, cwd: e.infer.cwd } : null;
+  }
+
   private tickStatuses(): void {
     const now = performance.now();
     for (const e of this.entries.values()) {
+      if (e.infer.agent && !e.agent) e.infer.observe(now, this.screenState(e));
       // A committed Codex turn end on a cell that already waited changes no status but must alert: report it as a renotify.
       this.setStatus(e, () => { e.tracker.tick(now); return e.tracker.takeRenotify() ? 'renotify' : undefined; }, 'tick-stall');
     }
