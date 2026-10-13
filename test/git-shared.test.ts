@@ -41,14 +41,17 @@ describe('ref and path validation', () => {
     for (const value of [undefined, null, 5, {}]) expect(normalizeRepoPath(value)).toBeNull();
   });
 
-  it('finds the project relative path of a repository file', () => {
-    expect(projectRelativePath('D:/Projekty/app', 'D:\\Projekty\\app', 'src/a.ts', true)).toBe('src/a.ts');
-    expect(projectRelativePath('D:/Projekty', 'D:\\Projekty\\app', 'app/src/a.ts', true)).toBe('src/a.ts');
-    expect(projectRelativePath('d:/projekty', 'D:\\Projekty\\App', 'app/src/a.ts', true)).toBe('src/a.ts');
-    expect(projectRelativePath('D:/Projekty', 'D:\\Projekty\\app', 'other/a.ts', true)).toBeNull();
-    expect(projectRelativePath('D:/Projekty/app', 'D:\\Projekty\\app', 'dir/', true)).toBe('dir');
-    expect(projectRelativePath('/home/me/repo', '/home/me/repo/pkg', 'pkg/a.ts')).toBe('a.ts');
-    expect(projectRelativePath('/home/me/Repo', '/home/me/repo/pkg', 'pkg/a.ts')).toBeNull(); // case matters off Windows
+  it('finds the project relative path of a repository file from the relation main worked out', () => {
+    expect(projectRelativePath({ kind: 'inside-root', prefix: '' }, 'src/a.ts', true)).toBe('src/a.ts');
+    expect(projectRelativePath({ kind: 'inside-root', prefix: 'app' }, 'app/src/a.ts', true)).toBe('src/a.ts');
+    expect(projectRelativePath({ kind: 'inside-root', prefix: 'App' }, 'app/src/a.ts', true)).toBe('src/a.ts'); // Windows: letter case does not matter
+    expect(projectRelativePath({ kind: 'inside-root', prefix: 'app' }, 'other/a.ts', true)).toBeNull();
+    expect(projectRelativePath({ kind: 'inside-root', prefix: 'app' }, 'app', true)).toBeNull();
+    expect(projectRelativePath({ kind: 'inside-root', prefix: '' }, 'dir/', true)).toBe('dir');
+    expect(projectRelativePath({ kind: 'inside-root', prefix: 'pkg' }, 'pkg/a.ts')).toBe('a.ts');
+    expect(projectRelativePath({ kind: 'inside-root', prefix: 'Pkg' }, 'pkg/a.ts')).toBeNull(); // case matters off Windows
+    expect(projectRelativePath({ kind: 'contains-root', prefix: 'vendor/lib' }, 'src/a.ts')).toBe('vendor/lib/src/a.ts');
+    expect(projectRelativePath(null, 'a.ts')).toBeNull();
   });
 });
 
@@ -213,8 +216,8 @@ describe('log and details parsers', () => {
     ]);
     const list = parseWorktrees(['worktree D:/p/app', 'HEAD 0123456789abcdef', 'branch refs/heads/main', '', 'worktree D:/p/app-wt-a', 'HEAD fedcba9876543210', 'detached', ''].join('\n'));
     expect(list).toEqual([
-      { path: 'D:/p/app', branch: 'main', head: '0123456', main: true, detached: false, allowed: true },
-      { path: 'D:/p/app-wt-a', branch: null, head: 'fedcba9', main: false, detached: true, allowed: true },
+      { path: 'D:/p/app', branch: 'main', head: '0123456', main: true, detached: false, allowed: true, isProject: false, preferred: false },
+      { path: 'D:/p/app-wt-a', branch: null, head: 'fedcba9', main: false, detached: true, allowed: true, isProject: false, preferred: false },
     ]);
   });
 });

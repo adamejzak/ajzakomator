@@ -3,7 +3,6 @@
 // A repository whose own configuration can start programs stays read-only (history only) until the user trusts it.
 import { useCallback, useEffect, useState } from 'react';
 import { activeProject, findCell } from '../../../shared/state';
-import { normalizeProjectPath } from '../../../shared/platform';
 import {
   projectRelativePath, type GitBranch, type GitFileChange, type GitOpResult, type GitResult, type GitTrustInfo, type GitWorktree,
 } from '../../../shared/git';
@@ -19,8 +18,6 @@ import { GitChanges } from './GitChanges';
 import { GitHistory } from './GitHistory';
 import { IBranch, IChevron, IRestart } from './icons';
 import './gitPanel.css';
-
-const same = (a: string, b: string): boolean => normalizeProjectPath(a) === normalizeProjectPath(b);
 
 export function GitPanel() {
   const { tr } = useI18n();
@@ -73,9 +70,9 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
   const cellWorktree = useStore((st) => { const id = st.ui.focusedCellId; return id ? findCell(st.s, id)?.cell.worktree?.path : undefined; });
 
   // The worktree to show: the one the user picked, else the one of the focused cell, else the project folder itself.
-  const wanted = picked ?? cellWorktree ?? null;
-  const known = wanted ? worktrees.find((w) => same(w.path, wanted) && w.allowed) : undefined;
-  const worktree = known && !same(known.path, projectPath) ? known.path : undefined;
+  // Folders are matched in main by canonical path (short names, links and letter case do not matter), the answer comes as flags.
+  const known = picked ? worktrees.find((w) => w.path === picked && w.allowed) : worktrees.find((w) => w.preferred && w.allowed);
+  const worktree = known && !known.isProject ? known.path : undefined;
   const opts = worktree ? { worktree } : {};
 
   // Trust first: the status runs the repository's filters, so it is only asked for in a repository that is safe or trusted.
@@ -103,7 +100,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
 
   useEffect(() => {
     let cancelled = false;
-    window.mc.git.worktrees(projectId).then((r) => { if (!cancelled && r.ok) setWorktrees(r.data); }).catch(() => undefined);
+    window.mc.git.worktrees(projectId, cellWorktree ? { prefer: cellWorktree } : {}).then((r) => { if (!cancelled && r.ok) setWorktrees(r.data); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [projectId, cellWorktree, status?.branch, status?.head, trust?.state]);
 
@@ -212,7 +209,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
 
   const fileMenu = (e: React.MouseEvent, file: GitFileChange, source: 'working' | 'staged' | 'untracked') => {
     e.preventDefault();
-    const relative = status ? projectRelativePath(status.root, projectPath, file.path, window.mc.platform === 'win32') : null;
+    const relative = status ? projectRelativePath(status.projectRelation, file.path, window.mc.platform === 'win32') : null;
     const deleted = file.x === 'D' || file.y === 'D';
     const folder = file.path.endsWith('/');
     const usable = !!relative && !deleted && !folder && !worktree;
@@ -225,7 +222,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
     ]);
   };
 
-  const selectValue = known?.path ?? worktrees.find((w) => same(w.path, projectPath))?.path ?? worktrees[0]?.path ?? '';
+  const selectValue = known?.path ?? worktrees.find((w) => w.isProject)?.path ?? worktrees[0]?.path ?? '';
   const folderName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
   const worktreeSelect = worktrees.length > 1 && (
     // every option shows its full path, so the user sees which folder a choice means; the ones the project may not use are disabled

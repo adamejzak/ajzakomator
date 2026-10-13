@@ -7,6 +7,7 @@ import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Git } from '../src/main/git';
 import { handleGit } from '../src/main/gitHandler';
+import { samePath } from '../src/main/gitPaths';
 import type { GitResult, GitStatus, GitTrustInfo } from '../src/shared/git';
 
 let lab: string;
@@ -64,7 +65,7 @@ function hostile(name: string): { dir: string; bare: string } {
 const markersReset = () => { rmSync(marker, { force: true }); };
 
 beforeAll(() => {
-  lab = realpathSync(mkdtempSync(join(tmpdir(), 'mc-trust-')));
+  lab = realpathSync.native(mkdtempSync(join(tmpdir(), 'mc-trust-')));
   marker = join(lab, 'markers.log');
   writeFileSync(join(lab, 'mark.js'), [
     "const fs = require('fs');",
@@ -359,7 +360,7 @@ describe('environment and scope', () => {
     };
     const scrubbed = new Git({ env: hostileEnv });
     const status = data<GitStatus>(await scrubbed.status(dir));
-    expect(slash(status.root).toLowerCase()).toBe(slash(dir).toLowerCase());
+    expect(samePath(status.root, dir)).toBe(true);
     expect(status.files.map((f) => f.path)).toContain('a.txt');
     // a global configuration that lives inside the repository is repository content: it must not apply (here it would require signing)
     const insideGlobal = new Git({ env: { ...hostileEnv, GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined, GIT_COMMON_DIR: undefined, GIT_CONFIG_GLOBAL: evil } });

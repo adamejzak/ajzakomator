@@ -41,6 +41,9 @@ export interface GitFileChange {
  * Where "Push" would go. `url` is the push URL git resolves (pushurl and insteadOf rewriting applied) with credentials removed, for
  * the confirmation dialog; `urlId` identifies the raw URL, and a push is refused when it no longer matches what the user confirmed.
  */
+/** `inside-root`: the project is `prefix` below the root ('' = the root itself); `contains-root`: the root is `prefix` below the project. */
+export type GitProjectRelation = { kind: 'inside-root' | 'contains-root'; prefix: string };
+
 export interface GitPushTarget { remote: string; branch: string; setUpstream: boolean; url: string; urlId: string }
 
 export interface GitStatus {
@@ -63,6 +66,8 @@ export interface GitStatus {
   push: GitPushTarget | null;
   /** The repository root is above the project folder (the project is a subfolder of a larger repository): no write operations. */
   parent: boolean;
+  /** Where the project folder lies relative to the repository root (null: unrelated); main works it out from canonical paths. */
+  projectRelation: GitProjectRelation | null;
 }
 
 export interface GitRef { name: string; kind: 'head' | 'branch' | 'remote' | 'tag'; current?: boolean }
@@ -112,6 +117,10 @@ export interface GitWorktree {
   detached: boolean;
   /** Inside the project folder, next to it as an app-created sibling, or used by a cell: only these can be picked. */
   allowed: boolean;
+  /** This is the project's own folder (compared by canonical path, so short names, links and letter case do not matter). */
+  isProject: boolean;
+  /** The worktree the caller asked to prefer (the focused cell's), matched the same way. */
+  preferred: boolean;
 }
 
 /**
@@ -153,7 +162,7 @@ export interface GitCheckoutRequest extends GitMutation { branch: string; remote
 
 export interface GitApi {
   probe(projectId: string): Promise<GitProbe>;
-  worktrees(projectId: string): Promise<GitResult<GitWorktree[]>>;
+  worktrees(projectId: string, req?: { prefer?: string }): Promise<GitResult<GitWorktree[]>>;
   status(projectId: string, req: GitStatusRequest): Promise<GitResult<GitStatus>>;
   log(projectId: string, req: GitLogRequest): Promise<GitResult<GitLogPage>>;
   show(projectId: string, req: GitShowRequest): Promise<GitResult<GitCommitDetails>>;
@@ -529,7 +538,7 @@ export function parseWorktrees(stdout: string): GitWorktree[] {
   let current: GitWorktree | null = null;
   for (const line of stdout.split('\n').map((l) => l.replace(/\r$/, ''))) {
     if (line.startsWith('worktree ')) {
-      current = { path: line.slice(9), branch: null, head: '', main: list.length === 0, detached: false, allowed: true };
+      current = { path: line.slice(9), branch: null, head: '', main: list.length === 0, detached: false, allowed: true, isProject: false, preferred: false };
       list.push(current);
     } else if (current) {
       if (line.startsWith('HEAD ')) current.head = line.slice(5, 12);
@@ -635,16 +644,18 @@ export function layoutGraph(commits: ReadonlyArray<Pick<GitCommit, 'hash' | 'par
 
 // ---------- paths shown in the panel ----------
 
-/** The path of a repository file relative to the project folder (forward slashes), or null when the file is outside the project. */
-export function projectRelativePath(root: string, projectPath: string, file: string, windows = false): string | null {
-  const norm = (value: string): string => {
-    const slashed = value.replace(/\\/g, '/').replace(/\/+$/, '');
-    return windows ? slashed.toLowerCase() : slashed;
-  };
-  const absolute = norm(`${root.replace(/[\\/]+$/, '')}/${file}`);
-  const base = norm(projectPath);
-  if (absolute === base || !absolute.startsWith(`${base}/`)) return null;
-  return `${root.replace(/[\\/]+$/, '')}/${file}`.replace(/\\/g, '/').slice(base.length + 1).replace(/\/+$/, '');
+/**
+ * The path of a repository file relative to the project folder (forward slashes), or null when the file is outside the project.
+ * `relation` comes from main (canonical paths), so a project reached through a short name, a link or another letter case works.
+ */
+export function projectRelativePath(relation: GitProjectRelation | null, file: string, windows = false): string | null {
+  if (!relation) return null;
+  const clean = file.replace(/\/+$/, '');
+  if (relation.kind === 'contains-root') return relation.prefix ? `${relation.prefix}/${clean}` : clean;
+  if (!relation.prefix) return clean;
+  const same = (a: string, b: string): boolean => (windows ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const prefix = `${relation.prefix}/`;
+  return clean.length > prefix.length && same(clean.slice(0, prefix.length), prefix) ? clean.slice(prefix.length) : null;
 }
 
 /**

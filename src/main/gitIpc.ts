@@ -22,9 +22,12 @@ export function registerGitIpc(deps: GitIpcDeps): void {
     const path = typeof projectId === 'string' ? deps.projectPath(projectId) : undefined;
     return path ? git.probe(path) : 'no-repo';
   });
-  ipcMain.handle('git:worktrees', async (_e, projectId: unknown): Promise<GitResult<unknown>> => {
+  ipcMain.handle('git:worktrees', async (_e, projectId: unknown, request: unknown): Promise<GitResult<unknown>> => {
     const path = typeof projectId === 'string' ? deps.projectPath(projectId) : undefined;
-    return path ? git.worktrees(path, path, deps.worktreePaths?.(projectId as string) ?? []) : { ok: false, code: 'gone', error: GONE };
+    if (!path) return { ok: false, code: 'gone', error: GONE };
+    const wanted = (request as { prefer?: unknown } | null)?.prefer;
+    const prefer = typeof wanted === 'string' && wanted.length > 0 && wanted.length <= 1000 && !wanted.includes('\0') ? wanted : undefined;
+    return git.worktrees(path, path, deps.worktreePaths?.(projectId as string) ?? [], prefer);
   });
   for (const channel of GIT_CHANNELS) {
     ipcMain.handle(`git:${channel}`, (_e, projectId: unknown, request: unknown) => {

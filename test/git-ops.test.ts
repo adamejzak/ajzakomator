@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Git } from '../src/main/git';
+import { samePath } from '../src/main/gitPaths';
 import { handleGit } from '../src/main/gitHandler';
 import type { GitCommitDetails, GitLogPage, GitStatus } from '../src/shared/git';
 
@@ -59,7 +60,7 @@ const data = <T>(result: { ok: boolean }): T => {
 };
 
 beforeAll(() => {
-  lab = realpathSync(mkdtempSync(join(tmpdir(), 'mc-git-')));
+  lab = realpathSync.native(mkdtempSync(join(tmpdir(), 'mc-git-')));
   const globalConfig = join(lab, 'global.gitconfig');
   writeFileSync(globalConfig, '[user]\n\tname = Tester\n\temail = tester@example.com\n[init]\n\tdefaultBranch = main\n[protocol "file"]\n\tallow = always\n');
   env = { ...process.env, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
@@ -153,7 +154,7 @@ describe('status', () => {
     const dir = repo('sub', 1);
     mkdirSync(join(dir, 'a', 'b'), { recursive: true });
     const status = data<GitStatus>(await git.status(join(dir, 'a', 'b')));
-    expect(status.root.replace(/\\/g, '/').toLowerCase()).toBe(dir.replace(/\\/g, '/').toLowerCase());
+    expect(samePath(status.root, dir)).toBe(true); // git reports its own spelling of the folder
     const plain = join(lab, 'plain');
     mkdirSync(plain);
     expect(await git.status(plain)).toMatchObject({ ok: false, code: 'not-repo' });

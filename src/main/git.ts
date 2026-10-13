@@ -10,10 +10,10 @@
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
-import { realpath } from 'fs/promises';
+import { realpath as fsRealpath } from 'fs';
+import { promisify } from 'util';
 import { dirname, join, resolve } from 'path';
 import { cleanEnv } from '../shared/env';
-import { normalizeProjectPath } from '../shared/platform';
 import {
   BRANCH_FORMAT, DETAILS_FORMAT, GIT_COMMIT_FILE_LIMIT, GIT_MAX_FILES, LOG_FORMAT, isSafeRef, isSafeRemote, parseBranches, parseDetails,
   parseDiffTree, parseLog, parseStatusV2, parseWorktrees, redactSecrets, trimGitText, worktreeAllowed,
@@ -21,6 +21,7 @@ import {
   type GitErrorCode, type GitLogPage, type GitLogRequest, type GitOpResult, type GitPathsRequest, type GitProbe, type GitPushRequest,
   type GitPushTarget, type GitResult, type GitStatus, type GitTrustInfo, type GitWorktree,
 } from '../shared/git';
+import { canonicalPath, isInsidePath, relativeInside, samePath } from './gitPaths';
 import { attributeDrivers, configuredAttributeDrivers, dangerousConfigKeys, parseConfigList, type ConfigEntry } from '../shared/gitTrust';
 
 export interface GitOptions {
@@ -90,12 +91,8 @@ function killTree(child: ChildProcess): Promise<void> {
 /** Variables that would point git at another repository, index or configuration than the folder we run it in. */
 const SCRUBBED_ENV = /^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_NAMESPACE|GIT_PREFIX|GIT_CONFIG|GIT_CONFIG_SYSTEM|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+|GIT_CONFIG_PARAMETERS|GIT_EXTERNAL_DIFF|GIT_DIFF_OPTS)$/i;
 
-const sameFolder = (a: string, b: string): boolean => normalizeProjectPath(a) === normalizeProjectPath(b);
-const insidePath = (parent: string, child: string): boolean => {
-  const p = normalizeProjectPath(parent);
-  const c = normalizeProjectPath(child);
-  return c === p || c.startsWith(`${p}/`);
-};
+/** Resolves links and 8.3 short names, like the canonical spelling of folders does (the plain fs.promises version leaves short names alone on some systems). */
+const realpath = promisify(fsRealpath.native);
 const caseFold = (value: string): string => (process.platform === 'win32' ? value.toLowerCase() : value);
 
 /** The repositories the user trusted: root -> fingerprint of the configuration that was trusted. */
@@ -110,7 +107,7 @@ export class GitTrustStore {
     } catch { /* first start, or a damaged file: nothing is trusted */ }
   }
 
-  private key = (root: string): string => normalizeProjectPath(root);
+  private key = (root: string): string => canonicalPath(root);
   get(root: string): string | undefined { return this.map.get(this.key(root)); }
   set(root: string, hash: string): void { this.map.set(this.key(root), hash); this.save(); }
   delete(root: string): void { if (this.map.delete(this.key(root))) this.save(); }
@@ -161,7 +158,7 @@ export class Git {
     const env = cleanEnv(this.baseEnv);
     for (const key of Object.keys(env)) if (SCRUBBED_ENV.test(key)) delete env[key];
     // The user's own global configuration stays; one that lives inside the repository folder would be repository content.
-    for (const key of Object.keys(env)) if (/^GIT_CONFIG_GLOBAL$/i.test(key) && insidePath(cwd, env[key])) delete env[key];
+    for (const key of Object.keys(env)) if (/^GIT_CONFIG_GLOBAL$/i.test(key) && isInsidePath(cwd, env[key])) delete env[key];
     env.GIT_TERMINAL_PROMPT = '0';
     env.GCM_INTERACTIVE = 'never';
     env.GIT_EDITOR = 'true';
@@ -347,16 +344,15 @@ export class Git {
   }
 
   /** Is the repository's root the project folder or inside it? A larger repository around the project must never be written to. */
-  private async withinScope(scope: string, root: string): Promise<boolean> {
-    const real = async (path: string): Promise<string> => { try { return await realpath(path); } catch { return path; } };
-    return insidePath(await real(scope), await real(root));
+  private withinScope(scope: string, root: string): boolean {
+    return isInsidePath(scope, root);
   }
 
   trustInfo(dir: string, scope?: string): Promise<GitResult<GitTrustInfo>> {
     return this.attempt(async () => {
       const root = await this.root(dir);
       const { state, scan } = await this.stateOf(root, true);
-      return ok({ state, keys: scan.keys, root, parent: scope ? !(await this.withinScope(scope, root)) : false });
+      return ok({ state, keys: scan.keys, root, parent: scope ? !this.withinScope(scope, root) : false });
     });
   }
 
@@ -393,13 +389,31 @@ export class Git {
     catch (error) { return error instanceof GitFailure && error.code === 'no-git' ? 'no-git' : 'no-repo'; }
   }
 
-  /** The repository's worktrees; those the project may use are marked `allowed`. */
-  worktrees(dir: string, projectPath?: string, extra: readonly string[] = []): Promise<GitResult<GitWorktree[]>> {
+  /**
+   * The repository's worktrees; those the project may use are marked `allowed`, the project's own folder `isProject`, and the one equal
+   * to `prefer` (the focused cell's worktree) `preferred`. All comparisons use the canonical spelling of the folders.
+   */
+  worktrees(dir: string, projectPath?: string, extra: readonly string[] = [], prefer?: string): Promise<GitResult<GitWorktree[]>> {
     return this.attempt(async () => {
       const root = await this.root(dir);
       const out = await this.run(root, ['worktree', 'list', '--porcelain'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true });
-      return ok(parseWorktrees(out.stdout).map((w) => ({ ...w, allowed: projectPath ? worktreeAllowed(projectPath, w.path, extra) : true })));
+      const project = projectPath ? canonicalPath(projectPath) : undefined;
+      const extras = extra.map((path) => canonicalPath(path));
+      const wanted = prefer ? canonicalPath(prefer) : undefined;
+      return ok(parseWorktrees(out.stdout).map((w) => {
+        const real = canonicalPath(w.path);
+        return { ...w, allowed: project ? worktreeAllowed(project, real, extras) : true, isProject: real === project, preferred: real === wanted };
+      }));
     });
+  }
+
+  /** How the project folder and the repository root lie to each other (see GitStatus.projectRelation), by their canonical paths. */
+  private relation(scope: string | undefined, root: string): GitStatus['projectRelation'] {
+    if (!scope) return { kind: 'inside-root', prefix: '' };
+    const inRoot = relativeInside(root, scope);
+    if (inRoot !== null) return { kind: 'inside-root', prefix: inRoot };
+    const rootIn = relativeInside(scope, root);
+    return rootIn !== null ? { kind: 'contains-root', prefix: rootIn } : null;
   }
 
   /**
@@ -410,7 +424,7 @@ export class Git {
     if (!worktree) return ok(projectPath);
     const list = await this.worktrees(projectPath, projectPath, extra);
     if (!list.ok) return list;
-    const found = list.data.find((w) => sameFolder(w.path, worktree));
+    const found = list.data.find((w) => samePath(w.path, worktree));
     return found && found.allowed ? ok(found.path) : fail('invalid', 'To nie jest worktree tego repozytorium.');
   }
 
@@ -482,8 +496,8 @@ export class Git {
       const out = await this.run(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true });
       const parsed = parseStatusV2(out.stdout, GIT_MAX_FILES);
       const push = parsed.branch && !parsed.initial ? await this.pushTarget(root, parsed.branch) : null;
-      const parent = scope ? !(await this.withinScope(scope, root)) : false;
-      return ok({ ...parsed, truncated: parsed.truncated || out.truncated, root, push, parent });
+      const parent = scope ? !this.withinScope(scope, root) : false;
+      return ok({ ...parsed, truncated: parsed.truncated || out.truncated, root, push, parent, projectRelation: this.relation(scope, root) });
     });
   }
 
@@ -564,9 +578,9 @@ export class Git {
   private mutate<T>(dir: string, requestId: string, scope: string | undefined, work: (root: string) => Promise<GitResult<T>>): Promise<GitResult<T>> {
     return this.attempt(async () => {
       const root = await this.root(dir);
-      if (scope && !(await this.withinScope(scope, root))) return fail('parent', 'To repozytorium nadrzędne wobec projektu: zapisy są wyłączone.');
+      if (scope && !this.withinScope(scope, root)) return fail('parent', 'To repozytorium nadrzędne wobec projektu: zapisy są wyłączone.');
       await this.requireTrust(root, true);
-      const key = normalizeProjectPath((await this.gitDirs(root)).commonDir);
+      const key = canonicalPath((await this.gitDirs(root)).commonDir);
       this.consume(requestId);
       if (this.busy.has(key)) return fail('busy', 'Inna operacja git w tym repozytorium jeszcze trwa.');
       this.busy.add(key);

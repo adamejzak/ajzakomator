@@ -48,7 +48,7 @@ const api: McApi = {
   removeWorktree: (projectPath, wt, deleteBranch) => ipcRenderer.invoke('git:removeWorktree', projectPath, wt, deleteBranch),
   git: {
     probe: (projectId) => ipcRenderer.invoke('git:probe', projectId),
-    worktrees: (projectId) => ipcRenderer.invoke('git:worktrees', projectId),
+    worktrees: (projectId, req) => ipcRenderer.invoke('git:worktrees', projectId, req),
     status: (projectId, req) => ipcRenderer.invoke('git:status', projectId, req),
     log: (projectId, req) => ipcRenderer.invoke('git:log', projectId, req),
     show: (projectId, req) => ipcRenderer.invoke('git:show', projectId, req),
