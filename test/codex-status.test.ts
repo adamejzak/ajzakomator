@@ -7,7 +7,7 @@ import { automationStatusFor } from '../src/shared/runtimeStatus';
 import { layoutForCount } from '../src/shared/layout';
 import { addProject, addTab, defaultState, findCell, normalizeState, updateCell } from '../src/shared/state';
 import {
-  CODEX_QUIET_MS, ENV_QUIET_MS, FAILURE_QUIET_MS, shouldNotify, StatusTracker, SUSPEND_MS,
+  CODEX_COMMIT_MS, CODEX_QUIET_MS, CODEX_SETTLE_MS, ENV_QUIET_MS, FAILURE_QUIET_MS, shouldNotify, StatusTracker, SUSPEND_MS,
   type CellStatus, type HookInfo,
 } from '../src/shared/status';
 
@@ -50,16 +50,21 @@ function cell(opts: { codex?: boolean; muted?: boolean } = {}) {
       if (failure) t.failure(failure);
     }),
     /** Several lines of the app's own redraw at once do not matter; this is the user's answer without Enter (a plain key). */
-    notify: (at: number, turnId?: string) => watch(at, () => t.hook('stop', at, { codex: true, ...(turnId ? { turnId } : {}) } as HookInfo)),
+    notify: (at: number, turnId?: string, threadId?: string) => watch(at, () => t.hook('stop', at, { codex: true, ...(turnId ? { turnId } : {}), ...(threadId ? { threadId } : {}) } as HookInfo)),
+    /** A notify followed by quiet: the ticks of the app commit the turn end. */
+    end: (at: number, turnId?: string, threadId?: string) => {
+      watch(at, () => t.hook('stop', at, { codex: true, ...(turnId ? { turnId } : {}), ...(threadId ? { threadId } : {}) } as HookInfo));
+      for (let n = at + 400; n <= at + CODEX_COMMIT_MS + 400; n += 400) watch(n, () => { t.tick(n); return t.takeRenotify() ? 'renotify' : undefined; });
+    },
     osc9: (at: number) => watch(at, () => t.osc9()),
     esc: (at: number) => watch(at, () => { t.input(at, false); t.interrupt(at); }),
     env: (at: number) => watch(at, () => t.environment(at)),
     reply: (at: number) => watch(at, () => t.terminalReply(at)),
     /** Ticks every 400 ms like the app. */
-    run: (from: number, to: number) => { for (let n = from; n <= to; n += 400) watch(n, () => t.tick(n)); },
+    run: (from: number, to: number) => { for (let n = from; n <= to; n += 400) watch(n, () => { t.tick(n); return t.takeRenotify() ? 'renotify' : undefined; }); },
     /** Output every `every` ms between two instants, with the ticks of the app in between. */
     stream: (from: number, to: number, every = 500) => {
-      for (let n = from; n <= to; n += every) { watch(n, () => t.output(n)); watch(n + 1, () => t.tick(n + 1)); }
+      for (let n = from; n <= to; n += every) { watch(n, () => t.output(n)); watch(n + 1, () => { t.tick(n + 1); return t.takeRenotify() ? 'renotify' : undefined; }); }
     },
   };
 }
@@ -104,11 +109,11 @@ describe('window visibility regression (minimize, restore 10 minutes later, redr
     const c = cell();
     c.submit(0);
     c.stream(300, 6000);
-    c.notify(6100, 'turn-1');
+    c.end(6100, 'turn-1');
     expect(c.alerts).toEqual(['done']);
     expect(c.t.isHooked).toBe(true);
     const flips = c.flips.length;
-    minimizeAndRestore(c, 12_000);
+    minimizeAndRestore(c, 6000);
     expect(c.t.status).toBe('waiting');
     expect(c.flips.length).toBe(flips);
     expect(c.alerts).toEqual(['done']);
@@ -149,7 +154,7 @@ describe('window visibility regression (minimize, restore 10 minutes later, redr
     c.env(3000);
     c.stream(3500, 9000);
     expect(c.t.status).toBe('working');
-    c.notify(9500, 'turn-1');
+    c.end(9500, 'turn-1');
     expect(c.alerts).toEqual(['done']);
   });
 });
@@ -157,17 +162,17 @@ describe('window visibility regression (minimize, restore 10 minutes later, redr
 describe('Codex notify drives the status', () => {
   it('alerts once per turn at the notify, not at a mid-turn pause', () => {
     const c = cell();
-    c.notify(0, 'turn-0'); // the hook works (first turn already reported)
+    c.end(-4000, 'turn-0'); // the hook works (first turn already reported)
     expect(c.alerts).toEqual(['done']);
     c.submit(1000);
     c.stream(1200, 4000);
     c.run(4000, 4000 + 5000); // a tool runs silently for 5 s: the heuristic alone would have said "waiting"
     expect(c.t.status).toBe('working');
     c.stream(10_000, 12_000);
-    c.notify(12_300, 'turn-1');
+    c.end(12_300, 'turn-1');
     expect(c.t.status).toBe('waiting');
     expect(c.alerts).toEqual(['done', 'done']);
-    c.notify(12_400, 'turn-1'); // the same turn reported again
+    c.end(12_400, 'turn-1'); // the same turn reported again
     c.run(12_800, 40_000);
     expect(c.alerts).toEqual(['done', 'done']);
     expect(c.flips.map((f) => f.to)).toEqual(['waiting', 'idle', 'working', 'waiting']);
@@ -180,14 +185,14 @@ describe('Codex notify drives the status', () => {
     c.run(3000, 6000);
     expect(c.t.status).toBe('waiting');
     expect(c.alerts).toEqual(['done']);
-    c.notify(6500, 'turn-1'); // late notify of the same turn: nothing new
+    c.end(6500, 'turn-1'); // late notify of the same turn: nothing new
     expect(c.alerts).toEqual(['done']);
     expect(c.t.isHooked).toBe(true);
   });
 
   it('a lost notify is caught late by the silence net, once', () => {
     const c = cell();
-    c.notify(0, 'turn-0');
+    c.end(-4000, 'turn-0');
     c.submit(1000);
     c.stream(1200, 3000);
     c.run(3000, 3000 + CODEX_QUIET_MS - 400);
@@ -199,7 +204,7 @@ describe('Codex notify drives the status', () => {
 
   it('Esc on a hooked Codex cell ends the work quietly', () => {
     const c = cell();
-    c.notify(0, 'turn-0');
+    c.end(-4000, 'turn-0');
     c.submit(1000);
     c.stream(1200, 3000);
     c.esc(3100);
@@ -210,7 +215,7 @@ describe('Codex notify drives the status', () => {
 
   it('an approval prompt (OSC 9) is a precise "needs you", and the turn end still alerts once afterwards', () => {
     const c = cell();
-    c.notify(0, 'turn-0');
+    c.end(-4000, 'turn-0');
     c.submit(1000);
     c.stream(1200, 3000);
     c.osc9(3100);
@@ -222,42 +227,60 @@ describe('Codex notify drives the status', () => {
     c.submit(31_000); // approves with Enter
     c.stream(31_200, 36_000);
     expect(c.t.status).toBe('working');
-    c.notify(36_300, 'turn-1');
+    c.end(36_300, 'turn-1');
     expect(c.alerts).toEqual(['done', 'attention', 'done']);
   });
 
   it('a message queued behind a finished turn alerts when its own turn ends, without a new Enter', () => {
     const c = cell();
-    c.notify(0, 'turn-0');
-    c.stream(2000, 8000); // Codex starts the queued turn by itself; a redraw never reopens a finished turn
+    c.end(-4000, 'turn-0');
+    c.stream(2000, 8000); // Codex starts the queued turn by itself: sustained output reopens the finished turn
+    expect(c.t.status).toBe('working');
+    c.end(8300, 'turn-1');
     expect(c.t.status).toBe('waiting');
-    c.notify(8300, 'turn-1');
     expect(c.alerts).toEqual(['done', 'done']);
-    c.notify(8400, 'turn-1');
+    c.notify(12_000, 'turn-1'); // the same turn reported again
+    c.run(12_400, 16_000);
     expect(c.alerts).toEqual(['done', 'done']);
   });
 
   it('an approval answered with a plain key still ends with a finished alert', () => {
     const c = cell();
-    c.notify(0, 'turn-0');
+    c.end(-4000, 'turn-0');
     c.submit(1000);
     c.stream(1200, 3000);
     c.osc9(3100);
     c.key(4000); // "y"
     c.stream(4100, 9000);
     expect(c.t.status).toBe('working'); // sustained output after the prompt: the work went on
-    c.notify(9300, 'turn-1');
+    c.end(9300, 'turn-1');
     expect(c.alerts).toEqual(['done', 'attention', 'done']);
   });
 
-  it('OSC 9 outside a turn (e.g. a redraw after restore) is ignored', () => {
+  it('OSC 9 with no turn at all is ignored; after a finished turn an approval still raises attention', () => {
     const c = cell();
     c.osc9(0);
     expect(c.t.status).toBe('idle');
-    c.notify(1000, 'turn-1');
-    c.osc9(1500);
-    expect(c.t.lastReason).toBe('done');
+    c.end(1000, 'turn-1');
     expect(c.alerts).toEqual(['done']);
+    c.osc9(5000); // a queued turn asks for an approval before any sustained output
+    expect(c.t.lastReason).toBe('attention');
+    expect(c.alerts).toEqual(['done', 'attention']);
+  });
+
+  it('an approval raises attention while working and while a finished turn is shown alike', () => {
+    const working = cell();
+    working.submit(0);
+    working.stream(300, 2000);
+    working.osc9(2100);
+    expect(working.alerts).toEqual(['attention']);
+    const finished = cell();
+    finished.submit(0);
+    finished.stream(300, 2000);
+    finished.end(2100, 'turn-1');
+    finished.osc9(6000);
+    finished.osc9(6100); // a second prompt line of the same question: nothing new
+    expect(finished.alerts).toEqual(['done', 'attention']);
   });
 
   it('a non-Codex cell keeps the old OSC 9 meaning (finished)', () => {
@@ -281,7 +304,7 @@ describe('Codex notify drives the status', () => {
 
   it('a restart (new process) forgets that the hook works, so the heuristic covers an old Codex without notify', () => {
     const c = cell();
-    c.notify(0, 'turn-0');
+    c.end(-4000, 'turn-0');
     expect(c.t.isHooked).toBe(true);
     c.t.reset();
     expect(c.t.isHooked).toBe(false);
@@ -300,7 +323,7 @@ describe('Codex notify drives the status', () => {
 describe('turn failures (usage limit)', () => {
   it('a Codex usage-limit line ends the turn as an error with its own alert', () => {
     const c = cell();
-    c.notify(0, 'turn-0');
+    c.end(-4000, 'turn-0');
     c.submit(1000);
     c.stream(1200, 3000);
     c.out(3200, LIMIT_LINE);
@@ -331,7 +354,7 @@ describe('turn failures (usage limit)', () => {
     expect(c.t.lastReason).toBe('error');
     c.submit(10_000);
     c.stream(10_200, 13_000);
-    c.notify(13_300, 'turn-9');
+    c.end(13_300, 'turn-9');
     expect(c.t.lastReason).toBe('done');
     expect(c.t.lastError).toBeUndefined();
     expect(c.alerts).toEqual(['error', 'done']);
@@ -342,7 +365,7 @@ describe('turn failures (usage limit)', () => {
     c.out(0, LIMIT_LINE);
     c.run(0, 10_000);
     expect(c.flips).toEqual([]);
-    c.notify(11_000, 'turn-1');
+    c.end(11_000, 'turn-1');
     c.out(12_000, LIMIT_LINE); // already waiting: a redraw of the old error
     c.run(12_000, 20_000);
     expect(c.t.lastReason).toBe('done');
@@ -356,7 +379,7 @@ describe('turn failures (usage limit)', () => {
     c.out(1600, LIMIT_LINE);
     c.submit(1700); // the user submits again before the silence
     c.stream(1800, 3000);
-    c.notify(3100, 'turn-1');
+    c.end(3100, 'turn-1');
     expect(c.t.lastReason).toBe('done');
   });
 
@@ -446,5 +469,206 @@ describe('per-cell mute', () => {
     expect(findCell(reloaded, b.id)!.cell.muted).toBeUndefined();
     s = updateCell(s, a.id, { muted: undefined });
     expect('muted' in findCell(s, a.id)!.cell).toBe(false);
+  });
+});
+
+const MAIN = '3f2b8c1e-0d4a-4b7e-9c11-2a5d6e7f8091';
+const OTHER = '0198aa11-2222-7333-8444-555566667777';
+const SUB1 = '0198aa11-9999-7333-8444-555566667777';
+const SUB2 = '0198aa11-aaaa-7333-8444-555566667777';
+
+/** A cell with its thread bookkeeping: what the tracker asks the app to store as the cell's session. */
+function threaded(session?: { id: string; confirmed?: boolean }) {
+  const c = cell();
+  const binds: Array<{ id: string; confirmed: boolean }> = [];
+  c.t.onBind = (b) => binds.push(b);
+  c.t.threads.begin(session);
+  return { c, binds };
+}
+
+describe('sub-agent threads and the parent turn end', () => {
+  it('a sub-agent notify while output goes on is no turn end, no alert and no binding; the parent end binds', () => {
+    const { c, binds } = threaded();
+    c.submit(0);
+    c.stream(300, 3000);
+    c.notify(3100, 'turn-sub', SUB1); // a sub-agent finished, the parent keeps working
+    c.stream(3300, 8000);
+    expect(c.t.status).toBe('working');
+    expect(c.alerts).toEqual([]);
+    expect(binds).toEqual([]);
+    expect(c.t.threads.isSecondary(SUB1)).toBe(true);
+    c.end(8100, 'turn-main', MAIN);
+    expect(c.t.status).toBe('waiting');
+    expect(c.alerts).toEqual(['done']);
+    expect(binds).toEqual([{ id: MAIN, confirmed: false }]);
+  });
+
+  it('the commit waits for quiet: no alert before CODEX_COMMIT_MS, the final repaint inside the settle window does not cancel it', () => {
+    const { c } = threaded();
+    c.submit(0);
+    c.stream(300, 3000);
+    c.notify(3100, 'turn-main', MAIN);
+    c.out(3100 + CODEX_SETTLE_MS - 200); // the finished turn's last repaint
+    c.run(3100, 3100 + CODEX_COMMIT_MS - 500);
+    expect(c.t.status).toBe('working');
+    expect(c.alerts).toEqual([]);
+    c.run(3100 + CODEX_COMMIT_MS - 100, 3100 + CODEX_COMMIT_MS + 1000);
+    expect(c.t.status).toBe('waiting');
+    expect(c.alerts).toEqual(['done']);
+  });
+
+  it('a resumed process whose sub-agent finishes twice inside one parent turn keeps the stored session', () => {
+    const { c, binds } = threaded({ id: MAIN, confirmed: true });
+    c.submit(0);
+    c.stream(300, 2000);
+    c.notify(2100, 'turn-s1', SUB1);
+    c.stream(2300, 5000);
+    c.notify(5100, 'turn-s1b', SUB1); // the same sub-agent again: already known, ignored outright
+    c.notify(5200, 'turn-s2', SUB2);
+    c.stream(5300, 9000);
+    expect(c.t.status).toBe('working');
+    expect(c.alerts).toEqual([]);
+    c.end(9100, 'turn-main', MAIN);
+    expect(c.alerts).toEqual(['done']);
+    expect(binds).toEqual([]);
+    expect(c.t.threads.isSecondary(MAIN)).toBe(false);
+  });
+
+  it('a sub-agent thread is never bound even when it ends quietly later, and does not end the parent turn by itself', () => {
+    const { c, binds } = threaded();
+    c.submit(0);
+    c.stream(300, 3000);
+    c.notify(3100, 'turn-sub', SUB1);
+    c.stream(3300, 5000);
+    c.end(5100, 'turn-main', MAIN);
+    expect(binds).toEqual([{ id: MAIN, confirmed: false }]);
+    c.submit(20_000);
+    c.stream(20_300, 24_000);
+    c.end(24_100, 'turn-sub-2', SUB1);
+    expect(binds).toEqual([{ id: MAIN, confirmed: false }]);
+    expect(c.alerts).toEqual(['done']);
+  });
+
+  it('two notifies before either commits: the earlier was not the end', () => {
+    const { c, binds } = threaded();
+    c.submit(0);
+    c.stream(300, 2000);
+    c.notify(2100, 'turn-a', SUB1);
+    c.notify(2300, 'turn-b', MAIN);
+    c.run(2300, 6000);
+    expect(c.alerts).toEqual(['done']);
+    expect(binds).toEqual([{ id: MAIN, confirmed: false }]);
+    expect(c.t.threads.isSecondary(SUB1)).toBe(true);
+  });
+
+  it('the same thread ending two turns confirms the session; a single report never does', () => {
+    const { c, binds } = threaded();
+    c.submit(0);
+    c.stream(300, 2000);
+    c.end(2100, 'turn-1', MAIN);
+    expect(binds).toEqual([{ id: MAIN, confirmed: false }]);
+    c.submit(20_000);
+    c.stream(20_300, 22_000);
+    c.end(22_100, 'turn-2', MAIN);
+    expect(binds).toEqual([{ id: MAIN, confirmed: false }, { id: MAIN, confirmed: true }]);
+  });
+
+  it('two cells in one folder bind independently', () => {
+    const one = threaded();
+    const two = threaded();
+    two.c.submit(0);
+    two.c.stream(300, 2000);
+    two.c.end(2100, 'turn-b', OTHER);
+    one.c.submit(500);
+    one.c.stream(800, 3000);
+    one.c.end(3100, 'turn-a', MAIN);
+    expect(one.binds).toEqual([{ id: MAIN, confirmed: false }]);
+    expect(two.binds).toEqual([{ id: OTHER, confirmed: false }]);
+  });
+
+  it('a user submit before the quiet drops the pending notify without marking anything', () => {
+    const { c, binds } = threaded();
+    c.submit(0);
+    c.stream(300, 2000);
+    c.notify(2100, 'turn-1', MAIN);
+    c.submit(2400);
+    c.stream(2700, 5000);
+    expect(c.t.status).toBe('working');
+    expect(binds).toEqual([]);
+    expect(c.t.threads.isSecondary(MAIN)).toBe(false);
+  });
+});
+
+describe('failure line: revertible, anchored, per spawn', () => {
+  it('sustained output after a failure end reverts the cell to working; the real turn end then alerts normally', () => {
+    const c = cell();
+    c.submit(0);
+    c.stream(300, 1500);
+    c.out(1800, LIMIT_LINE);
+    c.run(1800, 4000);
+    expect(c.t.status).toBe('waiting');
+    expect(c.t.lastReason).toBe('error');
+    expect(c.alerts).toEqual(['error']);
+    c.stream(5000, 9000); // the agent goes on: the line was part of the turn (a retry), not its end
+    expect(c.t.status).toBe('working');
+    c.end(9300, 'turn-1', MAIN);
+    expect(c.t.status).toBe('waiting');
+    expect(c.t.lastReason).toBe('done');
+    expect(c.t.lastError).toBeUndefined();
+    expect(c.alerts).toEqual(['error', 'done']);
+  });
+
+  it('a little redraw right after the failure line does not revert it', () => {
+    const c = cell();
+    c.submit(0);
+    c.stream(300, 1500);
+    c.out(1800, LIMIT_LINE);
+    c.run(1800, 4000);
+    c.out(4500);
+    c.out(5000);
+    c.run(5000, 12_000);
+    expect(c.t.lastReason).toBe('error');
+    expect(c.t.status).toBe('waiting');
+  });
+
+  it('an rg result line that contains the limit text never starts an error', () => {
+    const c = cell();
+    c.submit(0);
+    c.stream(300, 1500);
+    c.out(1800, "test/codex-status.test.ts:16:const LIMIT_LINE = '\\x1b[31m■ You’ve hit your usage limit. Try again later.\\x1b[0m\\r\\n';\r\n");
+    c.end(2200, 'turn-1', MAIN);
+    expect(c.t.lastReason).toBe('done');
+    expect(c.alerts).toEqual(['done']);
+  });
+
+  it('the same turn number in a restarted process alerts again (turn 1 limit, restart, turn 1 limit)', () => {
+    const c = cell();
+    c.submit(0);
+    c.stream(300, 1500);
+    c.out(1800, LIMIT_LINE);
+    c.run(1800, 4000);
+    expect(c.alerts).toEqual(['error']);
+    c.t.reset(); // the cell restarts (prepareSpawn)
+    c.t.setCodex(true);
+    c.submit(10_000);
+    c.stream(10_300, 11_500);
+    c.out(11_800, LIMIT_LINE);
+    c.run(11_800, 14_000);
+    expect(c.t.lastReason).toBe('error');
+    expect(c.alerts).toEqual(['error', 'error']);
+  });
+
+  it('keys of alerts differ per spawn and per reopened turn, and Claude hook cells still have none', () => {
+    const t = new StatusTracker();
+    t.setCodex(true);
+    t.input(0, true);
+    const first = t.turnKey;
+    t.reset();
+    t.setCodex(true);
+    t.input(0, true);
+    expect(t.turnKey).not.toBe(first);
+    const claude = new StatusTracker();
+    claude.hook('prompt', 0);
+    expect(claude.turnKey).toBeUndefined();
   });
 });

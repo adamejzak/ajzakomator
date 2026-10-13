@@ -89,10 +89,19 @@ async function boot(): Promise<void> {
     });
     if (status !== 'waiting') return;
     alertForStatus(cellId, status, prev, cause, reason, hooked, info);
-    bindCodexSession(cellId);
+    if (!hooked) bindCodexSession(cellId); // a cell whose notify hook works is bound by its committed turn ends instead
     // A turn finished: the agent may have (re)titled the conversation.
     const found = findCell(getS(), cellId);
     if (found && !found.cell.name) refreshSessionTitles(found.project.path, 3000);
+  });
+  // A Codex turn end the tracker committed (notify followed by quiet) names the thread the cell is really on.
+  terminals.onCodexBind((cellId, thread) => {
+    const found = findCell(getS(), cellId);
+    if (!found || getProfile(getS(), found.cell.profileId).cli !== 'codex') return;
+    const current = found.cell.session;
+    // Never downgrade: the same thread stays as it is unless this report confirms it.
+    if (current?.cli === 'codex' && current.id.toLowerCase() === thread.id && (current.confirmed || !thread.confirmed)) return;
+    update((s) => updateCell(s, cellId, { session: { cli: 'codex', id: thread.id, confirmed: thread.confirmed } }));
   });
   terminals.onExit((cellId) => {
     if (isAuxPtyId(cellId)) return; // login and install windows are not cells

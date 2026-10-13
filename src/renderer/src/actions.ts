@@ -61,7 +61,10 @@ export function ensureStarted(cellId: string): void {
   started.add(cellId);
   ensureTerminal(cellId);
   // pty survived a renderer reload; its output is replayed
-  if (aliveAtStart.delete(cellId)) return;
+  if (aliveAtStart.delete(cellId)) {
+    terminals.beginCodex(cellId, findCell(getS(), cellId)?.cell.session);
+    return;
+  }
   const cell = findCell(getS(), cellId)?.cell;
   void spawnCell(cellId, cell?.session ? 'resume' : 'new');
 }
@@ -91,7 +94,7 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
     update((s) => updateCell(s, cellId, { session }));
   }
 
-  terminals.prepareSpawn(cellId);
+  terminals.prepareSpawn(cellId, mode === 'resume' && sameCli ? cell.session : undefined);
   setUi((ui) => {
     const { [cellId]: _, ...rest } = ui.cellErrors;
     return { cellErrors: rest };

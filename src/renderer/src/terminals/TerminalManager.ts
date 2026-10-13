@@ -6,6 +6,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
+import type { BoundThread } from '../../../shared/codexHooks';
 import { FailureScanner } from '../../../shared/outputFailure';
 import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
 import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
@@ -70,6 +71,7 @@ class TerminalManager {
   private disposed = new Set<string>();
   private statusListeners = new Set<StatusListener>();
   private exitListeners = new Set<(cellId: string) => void>();
+  private bindListeners = new Set<(cellId: string, thread: BoundThread) => void>();
   private parking: HTMLDivElement;
   private buildNumber = 0;
   private acks = new Map<string, number>();
@@ -216,6 +218,7 @@ class TerminalManager {
       parkedSelection: null, applySelection: null,
     };
     entry.tracker.setCodex(entry.codex);
+    entry.tracker.onBind = (thread) => this.bindListeners.forEach((l) => l(cellId, thread));
     this.entries.set(cellId, entry);
     this.deferParkedSelection(entry);
 
@@ -443,8 +446,13 @@ class TerminalManager {
     this.refit(e);
   }
 
+  /** The conversation a Codex process starts with (the saved session when resuming); its committed turn ends bind the cell's session. */
+  beginCodex(cellId: string, session?: { id: string; confirmed?: boolean }): void {
+    this.entries.get(cellId)?.tracker.threads.begin(session);
+  }
+
   /** Called right before (re)spawning the pty for a cell. */
-  prepareSpawn(cellId: string): void {
+  prepareSpawn(cellId: string, session?: { id: string; confirmed?: boolean }): void {
     const e = this.entries.get(cellId);
     this.exited.delete(cellId);
     if (!e) return;
@@ -452,6 +460,7 @@ class TerminalManager {
     e.scanner.reset();
     e.term.reset();
     this.setStatus(e, () => e.tracker.reset(), 'restore');
+    e.tracker.threads.begin(session);
   }
 
   dispose(cellId: string): void {
@@ -481,6 +490,12 @@ class TerminalManager {
     return () => this.statusListeners.delete(l);
   }
 
+  /** A Codex turn end was committed and names the thread the cell's stored session should become. */
+  onCodexBind(l: (cellId: string, thread: BoundThread) => void): () => void {
+    this.bindListeners.add(l);
+    return () => this.bindListeners.delete(l);
+  }
+
   onExit(l: (cellId: string) => void): () => void {
     this.exitListeners.add(l);
     return () => this.exitListeners.delete(l);
@@ -502,7 +517,7 @@ class TerminalManager {
     const hookEvent = trigger === 'stop' || trigger === 'stopbg' || trigger === 'notify' || trigger === 'busy' || trigger === 'fail' || trigger === 'prompt' || trigger === 'session';
     // Transitions are always logged; hook events that changed nothing only when they matter (busy spam would evict the history).
     const changed = status !== prev;
-    if (changed || (hookEvent && (trigger !== 'busy' || result === 'ignored'))) {
+    if (changed || result === 'renotify' || (hookEvent && (trigger !== 'busy' || result === 'ignored'))) {
       const detail = [hookDetail(info ?? (status === 'waiting' && lastReason === 'error' && lastError ? { error: lastError } : undefined)), trigger === 'tick-stall' && e.tracker.lastStallKind ? `stall=${e.tracker.lastStallKind}` : ''].filter(Boolean).join(' ');
       statusLog.push({
         at: Date.now(), cellId: e.id, from: prev, to: status, cause: lastCause, trigger, reason: status === 'waiting' ? lastReason : undefined,
@@ -520,7 +535,10 @@ class TerminalManager {
 
   private tickStatuses(): void {
     const now = performance.now();
-    for (const e of this.entries.values()) this.setStatus(e, () => e.tracker.tick(now), 'tick-stall');
+    for (const e of this.entries.values()) {
+      // A committed Codex turn end on a cell that already waited changes no status but must alert: report it as a renotify.
+      this.setStatus(e, () => { e.tracker.tick(now); return e.tracker.takeRenotify() ? 'renotify' : undefined; }, 'tick-stall');
+    }
   }
 }
 

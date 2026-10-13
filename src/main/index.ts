@@ -55,7 +55,7 @@ import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
 import { automationHintForHook, automationStatusFor } from '../shared/runtimeStatus';
 import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
-import { codexThreadSession, CodexThreads, shouldBindCodexThread, type CodexNotice } from '../shared/codexHooks';
+import type { CodexNotice } from '../shared/codexHooks';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadEventSound } from './alertSound';
 import { notificationOptions } from './notifyOptions';
@@ -391,29 +391,16 @@ hooks.on('session', (cellId: string, sessionId: string) => {
   send('cell:session', cellId, followedSession(sessionId));
 });
 
-/** Which conversation each running Codex cell is on (reported by its notify hook). */
-const codexThreads = new CodexThreads();
-/** Cells whose notify hook reported in this process: their session is exact and the file-timestamp guess never touches it. */
+/** Cells whose notify hook reported in this process: their session is bound by the renderer's committed turn ends and the file-timestamp guess never touches it. */
 const codexHooked = new Set<string>();
 
-// A Codex turn completed (its `notify` program posted the payload): the turn end is precise, and the payload names the
-// cell's conversation, so it is bound right away, per cell (several Codex cells may share a folder).
+// A Codex turn completed (its `notify` program posted the payload). The renderer's StatusTracker decides whether it was the
+// cell's own turn end (quiet follows) or a sub-agent / mid-turn one (output goes on), and binds the thread accordingly.
 hooks.on('codex', (cellId: string, notice: CodexNotice) => {
   const found = findCell(state, cellId);
   if (!found || !alive.has(cellId) || getProfile(state, found.cell.profileId).cli !== 'codex') return; // stale or foreign
-  const verdict = codexThreads.observe(cellId, notice.threadId);
-  if (!verdict.own) return; // another thread of the process (a sub-agent, or a conversation switch that has not repeated yet)
   codexHooked.add(cellId);
-  if (verdict.bind && notice.threadId && shouldBindCodexThread({
-    known: true, isCodex: true, alive: true, currentId: found.cell.session?.id,
-    currentConfirmed: found.cell.session?.confirmed === true, reportedId: notice.threadId,
-  })) {
-    claimedCodex.add(notice.threadId);
-    send('cell:session', cellId, codexThreadSession(notice.threadId));
-  }
-  const hint = automationHintForHook('stop');
-  if (hint) automation.statuses.set(cellId, hint);
-  send('cell:hook', cellId, 'stop', { codex: true, ...(notice.turnId ? { turnId: notice.turnId } : {}) });
+  send('cell:hook', cellId, 'stop', { codex: true, ...(notice.turnId ? { turnId: notice.turnId } : {}), ...(notice.threadId ? { threadId: notice.threadId } : {}) });
 });
 
 function boundCodexIds(): Set<string> {
@@ -503,7 +490,6 @@ async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
   let codexNotifyUrl: string | undefined;
   if (req.profile.cli === 'codex') {
     codexNotifyUrl = hooks.prepareCodex(req.cellId);
-    codexThreads.begin(req.cellId, mode === 'resume' ? req.sessionId : undefined);
     codexHooked.delete(req.cellId);
   }
   const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath, codexNotifyUrl,
