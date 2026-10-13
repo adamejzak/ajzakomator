@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { rm, writeFile, mkdir } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import type { UpdateSplashConfig, UpdateStrings } from '../shared/updateProgress';
-import { installInProgress, readUpdateAttempt, stageRuntime, startSplash, waitForFile } from './updateRuntime';
+import { installInProgress, readUpdateAttempt, stageRuntime, startSplash, updateWindowAlive, waitForFile } from './updateRuntime';
 
 const SHOWN_WAIT_MS = 4000;
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -62,6 +62,15 @@ export async function showUpdateWindow(version: string, strings: UpdateStrings):
   if (!started) return false;
   await waitForFile(shownFlag(), SHOWN_WAIT_MS);
   return true;
+}
+
+/**
+ * Waits (at most `maxMs`) until the update window of the update that just finished has gone. A prompt or checking window of
+ * this start must never appear next to it. Resolves at once when there is no such window.
+ */
+export async function waitForUpdateWindowGone(maxMs: number, intervalMs = 100): Promise<void> {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline && updateWindowAlive(updateDir())) await new Promise((resolve) => setTimeout(resolve, intervalMs));
 }
 
 /** Closes the update window when the hand-off to the installer failed and the app keeps running. */

@@ -4,6 +4,7 @@
  */
 
 import type { UpdateMode } from '../shared/updateMode';
+import { compareVersions, isSuperseded } from './updateCoordinator';
 
 export const CHECK_TIMEOUT_MS = 8000;
 /**
@@ -16,6 +17,8 @@ export const DOWNLOAD_STALL_MS = 60 * 1000;
 /** The whole download may not take longer than this, however steadily it progresses. */
 export const DOWNLOAD_TOTAL_MS = 3 * 60 * 1000;
 /** Showing the installing window and starting the installer is expected to take seconds. */
+/** The last look at the feed before the hand-over may take this long; without an answer the downloaded update proceeds. */
+export const RECHECK_TIMEOUT_MS = 5 * 1000;
 export const HANDOFF_TIMEOUT_MS = 20 * 1000;
 /** How long the failure notice stays visible before the current version starts. */
 export const ERROR_HOLD_MS = 2500;
@@ -49,16 +52,7 @@ export function parseFailure(raw: unknown): FailureRecord | undefined {
   return typeof version === 'string' && typeof at === 'number' && Number.isFinite(at) ? { version, at } : undefined;
 }
 
-/** Numeric comparison of dotted versions; prerelease suffixes are ignored. Negative when `a` is older than `b`. */
-export function compareVersions(a: string, b: string): number {
-  const parts = (value: string) => value.split(/[-+]/)[0].split('.').map((part) => Number.parseInt(part, 10) || 0);
-  const left = parts(a); const right = parts(b);
-  for (let i = 0; i < Math.max(left.length, right.length); i++) {
-    const diff = (left[i] ?? 0) - (right[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-}
+export { compareVersions };
 
 export const isRecentFailure = (failure: FailureRecord | undefined, now: number): boolean =>
   !!failure && now - failure.at >= 0 && now - failure.at < FAILURE_COOLDOWN_MS;
@@ -73,6 +67,14 @@ export type GateView =
 export interface GateDeps {
   /** Resolves the available update, or undefined when the app is current. */
   check(): Promise<{ version: string } | undefined>;
+  /** The last look at the feed before the installer is started (defaults to `check`); a failure of it never blocks the update. */
+  recheck?(): Promise<{ version: string } | undefined>;
+  /** Whether `version` is already downloaded and verified (the window then goes straight to the hand-over). */
+  isDownloaded?(version: string): boolean;
+  /** The version the update is currently heading for; it changes when a newer release supersedes the offer. */
+  target?(): string | undefined;
+  /** Registers the callback called whenever the target version changed (a newer release appeared); returns the unsubscribe. */
+  onTargetChange?(listener: () => void): () => void;
   /** Called when the check outlived its timeout; the late answer must not be used by the gate. */
   abandonCheck?(): void;
   /**
@@ -103,6 +105,7 @@ export interface GateDeps {
   downloadStallMs?: number;
   downloadTotalMs?: number;
   handoffTimeoutMs?: number;
+  recheckTimeoutMs?: number;
   errorHoldMs?: number;
 }
 
@@ -120,18 +123,37 @@ function within<T>(promise: Promise<T>, ms: number, timeout: () => Error): Promi
     promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
   });
 }
-
 /**
  * Runs the pre-start check. Every failure path (offline, error, timeout, exception) resolves 'start-app';
  * only a completed hand-over to the installer resolves 'installing'.
  */
-export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
+export function runStartupGate(deps: GateDeps): Promise<GateResult> {
+  return runFlow(deps, { prompt: true });
+}
+
+/**
+ * The update window opened from the status bar: the version to install is already known, so there is no check and no
+ * prompt; the window shows the download (joining a running one), then the hand-over. 'start-app' means nothing was
+ * handed over and the app simply keeps running.
+ */
+export function runInstallWindow(deps: GateDeps, version: string): Promise<GateResult> {
+  return runFlow(deps, { prompt: false, version });
+}
+
+interface FlowOptions {
+  /** Ask "Install now / Later" once the check found an update. */
+  prompt: boolean;
+  /** The update to install is already known: skip the check. */
+  version?: string;
+}
+
+async function runFlow(deps: GateDeps, opts: FlowOptions): Promise<GateResult> {
   const checkTimeout = deps.checkTimeoutMs ?? CHECK_TIMEOUT_MS;
   let shown = false;
   let stopped = false;
   const show = (view: GateView) => { if (stopped) return; shown = true; try { deps.show(view); } catch { /* the window is optional */ } };
   const hide = () => { if (shown) { shown = false; try { deps.hide(); } catch { /* already gone */ } } };
-  const showTimer = setTimeout(() => show({ kind: 'checking' }), deps.showAfterMs ?? SHOW_AFTER_MS);
+  const showTimer = opts.version ? undefined : setTimeout(() => show({ kind: 'checking' }), deps.showAfterMs ?? SHOW_AFTER_MS);
   // The user may close the window until the installer is handed over; then the app starts as it is.
   let cancellable = true;
   let cancel = () => {};
@@ -141,43 +163,92 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
   let install = () => {};
   const installChosen = new Promise<void>((resolve) => { install = resolve; });
   try { deps.onInstall?.(() => install()); } catch { /* the window is optional */ }
-  let found: { version: string } | undefined;
-  try {
-    const pending = deps.check();
-    // A check that is abandoned later may still reject; that must not become an unhandled rejection.
-    pending.catch(() => {});
-    try { found = await Promise.race([within(pending, checkTimeout, () => new CheckTimeout()), cancelled]); }
-    catch (error) { if (error instanceof CheckTimeout || error instanceof GateCancelled) deps.abandonCheck?.(); throw error; }
-  } catch {
-    clearTimeout(showTimer);
-    hide();
-    return 'start-app';
+  let found: { version: string } | undefined = opts.version ? { version: opts.version } : undefined;
+  if (!opts.version) {
+    try {
+      const pending = deps.check();
+      // A check that is abandoned later may still reject; that must not become an unhandled rejection.
+      pending.catch(() => {});
+      try { found = await Promise.race([within(pending, checkTimeout, () => new CheckTimeout()), cancelled]); }
+      catch (error) { if (error instanceof CheckTimeout || error instanceof GateCancelled) deps.abandonCheck?.(); throw error; }
+    } catch {
+      clearTimeout(showTimer);
+      hide();
+      return 'start-app';
+    }
   }
   clearTimeout(showTimer);
   if (!found || found.version === deps.skipVersion) { hide(); return 'start-app'; }
 
-  const { version } = found;
+  let version = found.version;
+  let unsubscribe: (() => void) | undefined;
   try {
     // The download starts together with the prompt: the offer is already an explicit statement that an update
     // exists, and downloading is not installing. Its progress only reaches the window once "Install now" was chosen.
-    let chosen = false;
+    let chosen = !opts.prompt;
     let percent = 0;
     let downloaded = false;
-    const download = downloadWithStall(deps, (next) => {
-      percent = next;
-      if (chosen) show({ kind: 'downloading', version, percent });
-    });
-    // A download nobody waits for any more (the user chose "Later") may still fail; the updater reports that itself.
-    download.then(() => { downloaded = true; }, () => {});
-    // "Later" (the button, X or Escape) rejects with GateCancelled below and starts the current version.
-    show({ kind: 'ask', version });
-    await Promise.race([installChosen, cancelled]);
-    chosen = true;
-    if (!downloaded) {
-      show({ kind: 'downloading', version, percent });
-      await Promise.race([within(download, deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long')), cancelled]);
+    let handingOver = false;
+    let download: Promise<void> = Promise.resolve();
+    const startDownload = () => {
+      const mine = version;
+      percent = 0; downloaded = deps.isDownloaded?.(mine) ?? false;
+      const attempt = downloadWithStall(deps, (next) => {
+        if (version !== mine) return;
+        percent = next;
+        if (chosen) show({ kind: 'downloading', version, percent });
+      });
+      // A download nobody waits for any more (the user chose "Later", or a newer version replaced it) may still fail;
+      // the updater reports that itself.
+      attempt.then(() => { if (version === mine) downloaded = true; }, () => {});
+      download = attempt;
+    };
+    /** A newer release became the target: every view moves to it and its download is joined. */
+    const retarget = (next: string | undefined) => {
+      if (handingOver || !next || next === version) return false;
+      version = next;
+      startDownload();
+      show(chosen ? { kind: 'downloading', version, percent: 0 } : { kind: 'ask', version });
+      return true;
+    };
+    try { unsubscribe = deps.onTargetChange?.(() => { retarget(deps.target?.()); }); } catch { /* the listener is optional */ }
+    startDownload();
+    if (opts.prompt) {
+      // "Later" (the button, X or Escape) rejects with GateCancelled below and starts the current version.
+      show({ kind: 'ask', version });
+      await Promise.race([installChosen, cancelled]);
+      chosen = true;
+    }
+    for (;;) {
+      const round = version;
+      if (!downloaded) {
+        show({ kind: 'downloading', version, percent });
+        try { await Promise.race([within(download, deps.downloadTotalMs ?? DOWNLOAD_TOTAL_MS, () => new Error('download took too long')), cancelled]); }
+        catch (error) {
+          if (error instanceof GateCancelled) throw error;
+          if (isSuperseded(error)) {
+            // The coordinator moved on: follow its target; if it has none the offer is simply gone.
+            if (!retarget(deps.target?.()) && version === round) throw error;
+            continue;
+          }
+          if (version !== round) continue;
+          throw error;
+        }
+        if (version !== round) continue;
+      }
+      // The last look at the feed: a release published while this one was offered or downloading replaces it.
+      let again: { version: string } | undefined | 'unknown' = 'unknown';
+      try { again = await Promise.race([within((deps.recheck ?? deps.check)(), deps.recheckTimeoutMs ?? RECHECK_TIMEOUT_MS, () => new CheckTimeout()), cancelled]); }
+      catch (error) { if (error instanceof GateCancelled) throw error; /* the feed cannot be read: what is downloaded stays the target */ }
+      if (again !== 'unknown' && again) retarget(again.version);
+      if (version !== round) continue;
+      if (again === undefined) { cancellable = false; hide(); return 'start-app'; }
+      // Same tick as the hand-over below: nothing can supersede the target in between.
+      if (retarget(deps.target?.())) continue;
+      break;
     }
     cancellable = false;
+    handingOver = true;
     show({ kind: 'installing', version });
     try { deps.markAttempt?.(version); } catch { /* the attempt marker is best effort */ }
     const handedOver = deps.handoff(version, hide);
@@ -204,6 +275,8 @@ export async function runStartupGate(deps: GateDeps): Promise<GateResult> {
     await sleep(deps.errorHoldMs ?? ERROR_HOLD_MS);
     hide();
     return 'start-app';
+  } finally {
+    try { unsubscribe?.(); } catch { /* nothing to undo */ }
   }
 }
 

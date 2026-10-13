@@ -39,6 +39,9 @@ export const REFUSAL_MESSAGES: Record<MacRefusal, string> = {
   'app-management': 'macOS nie pozwolił zmienić aplikacji. Zezwól ajzakomatorowi w Ustawieniach systemowych (Prywatność i ochrona, Zarządzanie aplikacjami) albo pobierz nową wersję ręcznie.',
 };
 
+/** Message of the error a cancelled download ends with (the caller knows it cancelled and does not report it). */
+export const DOWNLOAD_CANCELLED = 'download cancelled';
+
 /** The download may be silent for this long before it counts as failed (same as the Windows start-up gate). */
 export const MAC_DOWNLOAD_STALL_MS = 60 * 1000;
 /** Upper bound for one download of the ~140 MB archive, however steadily it progresses. */
@@ -208,9 +211,14 @@ export class MacUpdater {
     await Promise.all(names.filter((name) => !preserved.has(name)).map((name) => this.d.fs.rm(posix.join(this.dir, name), { recursive: true, force: true }).catch(() => {})));
   }
 
-  /** Downloads, verifies, unpacks and checks the update; resolves once the new bundle is ready to be swapped in. */
-  async download(offer: MacOffer, onProgress: (progress: MacProgress) => void): Promise<MacStaged> {
+  /**
+   * Downloads, verifies, unpacks and checks the update; resolves once the new bundle is ready to be swapped in. An aborted
+   * `signal` (a newer release replaced this one) ends the transfer and the next step with a "cancelled" error.
+   */
+  async download(offer: MacOffer, onProgress: (progress: MacProgress) => void, signal?: AbortSignal): Promise<MacStaged> {
     const { fs } = this.d;
+    const stop = () => { if (signal?.aborted) throw new Error(DOWNLOAD_CANCELLED); };
+    stop();
     await fs.mkdir(this.dir, { recursive: true });
     const zip = posix.join(this.dir, offer.asset.name);
     await this.cleanStaging([offer.asset.name]);
@@ -219,8 +227,9 @@ export class MacUpdater {
       onProgress({ percent: 100, transferred: offer.asset.size, total: offer.asset.size, bytesPerSecond: 0 });
     } else {
       await fs.rm(zip, { force: true });
-      await this.fetchArchive(offer, zip, onProgress);
+      await this.fetchArchive(offer, zip, onProgress, signal);
     }
+    stop();
     const extractDir = posix.join(this.dir, `extracted-${offer.version}`);
     await fs.rm(extractDir, { recursive: true, force: true });
     await fs.mkdir(extractDir, { recursive: true });
@@ -229,6 +238,7 @@ export class MacUpdater {
       await this.note(`ditto failed (${unpacked.code}): ${unpacked.stderr.trim().slice(0, 300)}`);
       throw fail(MAC_MESSAGES.extract);
     }
+    stop();
     const apps = (await fs.readdir(extractDir)).filter((name) => name.endsWith('.app'));
     if (apps.length !== 1) { await this.note(`the archive holds ${apps.length} app bundles, expected 1`); throw fail(MAC_MESSAGES.verify); }
     const unpackedBundle = posix.join(extractDir, apps[0]);
@@ -237,6 +247,7 @@ export class MacUpdater {
     // A quick look first, so nothing unverified is copied next to the installed app.
     await this.verifyBundle(unpackedBundle, offer.version, false);
 
+    stop();
     // The verified bundle waits next to the installed app (same directory and volume), so the swap is two renames.
     const target = await evaluateInstallTarget(this.d.execPath, this.d.packaged, this.targetFs());
     if (!target.ok) { await this.note(`staging refused: ${target.reason}`); throw fail(REFUSAL_MESSAGES[target.reason]); }
@@ -294,13 +305,15 @@ export class MacUpdater {
     } catch { return false; }
   }
 
-  private async fetchArchive(offer: MacOffer, zip: string, onProgress: (progress: MacProgress) => void): Promise<void> {
+  private async fetchArchive(offer: MacOffer, zip: string, onProgress: (progress: MacProgress) => void, outside?: AbortSignal): Promise<void> {
     const { fs, now } = this.d;
     const part = `${zip}.part`;
     const controller = new AbortController();
     let interrupted = false;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
     const interrupt = () => { interrupted = true; controller.abort(); };
+    const cancel = () => controller.abort();
+    outside?.addEventListener('abort', cancel, { once: true });
     const arm = () => { clearTimeout(stallTimer); stallTimer = setTimeout(interrupt, this.d.stallMs ?? MAC_DOWNLOAD_STALL_MS); };
     const totalTimer = setTimeout(interrupt, this.d.totalMs ?? MAC_DOWNLOAD_TOTAL_MS);
     let handle: Awaited<ReturnType<MacFs['open']>> | undefined;
@@ -341,9 +354,11 @@ export class MacUpdater {
       await fs.rename(part, zip);
       finished = true;
     } catch (error) {
+      if (outside?.aborted) throw new Error(DOWNLOAD_CANCELLED);
       if (interrupted) { await this.note('the download stalled or took too long'); throw fail(MAC_MESSAGES.stalled); }
       throw error;
     } finally {
+      outside?.removeEventListener('abort', cancel);
       clearTimeout(stallTimer); clearTimeout(totalTimer);
       await handle?.close().catch(() => {});
       if (!finished) await fs.rm(part, { force: true }).catch(() => {});

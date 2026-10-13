@@ -25,20 +25,26 @@ export function StatusBar() {
       }
       case 'downloading': {
         const percent = Math.round(Math.min(100, Math.max(0, Number.isFinite(u.percent) ? u.percent! : 0)));
-        return <span className="sb-item" role="status" title={tr('Pobieranie aktualizacji w tle')}>
+        const progress = <>
           {tr('Pobieranie {version}… {percent}%', { version, percent })}
           <span className="sb-track" role="progressbar" aria-label={tr('Pobieranie aktualizacji w tle')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{ width: `${percent}%` }} /></span>
           <span className="sb-transfer">{formatUpdateBytes(u.transferred)} / {formatUpdateBytes(u.total)} · {formatUpdateBytes(u.bytesPerSecond)}/s</span>
-        </span>;
+        </>;
+        // The download runs in the background; a click opens the one update window, which finishes the download and installs.
+        return u.portable
+          ? <span className="sb-item" role="status" title={tr('Pobieranie aktualizacji w tle')}>{progress}</span>
+          : <button className="sb-btn sb-action" onClick={() => window.mc.installUpdate()} title={tr('Kliknij, aby otworzyć okno aktualizacji - zainstaluje się po pobraniu')}>{progress}</button>;
       }
       case 'ready':
-        return <button className="sb-btn sb-action" onClick={() => window.mc.installUpdate()} title={tr('Zainstaluj i uruchom ponownie (rozmowy wznowią się same)')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · uruchom ponownie', { version })}</button>;
+        return <button className="sb-btn sb-action" onClick={() => window.mc.installUpdate()} title={tr('Aktualizacja potrwa chwilę, rozmowy wznowią się same')}><span className="sb-dot new" aria-hidden />{tr('Wersja {version} gotowa - Zainstaluj', { version })}</button>;
       case 'available':
+        // Without in-app installation (portable build, macOS app that cannot replace itself) only the download page is offered.
+        if (!u.portable) return <button className="sb-btn sb-action" onClick={() => window.mc.installUpdate()} title={tr('Aktualizacja potrwa chwilę, rozmowy wznowią się same')}><span className="sb-dot new" aria-hidden />{tr('Dostępna wersja {version} - Aktualizuj', { version })}</button>;
         return <button className="sb-btn sb-action" onClick={() => window.mc.openReleases()} title={u.message ? errorText(u.message) : tr('Otwórz stronę pobierania')}><span className="sb-dot new" aria-hidden />{tr('Nowa wersja {version} · pobierz', { version })}</button>;
       case 'unavailable':
         return <span className="sb-item sb-muted" role="status">{errorText(u.message ?? '')}</span>;
       case 'installing':
-        return <span className="sb-item" role="status"><RefreshIcon spinning />{tr('Instalowanie aktualizacji…')}</span>;
+        return <span className="sb-item" role="status"><RefreshIcon spinning />{tr('Instalowanie {version}…', { version })}</span>;
       case 'error': {
         const message = errorText(u.message ?? 'Nie udało się sprawdzić aktualizacji.');
         return <span className="sb-item sb-error" role="alert">

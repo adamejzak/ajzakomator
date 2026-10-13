@@ -19,12 +19,13 @@ import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from './sessions';
 import { createSaver, loadState } from './store';
-import { abandonStartupCheck, blockUpdateVersion, checkForUpdates, getUpdateState, initUpdater, installNow, isPortableBuild, previousMacUpdate, signalMacUpdateReady, updateHandoffStarted, RELEASES_URL, startupCheck, startupDownload, startupHandoff, updatesEnabled } from './updater';
-import { compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup } from './startupGate';
-import { createGateWindow } from './gateWindow';
+import { blockUpdateVersion, canInstallNow, checkForUpdates, getUpdateState, handOver, initUpdater, isPortableBuild, isUpdateDownloaded, onUpdateTargetChange, previousMacUpdate, recheckUpdate, signalMacUpdateReady, updateHandoffStarted, updateTarget, RELEASES_URL, startupCheck, startupDownload, updatesEnabled } from './updater';
+import { createUpdateUiGuard } from './updateUiGuard';
+import { compareVersions, isRecentFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
+import { createGateWindow, type GateTexts } from './gateWindow';
 import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
 import { createUpdaterLogger } from './updaterLog';
-import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
+import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling, waitForUpdateWindowGone } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile, type RefreshOutcome } from './accounts/refresh';
 import { createRefreshLimits } from './accounts/refreshLimits';
@@ -656,7 +657,7 @@ ipcMain.handle('accounts:clearSwapPending', async () => {
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
-ipcMain.on('update:install', () => installNow());
+ipcMain.on('update:install', () => openInstallWindow());
 ipcMain.on('update:open', () => shell.openExternal(RELEASES_URL));
 ipcMain.on('shell:openInEditor', (_e, p: string) => {
   // `cursor` / `code` are .cmd launchers → need a shell; they get our clean env.
@@ -707,6 +708,25 @@ function clearGateFailureIfUpdated(): void {
   if (record && compareVersions(app.getVersion(), record.version) >= 0) { try { rmSync(GATE_FILE, { force: true }); } catch { /* retried on next start */ } }
 }
 
+/** The texts of the in-app update window (startup prompt and the window opened from the status bar). */
+const gateTexts = (failed: string): GateTexts => ({
+  checking: tr('Sprawdzanie aktualizacji…'),
+  downloading: tr('Pobieranie aktualizacji…'),
+  updating: (next) => tr('Aktualizacja do wersji {version}', { version: next }),
+  hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
+  preparing: tr('Przygotowanie aktualizacji…'),
+  failed,
+  close: tr('Zamknij'),
+  available: (next) => tr('Dostępna nowa wersja {version}', { version: next }),
+  askMessage: tr('Zainstalować ją teraz?'),
+  askHint: tr('„Później” uruchamia obecną wersję. Zainstalujesz ją przyciskiem w stopce.'),
+  install: tr('Zainstaluj teraz'),
+  later: tr('Później'),
+});
+
+/** At most one update window or prompt at a time: the startup prompt, the window of the status bar button and the hand-over. */
+const updateUi = createUpdateUiGuard();
+
 /** Runs the updater before the main window exists; resolves true when the installer took over and the app must not start. */
 async function runUpdateGate(): Promise<boolean> {
   let window: ReturnType<typeof createGateWindow> | undefined;
@@ -719,32 +739,20 @@ async function runUpdateGate(): Promise<boolean> {
       mode: state.settings.updateMode, recentFailure: recent,
     })) return false;
     const version = app.getVersion();
-    window = createGateWindow({
-      checking: tr('Sprawdzanie aktualizacji…'),
-      downloading: tr('Pobieranie aktualizacji…'),
-      updating: (next) => tr('Aktualizacja do wersji {version}', { version: next }),
-      hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
-      preparing: tr('Przygotowanie aktualizacji…'),
-      failed: tr('Aktualizacja nie powiodła się - uruchamiam obecną wersję'),
-      close: tr('Zamknij'),
-      available: (next) => tr('Dostępna nowa wersja {version}', { version: next }),
-      askMessage: tr('Zainstalować ją teraz?'),
-      askHint: tr('„Później” uruchamia obecną wersję. Zainstalujesz ją przyciskiem w stopce.'),
-      install: tr('Zainstaluj teraz'),
-      later: tr('Później'),
-    }, version);
+    if (!updateUi.acquire('startup-gate')) return false;
+    window = createGateWindow(gateTexts(tr('Aktualizacja nie powiodła się - uruchamiam obecną wersję')), version);
     gating = true;
     let handedOver = '';
     const result = await runStartupGate({
-      check: startupCheck, abandonCheck: abandonStartupCheck, download: startupDownload,
-      handoff: (next, hide) => { handedOver = next; return startupHandoff(hide); },
+      check: startupCheck, recheck: recheckUpdate, download: startupDownload, target: updateTarget, onTargetChange: onUpdateTargetChange, isDownloaded: isUpdateDownloaded,
+      handoff: (next, hide) => { handedOver = next; return handOver(next, hide); },
       show: window.show, hide: window.hide, onCancel: window.onCancel, onInstall: window.onInstall,
       skipVersion: failure?.version,
       // The macOS archive is about 140 MB: allow more than the default for the whole download.
       downloadTotalMs: process.platform === 'darwin' ? MAC_GATE_DOWNLOAD_TOTAL_MS : undefined,
       markAttempt: writeGateRecord, recordFailure: recordUpdateFailure,
     });
-    if (result !== 'installing') { gating = false; return false; }
+    if (result !== 'installing') { gating = false; updateUi.release('startup-gate'); return false; }
     // After a hand-over `gating` stays on: the app is quitting for the installer and must not wind anything down.
     const armedAt = Date.now();
     const watch = () => {
@@ -757,6 +765,7 @@ async function runUpdateGate(): Promise<boolean> {
       recordUpdateFailure(handedOver);
       void abortUpdateWindow();
       gating = false;
+      updateUi.release('startup-gate');
       void startMainApp().catch((error) => console.error('startup failed', error));
     };
     handoffWatchdog = setTimeout(watch, HANDOFF_QUIT_WATCHDOG_MS);
@@ -765,8 +774,41 @@ async function runUpdateGate(): Promise<boolean> {
     console.error('startup update gate failed', error);
     try { window?.hide(); } catch { /* already gone */ }
     gating = false;
+    updateUi.release('startup-gate');
     return false;
   }
+}
+
+/**
+ * The status bar button of an offered, downloading or downloaded update: opens the one update window, which shows the
+ * download (joining the running one), then the hand-over to the installer. A window that is already open (also the
+ * startup prompt) is the only one there ever is.
+ */
+function openInstallWindow(): void {
+  const version = updateTarget();
+  if (!version || !canInstallNow() || !updateUi.acquire('install-window')) return;
+  void (async () => {
+    let handed = false;
+    try {
+      const window = createGateWindow(gateTexts(tr('Aktualizacja nie powiodła się')), app.getVersion());
+      // macOS has no separate installing window: the in-app one stays visible while the app winds down.
+      const keepOpen = process.platform === 'darwin';
+      const result = await runInstallWindow({
+        check: startupCheck, recheck: recheckUpdate, download: startupDownload, target: updateTarget, onTargetChange: onUpdateTargetChange, isDownloaded: isUpdateDownloaded,
+        handoff: (next, hide) => handOver(next, keepOpen ? () => {} : hide),
+        show: window.show, hide: window.hide, onCancel: window.onCancel, onInstall: window.onInstall,
+        // The failure is shown by the status bar (with a retry); nothing is remembered for the next start.
+        recordFailure: () => {},
+        downloadTotalMs: process.platform === 'darwin' ? MAC_GATE_DOWNLOAD_TOTAL_MS : undefined,
+      }, version);
+      handed = result === 'installing';
+    } catch (error) {
+      // A window that cannot be created must not make the button dead: an update that is already downloaded installs without it.
+      console.error('update window failed', error);
+      if (!handed && isUpdateDownloaded(version)) handed = await handOver(version, () => {}).catch(() => false);
+    }
+    finally { if (!handed) updateUi.release('install-window'); }
+  })();
 }
 
 async function startMainApp(): Promise<void> {
@@ -789,6 +831,9 @@ app.whenReady().then(async () => {
   // macOS: an update whose swap did not happen counts as a failure of that version (the cooldown applies).
   const previous = await previousMacUpdate();
   if (previous.kind === 'failed') recordUpdateFailure(previous.version);
+  // The new version is up: the update window of the update that just finished may say "done" now, and nothing of this start may
+  // appear next to it (the prompt of a still newer release comes after it has gone).
+  if (process.platform === 'win32' && app.isPackaged) { await signalUpdateReady(); await waitForUpdateWindowGone(4000); }
   if (await runUpdateGate()) return;
   await startMainApp();
 }).catch((error) => console.error('startup failed', error));

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { HEARTBEAT_MAX_AGE_MS, installInProgress, shouldCopy, SPLASH_EXE, stageRuntime, startSplash, waitForFile } from '../src/main/updateRuntime';
+import { HEARTBEAT_MAX_AGE_MS, installInProgress, shouldCopy, updateWindowAlive, SPLASH_EXE, stageRuntime, startSplash, waitForFile } from '../src/main/updateRuntime';
 import type { UpdateSplashConfig } from '../src/shared/updateProgress';
 
 let root: string;
@@ -117,5 +117,17 @@ describe('installInProgress', () => {
       rmSync(join(dir(), ...flag));
       expect(installInProgress(dir(), '0.5.7', 60_000)).toBe(true);
     }
+  });
+});
+
+describe('updateWindowAlive', () => {
+  it('is true only while the update window of an earlier update still beats (the new start waits for it)', () => {
+    const dir = join(root, 'update');
+    expect(updateWindowAlive(dir)).toBe(false);
+    put(join(dir, 'work', 'heartbeat'));
+    expect(updateWindowAlive(dir)).toBe(true);
+    expect(updateWindowAlive(dir, Date.now() + 60_000)).toBe(false);
+    rmSync(join(dir, 'work', 'heartbeat'));
+    expect(updateWindowAlive(dir)).toBe(false);
   });
 });

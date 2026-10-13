@@ -131,6 +131,11 @@ export function installInProgress(updateDir: string, currentVersion: string, max
 export const HEARTBEAT_MAX_AGE_MS = 15 * 60 * 1000;
 const HEARTBEAT_FRESH_MS = 15 * 1000;
 
+/** Whether the update window of an earlier attempt still beats (it is on screen, even when it only says "done"). */
+export function updateWindowAlive(updateDir: string, now = Date.now()): boolean {
+  return heartbeatFresh(join(updateDir, 'work', 'heartbeat'), now);
+}
+
 function heartbeatFresh(file: string, now: number): boolean {
   try { const age = now - statSync(file).mtimeMs; return age >= -HEARTBEAT_FRESH_MS && age <= HEARTBEAT_FRESH_MS; }
   catch { return false; }
