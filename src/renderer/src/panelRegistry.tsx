@@ -28,7 +28,8 @@ export interface SidebarPanel extends Omit<PanelDef, 'unavailableReason'> {
 export const SIDEBAR_PANELS: readonly SidebarPanel[] = [
   { id: 'projects', label: 'Projekty', icon: TProjects, component: ProjectsPanel },
   { id: 'files', label: 'Pliki', icon: TFiles, component: FilesPanel, unavailableReason: (ctx) => (ctx.hasProject ? null : 'Najpierw dodaj projekt') },
-  // Git needs a project that is a repository (the tile is disabled, with the reason as its tooltip, otherwise); Terminal is always there.
+  // Git needs a project that is a repository (the tile is disabled, with the reason as its tooltip, otherwise). The SSH tile is a placeholder
+  // for the future connection manager (saved hosts, Termius/PuTTY style): shown greyed out and disabled until it exists.
   { id: 'git', label: 'Git', icon: TGit, component: GitPanel, unavailableReason: gitPanelReason },
-  { id: 'terminal', label: 'Terminal', icon: TTerminal, component: TerminalPanel },
+  { id: 'terminal', label: 'SSH', icon: TTerminal, component: TerminalPanel, unavailableReason: () => 'Połączenia SSH - wkrótce' },
 ];

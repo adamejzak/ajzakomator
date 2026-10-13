@@ -7,5 +7,6 @@ export const terminalPanelMessages = {
   'Połączenia SSH pojawią się tutaj': ['SSH connections will appear here', 'SSH-Verbindungen erscheinen hier', 'Las conexiones SSH aparecerán aquí', 'Les connexions SSH apparaîtront ici', 'As ligações SSH aparecerão aqui'],
   'To połączenie nie jest jeszcze obsługiwane.': ['This connection is not supported yet.', 'Diese Verbindung wird noch nicht unterstützt.', 'Esta conexión aún no es compatible.', 'Cette connexion n’est pas encore prise en charge.', 'Esta ligação ainda não é suportada.'],
   'Panel: Git': ['Panel: Git', 'Panel: Git', 'Panel: Git', 'Panneau : Git', 'Painel: Git'],
-  'Panel: Terminal': ['Panel: Terminal', 'Panel: Terminal', 'Panel: Terminal', 'Panneau : Terminal', 'Painel: Terminal'],
+  'SSH': ['SSH', 'SSH', 'SSH', 'SSH', 'SSH'],
+  'Połączenia SSH - wkrótce': ['SSH connections - coming soon', 'SSH-Verbindungen - demnächst', 'Conexiones SSH - próximamente', 'Connexions SSH - bientôt', 'Ligações SSH - em breve'],
 } as const;

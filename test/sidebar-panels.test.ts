@@ -84,12 +84,13 @@ describe('git and terminal tiles', () => {
     expect(resolvePanelId([git], 'git', { ...base, git: 'repo' })).toBe('git');
   });
 
-  it('keeps the rail order Projects, Files, Git, Terminal and the Terminal tile always on', () => {
+  it('keeps the rail order Projects, Files, Git, SSH and the SSH tile greyed out until the connection manager exists', () => {
     const source = readFileSync('src/renderer/src/panelRegistry.tsx', 'utf8');
     const entries = source.split(/\r?\n/).filter((line) => /^\s*\{ id: '/.test(line));
     expect(entries.map((line) => /id: '([a-z]+)'/.exec(line)![1])).toEqual(['projects', 'files', 'git', 'terminal']);
     const terminal = entries.find((line) => line.includes("id: 'terminal'"))!;
-    expect(terminal).not.toMatch(/available|unavailableReason/);
+    expect(terminal).toContain("label: 'SSH'");
+    expect(terminal).toContain("unavailableReason: () => 'Połączenia SSH - wkrótce'");
     expect(entries.find((line) => line.includes("id: 'git'"))).toContain('unavailableReason: gitPanelReason');
   });
 });
