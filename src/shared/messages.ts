@@ -4,6 +4,7 @@ import { alertMessages } from './alertMessages';
 import { automationMessages } from './automationMessages';
 import { cliMessages } from './cliMessages';
 import { codexMessages } from './codexMessages';
+import { filesMessages } from './filesMessages';
 import { gridMessages } from './gridMessages';
 import { macUpdateMessages } from './macUpdateMessages';
 import { statusMessages } from './statusMessages';
@@ -17,6 +18,7 @@ export const messages = {
   ...automationMessages,
   ...cliMessages,
   ...codexMessages,
+  ...filesMessages,
   ...gridMessages,
   ...macUpdateMessages,
   ...statusMessages,

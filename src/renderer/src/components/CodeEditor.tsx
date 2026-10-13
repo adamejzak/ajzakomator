@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { treeOpen } from '../files';
 import { basicSetup } from 'codemirror';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
@@ -92,7 +93,9 @@ export function CodeEditor({ path, text, wrap, onChange }: { path: string; text:
       EditorView.updateListener.of(update => { if (update.docChanged) changed.current(update.state.doc.toString()); }),
     ] }) });
     view.current = editor;
-    editor.focus();
+    // Opening or renaming a file from the Files panel keeps the keyboard in the tree (F2, Delete, Ctrl+C...), unless it was opened with Enter.
+    if (treeOpen.keyboard || !(treeOpen.hold || document.activeElement?.closest?.('.project-explorer'))) editor.focus();
+    treeOpen.keyboard = false;
     return () => { view.current = null; editor.destroy(); };
   }, [path]);
   useEffect(() => {

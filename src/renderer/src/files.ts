@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { detectLanguage, type Language } from '../../shared/languages';
 import { askChoice, getS, getUi, setUi } from './store';
 import { tr } from './i18n';
+import { documentId, documentsUnder, removeDocuments, retargetDocuments, type FileMoveRecord } from '../../shared/fileOps';
 
 export interface FileDocument {
   id: string;
@@ -53,6 +54,10 @@ export const useFileStore = create<{ documents: FileDocument[]; activeFileId: st
 function patch(id: string, changes: Partial<FileDocument>): void {
   useFileStore.setState((s) => ({ documents: s.documents.map((d) => d.id === id ? { ...d, ...changes } : d) }));
 }
+/** Set by the Files panel when a file is opened with the keyboard (Enter): the editor then takes focus. */
+export const treeOpen = { keyboard: false, hold: false };
+/** A rename or move from the tree re-creates editors: they must not steal the keyboard from the tree for a moment. */
+export function holdTreeFocus(): void { treeOpen.hold = true; setTimeout(() => { treeOpen.hold = false; }, 600); }
 export const isFileDirty = (d: FileDocument): boolean => d.text !== d.savedText;
 export function activateFile(id: string): void {
   setUi({ settingsActive: false });
@@ -62,7 +67,7 @@ export function showTerminalTabs(): void { setUi({ settingsActive: false }); use
 export async function openFile(projectId: string, relativePath: string): Promise<void> {
   setUi({ settingsActive: false });
   const path = relativePath.replace(/\\/g, '/');
-  const id = JSON.stringify([projectId, path]);
+  const id = documentId(projectId, path);
   const existing = useFileStore.getState().documents.find((d) => d.id === id);
   if (existing) { activateFile(id); return; }
   const document: FileDocument = { id, projectId, relativePath: path, name: path.split('/').pop() ?? path, text: '', savedText: '', diskText: '', status: 'loading', saving: false, error: null, wrap: false };
@@ -140,3 +145,35 @@ export function hasDirtyFiles(): boolean { return useFileStore.getState().docume
 useFileStore.subscribe((s) => {
   try { localStorage.setItem(storageKey, JSON.stringify(s.documents.filter(isFileDirty))); } catch { /* In-memory drafts still remain protected by close confirmation. */ }
 });
+
+/** Open tabs follow renamed or moved files and folders (their text and unsaved changes stay untouched). */
+export function retargetOpenFiles(projectId: string, moves: FileMoveRecord[]): void {
+  const before = useFileStore.getState();
+  const result = retargetDocuments(before.documents, before.activeFileId, projectId, moves);
+  if (!result.changed) return;
+  const oldIds = new Set(before.documents.map((d) => d.id));
+  const reload = result.documents.filter((d) => d.status === 'loading' && !oldIds.has(d.id)).map((d) => d.id);
+  for (const doc of before.documents) loads.delete(doc.id);
+  useFileStore.setState({ documents: result.documents, activeFileId: result.activeId });
+  for (const id of reload) void retryFile(id);
+}
+
+/** Tabs of trashed files: clean ones close, tabs with unsaved changes stay (marked) so the draft is not lost. */
+export function forgetDeletedFiles(projectId: string, paths: string[]): void {
+  const state = useFileStore.getState();
+  const ids = documentsUnder(state.documents, projectId, paths);
+  if (!ids.length) return;
+  const keep = new Set(ids.filter((id) => state.documents.some((d) => d.id === id && isFileDirty(d))));
+  const gone = ids.filter((id) => !keep.has(id));
+  for (const id of ids) loads.delete(id);
+  const removed = removeDocuments(state.documents, state.activeFileId, gone);
+  useFileStore.setState({
+    documents: removed.documents.map((d) => keep.has(d.id) ? { ...d, error: 'Ten plik został usunięty z dysku. Niezapisany szkic został zachowany.' } : d),
+    activeFileId: removed.activeId,
+  });
+}
+
+/** Closes several tabs one by one (each unsaved one asks first); stops when the user cancels. */
+export async function closeFiles(ids: string[]): Promise<void> {
+  for (const id of ids) if (!await closeFile(id)) return;
+}

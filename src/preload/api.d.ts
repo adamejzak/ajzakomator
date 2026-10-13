@@ -10,6 +10,7 @@ import type { AlertEventId } from '../shared/alerts';
 import type { UsageState } from '../shared/usage';
 import type { LoginRequest, LoginState, SwapResult } from '../shared/accounts';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
+import type { CreateResult, DeleteResult, FileOpProgress, FileOpRequest, FileOpResult, RenameResult } from '../shared/fileOps';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
 export type { SessionInfo };
@@ -69,6 +70,11 @@ export interface McApi {
   listProjectDirectories(projectId: string): Promise<{ ok: true; paths: string[]; truncated: boolean } | { ok: false; error: string }>;
   searchProject(projectId: string, options: SearchOptions): Promise<SearchResult>;
   replaceInProject(projectId: string, request: ReplaceRequest): Promise<ReplaceResult>;
+  renameProjectEntry(projectId: string, relativePath: string, newName: string): Promise<RenameResult>;
+  createProjectEntry(projectId: string, directory: string, name: string, kind: 'file' | 'directory'): Promise<CreateResult>;
+  deleteProjectEntries(projectId: string, relativePaths: string[]): Promise<DeleteResult>;
+  transferProjectEntries(projectId: string, request: FileOpRequest): Promise<FileOpResult>;
+  cancelFileOp(opId: string): void;
   writeProjectFile(projectId: string, relativePath: string, text: string, expectedText: string): Promise<{ ok: true } | { ok: false; error: string }>;
   listSessions(projectPath: string): Promise<SessionInfo[]>;
   isGitRepo(path: string): Promise<boolean>;
@@ -110,6 +116,7 @@ export interface McApi {
   on(channel: 'usage:state', cb: (state: UsageState) => void): () => void;
   on(channel: 'accounts:swapPending', cb: (pending: boolean) => void): () => void;
   on(channel: 'state:changed', cb: (snapshot: StateSnapshot) => void): () => void;
+  on(channel: 'fs:progress', cb: (progress: FileOpProgress) => void): () => void;
   on(channel: 'automation:start-cells', cb: (cellIds: string[]) => void): () => void;
 }
 

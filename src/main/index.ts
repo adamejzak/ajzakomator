@@ -14,6 +14,7 @@ import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
 import { listProjectDirectories, listProjectDirectory, readProjectFile, writeProjectFile } from './files';
+import { registerFileOpsIpc } from './filesIpc';
 import { replaceInProject, searchProject } from './search';
 import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
@@ -586,6 +587,7 @@ ipcMain.handle('fs:writeProjectFile', (_e, projectId: string, path: string, text
   const project = state.projects.find((p) => p.id === projectId);
   return project ? writeProjectFile(project.path, path, text, expectedText) : { ok: false, error: 'Projekt już nie istnieje.' };
 });
+registerFileOpsIpc({ projectPath: (projectId) => state.projects.find((p) => p.id === projectId)?.path, send });
 ipcMain.handle('sessions:list', (_e, projectPath: string) => listSessionsAsync(homedir(), projectPath));
 ipcMain.handle('git:isRepo', (_e, p: string) => isGitRepo(p));
 ipcMain.handle('git:createWorktree', (_e, p: string, name: string) => createWorktree(p, name));

@@ -691,7 +691,7 @@ button:focus-visible, .snippet:focus-visible { outline: 1px solid #a8a29e; outli
 
 /* Workspace tabs live below the navbar. Color accents identify teams without obscuring labels. */
 .workspace-tabs { flex: none; height: 38px; min-width: 0; display: flex; background: #111; border-bottom: 1px solid var(--border); }
-.workspace-tabs .tabs { display: flex; align-items: stretch; gap: 0; overflow-x: auto; flex: 1; padding: 0; min-width: 0; }
+.workspace-tabs .tabs { position: relative; display: flex; align-items: stretch; gap: 0; overflow-x: auto; flex: 0 1 auto; padding: 0; min-width: 0; }
 .workspace-tabs .tab { --tab-color: #a8a29e; position: relative; display: flex; align-items: center; gap: 8px; flex: none; min-width: 100px; max-width: 230px; height: 37px; padding: 0 12px; border-radius: 0; border: 0; border-right: 1px solid #272727; border-top: 2px solid color-mix(in srgb, var(--tab-color) 55%, transparent); background: color-mix(in srgb, var(--tab-color) 5%, #141414); color: #969696; cursor: pointer; }
 .workspace-tabs .tab:hover { background: color-mix(in srgb, var(--tab-color) 10%, #1a1a1a); color: #eee; }
 .workspace-tabs .tab.active { background: color-mix(in srgb, var(--tab-color) 12%, #191919); border-top-color: var(--tab-color); color: #f2f2f2; }
@@ -711,7 +711,26 @@ button:focus-visible, .snippet:focus-visible { outline: 1px solid #a8a29e; outli
 .workspace-tabs .tab[data-drop]::after { content: ''; position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; z-index: 2; }
 .workspace-tabs .tab[data-drop="before"]::after { left: 0; }
 .workspace-tabs .tab[data-drop="after"]::after { right: 0; }
-.workspace-tabs .tabs > button { order: 2147483647; }
+.workspace-tabs .tab .x { opacity: .55; }
+.workspace-tabs .tab:hover .x, .workspace-tabs .tab.active .x { opacity: 1; }
+.workspace-tabs .tabs-scroll { flex: none; align-self: center; width: 22px; height: 26px; margin: 0 1px; display: grid; place-items: center; border: 0; border-radius: 4px; background: transparent; color: #aaa; cursor: pointer; }
+.workspace-tabs .tabs-scroll:hover:not(:disabled) { background: #ffffff15; color: #fff; }
+.workspace-tabs .tabs-scroll:disabled { opacity: .3; cursor: default; }
+.workspace-tabs .tabs-scroll .chev-left { display: grid; transform: rotate(90deg); }
+.workspace-tabs .tabs-scroll .chev-right { display: grid; transform: rotate(-90deg); }
+.workspace-tabs .tabs-all { margin-left: auto; }
+
+/* File tree: selection, drag and drop, inline rename, copy progress */
+.file-entry.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); }
+.file-entry.cut { opacity: .5; }
+.file-entry.drop-target { background: color-mix(in srgb, var(--accent) 28%, transparent); outline: 1px dashed var(--accent); outline-offset: -2px; }
+.explorer-tree.drop-root { box-shadow: inset 0 0 0 1px var(--accent); }
+.file-entry.editing { cursor: default; }
+.file-rename { flex: 1; min-width: 0; height: 22px; padding: 0 5px; background: var(--bg); border: 1px solid var(--accent); border-radius: 3px; color: var(--text); font: inherit; outline: none; }
+.file-rename[aria-invalid="true"] { border-color: var(--error); }
+.file-rename-error { position: absolute; z-index: 5; margin-top: 44px; padding: 3px 7px; border-radius: 4px; background: var(--bg-2); border: 1px solid var(--error); color: var(--error); font-size: 11px; max-width: 220px; }
+.explorer-busy { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-2); }
+.explorer-busy span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-dirty { color: #e5cfa7; font-size: 9px; }
 .workspace-content, .terminal-workspace { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .settings-workspace { flex: 1; min-width: 0; min-height: 0; }

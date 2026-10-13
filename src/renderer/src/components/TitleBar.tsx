@@ -1,6 +1,6 @@
 import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
-import { useState, type CSSProperties, type DragEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { workspaceOrder, reorderWorkspace } from '../../../shared/workspaceOrder';
 import { describeLayout } from '../../../shared/layout';
 import { activeProject, renameTab, PROJECT_COLORS } from '../../../shared/state';
@@ -12,7 +12,11 @@ import { openMenu, openMenuAt } from './ContextMenu';
 import { IChevron, IPlusBold, ISearch, IX, IFile, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
 import { StatusBadges } from './StatusBadges';
 import { Brand } from './Brand';
-import { activateFile, closeFile, useFileStore } from '../files';
+import { activateFile, closeFile, closeFiles, useFileStore, type FileDocument } from '../files';
+import { locateInFiles } from '../explorer';
+import { fullProjectPath } from '../../../shared/platform';
+import { tabsToClose } from '../../../shared/fileOps';
+import { revealScroll, scrollEdges, stepScroll, wheelScroll } from '../../../shared/tabStrip';
 
 export function TitleBar() {
   const { tr } = useI18n();
@@ -106,6 +110,78 @@ export function WorkspaceTabs() {
     },
   });
 
+  // Many open tabs: the strip scrolls (wheel, arrows), keeps the active tab in view and has a list of all tabs.
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ canLeft: false, canRight: false });
+  const measure = () => {
+    const el = stripRef.current;
+    if (!el) return;
+    const next = scrollEdges(el.scrollLeft, el.clientWidth, el.scrollWidth);
+    setEdges((prev) => prev.canLeft === next.canLeft && prev.canRight === next.canRight ? prev : next);
+  };
+  useLayoutEffect(measure);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    const wheel = (e: WheelEvent) => {
+      if (e.ctrlKey || el.scrollWidth <= el.clientWidth) return;
+      const delta = wheelScroll(e, el.clientWidth);
+      if (!delta) return;
+      e.preventDefault();
+      el.scrollLeft += delta;
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    return () => { observer.disconnect(); el.removeEventListener('wheel', wheel); };
+  }, []);
+  const activeKey = settingsActive ? 'settings' : activeFileId ? `file:${activeFileId}` : project?.activeTabId ? `grid:${project.activeTabId}` : null;
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el || !activeKey) return;
+    const tab = Array.from(el.children).find((child) => (child as HTMLElement).dataset.workspaceId === activeKey) as HTMLElement | undefined;
+    if (!tab) return;
+    const next = revealScroll({ scrollLeft: el.scrollLeft, width: el.clientWidth, scrollWidth: el.scrollWidth }, { left: tab.offsetLeft, width: tab.offsetWidth });
+    if (next !== el.scrollLeft) el.scrollLeft = next;
+  }, [activeKey, order.length]);
+  const scrollStrip = (direction: -1 | 1) => {
+    const el = stripRef.current;
+    if (el) el.scrollBy({ left: stepScroll(direction, el.clientWidth), behavior: 'smooth' });
+  };
+  const allTabsMenu = (el: HTMLElement) => {
+    if (!project) return;
+    openMenuAt(el, [
+      { header: tr('Wszystkie karty') },
+      ...order.flatMap((key) => {
+        const hint = key === activeKey ? '✓' : undefined;
+        if (key === 'settings') return [{ label: tr('Ustawienia'), hint, onClick: () => setUi({ settingsActive: true }) }];
+        if (key.startsWith('grid:')) {
+          const t = project.tabs.find((tab) => `grid:${tab.id}` === key);
+          return t ? [{ label: t.name, hint, onClick: () => selectTab(project.id, t) }] : [];
+        }
+        const doc = documents.find((d) => `file:${d.id}` === key);
+        return doc ? [{ label: (doc.text !== doc.savedText ? '● ' : '') + doc.relativePath, hint, onClick: () => activateFile(doc.id) }] : [];
+      }),
+    ]);
+  };
+  const fileTabMenu = (x: number, y: number, doc: FileDocument) => {
+    const fileKeys = order.filter((key) => key.startsWith('file:'));
+    const idsFor = (mode: 'others' | 'right' | 'all') => tabsToClose(fileKeys, `file:${doc.id}`, mode).map((key) => key.slice(5));
+    const full = project ? fullProjectPath(project.path, doc.relativePath, window.mc.platform) : doc.relativePath;
+    openMenu(x, y, [
+      { header: doc.name },
+      { label: tr('Zamknij'), onClick: () => void closeFile(doc.id) },
+      { label: tr('Zamknij pozostałe'), disabled: idsFor('others').length === 0, onClick: () => void closeFiles(idsFor('others')) },
+      { label: tr('Zamknij karty po prawej'), disabled: idsFor('right').length === 0, onClick: () => void closeFiles(idsFor('right')) },
+      { label: tr('Zamknij wszystkie pliki'), onClick: () => void closeFiles(idsFor('all')) },
+      { sep: true },
+      { label: tr('Kopiuj ścieżkę'), onClick: () => window.mc.clipboardWrite(full) },
+      { label: tr('Kopiuj ścieżkę względną'), onClick: () => window.mc.clipboardWrite(doc.relativePath) },
+      { label: tr('Pokaż w menedżerze plików'), onClick: () => window.mc.revealPath(full) },
+      { label: tr('Pokaż w panelu plików'), onClick: () => locateInFiles(doc.projectId, doc.relativePath) },
+    ]);
+  };
+
   const agentMenu = (el: HTMLElement) =>
     openMenuAt(el, [
       { header: tr("Dodaj komórkę do siatki") },
@@ -116,7 +192,8 @@ export function WorkspaceTabs() {
     ]);
 
   return <div className="workspace-tabs" aria-label={tr('Gridy i pliki')}>
-    <div className="tabs no-drag">
+    {(edges.canLeft || edges.canRight) && <button className="tabs-scroll no-drag" disabled={!edges.canLeft} title={tr('Przewiń karty w lewo')} aria-label={tr('Przewiń karty w lewo')} onClick={() => scrollStrip(-1)}><span className="chev-left"><IChevron /></span></button>}
+    <div className="tabs no-drag" ref={stripRef} onScroll={measure}>
       {settingsTabOpen && <div {...dragProps('settings')} style={{ order: order.indexOf('settings') }} className={`tab settings-tab ${settingsActive ? 'active' : ''}`} onClick={() => setUi({ settingsActive: true })} onAuxClick={(e) => { if (e.button === 1) setUi({ settingsTabOpen: false, settingsActive: false }); }}>
         <span className="tab-type-icon"><TSettings /></span><span className="label">{tr('Ustawienia')}</span>
         <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); setUi({ settingsTabOpen: false, settingsActive: false }); }}><IX /></button>
@@ -175,18 +252,24 @@ export function WorkspaceTabs() {
           })}
           {documents.filter((doc) => doc.projectId === project.id).map((doc) => (
             <div key={doc.id} {...dragProps(`file:${doc.id}`)} style={{ order: order.indexOf(`file:${doc.id}`) }} className={`tab file-tab ${!settingsActive && activeFileId === doc.id ? 'active' : ''}`} title={doc.relativePath}
-              onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) void closeFile(doc.id); }}>
+              onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); void closeFile(doc.id); } }}
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+              onContextMenu={(e) => { e.preventDefault(); fileTabMenu(e.clientX, e.clientY, doc); }}>
               <span className="tab-type-icon" aria-hidden="true"><IFile /></span><span className="label">{doc.name}</span>
               {doc.text !== doc.savedText && <span className="file-dirty" aria-label={tr('Niezapisane zmiany')}>●</span>}
               <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); void closeFile(doc.id); }}><IX /></button>
             </div>
           ))}
-          <button className="tb-btn" title={tr("Nowy grid") + keyLabel(" (Ctrl+Shift+G)")} onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
-          <button className="tb-add" title={tr("Dodaj agenta do siatki") + keyLabel(" (Ctrl+Shift+N)")} onClick={(e) => agentMenu(e.currentTarget)}>
-            <IPlusBold />  {tr("Dodaj")} <IChevron />
-          </button>
         </>
       )}
     </div>
+    {(edges.canLeft || edges.canRight) && <button className="tabs-scroll no-drag" disabled={!edges.canRight} title={tr('Przewiń karty w prawo')} aria-label={tr('Przewiń karty w prawo')} onClick={() => scrollStrip(1)}><span className="chev-right"><IChevron /></span></button>}
+    {project && <>
+      <button className="tabs-scroll tabs-all no-drag" title={tr('Wszystkie karty')} aria-label={tr('Wszystkie karty')} aria-haspopup="menu" onClick={(e) => allTabsMenu(e.currentTarget)}><IChevron /></button>
+      <button className="tb-btn" title={tr("Nowy grid") + keyLabel(" (Ctrl+Shift+G)")} onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
+      <button className="tb-add" title={tr("Dodaj agenta do siatki") + keyLabel(" (Ctrl+Shift+N)")} onClick={(e) => agentMenu(e.currentTarget)}>
+        <IPlusBold />  {tr("Dodaj")} <IChevron />
+      </button>
+    </>}
   </div>;
 }
