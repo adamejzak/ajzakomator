@@ -1,4 +1,4 @@
-import { automationSchemas, taskPrompt, type AgentMessage, type AgentRuntimeStatus, type AgentTask, type AutomationOperation } from '../shared/automation';
+import { automationSchemas, taskPrompt, type AgentMessage, type AgentRole, type AgentRuntimeStatus, type AgentTask, type AutomationOperation } from '../shared/automation';
 import { CELL_COLORS, closeTab, addTab, findCell, getProfile, setActiveTab, uid, updateCell, upsertPreset, upsertSnippet } from '../shared/state';
 import { layoutForCount, layoutFromRows } from '../shared/layout';
 import type { AppState, Cell, Tab, Worktree } from '../shared/types';
@@ -17,7 +17,10 @@ export interface AutomationDependencies {
   restartAgent?(cellId: string): Promise<{ restarted: boolean; reason?: string }>;
   deliver(cellId: string, text: string): Promise<void>;
 }
-const READS = new Set<AutomationOperation>(['get_context', 'read_inbox', 'list_agents', 'list_library', 'get_snippet', 'get_tasks', 'get_messages']);
+const READS = new Set<AutomationOperation>(['get_context', 'read_inbox', 'list_agents', 'list_library', 'get_snippet', 'get_tasks', 'get_messages', 'wait_for']);
+const CLOSED = new Set(['completed', 'cancelled']);
+/** Fast enough to feel instant, cheap because the state object is only inspected when its identity changed. */
+const WAIT_POLL_MS = 200;
 const UI_ONLY = new Set<AutomationOperation>(['set_paused', 'set_role', 'mark_pasted']);
 const DELIVERY_LIMIT = 500;
 
@@ -33,6 +36,10 @@ export class AutomationService {
     const found = findCell(this.state.get(), cellId);
     if (!found || !found.cell.role || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent MCP integration is disabled or the cell is no longer available.');
     return found;
+  }
+  /** The MCP role of a cell, or undefined while MCP is disabled for it (used to decide which tools the agent sees). */
+  roleOf(cellId: string): AgentRole | undefined {
+    try { return this.actor(cellId).cell.role; } catch { return undefined; }
   }
   private role(cellId: string) {
     return this.actor(cellId).cell.role;
@@ -59,7 +66,7 @@ export class AutomationService {
       { id: uid(), projectId, action, detail, cellId, createdAt: Date.now() }].slice(-200) } };
   }
 
-  async execute<K extends AutomationOperation>(operation: K, input: unknown, actorId?: string): Promise<unknown> {
+  async execute<K extends AutomationOperation>(operation: K, input: unknown, actorId?: string, signal?: AbortSignal): Promise<unknown> {
     const args = automationSchemas[operation].parse(input);
     if (actorId) {
       this.actor(actorId);
@@ -81,8 +88,8 @@ export class AutomationService {
         const a = automationSchemas.read_inbox.parse(input);
         const { project } = this.actor(actorId);
         const snapshot = this.state.get();
-        const tasks = snapshot.automation.tasks.filter((t) => t.projectId === project.id && t.cellId === actorId)
-          .map((t) => ({ ...t, blockedBy: this.blockedBy(t), ready: t.status === 'queued' && this.blockedBy(t).length === 0 })).slice(a.offset, a.offset + a.limit);
+        const own = snapshot.automation.tasks.filter((t) => t.projectId === project.id && t.cellId === actorId && (!a.openOnly || !CLOSED.has(t.status)));
+        const tasks = own.map((t) => ({ ...t, blockedBy: this.blockedBy(t), ready: t.status === 'queued' && this.blockedBy(t).length === 0 })).slice(a.offset, a.offset + a.limit);
         const unread = snapshot.automation.messages.filter((m) => m.projectId === project.id && m.toCellId === actorId && !m.readAt);
         const messages = unread.slice(a.offset, a.offset + a.limit);
         const acknowledgedMessageIds = a.acknowledge ? messages.map((m) => m.id) : [];
@@ -92,7 +99,7 @@ export class AutomationService {
           this.state.change((s) => ({ ...s, automation: { ...s.automation, messages: s.automation.messages.map((m) => ids.has(m.id) && m.toCellId === actorId ? { ...m, readAt } : m) } }));
         }
         return { tasks, messages: a.acknowledge ? messages.map((m) => ({ ...m, readAt })) : messages, acknowledgedMessageIds,
-          hasMoreTasks: snapshot.automation.tasks.filter((t) => t.projectId === project.id && t.cellId === actorId).length > a.offset + a.limit,
+          hasMoreTasks: own.length > a.offset + a.limit,
           hasMoreMessages: unread.length > a.offset + a.limit };
       }
       case 'list_agents': {
@@ -103,7 +110,7 @@ export class AutomationService {
           gridId: tab.id, gridName: tab.name, gridColor: tab.color, profileId: cell.profileId, model: cell.model, color: cell.color,
           role: cell.role ?? null,
           status: this.statuses.get(cell.id) ?? 'unknown', cwd: cell.worktree?.path ?? project.path,
-          tasks: this.state.get().automation.tasks.filter((t) => t.cellId === cell.id && !['completed', 'cancelled'].includes(t.status)).map(({ id, title, status }) => ({ id, title, status })),
+          tasks: this.state.get().automation.tasks.filter((t) => t.cellId === cell.id && !CLOSED.has(t.status)).map(({ id, title, status }) => ({ id, title, status })),
         })));
       }
       case 'list_library': {
@@ -177,7 +184,7 @@ export class AutomationService {
         const a = automationSchemas.get_tasks.parse(input);
         const project = this.project(a.projectId, actorId);
         return this.state.get().automation.tasks.filter((t) => t.projectId === project.id && (!a.cellId || t.cellId === a.cellId) &&
-          (!a.status || t.status === a.status) && (!actorId || this.role(actorId) === 'coordinator' || t.cellId === actorId))
+          (!a.ids || a.ids.includes(t.id)) && (!a.status || t.status === a.status) && (!actorId || this.role(actorId) === 'coordinator' || t.cellId === actorId))
           .map((t) => ({ ...t, blockedBy: this.blockedBy(t), ready: t.status === 'queued' && this.blockedBy(t).length === 0 }))
           .filter((t) => !a.readyOnly || t.ready).slice(a.offset, a.offset + a.limit);
       }
@@ -210,6 +217,7 @@ export class AutomationService {
         const project = this.project(a.projectId, actorId);
         return this.state.get().automation.messages.filter((m) => m.projectId === project.id && (!actorId || m.toCellId === actorId) && (!a.unreadOnly || !m.readAt)).slice(a.offset, a.offset + a.limit);
       }
+      case 'wait_for': return this.waitFor(automationSchemas.wait_for.parse(input), actorId, signal);
       case 'acknowledge_message': {
         const { messageId } = automationSchemas.acknowledge_message.parse(input);
         const message = this.state.get().automation.messages.find((m) => m.id === messageId);
@@ -406,6 +414,49 @@ export class AutomationService {
       throw error;
     }
   }
+  /**
+   * Bounded wait that replaces polling loops: resolves as soon as the agent has something new, or after timeoutSec.
+   * Without taskIds it waits for an unread message or a startable queued task in the caller's own inbox;
+   * with taskIds it waits for any (or, with all, every) listed task to be completed, blocked or cancelled.
+   */
+  private async waitFor(a: ReturnType<typeof automationSchemas.wait_for.parse>, actorId?: string, signal?: AbortSignal) {
+    if (!actorId) throw new Error('Waiting requires an authenticated agent.');
+    const own = this.actor(actorId).project;
+    const ids = a.taskIds ? [...new Set(a.taskIds)] : undefined;
+    for (const taskId of ids ?? []) {
+      const task = this.state.get().automation.tasks.find((t) => t.id === taskId);
+      if (!task) throw new Error(`Task not found: ${taskId}`);
+      this.project(task.projectId, actorId);
+    }
+    const deadline = Date.now() + a.timeoutSec * 1000;
+    let seen: AppState | undefined;
+    for (;;) {
+      const snapshot = this.state.get();
+      if (snapshot !== seen) {
+        seen = snapshot;
+        this.actor(actorId);
+        const tasks = snapshot.automation.tasks;
+        if (ids) {
+          const listed = ids.map((taskId) => tasks.find((t) => t.id === taskId)).filter((t): t is AgentTask => !!t);
+          const finished = listed.filter((t) => t.status !== 'queued' && t.status !== 'in_progress');
+          if (a.all ? listed.length > 0 && finished.length === listed.length : finished.length > 0) {
+            return { event: 'tasks', tasks: listed.map((t) => ({ id: t.id, status: t.status, summary: t.result?.summary, blockedReason: t.blockedReason })) };
+          }
+        } else {
+          const unread = snapshot.automation.messages.filter((m) => m.projectId === own.id && m.toCellId === actorId && !m.readAt).length;
+          const startable = tasks.filter((t) => t.projectId === own.id && t.cellId === actorId && t.status === 'queued' && this.blockedBy(t).length === 0).length;
+          if (unread || startable) return { event: 'inbox', unreadMessages: unread, queuedTasks: startable };
+        }
+      }
+      const left = deadline - Date.now();
+      if (signal?.aborted || left <= 0) return { event: 'timeout' };
+      await new Promise<void>((resolve) => {
+        const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
+        const timer = setTimeout(done, Math.min(WAIT_POLL_MS, left));
+        signal?.addEventListener('abort', done, { once: true });
+      });
+    }
+  }
   private blockedBy(task: AgentTask): string[] {
     return (task.dependsOn ?? []).filter((id) => {
       const prerequisite = this.state.get().automation.tasks.find((t) => t.id === id && t.projectId === task.projectId);
@@ -427,7 +478,7 @@ export class AutomationService {
     try {
       if (this.state.get().automation.paused) throw new Error('Automation is paused by the user.');
       this.target(cellId, actorId);
-      const prompt = kind === 'task' ? taskPrompt(item as AgentTask) : `[Ajzakomator message ${id} from ${item.fromCellId ?? 'user'}]\n${(item as AgentMessage).text}\nRead and acknowledge this message using acknowledge_message.`;
+      const prompt = kind === 'task' ? taskPrompt(item as AgentTask) : `[Ajzakomator message ${id} from ${item.fromCellId ?? 'user'}]\n${(item as AgentMessage).text}\nRead it with read_inbox (acknowledge:true).`;
       await this.deps.deliver(cellId, prompt);
     } catch (error) { deliveryError = error instanceof Error ? error.message : String(error); }
     finally { this.delivering.delete(id); }

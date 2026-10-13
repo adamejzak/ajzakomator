@@ -82,7 +82,7 @@ async function mcpClient(cellId) {
 async function call(client, name, args = {}) {
   const result = await client.callTool({ name, arguments: args });
   assert.notEqual(result.isError, true, JSON.stringify(result.content));
-  return result.structuredContent.result;
+  return JSON.parse(result.content[0].text);
 }
 async function screenshot(name) {
   const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
@@ -130,18 +130,20 @@ try {
   assert.equal(await evaluate('document.activeElement?.tagName'), focusedBefore);
   assert.equal(await evaluate('document.querySelectorAll(".grid > .cell").length'), 2);
   const backend = await mcpClient(created.cellIds[0]);
-  const inbox = await call(backend, 'get_tasks', { status: 'queued' });
+  const inbox = (await call(backend, 'read_inbox')).tasks;
   assert.equal(inbox.length, 1);
   await call(backend, 'update_task', { taskId: inbox[0].id, status: 'in_progress' });
   await call(backend, 'update_task', { taskId: inbox[0].id, status: 'completed', result: { summary: 'Backend sprawdzony - testy przeszły.', files: ['src/backend.ts'], tests: ['smoke: passed'], branch: 'mc/backend' } });
   const message = await call(coordinator, 'send_message', { toCellId: created.cellIds[0], text: 'Dziękuję, przekazuję do review.' });
   const combined = await call(backend, 'read_inbox', { acknowledge: true });
   assert.equal(combined.messages[0].id, message.id);
-  assert.deepEqual(combined.acknowledgedMessageIds, [message.id]);
+  assert.equal(combined.acknowledged, 1);
   assert.equal((await call(backend, 'read_inbox')).messages.length, 0);
-  await call(coordinator, 'save_snippet', { name: 'Review checklist', text: 'Sprawdź testy i regresje' });
+  await call(coordinator, 'snippets', { action: 'save', name: 'Review checklist', text: 'Sprawdź testy i regresje' });
   await call(coordinator, 'save_preset', { name: 'Review team', cells: [{ profileId: 'codex', role: 'worker', prompt: 'Review changes' }] });
-  assert.equal((await call(coordinator, 'list_library')).snippets[0].name, 'Review checklist');
+  assert.equal((await call(coordinator, 'snippets')).snippets[0].name, 'Review checklist');
+  assert.equal((await call(backend, 'wait_for', { timeoutSec: 1 })).event, 'timeout');
+  assert.equal((await backend.listTools()).tools.some((tool) => tool.name === 'create_grid'), false);
   await until(() => evaluate('!!Array.from(document.querySelectorAll(".task-open")).find(b => b.textContent.includes("Backend"))'), 'compact task cards');
   await evaluate('Array.from(document.querySelectorAll(".task-open")).find(b => b.textContent.includes("Backend")).click()');
   await until(() => evaluate('document.querySelector(".automation-list").textContent.includes("Backend sprawdzony")'), 'task result rendering');

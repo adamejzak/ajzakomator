@@ -9,6 +9,7 @@ import { addProject, addTab, defaultState } from '../src/shared/state';
 import { layoutForCount } from '../src/shared/layout';
 
 const running: AjzakomatorMcpServer[] = [];
+const data = (result: unknown) => JSON.parse(((result as { content: Array<{ text: string }> }).content[0]).text);
 afterEach(async () => { await Promise.all(running.splice(0).map((s) => s.stop())); });
 async function setup() {
   let state = addProject(defaultState(), { name: 'Project', path: 'D:/project' });
@@ -31,16 +32,11 @@ describe('local MCP over Streamable HTTP', () => {
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL(f.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
       const tools = (await client.listTools()).tools.map((tool) => tool.name);
-      expect(tools).toContain('create_grid');
-      expect(tools).toContain('add_agents');
-      expect(tools).toContain('read_inbox');
-      expect(tools).toContain('update_grid');
-      expect(tools).toContain('update_agent');
-      expect(tools).toContain('apply_snippet');
+      for (const name of ['create_grid', 'close_grid', 'read_inbox', 'wait_for', 'update_grid', 'update_agent', 'snippets', 'get_tasks']) expect(tools).toContain(name);
       expect(tools).not.toContain('set_role');
       expect(tools).not.toContain('set_paused');
       const context = await client.callTool({ name: 'get_context', arguments: {} });
-      expect(context.structuredContent).toMatchObject({ result: { cellId: f.coordinator.id, role: 'coordinator' } });
+      expect(data(context)).toMatchObject({ cellId: f.coordinator.id, role: 'coordinator', inbox: { openTasks: 0 } });
       const created = await client.callTool({ name: 'create_task', arguments: { cellId: f.worker.id, title: 'Review', prompt: 'Review changes' } });
       expect(created.isError).not.toBe(true);
       expect(f.controller.get().automation.tasks[0]).toMatchObject({ title: 'Review', delivery: 'pending' });
@@ -75,9 +71,9 @@ describe('local MCP over Streamable HTTP', () => {
       const peerEdit = await client.callTool({ name: 'update_agent', arguments: { cellId: f.coordinator.id, name: 'Denied' } });
       expect(peerEdit.isError).toBe(true);
       const ownEdit = await client.callTool({ name: 'update_agent', arguments: { cellId: f.worker.id, name: 'Worker label', model: 'gpt-5.4' } });
-      expect(ownEdit.structuredContent).toMatchObject({ result: { needsRestart: true, restarted: false } });
+      expect(data(ownEdit)).toMatchObject({ needsRestart: true });
       const inbox = await client.callTool({ name: 'read_inbox', arguments: { acknowledge: true } });
-      expect(inbox.structuredContent).toMatchObject({ result: { tasks: [], messages: [], acknowledgedMessageIds: [] } });
+      expect(data(inbox)).toEqual({ tasks: [], messages: [] });
       const forbidden = await client.callTool({ name: 'create_grid', arguments: { name: 'Denied', cells: [{ profileId: 'codex' }] } });
       expect(forbidden.isError).toBe(true);
       expect(f.controller.get().projects[0].tabs).toHaveLength(1);
