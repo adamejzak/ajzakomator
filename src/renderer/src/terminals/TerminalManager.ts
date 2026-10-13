@@ -149,7 +149,7 @@ class TerminalManager {
     } else {
       e.term.write(m.data, () => this.ack(m));
       // Published right away: output alone can flip the status to "working" (it used to surface only later).
-      this.setStatus(e, () => e.tracker.output(performance.now()), 'output');
+      this.setStatus(e, () => { e.tracker.output(performance.now()); return e.tracker.takeRenotify() ? 'renotify' : undefined; }, 'output');
       // Live output only (a replay never comes through here): a failed Codex turn prints a red error line and fires no hook.
       if (e.codex) {
         const failure = e.scanner.feed(m.data);

@@ -7,7 +7,7 @@ import { automationStatusFor } from '../src/shared/runtimeStatus';
 import { layoutForCount } from '../src/shared/layout';
 import { addProject, addTab, defaultState, findCell, normalizeState, updateCell } from '../src/shared/state';
 import {
-  CODEX_COMMIT_MS, CODEX_QUIET_MS, CODEX_SETTLE_MS, ENV_QUIET_MS, FAILURE_QUIET_MS, shouldNotify, StatusTracker, SUSPEND_MS,
+  CODEX_GAP_MS, CODEX_QUIET_MS, CODEX_WINDOW_MS, ENV_QUIET_MS, FAILURE_QUIET_MS, shouldNotify, StatusTracker, SUSPEND_MS,
   type CellStatus, type HookInfo,
 } from '../src/shared/status';
 
@@ -54,7 +54,7 @@ function cell(opts: { codex?: boolean; muted?: boolean } = {}) {
     /** A notify followed by quiet: the ticks of the app commit the turn end. */
     end: (at: number, turnId?: string, threadId?: string) => {
       watch(at, () => t.hook('stop', at, { codex: true, ...(turnId ? { turnId } : {}), ...(threadId ? { threadId } : {}) } as HookInfo));
-      for (let n = at + 400; n <= at + CODEX_COMMIT_MS + 400; n += 400) watch(n, () => { t.tick(n); return t.takeRenotify() ? 'renotify' : undefined; });
+      for (let n = at + 400; n <= at + CODEX_GAP_MS + 800; n += 400) watch(n, () => { t.tick(n); return t.takeRenotify() ? 'renotify' : undefined; });
     },
     osc9: (at: number) => watch(at, () => t.osc9()),
     esc: (at: number) => watch(at, () => { t.input(at, false); t.interrupt(at); }),
@@ -492,29 +492,66 @@ describe('sub-agent threads and the parent turn end', () => {
     c.submit(0);
     c.stream(300, 3000);
     c.notify(3100, 'turn-sub', SUB1); // a sub-agent finished, the parent keeps working
-    c.stream(3300, 8000);
+    c.stream(3300, 8800);
     expect(c.t.status).toBe('working');
     expect(c.alerts).toEqual([]);
     expect(binds).toEqual([]);
     expect(c.t.threads.isSecondary(SUB1)).toBe(true);
-    c.end(8100, 'turn-main', MAIN);
+    c.end(8900, 'turn-main', MAIN);
     expect(c.t.status).toBe('waiting');
     expect(c.alerts).toEqual(['done']);
     expect(binds).toEqual([{ id: MAIN, confirmed: false }]);
   });
 
-  it('the commit waits for quiet: no alert before CODEX_COMMIT_MS, the final repaint inside the settle window does not cancel it', () => {
+  it('the commit waits for the quiet gap: no alert while the final repaint goes on, then the gap commits', () => {
     const { c } = threaded();
     c.submit(0);
     c.stream(300, 3000);
     c.notify(3100, 'turn-main', MAIN);
-    c.out(3100 + CODEX_SETTLE_MS - 200); // the finished turn's last repaint
-    c.run(3100, 3100 + CODEX_COMMIT_MS - 500);
+    c.out(3100 + 800); // the finished turn's last repaint
+    c.run(3100, 3100 + 800 + CODEX_GAP_MS - 500);
     expect(c.t.status).toBe('working');
     expect(c.alerts).toEqual([]);
-    c.run(3100 + CODEX_COMMIT_MS - 100, 3100 + CODEX_COMMIT_MS + 1000);
+    c.run(3100 + 800 + CODEX_GAP_MS - 100, 3100 + 800 + CODEX_GAP_MS + 1000);
     expect(c.t.status).toBe('waiting');
     expect(c.alerts).toEqual(['done']);
+  });
+
+  it('a repaint burst of 1.5 s after the notify, then quiet, still commits (latency = repaint + gap)', () => {
+    const { c, binds } = threaded();
+    c.submit(0);
+    c.stream(300, 3000);
+    c.notify(3100, 'turn-main', MAIN);
+    for (let n = 3200; n <= 4700; n += 300) { c.out(n); c.run(n + 1, n + 1); }
+    expect(c.alerts).toEqual([]);
+    c.run(4800, 4700 + CODEX_GAP_MS + 800);
+    expect(c.t.status).toBe('waiting');
+    expect(c.alerts).toEqual(['done']);
+    expect(binds).toEqual([{ id: MAIN, confirmed: false }]);
+  });
+
+  it('a continuous spinner for 5 s after the notify is mid-turn: no alert, no binding, thread remembered as secondary', () => {
+    const { c, binds } = threaded();
+    c.submit(0);
+    c.stream(300, 3000);
+    c.notify(3100, 'turn-sub', SUB1);
+    c.stream(3200, 8200, 400);
+    c.run(8400, 12_000);
+    expect(c.alerts).toEqual([]);
+    expect(binds).toEqual([]);
+    expect(c.t.threads.isSecondary(SUB1)).toBe(true);
+    expect(c.t.status).toBe('working');
+  });
+
+  it('a gap that begins after the window is too late: the notify stays mid-turn', () => {
+    const { c } = threaded();
+    c.submit(0);
+    c.stream(300, 3000);
+    c.notify(3100, 'turn-x', SUB1);
+    c.stream(3200, 3100 + CODEX_WINDOW_MS + 600, 400);
+    c.run(3100 + CODEX_WINDOW_MS + 1000, 3100 + CODEX_WINDOW_MS + 4000);
+    expect(c.alerts).toEqual([]);
+    expect(c.t.threads.isSecondary(SUB1)).toBe(true);
   });
 
   it('a resumed process whose sub-agent finishes twice inside one parent turn keeps the stored session', () => {

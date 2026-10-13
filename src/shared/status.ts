@@ -73,12 +73,16 @@ export const ENV_QUIET_MS = 8000;
 /** Silence net of a Codex cell whose notify hook works: its turn-end hook did not come (command line too long, curl failed). */
 export const CODEX_QUIET_MS = 8000;
 /**
- * A Codex notify only STARTS a pending turn end: output that goes on after this long means the turn was still running (a
- * sub-agent finished, or a queued turn followed), anything shorter is the final repaint of the finished turn.
+ * A Codex notify only STARTS a pending turn end. It is committed (alert, session binding) at the first quiet gap of this
+ * length in the (non-echo) output after it: a finished turn repaints briefly (final message, "Worked for", status bar) and
+ * then goes quiet.
  */
-export const CODEX_SETTLE_MS = 1000;
-/** A notify followed by quiet for this long commits the turn end (alert, session binding). */
-export const CODEX_COMMIT_MS = 2500;
+export const CODEX_GAP_MS = 1200;
+/**
+ * The gap has to begin within this long after the notify. Output that keeps going without such a gap (a spinner, a parent
+ * still working after a sub-agent's notify) means the notify was mid-turn: no alert, no binding, the thread is a sub-agent's.
+ */
+export const CODEX_WINDOW_MS = 4000;
 /** A failed turn (usage limit) is the last thing Codex prints: waiting follows after this much silence. */
 export const FAILURE_QUIET_MS = 1500;
 
@@ -138,8 +142,8 @@ export class StatusTracker {
   readonly threads = new CodexThreads();
   /** Called when a committed Codex turn end names a thread the cell's stored session should become. */
   onBind: ((thread: BoundThread) => void) | null = null;
-  /** A notify arrived and is waiting for the quiet that commits it (see CODEX_COMMIT_MS). */
-  private pendingEnd: { at: number; turnId?: string; threadId?: string } | null = null;
+  /** A notify arrived and is waiting for the quiet gap that commits it (see CODEX_GAP_MS); `last` is the latest non-echo output since. */
+  private pendingEnd: { at: number; last: number; turnId?: string; threadId?: string } | null = null;
   private renotifyDue = false;
   /** Bumped by every `reset` (a new process): alert keys of an earlier process never match. */
   private generation = 0;
@@ -249,8 +253,12 @@ export class StatusTracker {
     if (redraw && (this.status !== 'working' || this.background)) return;
     // Window / tab / wake redraws never start a run, unless the user just submitted (armed) or the agent is already working.
     if (now - this.lastEnv < ENV_QUIET_MS && !this.armed && this.status !== 'working') return;
-    // Output that goes on after the final repaint window means a notify that is pending was a sub-agent's or mid-turn.
-    if (this.pendingEnd && now - this.pendingEnd.at >= CODEX_SETTLE_MS) this.cancelPending();
+    // A pending notify: a quiet gap before this output committed it (the tick had not run yet); output that never gets a gap means it was mid-turn.
+    if (this.pendingEnd) {
+      if (this.gapDone(now)) this.commitEnd();
+      else if (now - this.pendingEnd.at > CODEX_WINDOW_MS + CODEX_GAP_MS) this.cancelPending();
+      else this.pendingEnd.last = now;
+    }
     if (now - this.lastOutput > GAP_MS) this.activityStart = now;
     this.lastOutput = now;
     // Hooks own the status, except to recover from a silence-based "waiting" that turned out premature.
@@ -339,18 +347,24 @@ export class StatusTracker {
     if (info.threadId && this.threads.isSecondary(info.threadId)) return 'ignored';
     // A second notify before the first one committed: the first was not the end of the turn.
     if (this.pendingEnd) this.cancelPending();
-    this.pendingEnd = { at: now, ...(info.turnId ? { turnId: info.turnId } : {}), ...(info.threadId ? { threadId: info.threadId } : {}) };
+    this.pendingEnd = { at: now, last: now, ...(info.turnId ? { turnId: info.turnId } : {}), ...(info.threadId ? { threadId: info.threadId } : {}) };
     return 'applied';
   }
 
-  /** The notify was followed by output: the turn was still running, so its thread is a sub-agent's (never the cell's own). */
+  /** The pending notify saw a quiet gap that began within the window: the turn really ended. */
+  private gapDone(now: number): boolean {
+    const p = this.pendingEnd;
+    return !!p && now - p.last >= CODEX_GAP_MS && p.last - p.at <= CODEX_WINDOW_MS;
+  }
+
+  /** The notify was followed by output without a gap: the turn was still running, so its thread is a sub-agent's (never the cell's own). */
   private cancelPending(): void {
     const p = this.pendingEnd;
     this.pendingEnd = null;
     if (p?.threadId) this.threads.markSecondary(p.threadId);
   }
 
-  /** Quiet followed the notify: the turn really ended. */
+  /** A quiet gap followed the notify: the turn really ended. */
   private commitEnd(): void {
     const p = this.pendingEnd;
     if (!p) return;
@@ -428,7 +442,10 @@ export class StatusTracker {
       this.environment(now); // the redraws after a wake are not work
     }
     this.lastTick = now;
-    if (this.pendingEnd && now - this.pendingEnd.at >= CODEX_COMMIT_MS && this.status !== 'exited') this.commitEnd();
+    if (this.pendingEnd && this.status !== 'exited') {
+      if (this.gapDone(now)) this.commitEnd();
+      else if (now - this.pendingEnd.at > CODEX_WINDOW_MS + CODEX_GAP_MS) this.cancelPending();
+    }
     if (this.status === 'working') {
       // Hooked agents get a long net (lost Stop, killed subagent) and a short one after Esc/Ctrl-C.
       const kind: StallKind = this.pendingFailure ? 'error'
