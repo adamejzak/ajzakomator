@@ -11,7 +11,7 @@ import {
 } from '../actions';
 import { getS, getUi, setUi, toast, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
-import { statusLog } from '../terminals/TerminalManager';
+import { statusLog, terminals } from '../terminals/TerminalManager';
 
 interface Item {
   kind: string;
@@ -60,6 +60,7 @@ function PaletteInner() {
       out.push({ kind: tr('Akcja'), title: tr("Maksymalizuj / przywróć komórkę"), desc: keyLabel("Ctrl+Shift+M"), run: () => toggleMaximize(focused) });
       out.push({ kind: tr('Akcja'), title: tr("Komórka: wznów rozmowę od nowa (restart)"), run: () => restartCell(focused, 'resume') });
       out.push({ kind: tr('Akcja'), title: tr("Komórka: nowa rozmowa"), run: () => restartCell(focused, 'new') });
+      out.push({ kind: tr('Akcja'), title: tr("Komórka: zresetuj terminal (tryby myszy i klawiatury)"), run: () => { terminals.resetInput(focused); toast(tr("Terminal zresetowany - historia została zachowana.")); } });
       const moves: Array<[string, string, number, number]> = [
         [tr('Komórka: przesuń w lewo'), 'Left', -1, 0], [tr('Komórka: przesuń w prawo'), 'Right', 1, 0],
         [tr('Komórka: przesuń w górę'), 'Up', 0, -1], [tr('Komórka: przesuń w dół'), 'Down', 0, 1],

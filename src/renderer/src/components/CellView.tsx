@@ -44,6 +44,10 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
   const [drop, setDrop] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [floodHint, setFloodHint] = useState(false);
+
+  // The terminal stopped feeding a shell with the mouse reports it was echoing (see termReset.ts).
+  useEffect(() => terminals.onMouseFlood((id) => { if (id === cell.id) setFloodHint(true); }), [cell.id]);
 
   useEffect(() => {
     const el = bodyRef.current!;
@@ -84,6 +88,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         { label: cell.muted ? tr("Włącz alerty tej komórki") : tr("Wycisz alerty tej komórki"), onClick: () => update((s) => updateCell(s, cell.id, { muted: cell.muted ? undefined : true })) },
       ] : []),
       { label: maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), onClick: () => toggleMaximize(cell.id), hint: keyLabel("Ctrl+Shift+M") },
+      { label: tr("Zresetuj terminal"), onClick: () => { terminals.resetInput(cell.id); setFloodHint(false); toast(tr("Terminal zresetowany - historia została zachowana.")); } },
       { sep: true },
       ...profileItems(),
       ...(profile.cli !== 'shell' ? [
@@ -192,6 +197,12 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       </div>
       <div className="cell-body" ref={bodyRef} style={lackingCli ? { visibility: 'hidden' } : undefined} />
       {lackingCli && <CliMissingCard cli={lackingCli} cellId={cell.id} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
+      {floodHint && !error && (
+        <div className="cell-hint" role="status">
+          <span className="grow">{tr("Terminal wysyłał zdarzenia myszy do powłoki - zresetowano tryb")}</span>
+          <button className="btn small" onClick={() => setFloodHint(false)}>{tr("Zamknij")}</button>
+        </div>
+      )}
       {error && (
         <div className="cell-error">
           <span className="grow">{errorText(error)}</span>

@@ -10,6 +10,7 @@ import type { BoundThread } from '../../../shared/codexHooks';
 import { FailureScanner } from '../../../shared/outputFailure';
 import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
 import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
+import { INPUT_MODES_OFF, isMouseReport, MouseFloodGuard, terminalModeReset } from '../../../shared/termReset';
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
 import { confirmTerminalLink } from '../terminalLinks';
@@ -39,6 +40,8 @@ interface Entry {
   /** Codex cell: approval OSC 9 is an attention signal and the output is scanned for a failed turn (usage limit). */
   codex: boolean;
   scanner: FailureScanner;
+  /** Stops mouse reports that only a shell prompt is echoing (see termReset.ts). */
+  guard: MouseFloodGuard;
   attachedTo: HTMLElement | null;
   resizeObs: ResizeObserver | null;
   /** >0 while replayed history is being parsed: terminal query replies must not reach the pty. */
@@ -72,6 +75,7 @@ class TerminalManager {
   private statusListeners = new Set<StatusListener>();
   private exitListeners = new Set<(cellId: string) => void>();
   private bindListeners = new Set<(cellId: string, thread: BoundThread) => void>();
+  private floodListeners = new Set<(cellId: string) => void>();
   private parking: HTMLDivElement;
   private buildNumber = 0;
   private acks = new Map<string, number>();
@@ -121,7 +125,7 @@ class TerminalManager {
       this.exited.add(m.id);
       const e = this.entries.get(m.id);
       if (e) {
-        e.term.write(`\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
+        e.term.write(`${INPUT_MODES_OFF}\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
         this.setStatus(e, () => e.tracker.exited(), 'exit');
       }
       this.exitListeners.forEach((l) => l(m.id));
@@ -145,9 +149,11 @@ class TerminalManager {
     }
     if (m.t === 'replay') {
       e.term.reset();
+      e.guard.reset();
       this.writeReplay(e, m.data);
     } else {
       e.term.write(m.data, () => this.ack(m));
+      e.guard.output(performance.now(), m.data);
       // Published right away: output alone can flip the status to "working" (it used to surface only later).
       this.setStatus(e, () => { e.tracker.output(performance.now()); return e.tracker.takeRenotify() ? 'renotify' : undefined; }, 'output');
       // Live output only (a replay never comes through here): a failed Codex turn prints a red error line and fires no hook.
@@ -214,7 +220,7 @@ class TerminalManager {
 
     const entry: Entry = {
       id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
-      codex: opts.codex === true, scanner: new FailureScanner(), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
+      codex: opts.codex === true, scanner: new FailureScanner(), guard: new MouseFloodGuard(), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
       parkedSelection: null, applySelection: null,
     };
     entry.tracker.setCodex(entry.codex);
@@ -229,6 +235,11 @@ class TerminalManager {
     };
     term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, setW32(true));
     term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, setW32(false));
+    // A program that switches mouse tracking on again is alive and wants the reports: lift a flood mute.
+    term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
+      if (params.some((p) => typeof p === 'number' && p >= 1000 && p <= 1003)) entry.guard.reset();
+      return false;
+    });
     // Codex (tui.notifications) and others signal "needs attention" with OSC 9.
     term.parser.registerOscHandler(9, (payload) => {
       // 9;4;... = progress, 9;9;... = cwd reporting (oh-my-posh etc.) - not notifications.
@@ -243,6 +254,14 @@ class TerminalManager {
     term.attachCustomKeyEventHandler((ev) => this.handleKey(entry, ev));
     term.onData((d) => {
       if (entry.replaying > 0) return;
+      // A shell that prints every mouse report (the CLI died and left tracking on) must not be fed more of them.
+      if (isMouseReport(d)) {
+        const wasTripped = entry.guard.tripped;
+        if (entry.guard.report(performance.now(), entry.tracker.status === 'exited')) {
+          if (!wasTripped) this.mouseFlood(entry);
+          return;
+        }
+      }
       // Focus / mouse reports (a click on the cell) and device replies are the terminal's, not the user's: they must not
       // count as typing, and the redraw they make the agent do must not count as work.
       if (isUserInput(d)) this.userInput(entry, d.includes('\r'), d === '\x1b' || d === '\x03');
@@ -451,12 +470,32 @@ class TerminalManager {
     this.entries.get(cellId)?.tracker.threads.begin(session);
   }
 
+  /** Manual reset: switches off mouse / focus / paste / application modes of the terminal; text and scrollback stay. */
+  resetInput(cellId: string): void {
+    const e = this.entries.get(cellId);
+    if (!e) return;
+    e.guard.reset();
+    e.term.write(terminalModeReset(e.term.buffer.active.type === 'alternate'));
+  }
+
+  private mouseFlood(e: Entry): void {
+    e.term.write(INPUT_MODES_OFF);
+    this.floodListeners.forEach((l) => l(e.id));
+  }
+
+  /** The terminal stopped forwarding mouse reports that a shell was echoing (the modes were reset). */
+  onMouseFlood(l: (cellId: string) => void): () => void {
+    this.floodListeners.add(l);
+    return () => this.floodListeners.delete(l);
+  }
+
   /** Called right before (re)spawning the pty for a cell. */
   prepareSpawn(cellId: string, session?: { id: string; confirmed?: boolean }): void {
     const e = this.entries.get(cellId);
     this.exited.delete(cellId);
     if (!e) return;
     e.win32 = false;
+    e.guard.reset();
     e.scanner.reset();
     e.term.reset();
     this.setStatus(e, () => e.tracker.reset(), 'restore');

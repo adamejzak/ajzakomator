@@ -1,4 +1,5 @@
 import { codexHookOverrides } from './codexHooks';
+import { resetTail } from './termReset';
 import type { Profile, ShellKind } from './types';
 
 export const DEFAULT_PROFILES: Profile[] = [
@@ -43,8 +44,8 @@ function promptArg(p: { file: string; text: string }, shell: ShellKind = 'pwsh')
   return `(Get-Content -Raw -Encoding utf8 -LiteralPath ${psQuote(p.file)})`;
 }
 
-/** Command typed into the cell's shell to start the agent; null for plain shell profiles. */
-export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): string | null {
+/** The agent's own command line (what the CLI is started with); null for plain shell profiles. */
+export function buildCliCommand(profile: Profile, opts: LaunchOptions): string | null {
   // A cell override replaces a profile's model flag instead of giving the CLI duplicates.
   const args = (opts.model ? profile.args.replace(/(?:^|\s)(?:--model(?:=|\s+)|-m\s+)(?:"[^"]*"|'[^']*'|[^\s]+)/g, ' ') : profile.args).trim();
   const parts: string[] = [];
@@ -77,4 +78,13 @@ export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): strin
   }
   if (opts.mode === 'new' && opts.initialPrompt?.text.trim()) parts.push(promptArg(opts.initialPrompt, opts.shell));
   return parts.join(' ');
+}
+
+/**
+ * Line typed into the cell's shell to start the agent: the command, then a tail that runs when the CLI returned (also after a
+ * crash or kill) and switches off the mouse / focus / paste modes a dead CLI leaves on (see termReset.ts). Null for shell profiles.
+ */
+export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): string | null {
+  const command = buildCliCommand(profile, opts);
+  return command === null ? null : command + resetTail(opts.shell);
 }

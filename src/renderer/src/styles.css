@@ -214,6 +214,11 @@ html[data-platform="darwin"] .first-run-titlebar { padding-left: 84px; }
   background: #2a1414; border: 1px solid #5b2626; color: #fecaca; display: flex; gap: 10px; align-items: center; z-index: 2;
 }
 .cell-error .grow { flex: 1; }
+.cell-hint {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; padding: 6px 10px; border-radius: var(--radius); font-size: 12px;
+  background: #2b2412; border: 1px solid #5c4a1a; color: #f3dca0; display: flex; gap: 10px; align-items: center; z-index: 2;
+}
+.cell-hint .grow { flex: 1; }
 
 .empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 .empty-inner { text-align: center; display: flex; flex-direction: column; gap: 14px; align-items: center; max-width: 520px; }

@@ -5,7 +5,7 @@ import {
   type CodexNotice,
 } from '../src/shared/codexHooks';
 import { FailureScanner, normalizeOutput } from '../src/shared/outputFailure';
-import { buildLaunchCommand, DEFAULT_PROFILES } from '../src/shared/profiles';
+import { buildCliCommand, DEFAULT_PROFILES } from '../src/shared/profiles';
 
 const A = '3f2b8c1e-0d4a-4b7e-9c11-2a5d6e7f8091';
 const B = '0198aa11-2222-7333-8444-555566667777';
@@ -69,19 +69,19 @@ describe('Codex launch overrides', () => {
 
   it('quotes the overrides for PowerShell, bash/zsh and cmd', () => {
     const [notify, tui, cond] = codexHookOverrides(URL);
-    const ps = buildLaunchCommand(codex, { mode: 'new', shell: 'pwsh', codexNotifyUrl: URL })!;
+    const ps = buildCliCommand(codex, { mode: 'new', shell: 'pwsh', codexNotifyUrl: URL })!;
     expect(ps).toBe(`codex -c '${notify.replace(/'/g, "''")}' -c '${tui.replace(/'/g, "''")}' -c '${cond.replace(/'/g, "''")}'`);
-    const posix = buildLaunchCommand(codex, { mode: 'new', shell: 'bash', codexNotifyUrl: URL })!;
+    const posix = buildCliCommand(codex, { mode: 'new', shell: 'bash', codexNotifyUrl: URL })!;
     expect(posix).toBe(`codex -c ${posixQuoted(notify)} -c ${posixQuoted(tui)} -c ${posixQuoted(cond)}`);
-    expect(buildLaunchCommand(codex, { mode: 'new', shell: 'zsh', codexNotifyUrl: URL })).toBe(posix);
-    const cmd = buildLaunchCommand(codex, { mode: 'new', shell: 'cmd', codexNotifyUrl: URL })!;
+    expect(buildCliCommand(codex, { mode: 'new', shell: 'zsh', codexNotifyUrl: URL })).toBe(posix);
+    const cmd = buildCliCommand(codex, { mode: 'new', shell: 'cmd', codexNotifyUrl: URL })!;
     expect(cmd).toBe(`codex -c "${notify}" -c "${tui}" -c "${cond}"`);
     // cmd metacharacters never occur in the generated overrides
     expect(notify.replace(/[A-Za-z0-9'\[\],:/.*=_%-]/g, '')).toBe('');
   });
 
   it('resumes the saved conversation of the cell with its own hook and keeps profile args and model', () => {
-    const command = buildLaunchCommand({ ...codex, args: '--no-alt-screen' }, { mode: 'resume', sessionId: B, shell: 'bash', codexNotifyUrl: URL, model: 'gpt-5' })!;
+    const command = buildCliCommand({ ...codex, args: '--no-alt-screen' }, { mode: 'resume', sessionId: B, shell: 'bash', codexNotifyUrl: URL, model: 'gpt-5' })!;
     expect(command.startsWith(`codex resume ${B} -c `)).toBe(true);
     expect(command).toContain(URL);
     expect(command.endsWith(`--no-alt-screen --model 'gpt-5'`)).toBe(true);
@@ -89,7 +89,7 @@ describe('Codex launch overrides', () => {
   });
 
   it('keeps the plain terminal notifications when no hook url is given', () => {
-    expect(buildLaunchCommand(codex, { mode: 'new' })).toBe('codex -c tui.notifications=true');
+    expect(buildCliCommand(codex, { mode: 'new' })).toBe('codex -c tui.notifications=true');
   });
 });
 
@@ -215,7 +215,7 @@ describe('resume of two Codex cells in one folder', () => {
   it('resumes each cell with its own saved conversation, in every shell', () => {
     for (const [cell, id] of [['c1', A], ['c2', B]] as const) {
       for (const shell of ['pwsh', 'bash', 'cmd'] as const) {
-        const command = buildLaunchCommand(codex, { mode: 'resume', sessionId: id, shell, codexNotifyUrl: URL.replace('cell-1', cell) })!;
+        const command = buildCliCommand(codex, { mode: 'resume', sessionId: id, shell, codexNotifyUrl: URL.replace('cell-1', cell) })!;
         expect(command.startsWith(`codex resume ${id} -c `), `${cell} ${shell}`).toBe(true);
         expect(command).toContain(`/${cell}/codex/`);
       }
