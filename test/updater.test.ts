@@ -380,6 +380,97 @@ describe('updater lifecycle (Windows)', () => {
     });
   });
 
+  describe('stale feed answers, check errors and slow preparation', () => {
+    it('a stale older look never replaces the target, and a download re-looks first when the library would fetch the older one', async () => {
+      const api = await setup(true);
+      mock.check.mockResolvedValue(found('0.6.6'));
+      mock.download.mockRejectedValueOnce(new Error('interrupted'));
+      await api.checkForUpdates(); await settle();
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', version: '0.6.6' });
+      // The CDN answers with the older release: the target stays 0.6.6, and nothing is downloaded from that stale look.
+      mock.check.mockResolvedValue(found('0.6.5'));
+      await api.checkForUpdates(); await settle();
+      expect(api.updateTarget()).toBe('0.6.6');
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', version: '0.6.6' });
+      expect(mock.download).toHaveBeenCalledTimes(1);
+      // Once the feed is right again the same target downloads.
+      mock.check.mockResolvedValue(found('0.6.6'));
+      await api.checkForUpdates(); await settle();
+      expect(api.getUpdateState()).toMatchObject({ status: 'ready', version: '0.6.6' });
+    });
+
+    it('an error event from a failed look (as the real library emits it) does not release a running hand-over', async () => {
+      const api = await setup(true);
+      mock.check.mockResolvedValue(found('0.6.0'));
+      await api.checkForUpdates(); await settle();
+      let finishShow!: (shown: boolean) => void;
+      splash.show.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finishShow = resolve; }));
+      const handover = api.handOver('0.6.0', vi.fn());
+      expect(api.updateHandoffStarted()).toBe(true);
+      mock.check.mockImplementation(async () => { const error = new Error('look failed'); updater.emit('error', error); throw error; });
+      await api.checkForUpdates('background'); await settle();
+      expect(api.updateHandoffStarted()).toBe(true);
+      expect(api.getUpdateState().status).toBe('installing');
+      finishShow(true);
+      expect(await handover).toBe(true);
+      expect(mock.install).toHaveBeenCalledTimes(1);
+      // After the installer was started an error event is the installer's.
+      updater.emit('error', new Error('installer failed'));
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', message: 'installer failed' });
+      expect(api.updateHandoffStarted()).toBe(false);
+    });
+
+    it('a hand-over whose deadline passes while the window is still being prepared is abandoned: no installer, download kept, retry works', async () => {
+      const api = await setup(true);
+      mock.check.mockResolvedValue(found('0.6.0'));
+      await api.checkForUpdates(); await settle();
+      let finishShow!: (shown: boolean) => void;
+      splash.show.mockImplementationOnce(() => new Promise<boolean>((resolve) => { finishShow = resolve; }));
+      const deadline = new AbortController();
+      const hide = vi.fn();
+      const handover = api.handOver('0.6.0', hide, deadline.signal);
+      await settle();
+      expect(api.updateHandoverCommitted()).toBe(false);
+      deadline.abort();
+      finishShow(true);
+      expect(await handover).toBe(false);
+      expect(mock.install).not.toHaveBeenCalled();
+      expect(mock.app.quit).not.toHaveBeenCalled();
+      expect(hide).not.toHaveBeenCalled();
+      expect(splash.abort).toHaveBeenCalledOnce();
+      expect(api.updateHandoffStarted()).toBe(false);
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', version: '0.6.0' });
+      expect(api.updateHandoverCommitted()).toBe(false);
+      // The downloaded update is still there: a look restores "ready" without downloading again, and it installs.
+      await api.checkForUpdates(); await settle();
+      expect(api.getUpdateState()).toMatchObject({ status: 'ready', version: '0.6.0' });
+      expect(mock.download).toHaveBeenCalledTimes(1);
+      expect(await api.handOver('0.6.0', vi.fn())).toBe(true);
+    });
+
+    it('a deadline that passes after the installer was started changes nothing: it is committed', async () => {
+      const api = await setup(true);
+      mock.check.mockResolvedValue(found('0.6.0'));
+      await api.checkForUpdates(); await settle();
+      const deadline = new AbortController();
+      let committedAtInstall = false;
+      mock.install.mockImplementationOnce(() => { committedAtInstall = api.updateHandoverCommitted(); deadline.abort(); return true; });
+      expect(await api.handOver('0.6.0', vi.fn(), deadline.signal)).toBe(true);
+      expect(committedAtInstall).toBe(true);
+      expect(mock.app.quit).toHaveBeenCalledOnce();
+      expect(api.getUpdateState().status).toBe('installing');
+    });
+
+    it('stages the update window runtime as soon as an update is announced, concurrently with the download', async () => {
+      const api = await setup(true);
+      controlledDownload();
+      mock.check.mockResolvedValue(found('0.6.0'));
+      await api.checkForUpdates(); await settle();
+      expect(api.getUpdateState().status).toBe('downloading');
+      expect(splash.stage).toHaveBeenCalled();
+    });
+  });
+
   describe('update window', () => {
     it('stages the window runtime in the background while downloading', async () => {
       const api = await setup(true);

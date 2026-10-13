@@ -61,6 +61,10 @@ export { compareVersions };
 export const isActiveFailure = (failure: FailureRecord | undefined, currentVersion: string, now: number): boolean =>
   !!failure && compareVersions(failure.version, currentVersion) > 0 && isRecentFailure(failure, now);
 
+/** The version the startup prompt must not offer again: only while its failure is active (after the cooldown it is offered again). */
+export const gateSkipVersion = (failure: FailureRecord | undefined, currentVersion: string, now: number): string | undefined =>
+  failure && isActiveFailure(failure, currentVersion, now) ? failure.version : undefined;
+
 export const isRecentFailure = (failure: FailureRecord | undefined, now: number): boolean =>
   !!failure && now - failure.at >= 0 && now - failure.at < FAILURE_COOLDOWN_MS;
 
@@ -101,7 +105,12 @@ export interface GateDeps {
   /** Registers the callback the window calls when the user picks "Install now" in the prompt. */
   onInstall?(install: () => void): void;
   /** Starts the installing window and installer; calls `hide` once the hand-over is visible. True when it took over. */
-  handoff(version: string, hide: () => void): Promise<boolean>;
+  handoff(version: string, hide: () => void, signal?: AbortSignal): Promise<boolean>;
+  /**
+   * True once the installer is being started: a hand-over that outlived its deadline but is committed is not a failure
+   * (the app is about to quit), and one that was still preparing is abandoned through the signal given to `handoff`.
+   */
+  handoffCommitted?(): boolean;
   /** Written right before the installer starts, so an installer that fails outside the app still counts as a failure. */
   markAttempt?(version: string): void;
   recordFailure(version: string): void;
@@ -121,6 +130,7 @@ export type GateResult = 'start-app' | 'installing';
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 class CheckTimeout extends Error { constructor() { super('update check timed out'); } }
+class HandoverTimeout extends Error { constructor() { super('installer hand-over timed out'); } }
 class GateCancelled extends Error { constructor() { super('update gate cancelled by the user'); } }
 
 /** Rejects with `timeout()` when `promise` has not settled within `ms`; the timer never outlives the race. */
@@ -188,6 +198,8 @@ async function runFlow(deps: GateDeps, opts: FlowOptions): Promise<GateResult> {
   if (!found || found.version === deps.skipVersion) { hide(); return 'start-app'; }
 
   let version = found.version;
+  /** The hand-over was given up before the installer started: nothing is wrong with the version, so no failure is recorded. */
+  let handoverAbandoned = false;
   let unsubscribe: (() => void) | undefined;
   try {
     // The download starts together with the prompt: the offer is already an explicit statement that an update
@@ -258,9 +270,21 @@ async function runFlow(deps: GateDeps, opts: FlowOptions): Promise<GateResult> {
     handingOver = true;
     show({ kind: 'installing', version });
     try { deps.markAttempt?.(version); } catch { /* the attempt marker is best effort */ }
-    const handedOver = deps.handoff(version, hide);
+    const deadline = new AbortController();
+    const handedOver = deps.handoff(version, hide, deadline.signal);
     handedOver.catch(() => {});
-    if (await within(handedOver, deps.handoffTimeoutMs ?? HANDOFF_TIMEOUT_MS, () => new Error('installer hand-over timed out'))) return 'installing';
+    try {
+      if (await within(handedOver, deps.handoffTimeoutMs ?? HANDOFF_TIMEOUT_MS, () => new HandoverTimeout())) return 'installing';
+    } catch (error) {
+      if (error instanceof HandoverTimeout) {
+        // Slow preparation (the update window runtime) is not a failed installer: if the installer was already started the
+        // update runs on, otherwise the hand-over is abandoned and the downloaded update is kept.
+        if (deps.handoffCommitted?.()) return 'installing';
+        deadline.abort();
+        handoverAbandoned = true;
+      }
+      throw error;
+    }
     throw new Error('installer hand-over failed');
   } catch (error) {
     const beforeHandoff = cancellable;
@@ -277,7 +301,7 @@ async function runFlow(deps: GateDeps, opts: FlowOptions): Promise<GateResult> {
       }
     }
     cancellable = false;
-    try { deps.recordFailure(version); } catch { /* the cooldown is best effort */ }
+    if (!handoverAbandoned) { try { deps.recordFailure(version); } catch { /* the cooldown is best effort */ } }
     show({ kind: 'failed', version });
     await sleep(deps.errorHoldMs ?? ERROR_HOLD_MS);
     hide();

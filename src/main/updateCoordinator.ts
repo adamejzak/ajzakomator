@@ -169,14 +169,20 @@ export class UpdateCoordinator {
       if (found && compareVersions(found.version, this.locked) > 0) this.newer = found.version;
       return;
     }
+    if (found && found.version === this.blocked && this.target === found.version && this.manual) {
+      // The install of this version was refused (macOS): the download page stays offered, it is only never installed.
+      this.settle();
+      return;
+    }
     if (!found || found.version === this.blocked) {
       this.clearTarget();
       this.set({ status: 'current', version: found?.version ?? result.latest, checkedAt: now });
       return;
     }
     const manual = found.manual ?? (this.o.portable() ? {} : undefined);
-    if (found.version !== this.target) this.retarget(found.version, manual);
-    else this.manual = manual;
+    if (this.target === undefined || compareVersions(found.version, this.target) > 0) this.retarget(found.version, manual);
+    // An older answer (a stale copy of the feed on a CDN or proxy) never replaces the target and never starts a second download.
+    else if (found.version === this.target) this.manual = manual;
     this.settle();
   }
 
@@ -299,7 +305,8 @@ export class UpdateCoordinator {
   /** A version that failed to install is never offered again (until unblocked); a copy of it is withdrawn. */
   block(version: string | undefined): void {
     this.blocked = version;
-    if (version && this.target === version && !this.locked) {
+    // An offer that only links to the download page (the install was refused) stays; it can never be installed anyway.
+    if (version && this.target === version && !this.locked && !this.manual) {
       this.clearTarget();
       this.set({ status: 'current', checkedAt: (this.o.now ?? Date.now)() });
     }

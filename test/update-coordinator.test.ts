@@ -190,6 +190,55 @@ describe('UpdateCoordinator state machine', () => {
       expect(h.coordinator.getState()).toMatchObject({ status: 'downloading', version: '0.6.6' });
     });
 
+    it('a stale OLDER answer of the feed never replaces the target, cancels nothing and starts no second download', async () => {
+      const h = harness();
+      h.publish('0.6.6');
+      await h.coordinator.check('background'); await settle();
+      h.downloads[0].finish(); await settle();
+      const notify = vi.fn();
+      h.coordinator.onTargetChange(notify);
+      h.publish('0.6.5');
+      expect(await h.coordinator.check('recheck')).toEqual({ version: '0.6.6' });
+      await settle();
+      expect(h.coordinator.currentTarget()).toBe('0.6.6');
+      expect(h.coordinator.getState()).toMatchObject({ status: 'ready', version: '0.6.6' });
+      expect(h.coordinator.isDownloaded('0.6.6')).toBe(true);
+      expect(h.downloads).toHaveLength(1);
+      expect(notify).not.toHaveBeenCalled();
+      expect(h.coordinator.lockHandover('0.6.6')).toBe(true);
+    });
+
+    it('a stale older answer while the newer one is still downloading keeps that download', async () => {
+      const h = harness();
+      h.publish('0.6.6');
+      await h.coordinator.check('background'); await settle();
+      h.downloads[0].progress(30);
+      h.publish('0.6.5');
+      await h.coordinator.check('background'); await settle();
+      expect(h.downloads[0].signal.aborted).toBe(false);
+      expect(h.downloads).toHaveLength(1);
+      expect(h.coordinator.getState()).toMatchObject({ status: 'downloading', version: '0.6.6', percent: 30 });
+    });
+
+    it('a download page offer (install refused) survives blocking and later looks; a real block still drops a normal target', async () => {
+      const h = harness();
+      h.publish('0.6.5');
+      await h.coordinator.check('background'); await settle();
+      h.downloads[0].finish(); await settle();
+      expect(h.coordinator.lockHandover('0.6.5')).toBe(true);
+      h.coordinator.refuseInstall('0.6.5', 'App Management denied');
+      h.coordinator.block('0.6.5');
+      expect(h.coordinator.getState()).toMatchObject({ status: 'available', version: '0.6.5', portable: true, url: 'https://releases.test', message: 'App Management denied' });
+      await h.coordinator.check('background'); await settle();
+      expect(h.coordinator.getState()).toMatchObject({ status: 'available', portable: true });
+      expect(h.coordinator.lockHandover('0.6.5')).toBe(false);
+      const other = harness();
+      other.publish('0.6.5');
+      await other.coordinator.check('background'); await settle();
+      other.coordinator.block('0.6.5');
+      expect(other.coordinator.getState().status).toBe('current');
+    });
+
     it('a blocked version is not offered; a newer one is', async () => {
       const h = harness();
       h.coordinator.block('0.6.5');

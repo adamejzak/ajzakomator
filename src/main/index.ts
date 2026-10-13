@@ -20,9 +20,9 @@ import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from './sessions';
 import { createSaver, loadState } from './store';
-import { blockUpdateVersion, canInstallNow, checkForUpdates, getUpdateState, handOver, initUpdater, isPortableBuild, isUpdateDownloaded, onUpdateTargetChange, previousMacUpdate, recheckUpdate, signalMacUpdateReady, updateHandoffStarted, updateTarget, RELEASES_URL, startupCheck, startupDownload, updatesEnabled } from './updater';
+import { updateHandoverCommitted, blockUpdateVersion, canInstallNow, checkForUpdates, getUpdateState, handOver, initUpdater, isPortableBuild, isUpdateDownloaded, onUpdateTargetChange, previousMacUpdate, recheckUpdate, signalMacUpdateReady, updateHandoffStarted, updateTarget, RELEASES_URL, startupCheck, startupDownload, updatesEnabled } from './updater';
 import { createUpdateUiGuard } from './updateUiGuard';
-import { compareVersions, isActiveFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
+import { compareVersions, gateSkipVersion, isActiveFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
 import { createGateWindow, type GateTexts } from './gateWindow';
 import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
 import { createUpdaterLogger } from './updaterLog';
@@ -750,9 +750,10 @@ async function runUpdateGate(): Promise<boolean> {
     let handedOver = '';
     const result = await runStartupGate({
       check: startupCheck, recheck: recheckUpdate, download: startupDownload, target: updateTarget, onTargetChange: onUpdateTargetChange, isDownloaded: isUpdateDownloaded,
-      handoff: (next, hide) => { handedOver = next; return handOver(next, hide); },
+      handoff: (next, hide, signal) => { handedOver = next; return handOver(next, hide, signal); }, handoffCommitted: updateHandoverCommitted,
       show: window.show, hide: window.hide, onCancel: window.onCancel, onInstall: window.onInstall,
-      skipVersion: failure?.version,
+      // Only while the failure is recent (after the cooldown the version is offered again).
+      skipVersion: gateSkipVersion(failure, app.getVersion(), Date.now()),
       // The macOS archive is about 140 MB: allow more than the default for the whole download.
       downloadTotalMs: process.platform === 'darwin' ? MAC_GATE_DOWNLOAD_TOTAL_MS : undefined,
       markAttempt: writeGateRecord, recordFailure: recordUpdateFailure,
@@ -800,7 +801,8 @@ function openInstallWindow(): void {
       const keepOpen = process.platform === 'darwin';
       const result = await runInstallWindow({
         check: startupCheck, recheck: recheckUpdate, download: startupDownload, target: updateTarget, onTargetChange: onUpdateTargetChange, isDownloaded: isUpdateDownloaded,
-        handoff: (next, hide) => handOver(next, keepOpen ? () => {} : hide),
+        handoff: (next, hide, signal) => handOver(next, keepOpen ? () => {} : hide, signal), handoffCommitted: updateHandoverCommitted,
+        markAttempt: writeGateRecord,
         show: window.show, hide: window.hide, onCancel: window.onCancel, onInstall: window.onInstall,
         // The failure is shown by the status bar (with a retry); nothing is remembered for the next start.
         recordFailure: () => {},

@@ -25,7 +25,8 @@ const isMac = (): boolean => process.platform === 'darwin';
 
 // ── macOS: our own updater (electron-updater / Squirrel.Mac rejects ad-hoc signed updates and is never touched there) ──
 let mac: MacUpdater | undefined;
-let macOffer: MacOffer | undefined;
+/** Offers by version: a stale (older) answer of the feed must not replace the offer a download is about to use. */
+const macOffers = new Map<string, MacOffer>();
 let macStaged: MacStaged | undefined;
 const macEngine = (): MacUpdater => (mac ??= createMacUpdater(devFeed, (line) => console.log('mac-update:', line)));
 
@@ -34,28 +35,36 @@ const macBackend: UpdateBackend = {
   selfWatched: true,
   async lookup() {
     const { latest, offer } = await macEngine().check();
-    macOffer = offer;
+    if (offer) macOffers.set(offer.version, offer);
     if (!offer) return { latest };
     // An app that cannot replace itself only gets the download page (reported with the reason).
     return { latest, update: { version: offer.version, manual: offer.refusal ? { message: REFUSAL_MESSAGES[offer.refusal] } : undefined } };
   },
   async download(version, onProgress, signal) {
-    const offer = macOffer;
-    if (!offer || offer.refusal || offer.version !== version) throw new Error(MAC_MESSAGES.noAsset);
+    const offer = macOffers.get(version);
+    if (!offer || offer.refusal) throw new Error(MAC_MESSAGES.noAsset);
     macStaged = undefined;
     macStaged = await macEngine().download(offer, onProgress, signal);
   },
 };
 
 // ── Windows (installed and portable): electron-updater, driven explicitly (it never downloads or installs by itself) ──
+/** What electron-updater's last look announced: it downloads exactly that, whatever the coordinator targets. */
+let windowsLooked: string | undefined;
 const windowsBackend: UpdateBackend = {
   async lookup() {
     const result = await autoUpdater.checkForUpdates();
     if (!result) throw new Error('Nie udało się uruchomić sprawdzania aktualizacji.');
     const version: string | undefined = result.updateInfo?.version;
+    windowsLooked = result.isUpdateAvailable ? version : undefined;
     return result.isUpdateAvailable && version ? { latest: version, update: { version } } : { latest: version };
   },
-  async download(_version, onProgress, signal) {
+  async download(version, onProgress, signal) {
+    // A later (stale, older) look replaced what electron-updater would download: look again and only go on for the target.
+    if (windowsLooked !== version) {
+      await this.lookup();
+      if (windowsLooked !== version) throw new Error('Nie udało się sprawdzić aktualizacji.');
+    }
     const token = new CancellationToken();
     const cancel = () => token.cancel();
     if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, { once: true });
@@ -74,7 +83,7 @@ const coordinator = new UpdateCoordinator({
   },
   emit: (state) => {
     // The private runtime of the update window is copied while the download runs, not after it (saves the copy time at hand-over).
-    if (!isMac() && !portable && getStrings && (state.status === 'downloading' || state.status === 'ready')) void stageSplashRuntime();
+    if (!isMac() && !portable && getStrings && (state.status === 'available' || state.status === 'downloading' || state.status === 'ready')) void stageSplashRuntime();
     emit(state);
   },
   portable: () => portable,
@@ -140,7 +149,8 @@ function wireElectronUpdater(): void {
   // Lookups and downloads report their failures through their promises; an error event is only news while the installer
   // is being started (it can fail after `install()` returned).
   autoUpdater.on('error', (error) => {
-    if (coordinator.handoverVersion()) coordinator.failHandover(error);
+    // A failed look (also one still running when the hand-over began) emits this event too; it says nothing about the installer.
+    if (handoverCommitted && coordinator.handoverVersion()) failInstall(error);
     else console.error('auto-update error event', error);
   });
 }
@@ -183,6 +193,10 @@ export async function startupDownload(onProgress: (percent: number) => void): Pr
   finally { off(); }
 }
 
+/** True once the installer is being started (or, on macOS, the swap script): the hand-over can no longer be abandoned. */
+let handoverCommitted = false;
+export const updateHandoverCommitted = (): boolean => handoverCommitted;
+
 /** Whether an installer has been started in this run (and has not failed to start). */
 export const updateHandoffStarted = (): boolean => coordinator.handoverVersion() !== undefined;
 
@@ -197,17 +211,28 @@ async function showWindow(version: string): Promise<boolean> {
  * Starts the detached installing window and the installer for the downloaded update `version`. `hide` closes the
  * in-app update window once the installing window is visible. False means nothing was handed over (the state already
  * says why). From the moment the lock is taken the version cannot change any more: a newer release is only remembered.
+ *
+ * `signal` is the caller's deadline: when it aborts before the installer was started (the slow part is preparing the
+ * update window), the hand-over is given up (lock released, status error, the downloaded update kept). From the moment
+ * the installer is being started (`updateHandoverCommitted`) the deadline no longer applies: it will run and quit the app.
  */
-export async function handOver(version: string, hide: () => void): Promise<boolean> {
+export async function handOver(version: string, hide: () => void, signal?: AbortSignal): Promise<boolean> {
   if (portable || !coordinator.lockHandover(version)) return false;
+  handoverCommitted = false;
+  const giveUp = (): boolean => { coordinator.failHandover(new Error('Nie udało się zainstalować aktualizacji.')); return false; };
   if (isMac()) {
-    if (!(await macInstallStaged(version))) return false;
+    if (signal?.aborted) return giveUp();
+    handoverCommitted = true;
+    if (!(await macInstallStaged(version))) { handoverCommitted = false; return false; }
     hide();
     macQuit();
     return true;
   }
   const shown = await showWindow(version);
+  if (signal?.aborted) { if (shown) void abortUpdateWindow(); return giveUp(); }
   hide();
+  // From here on the installer is started in the same tick: nothing can cancel it any more.
+  handoverCommitted = true;
   // install() reports whether the installer started; quitAndInstall would silently do nothing when it did not.
   try {
     const installed = (autoUpdater as unknown as { install(silent: boolean, relaunch: boolean): boolean }).install(true, true);
@@ -220,6 +245,7 @@ export async function handOver(version: string, hide: () => void): Promise<boole
 
 /** electron-updater refuses a second install() after one was attempted; a failed attempt must not make every retry fail. */
 function failInstall(error: unknown): void {
+  handoverCommitted = false;
   coordinator.failHandover(error);
   try { (autoUpdater as unknown as { quitAndInstallCalled?: boolean }).quitAndInstallCalled = false; } catch { /* only a retry is affected */ }
 }
@@ -241,7 +267,7 @@ async function macInstallStaged(version: string): Promise<boolean> {
 
 /** The script waits for this process; the normal quit path winds the terminals down (and exits within its hard limit). */
 function macQuit(): void {
-  const timer = setTimeout(() => coordinator.failHandover(new Error(MAC_MESSAGES.quitTimeout)), MAC_QUIT_WATCHDOG_MS);
+  const timer = setTimeout(() => { handoverCommitted = false; coordinator.failHandover(new Error(MAC_MESSAGES.quitTimeout)); }, MAC_QUIT_WATCHDOG_MS);
   timer.unref?.();
   app.quit();
 }

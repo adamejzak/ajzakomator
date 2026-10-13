@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FAILURE_COOLDOWN_MS, compareVersions, isActiveFailure, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup,
+  FAILURE_COOLDOWN_MS, compareVersions, gateSkipVersion, isActiveFailure, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup,
   type GateDeps, type GateEnv, type GateView,
 } from '../src/main/startupGate';
 
@@ -142,7 +142,7 @@ describe('runStartupGate', () => {
     const { deps, views } = make({ check: vi.fn(async () => ({ version: '2.0.0' })) });
     expect(await runStartupGate(deps)).toBe('installing');
     expect(views).toEqual([{ kind: 'ask', version: '2.0.0' }, { kind: 'installing', version: '2.0.0' }]);
-    expect(deps.handoff).toHaveBeenCalledWith('2.0.0', expect.any(Function));
+    expect(deps.handoff).toHaveBeenCalledWith('2.0.0', expect.any(Function), expect.any(AbortSignal));
     expect(deps.hide).toHaveBeenCalledTimes(1);
     expect(deps.recordFailure).not.toHaveBeenCalled();
   });
@@ -206,12 +206,12 @@ describe('runStartupGate', () => {
     expect(deps.recordFailure).not.toHaveBeenCalled();
   });
 
-  it('starts the app and records a failure when the hand-over never answers', async () => {
+  it('starts the app when the hand-over never answers and nothing says the installer started (abandoned, no failure record)', async () => {
     const { deps } = make({ check: vi.fn(async () => ({ version: '2.0.0' })), handoff: vi.fn(() => new Promise<boolean>(() => {})) });
     const result = runStartupGate(deps);
     await vi.advanceTimersByTimeAsync(20_000 + 2500);
     expect(await result).toBe('start-app');
-    expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
+    expect(deps.recordFailure).not.toHaveBeenCalled();
   });
 
   it('starts the app when the hand-over throws or reports that nothing was handed over', async () => {
@@ -312,6 +312,52 @@ describe('runStartupGate', () => {
     expect(await runStartupGate(deps)).toBe('installing');
   });
 
+  describe('a slow hand-over', () => {
+    it('is abandoned through the signal when the installer was not started in time, without recording a failure', async () => {
+      let signal!: AbortSignal;
+      const { deps, views } = make({
+        check: vi.fn(async () => ({ version: '2.0.0' })),
+        handoff: vi.fn((_v: string, _hide: () => void, s?: AbortSignal) => { signal = s!; return new Promise<boolean>(() => {}); }),
+        handoffCommitted: () => false,
+        handoffTimeoutMs: 1000,
+      });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await result).toBe('start-app');
+      expect(signal.aborted).toBe(true);
+      expect(deps.recordFailure).not.toHaveBeenCalled();
+      expect(views.some((v) => v.kind === 'failed')).toBe(true);
+    });
+    it('counts as installing when the installer was already started at the deadline (no failure, the app is about to quit)', async () => {
+      const { deps } = make({
+        check: vi.fn(async () => ({ version: '2.0.0' })),
+        handoff: vi.fn(() => new Promise<boolean>(() => {})),
+        handoffCommitted: () => true,
+        handoffTimeoutMs: 1000,
+      });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await result).toBe('installing');
+      expect(deps.recordFailure).not.toHaveBeenCalled();
+    });
+    it('still records a failure when the hand-over itself reports failure', async () => {
+      const { deps } = make({ check: vi.fn(async () => ({ version: '2.0.0' })), handoff: vi.fn(async () => false), handoffCommitted: () => false });
+      const result = runStartupGate(deps);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await result).toBe('start-app');
+      expect(deps.recordFailure).toHaveBeenCalledWith('2.0.0');
+    });
+  });
+
+  it('skips a failed version only while the failure is recent', () => {
+    const failure = { version: '0.6.6', at: 1000 };
+    expect(gateSkipVersion(failure, '0.6.5', 2000)).toBe('0.6.6');
+    expect(gateSkipVersion(failure, '0.6.5', 1000 + FAILURE_COOLDOWN_MS)).toBeUndefined();
+    expect(gateSkipVersion(failure, '0.6.6', 2000)).toBeUndefined();
+    expect(gateSkipVersion(undefined, '0.6.5', 2000)).toBeUndefined();
+  });
+
   describe('ask mode', () => {
     const asking = (over: Partial<GateDeps> = {}) => {
       let install!: () => void; let cancel!: () => void;
@@ -379,7 +425,7 @@ describe('runStartupGate', () => {
         { kind: 'installing', version: '2.0.0' },
       ]);
       expect(deps.download).toHaveBeenCalledTimes(1);
-      expect(deps.handoff).toHaveBeenCalledWith('2.0.0', expect.any(Function));
+      expect(deps.handoff).toHaveBeenCalledWith('2.0.0', expect.any(Function), expect.any(AbortSignal));
       expect(deps.recordFailure).not.toHaveBeenCalled();
     });
 

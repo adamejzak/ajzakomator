@@ -167,6 +167,25 @@ describe('macOS updater state machine', () => {
       expect(api.updateHandoffStarted()).toBe(false);
       expect(api.canInstallNow()).toBe(false);
     });
+    it('keeps the download page offer when the gate records the refused install as a failure (block)', async () => {
+      const api = await ready();
+      mock.engine.install.mockResolvedValueOnce({ ok: false, refusal: 'app-management' });
+      expect(await api.handOver('0.7.0', vi.fn())).toBe(false);
+      api.blockUpdateVersion('0.7.0');
+      expect(api.getUpdateState()).toMatchObject({ status: 'available', version: '0.7.0', portable: true, url: api.RELEASES_URL, message: REFUSAL_MESSAGES['app-management'] });
+      await api.checkForUpdates(); await settle();
+      expect(api.getUpdateState()).toMatchObject({ status: 'available', portable: true });
+      expect(await api.handOver('0.7.0', vi.fn())).toBe(false);
+    });
+    it('abandons the hand-over when the deadline passed before the script was started, and does not touch electron-updater', async () => {
+      const api = await ready();
+      const deadline = new AbortController(); deadline.abort();
+      expect(await api.handOver('0.7.0', vi.fn(), deadline.signal)).toBe(false);
+      expect(mock.engine.install).not.toHaveBeenCalled();
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', version: '0.7.0' });
+      expect(api.updateHandoverCommitted()).toBe(false);
+      expect(mock.autoUpdaterTouched).not.toHaveBeenCalled();
+    });
     it('installs nothing unless an update is ready, and never another version than the target', async () => {
       const api = await setup();
       expect(await api.handOver('0.7.0', vi.fn())).toBe(false);
