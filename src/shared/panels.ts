@@ -4,7 +4,10 @@ export const PANEL_LIMITS = {
 } as const;
 
 export type Panel = keyof typeof PANEL_LIMITS;
-export const COLLAPSED_SIDEBAR_WIDTH = 48;
+/** The tile rail at the left edge of the sidebar; the panel's own width (PANEL_LIMITS.sidebar) comes on top of it. */
+export const RAIL_WIDTH = 48;
+/** Collapsed sidebar: the rail alone. */
+export const COLLAPSED_SIDEBAR_WIDTH = RAIL_WIDTH;
 export const MIN_WORKSPACE_WIDTH = 320;
 
 export function normalizePanelWidth(value: unknown, panel: Panel): number {
@@ -14,13 +17,16 @@ export function normalizePanelWidth(value: unknown, panel: Panel): number {
     : limits.default;
 }
 
-/** Fit saved preferences to the window without overwriting them when the window shrinks. */
+/**
+ * Fit saved preferences to the window without overwriting them when the window shrinks. `sidebar` goes in as the width of the
+ * panel content and comes out as the width of the whole sidebar (rail included).
+ */
 export function fitPanelWidths(
   available: number, sidebar: number, snippets: number, collapsed: boolean, snippetsOpen: boolean,
 ): { sidebar: number; snippets: number } {
-  const left = collapsed ? COLLAPSED_SIDEBAR_WIDTH : normalizePanelWidth(sidebar, 'sidebar');
+  const left = collapsed ? COLLAPSED_SIDEBAR_WIDTH : RAIL_WIDTH + normalizePanelWidth(sidebar, 'sidebar');
   const right = snippetsOpen ? normalizePanelWidth(snippets, 'snippets') : 0;
-  const leftMin = collapsed ? COLLAPSED_SIDEBAR_WIDTH : PANEL_LIMITS.sidebar.min;
+  const leftMin = collapsed ? COLLAPSED_SIDEBAR_WIDTH : RAIL_WIDTH + PANEL_LIMITS.sidebar.min;
   const rightMin = snippetsOpen ? PANEL_LIMITS.snippets.min : 0;
   const budget = Math.max(leftMin + rightMin, available - MIN_WORKSPACE_WIDTH);
   const excess = Math.max(0, left + right - budget);

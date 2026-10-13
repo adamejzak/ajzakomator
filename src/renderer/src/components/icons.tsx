@@ -55,6 +55,12 @@ export const TPlus = () => <T><path d="M12 5v14M5 12h14" /></T>;
 export const THistory = () => (
   <T><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></T>
 );
+export const TProjects = () => (
+  <T><path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z" /><path d="M2 8v11a2 2 0 0 0 2 2h14" /></T>
+);
+export const TFiles = () => (
+  <T><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M8 13h8M8 17h5" /></T>
+);
 export const TSnippet = () => <T><path d="m16 18 6-6-6-6" /><path d="m8 6-6 6 6 6" /></T>;
 export const TSidebar = () => <T><rect width="18" height="18" x="3" y="3" rx="2.5" /><path d="M9 3v18" /></T>;
 export const TSettings = () => (

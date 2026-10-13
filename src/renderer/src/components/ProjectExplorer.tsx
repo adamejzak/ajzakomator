@@ -10,8 +10,10 @@ import { ProjectIconView } from './ProjectIcon';
 import { fullProjectPath as projectPath } from '../../../shared/platform';
 import { baseName, parentPath, renameSelectionEnd, summarizeNames, topLevelPaths, validateEntryName } from '../../../shared/fileOps';
 import { keyLabel } from '../platform';
+import { buildPathPayload, PATH_MIME } from '../../../shared/pathDrop';
+import { addTreePathsToFocusedCell, focusedCellId } from '../pathDrop';
 import {
-  bumpRefresh, cancelBusy, copyToClipboard, createEntry, duplicateEntries, expandedSet, pasteInto, rememberKinds, renameEntry,
+  bumpRefresh, cancelBusy, copyToClipboard, createEntry, duplicateEntries, expandedSet, kindOf, pasteInto, rememberKinds, renameEntry,
   selectPaths, selectedPaths, setExpanded, targetDirectory, toggleFolder, transferEntries, trashEntries, undoLast, useExplorer,
 } from '../explorer';
 
@@ -274,6 +276,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
         ]),
         { sep: true },
         ...(multi ? [] : [{ label: tr("Zmień nazwę"), hint: 'F2', onClick: () => startRename(entry.path) }]),
+        { label: tr("Dodaj do rozmowy"), disabled: !focusedCellId(), onClick: () => addTreePathsToFocusedCell(project.id, targets) },
         { label: tr("Duplikuj"), onClick: () => void duplicateEntries(project.id, targets) },
         { label: tr("Wytnij"), hint: keyLabel('Ctrl+X'), onClick: () => copyToClipboard(project.id, targets, 'cut') },
         { label: tr("Kopiuj"), hint: keyLabel('Ctrl+C'), onClick: () => copyToClipboard(project.id, targets, 'copy') },
@@ -293,6 +296,8 @@ export function ProjectExplorer({ project }: { project: Project }) {
       dragging = { projectId: project.id, paths };
       e.dataTransfer.setData(TREE_MIME, JSON.stringify(dragging));
       e.dataTransfer.setData('text/plain', paths.map((p) => fullProjectPath(project.path, p)).join('\n'));
+      // For cells: identifiers only, the receiver rebuilds and checks the paths (see shared/pathDrop.ts).
+      e.dataTransfer.setData(PATH_MIME, buildPathPayload(project.id, project.path, paths.map((p) => ({ relPath: p, kind: kindOf(project.id, p) })), window.mc.platform));
       e.dataTransfer.effectAllowed = 'copyMove';
     },
     dragOver: (e, entry) => {

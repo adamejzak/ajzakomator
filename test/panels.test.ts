@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fitPanelWidths, normalizePanelWidth, PANEL_LIMITS } from '../src/shared/panels';
+import { fitPanelWidths, normalizePanelWidth, PANEL_LIMITS, RAIL_WIDTH } from '../src/shared/panels';
 import { defaultState, normalizeState } from '../src/shared/state';
 
 describe('side panel widths', () => {
@@ -12,24 +12,33 @@ describe('side panel widths', () => {
   });
 
   it('preserves both preferences in a large window', () => {
-    expect(fitPanelWidths(1600, 400, 500, false, true)).toEqual({ sidebar: 400, snippets: 500 });
+    // The sidebar comes out as rail + content width.
+    expect(fitPanelWidths(1600, 400, 500, false, true)).toEqual({ sidebar: RAIL_WIDTH + 400, snippets: 500 });
   });
 
   it('keeps the workspace usable when both panels are wide', () => {
     const widths = fitPanelWidths(800, 480, 520, false, true);
-    expect(widths.sidebar).toBeGreaterThanOrEqual(200);
+    expect(widths.sidebar).toBeGreaterThanOrEqual(RAIL_WIDTH + 200);
     expect(widths.snippets).toBeGreaterThanOrEqual(220);
     expect(800 - widths.sidebar - widths.snippets).toBeGreaterThanOrEqual(320);
-    expect(fitPanelWidths(1600, 480, 520, false, true)).toEqual({ sidebar: 480, snippets: 520 });
+    expect(fitPanelWidths(1600, 480, 520, false, true)).toEqual({ sidebar: RAIL_WIDTH + 480, snippets: 520 });
   });
 
   it('accounts for hidden snippets and the collapsed project rail', () => {
-    expect(fitPanelWidths(800, 480, 520, true, true)).toEqual({ sidebar: 48, snippets: 432 });
-    expect(fitPanelWidths(800, 480, 520, false, false)).toEqual({ sidebar: 480, snippets: 0 });
+    expect(fitPanelWidths(800, 480, 520, true, true)).toEqual({ sidebar: RAIL_WIDTH, snippets: 432 });
+    expect(fitPanelWidths(800, 480, 520, false, false)).toEqual({ sidebar: 480, snippets: 0 }); // squeezed to leave the workspace its minimum
+    expect(fitPanelWidths(1600, 480, 520, false, false)).toEqual({ sidebar: RAIL_WIDTH + 480, snippets: 0 });
   });
 
   it('does not lose a workspace pixel when both fitted widths round up', () => {
     const widths = fitPanelWidths(801, 260, 280, false, true);
     expect(801 - widths.sidebar - widths.snippets).toBeGreaterThanOrEqual(320);
+  });
+
+  it('keeps the workspace usable at the minimum window width with the rail and both panels open', () => {
+    const widths = fitPanelWidths(800, 228, 280, false, true);
+    expect(widths.sidebar).toBeGreaterThanOrEqual(RAIL_WIDTH + PANEL_LIMITS.sidebar.min);
+    expect(800 - widths.sidebar - widths.snippets).toBeGreaterThanOrEqual(320);
+    expect(fitPanelWidths(800, 228, 280, true, false)).toEqual({ sidebar: RAIL_WIDTH, snippets: 0 });
   });
 });

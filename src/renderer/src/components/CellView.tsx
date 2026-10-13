@@ -11,6 +11,8 @@ import type { Cell } from '../../../shared/types';
 import {
   changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, setCellColor, toggleMaximize,
 } from '../actions';
+import { PATH_MIME } from '../../../shared/pathDrop';
+import { addPathsToCell, cellRefusesPaths, readDroppedPaths } from '../pathDrop';
 import { setUi, toast, update, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { openMenu, openMenuAt, type MenuItem } from './ContextMenu';
@@ -43,6 +45,8 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const lackingCli = missingCardCli(profile, cliStatus, held);
   const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
   const [drop, setDrop] = useState(false);
+  /** A file or folder from the Files tree is over the cell (blocked: the cell is not running and would refuse it). */
+  const [pathDrop, setPathDrop] = useState<{ blocked: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
   const [floodHint, setFloodHint] = useState(false);
 
@@ -110,14 +114,34 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       onMouseDownCapture={markFocused}
       onFocusCapture={markFocused}
       onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(PATH_MIME)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          const blocked = cellRefusesPaths(cell.id);
+          if (pathDrop?.blocked !== blocked) setPathDrop({ blocked });
+          return;
+        }
         if (!e.dataTransfer.types.includes(SNIPPET_MIME)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         setDrop(true);
       }}
-      onDragLeave={() => setDrop(false)}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setDrop(false);
+        setPathDrop(null);
+      }}
       onDrop={(e) => {
         setDrop(false);
+        setPathDrop(null);
+        const paths = e.dataTransfer.types.includes(PATH_MIME) ? e.dataTransfer.getData(PATH_MIME) : '';
+        if (paths) {
+          e.preventDefault();
+          const parsed = readDroppedPaths(paths);
+          if (parsed) addPathsToCell(cell.id, parsed.items, parsed.rejected);
+          else toast(tr('Nie udało się dodać ścieżki.'), 'error');
+          return;
+        }
         const raw = e.dataTransfer.getData(SNIPPET_MIME);
         if (!raw) return;
         e.preventDefault();
@@ -196,6 +220,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         </span>
       </div>
       <div className="cell-body" ref={bodyRef} style={lackingCli ? { visibility: 'hidden' } : undefined} />
+      {pathDrop && <div className={`cell-path-drop ${pathDrop.blocked ? 'blocked' : ''}`} role="status">{pathDrop.blocked ? tr('Komórka nie jest uruchomiona') : tr('Upuść, aby dodać ścieżkę')}</div>}
       {lackingCli && <CliMissingCard cli={lackingCli} cellId={cell.id} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
       {floodHint && !error && (
         <div className="cell-hint" role="status">

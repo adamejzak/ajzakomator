@@ -45,7 +45,8 @@ export interface Ui {
   sessionTitles: Record<string, string>;
   /** Bumped when every terminal must be (re)started, e.g. after a pty host crash. */
   epoch: number;
-  sidebarView: 'projects' | 'files';
+  /** Id of the panel chosen in the left rail (see panelRegistry.tsx); an unknown or unavailable id shows the default panel. */
+  sidebarView: string;
   automationOpen: boolean;
   settingsTabOpen: boolean;
   settingsActive: boolean;

@@ -1,6 +1,6 @@
 import { tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
+import { fitPanelWidths, MIN_WORKSPACE_WIDTH, RAIL_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { isAuxPtyId } from '../../shared/cliInstall';
 import { alertForStatus } from './alerts';
@@ -185,8 +185,11 @@ export function App() {
   const widths = fitPanelWidths(available, live.sidebar ?? sidebarWidth, live.snippets ?? snippetsWidth, collapsed, snippetsOpen);
   const resizeProps = (panel: Panel) => ({
     panel,
-    width: widths[panel],
-    maxWidth: available - MIN_WORKSPACE_WIDTH - widths[panel === 'sidebar' ? 'snippets' : 'sidebar'],
+    // The sidebar handle sizes the panel content; the rail in front of it is not part of that width.
+    width: panel === 'sidebar' ? widths.sidebar - RAIL_WIDTH : widths.snippets,
+    maxWidth: panel === 'sidebar'
+      ? available - MIN_WORKSPACE_WIDTH - widths.snippets - RAIL_WIDTH
+      : available - MIN_WORKSPACE_WIDTH - widths.sidebar,
     onResize: (width: number) => setLive((current) => ({ ...current, [panel]: width })),
     onFinish: (width: number | null) => {
       if (width !== null) update((s) => ({ ...s, [panel === 'sidebar' ? 'sidebarWidth' : 'snippetsWidth']: width }));

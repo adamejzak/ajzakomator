@@ -302,6 +302,7 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       messages: Array.isArray(r.automation?.messages) ? r.automation.messages : [],
       events: Array.isArray(r.automation?.events) ? r.automation.events.slice(-200) : [],
     },
+    sidebarCollapsed: r.sidebarCollapsed === true,
     sidebarWidth: normalizePanelWidth(r.sidebarWidth, 'sidebar'),
     snippetsWidth: normalizePanelWidth(r.snippetsWidth, 'snippets'),
     profiles: profiles.length ? profiles : d.profiles,

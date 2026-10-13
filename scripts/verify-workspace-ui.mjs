@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, project, screenshot }) {
+  // The rail tile of the open panel collapses it, so only click when Files is not the shown panel yet.
+  const openFilesPanel = async () => { if (!(await evaluate("document.querySelector('#files-view')?.getAttribute('aria-selected') === 'true'"))) await click('#files-view'); };
   const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
   assert.equal(await evaluate('document.querySelectorAll(".titlebar .tab").length'), 0);
   assert.equal(await evaluate('document.querySelectorAll(".workspace-tabs .tab").length >= 2'), true);
@@ -60,7 +62,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 500, y: 200 });
   await until(() => evaluate('!document.documentElement.classList.contains("panel-resizing") && !document.querySelector(".panel-resize.dragging")'), 'resize cleanup');
   assert.equal(await evaluate('getComputedStyle(document.querySelector(".panel-resize"), "::after").backgroundColor'), 'rgb(168, 162, 158)');
-  await click('#files-view');
+  await openFilesPanel();
   await until(() => evaluate('!!document.querySelector(".file-entry[title=src]")'), 'file tree');
   if (!await evaluate('!!document.querySelector(".file-entry[title=" + JSON.stringify("src/catalog.mjs") + "]")')) await click('.file-entry[title=src]');
   await until(() => evaluate('!!document.querySelector(".file-entry[title=" + JSON.stringify("src/catalog.mjs") + "]")'), 'expanded source tree');
@@ -166,7 +168,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await click('.modal-foot button', 'Discard');
   await until(() => evaluate('!document.querySelector(".file-tab")'), 'file close returns to grid');
   assert.equal(await evaluate('document.querySelector(".terminal-workspace").style.display'), 'flex');
-  await click('#files-view');
+  await openFilesPanel();
   await until(() => evaluate(`!!document.querySelector('.file-entry[title="README.md"]')`), 'Markdown file in project explorer');
   await click('.file-entry[title="README.md"]');
   await until(() => evaluate('!!document.querySelector(".markdown-preview")'), 'Markdown opens in preview by default');
