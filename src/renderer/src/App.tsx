@@ -1,15 +1,16 @@
 import { tr, useI18n } from './i18n';
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { isAuxPtyId } from '../../shared/cliInstall';
 import { alertForStatus } from './alerts';
 import { initBackgroundLoader } from './backgroundLoader';
-import { applyCliStatus, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
+import { applyCliStatus, flushPendingSaves, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
 import { GridView } from './components/GridView';
 import { LanguageSetup } from './components/LanguageSetup';
+import { LazyScreen } from './components/LazyScreen';
 import { Modals } from './components/Modals';
 import { Sidebar } from './components/Sidebar';
 import { SnippetPanel } from './components/SnippetPanel';
@@ -19,9 +20,9 @@ import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
 import { statusLog, terminals } from './terminals/TerminalManager';
 // Rarely used screens load on demand: the editor alone (CodeMirror, language packs, Markdown preview) is about a third of the bundle.
-const AutomationPanel = lazy(() => import('./components/AutomationPanel').then((m) => ({ default: m.AutomationPanel })));
-const FileEditor = lazy(() => import('./components/FileEditor').then((m) => ({ default: m.FileEditor })));
-const SettingsPage = lazy(() => import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const loadAutomationPanel = () => import('./components/AutomationPanel').then((m) => ({ default: m.AutomationPanel }));
+const loadFileEditor = () => import('./components/FileEditor').then((m) => ({ default: m.FileEditor }));
+const loadSettingsPage = () => import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage }));
 import { useFileStore } from './files';
 
 let booted = false;
@@ -30,12 +31,17 @@ async function boot(): Promise<void> {
   if (booted) return;
   booted = true;
   terminals.setWindowsBuild(window.mc.windowsBuild);
-  window.mc.on('state:changed', (change) => {
-    const previous = getS().projects.flatMap((p) => p.tabs.flatMap((t) => t.cells));
-    const releaseGone = () => { for (const cell of previous) if (!findCell(getS(), cell.id)) releaseCellTerminal(cell.id); };
-    if (useStore.getState().applyChange(change)) releaseGone();
-    else void useStore.getState().resync().then(releaseGone); // a change that does not follow ours: take the full state
+  window.mc.on('state:changed', (change) => useStore.getState().applyChange(change));
+  // A cell that disappears from the state (closed by main, MCP, a resync) loses its terminal, whichever way the state arrived.
+  useStore.subscribe((st, prev) => {
+    if (st.s.projects === prev.s.projects) return;
+    const alive = new Set(st.s.projects.flatMap((p) => p.tabs.flatMap((t) => t.cells.map((c) => c.id))));
+    for (const p of prev.s.projects) for (const t of p.tabs) for (const c of t.cells) if (!alive.has(c.id)) releaseCellTerminal(c.id);
   });
+  // Debounced edits (the font size of a wheel gesture) are sent before the window goes away or is reloaded.
+  window.mc.on('app:before-quit', flushPendingSaves);
+  window.addEventListener('beforeunload', flushPendingSaves);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushPendingSaves(); });
   window.mc.on('automation:start-cells', (ids) => ids.forEach(ensureStarted));
   // Listening first: the startup scan may finish before the first answer arrives.
   window.mc.on('cli:changed', applyCliStatus);
@@ -196,10 +202,10 @@ export function App() {
           <WorkspaceTabs />
           <div className="workspace-content">
             <div className="terminal-workspace" style={{ display: fileOpen || settingsActive ? 'none' : 'flex' }}><GridView /></div>
-            {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><Suspense fallback={null}><SettingsPage /></Suspense></div>}
-            {!settingsActive && fileOpen && <Suspense fallback={null}><FileEditor /></Suspense>}
+            {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><LazyScreen load={loadSettingsPage} /></div>}
+            {!settingsActive && fileOpen && <LazyScreen load={loadFileEditor} />}
           </div>
-          {automationOpen && <Suspense fallback={null}><AutomationPanel /></Suspense>}
+          {automationOpen && <LazyScreen load={loadAutomationPanel} />}
         </div>
         {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
       </div>

@@ -2,9 +2,9 @@ import { create } from 'zustand';
 import { defaultState } from '../../shared/state';
 import type { CellStatus } from '../../shared/status';
 import type { AppState } from '../../shared/types';
-import { OptimisticState } from '../../shared/optimisticState';
 import type { StateSnapshot } from '../../shared/stateEdits';
-import { pruneEdit, type StateChange } from '../../shared/statePatch';
+import type { StateChange } from '../../shared/statePatch';
+import { StateSync } from '../../shared/stateSync';
 import type { McpInfo } from '../../shared/automation';
 import type { LoginTarget } from '../../shared/accounts';
 import type { CliId, CliStatusMap } from '../../shared/cliStatus';
@@ -57,7 +57,7 @@ export interface Ui {
   /** Cells whose start was skipped because their CLI is not installed (they show the install card and start by themselves once it is found). */
   heldCells: Record<string, true>;
   /** Progress of the background loader while it still has cells to start (null otherwise). */
-  backgroundLoad: { done: number; total: number } | null;
+  backgroundLoad: { done: number; total: number; capped: boolean } | null;
 }
 
 interface Store {
@@ -67,14 +67,18 @@ interface Store {
   update(fn: (s: AppState) => AppState): void;
   setUi(patch: Partial<Ui> | ((ui: Ui) => Partial<Ui>)): void;
   init(snapshot: StateSnapshot): void;
-  sync(snapshot: StateSnapshot): void;
-  /** Applies main's change (a patch); false when it does not follow the state we have (call `resync`). */
-  applyChange(change: StateChange): boolean;
+  /** Main's change (a patch): applied, or kept while a full state is being fetched; a change that does not follow ours starts that fetch. */
+  applyChange(change: StateChange): void;
   /** Fetches the full state of main again. */
   resync(): Promise<void>;
 }
 
-const optimistic = new OptimisticState({ state: defaultState(window.mc.platform), revision: -1 });
+const sync = new StateSync({ state: defaultState(window.mc.platform), revision: -1 }, {
+  transport: { applyEdit: (edit) => window.mc.applyStateEdit(edit), loadSnapshot: () => window.mc.loadSnapshot() },
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  onState: (s) => useStore.setState({ s }),
+  onError: (error) => toast(String(error), 'error'),
+});
 
 export const useStore = create<Store>((set, get) => ({
   s: defaultState(window.mc.platform),
@@ -107,31 +111,18 @@ export const useStore = create<Store>((set, get) => ({
     const next = fn(base);
     if (next === base) return;
     const edit = { id: crypto.randomUUID(), base, next };
-    optimistic.stage(edit);
     set({ s: next });
     // Only what changed goes over the wire; the new state comes back as the patch of `state:changed`, the answer just acknowledges.
-    void window.mc.applyStateEdit(pruneEdit(edit)).then(() => {
-      // The patch normally arrived before this answer. If our edit is still waiting after a grace period, the patch was lost: look again.
-      setTimeout(() => { if (optimistic.isPending(edit.id)) void get().resync(); }, 1500);
-    }).catch((error) => {
-      set({ s: optimistic.reject(edit.id) });
-      toast(String(error), 'error');
-    });
+    sync.submit(edit);
   },
   setUi(patch) {
     set((st) => ({ ui: { ...st.ui, ...(typeof patch === 'function' ? patch(st.ui) : patch) } }));
   },
   init(snapshot) {
-    set({ s: optimistic.accept(snapshot), ready: true });
+    set({ s: sync.init(snapshot), ready: true });
   },
-  sync(snapshot) { set({ s: optimistic.accept(snapshot) }); },
-  applyChange(change) {
-    const next = optimistic.acceptChange(change);
-    if (!next) return false;
-    set({ s: next });
-    return true;
-  },
-  async resync() { get().sync(await window.mc.loadSnapshot()); },
+  applyChange(change) { sync.receive(change); },
+  resync() { return sync.resync(); },
 }));
 
 export const getS = () => useStore.getState().s;

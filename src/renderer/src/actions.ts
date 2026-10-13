@@ -2,7 +2,8 @@ import { tr } from './i18n';
 // High-level user actions: they combine state transitions with pty/terminal side effects.
 import type { GridLayout } from '../../shared/layout';
 import { normalizeProjectPath } from '../../shared/platform';
-import { areaRects, layoutForCount } from '../../shared/layout';
+import { layoutForCount } from '../../shared/layout';
+import { cellBodyBox, chooseGridSize, type Size } from '../../shared/cellBox';
 import {
   activeProject, activeTab, addCell, addProject, addTab, closeTab as closeTabState, findCell, getProfile,
   removeCell as removeCellState, removeProject as removeProjectState, restoreTab, setActiveProject, setActiveTab,
@@ -45,13 +46,22 @@ const basename = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ||
 // ── cells ───────────────────────────────────────────────────────────────────
 
 /** Ctrl+wheel resizes the font on every notch; the saved value follows once the wheel rests (one edit instead of dozens). */
-const fontSizeTimers = new Map<string, number>();
+const fontSizeSaves = new Map<string, { timer: number; size: number }>();
 function saveFontSize(cellId: string, size: number): void {
-  window.clearTimeout(fontSizeTimers.get(cellId));
-  fontSizeTimers.set(cellId, window.setTimeout(() => {
-    fontSizeTimers.delete(cellId);
-    update((s) => updateCell(s, cellId, { fontSize: size }));
-  }, 250));
+  const earlier = fontSizeSaves.get(cellId);
+  if (earlier) window.clearTimeout(earlier.timer);
+  fontSizeSaves.set(cellId, { size, timer: window.setTimeout(() => commitFontSize(cellId), 250) });
+}
+function commitFontSize(cellId: string): void {
+  const save = fontSizeSaves.get(cellId);
+  if (!save) return;
+  window.clearTimeout(save.timer);
+  fontSizeSaves.delete(cellId);
+  update((s) => updateCell(s, cellId, { fontSize: save.size }));
+}
+/** Sends debounced edits now (window hidden, reload, app quitting), so the last wheel notch is not lost. */
+export function flushPendingSaves(): void {
+  for (const cellId of [...fontSizeSaves.keys()]) commitFontSize(cellId);
 }
 
 export function ensureTerminal(cellId: string): void {
@@ -77,6 +87,7 @@ export const isStarted = (cellId: string): boolean => started.has(cellId);
 function startOnce(cellId: string, beforeSpawn?: (cellId: string) => void): Promise<void> {
   if (started.has(cellId)) return Promise.resolve();
   started.add(cellId);
+  startListeners.forEach((l) => l());
   ensureTerminal(cellId);
   // pty survived a renderer reload; its output is replayed
   if (aliveAtStart.delete(cellId)) {
@@ -100,28 +111,37 @@ export const needsBackgroundStart = (cellId: string): boolean => {
  * Starts a cell that is not on screen, by the same rules as opening it (resume or new, held while its CLI is missing, MCP role,
  * one-shot startup prompt, alive pty survivors). Its terminal is created off-screen and fitted to the box the cell will get.
  */
-export async function startCellInBackground(cellId: string): Promise<void> {
-  if (!needsBackgroundStart(cellId)) return;
+export async function startCellInBackground(cellId: string): Promise<boolean> {
+  if (!needsBackgroundStart(cellId)) return false;
   const found = findCell(getS(), cellId)!;
   if (found.cell.worktree && !(await window.mc.pathExists(found.cell.worktree.path))) {
     skippedInBackground.add(cellId);
-    return;
+    return false;
   }
-  if (!needsBackgroundStart(cellId)) return; // opened or closed meanwhile
+  if (!needsBackgroundStart(cellId)) return false; // opened or closed meanwhile
   await startOnce(cellId, presizeForLayout);
+  return true;
 }
 
-/** Pixel box of a cell body, from the workspace size and the grid layout (the same maths the real layout uses). */
+const startListeners = new Set<() => void>();
+/** Called whenever a cell's start is requested (by a view or the loader). */
+export const onCellStart = (listener: () => void): (() => void) => { startListeners.add(listener); return () => startListeners.delete(listener); };
+
+let lastGridSize: Size | null = null;
+const measure = (selector: string): Size | null => {
+  const rect = document.querySelector(selector)?.getBoundingClientRect();
+  return rect ? { width: rect.width, height: rect.height } : null;
+};
+
+/** Fits the not yet shown terminal of a cell to the box it will get. The grid measures 0x0 while Settings or an editor covers it: the workspace (or the last size seen) stands in. */
 function presizeForLayout(cellId: string): void {
   const found = findCell(getS(), cellId);
-  const area = document.querySelector('.terminal-workspace .grid') ?? document.querySelector('.workspace-content');
-  const rect = area?.getBoundingClientRect();
-  if (!found || !rect || rect.width < 200 || rect.height < 120) return;
-  const rects = areaRects(found.tab.layout);
-  const r = rects[found.tab.cells.findIndex((c) => c.id === cellId)];
-  if (!r) return;
-  const head = document.querySelector<HTMLElement>('.cell-head')?.offsetHeight ?? 30;
-  terminals.presize(cellId, (r.x1 - r.x0) * rect.width - 1 - 8, (r.y1 - r.y0) * rect.height - 1 - head - 4);
+  if (!found) return;
+  const grid = chooseGridSize([measure('.terminal-workspace .grid'), measure('.workspace-content')], lastGridSize);
+  if (!grid) return;
+  lastGridSize = grid;
+  const box = cellBodyBox(found.tab.layout, found.tab.cells.findIndex((c) => c.id === cellId), grid, document.querySelector<HTMLElement>('.cell-head')?.offsetHeight ?? 30);
+  if (box) terminals.presize(cellId, box.width, box.height);
 }
 
 export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise<void> {

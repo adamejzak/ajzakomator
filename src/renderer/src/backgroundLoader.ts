@@ -1,7 +1,7 @@
 // Starts the cells of grids that are not on screen, staggered, after the active grid is up (policy: shared/backgroundLoad.ts).
 import { BackgroundLoader, planBackgroundLoad } from '../../shared/backgroundLoad';
 import { activeProject, activeTab } from '../../shared/state';
-import { isStarted, needsBackgroundStart, startCellInBackground } from './actions';
+import { isStarted, needsBackgroundStart, onCellStart, startCellInBackground } from './actions';
 import { getS, getUi, setUi, useStore } from './store';
 
 let loader: BackgroundLoader | null = null;
@@ -35,14 +35,17 @@ export function initBackgroundLoader(): void {
     lastActivityAt: () => lastActivity,
     start: startCellInBackground,
     needsStart: needsBackgroundStart,
-    onProgress: (done, total) => {
-      const next = instance.pending > 0 ? { done, total } : null;
+    onProgress: (done, total, capped) => {
+      // Shown while cells are loading, and after the limit was reached for as long as cells still wait for their grid to be opened.
+      const next = instance.pending > 0 || capped ? { done, total, capped } : null;
       const current = getUi().backgroundLoad;
-      if (current?.done === next?.done && current?.total === next?.total) return;
+      if (current?.done === next?.done && current?.total === next?.total && current?.capped === next?.capped) return;
       setUi({ backgroundLoad: next });
     },
   });
   loader = instance;
+  // A grid opened by the user starts its cells: they leave the queue (and the limit hint) without waiting for a re-plan.
+  onCellStart(() => queueMicrotask(() => instance.refresh()));
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') instance.wake(); });
 
   const first = getS().activeProjectId;

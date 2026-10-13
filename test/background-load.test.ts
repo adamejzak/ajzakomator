@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BackgroundLoader, normalizeBackgroundLoad, planBackgroundLoad, type LoaderDeps } from '../src/shared/backgroundLoad';
+import { BACKGROUND_MAX_CELLS, BackgroundLoader, normalizeBackgroundLoad, planBackgroundLoad, type LoaderDeps } from '../src/shared/backgroundLoad';
 import { defaultState, normalizeState } from '../src/shared/state';
 import type { AppState, Project } from '../src/shared/types';
 
@@ -209,5 +209,63 @@ describe('BackgroundLoader scheduling', () => {
     loader.stop();
     await h.advance(2000);
     expect(h.startLog).toEqual([]);
+  });
+});
+
+describe('the cap on automatic starts', () => {
+  it('is a named constant of 12', () => {
+    expect(BACKGROUND_MAX_CELLS).toBe(12);
+  });
+
+  it('starts at most BACKGROUND_MAX_CELLS cells and reports that the limit bit', async () => {
+    const h = harness();
+    const loader = new BackgroundLoader({ ...h.deps, onProgress: (done, total, capped) => h.progress.push([done, total, +capped] as unknown as [number, number]) }, { spacingMs: 50, initialDelayMs: 0 });
+    const ids = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    loader.setQueue(ids);
+    loader.begin();
+    await h.advance(20_000);
+    expect(h.startLog).toHaveLength(BACKGROUND_MAX_CELLS);
+    expect(loader.capped).toBe(true);
+    expect(loader.progress).toEqual({ done: 12, total: 20 });
+    expect(loader.pending).toBe(0);
+    expect((h.progress.at(-1) as unknown as number[])[2]).toBe(1);
+  });
+
+  it('does not count skipped cells (start resolves false) against the cap', async () => {
+    const h = harness();
+    const skipping = { ...h.deps, start: (id: string) => { h.state.started.add(id); h.startLog.push({ id, at: h.now() }); return Promise.resolve(!id.startsWith('skip')); } };
+    const loader = new BackgroundLoader(skipping, { spacingMs: 50, initialDelayMs: 0, maxCells: 3 });
+    loader.setQueue(['skip1', 'a', 'skip2', 'b', 'c', 'd', 'e']);
+    loader.begin();
+    await h.advance(10_000);
+    expect(h.startLog.map((s) => s.id)).toEqual(['skip1', 'a', 'skip2', 'b', 'c']);
+    expect(loader.capped).toBe(true);
+  });
+
+  it('cells the user opens meanwhile leave the queue, and the hint goes away when nothing waits any more', async () => {
+    const h = harness();
+    const loader = new BackgroundLoader(h.deps, { spacingMs: 50, initialDelayMs: 0, maxCells: 2 });
+    loader.setQueue(['a', 'b', 'c', 'd']);
+    loader.begin();
+    await h.advance(5000);
+    expect(loader.capped).toBe(true);
+    h.state.started.add('c');
+    loader.refresh();
+    expect(loader.capped).toBe(true);
+    h.state.started.add('d');
+    loader.refresh();
+    expect(loader.capped).toBe(false);
+  });
+
+  it('the cap is per launch: a later plan does not start more', async () => {
+    const h = harness();
+    const loader = new BackgroundLoader(h.deps, { spacingMs: 50, initialDelayMs: 0, maxCells: 2 });
+    loader.setQueue(['a', 'b']);
+    loader.begin();
+    await h.advance(2000);
+    loader.setQueue(['c']);
+    await h.advance(2000);
+    expect(h.startLog.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(loader.capped).toBe(true);
   });
 });

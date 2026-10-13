@@ -146,6 +146,8 @@ export function stateChange(prev: AppState, snapshot: StateSnapshot): StateChang
 /** Applies a change on top of a confirmed snapshot; null when it does not follow it (the caller asks for a full snapshot). */
 export function applyStateChange(current: StateSnapshot, change: StateChange): StateSnapshot | null {
   if ('full' in change) return change.full.revision >= current.revision ? change.full : current;
+  // A change at or below what we have (a duplicate, or one a snapshot already included) changes nothing; its edit id still settles that edit.
+  if (change.revision <= current.revision) return { state: current.state, revision: current.revision, editId: change.editId };
   if (change.base !== current.revision) return null;
   try {
     const state = change.patch ? (applyPatch(current.state, change.patch) as AppState) : current.state;

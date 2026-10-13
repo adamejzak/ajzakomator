@@ -7,6 +7,13 @@ export type BackgroundLoadMode = 'visible' | 'project' | 'all';
 export const BACKGROUND_LOAD_MODES: readonly BackgroundLoadMode[] = ['visible', 'project', 'all'];
 export const DEFAULT_BACKGROUND_LOAD: BackgroundLoadMode = 'project';
 
+/**
+ * Most cells the loader starts automatically per launch, whatever the mode. Cells of the grid on screen never count against it
+ * (they start when shown), and the rest start when their grid is opened, as in `visible` mode.
+ * Every started cell is a real agent process, so a project with many grids must not start dozens of them unasked.
+ */
+export const BACKGROUND_MAX_CELLS = 12;
+
 export function normalizeBackgroundLoad(value: unknown): BackgroundLoadMode {
   return BACKGROUND_LOAD_MODES.includes(value as BackgroundLoadMode) ? (value as BackgroundLoadMode) : DEFAULT_BACKGROUND_LOAD;
 }
@@ -58,9 +65,11 @@ export interface LoaderTuning {
   quietMs: number;
   /** Wait before the very first start (the active grid gets the machine first). */
   initialDelayMs: number;
+  /** Cells started by the loader in total (see BACKGROUND_MAX_CELLS). */
+  maxCells: number;
 }
 
-export const DEFAULT_LOADER_TUNING: LoaderTuning = { maxInFlight: 2, spacingMs: 400, busyRetryMs: 400, quietMs: 1200, initialDelayMs: 600 };
+export const DEFAULT_LOADER_TUNING: LoaderTuning = { maxInFlight: 2, spacingMs: 400, busyRetryMs: 400, quietMs: 1200, initialDelayMs: 600, maxCells: BACKGROUND_MAX_CELLS };
 
 export interface LoaderDeps {
   now(): number;
@@ -72,11 +81,12 @@ export interface LoaderDeps {
   windowVisible(): boolean;
   /** Time of the last keystroke / resize / pointer press (ms, same clock as `now`). */
   lastActivityAt(): number;
-  /** Starts one cell. Resolves when the request was handled (also when the cell was skipped). */
-  start(cellId: string): Promise<unknown>;
+  /** Starts one cell. Resolves when the request was handled; `false` = the cell was skipped (not started), which does not count against the cap. */
+  start(cellId: string): Promise<boolean | void>;
   /** Whether a cell still needs a start (it was not started meanwhile, still exists). */
   needsStart(cellId: string): boolean;
-  onProgress?(done: number, total: number): void;
+  /** `capped`: the limit was reached and `total - done` cells wait for their grid to be opened. */
+  onProgress?(done: number, total: number, capped: boolean): void;
 }
 
 /** Starts queued cells one by one with spacing; pauses while the user is busy or the window is hidden. */
@@ -85,6 +95,8 @@ export class BackgroundLoader {
   private done = 0;
   private total = 0;
   private inFlight = 0;
+  /** Starts dispatched so far (the cap counts these). */
+  private dispatched = 0;
   private lastStartAt = -Infinity;
   private timer: unknown = null;
   private running = false;
@@ -96,7 +108,9 @@ export class BackgroundLoader {
   }
 
   get progress(): { done: number; total: number } { return { done: this.done, total: this.total }; }
-  get pending(): number { return this.queue.length + this.inFlight; }
+  get pending(): number { return this.capped ? this.inFlight : this.queue.length + this.inFlight; }
+  /** The limit of automatic starts was reached and cells are still waiting for their grid to be opened. */
+  get capped(): boolean { return this.dispatched >= this.tuning.maxCells && this.queue.length > 0; }
 
   /** Replaces what waits to start (cells already started or gone are dropped). Counters restart when everything was finished. */
   setQueue(ids: readonly string[]): void {
@@ -105,6 +119,13 @@ export class BackgroundLoader {
     this.total = this.done + this.inFlight + this.queue.length;
     this.report();
     if (this.queue.length && this.running) this.schedule(this.deps.now() - this.lastStartAt >= this.tuning.spacingMs ? 0 : this.tuning.spacingMs);
+  }
+
+  /** Something started a cell (the user opened its grid): drop it from the queue and update the progress. */
+  refresh(): void {
+    this.queue = this.queue.filter((id) => this.deps.needsStart(id));
+    this.total = this.done + this.inFlight + this.queue.length;
+    this.report();
   }
 
   /** Begins loading (call once the first window paint and the active grid are done). */
@@ -127,7 +148,7 @@ export class BackgroundLoader {
   }
 
   private report(): void {
-    this.deps.onProgress?.(this.done, this.total);
+    this.deps.onProgress?.(this.done, this.total, this.capped);
   }
 
   private schedule(ms: number): void {
@@ -141,7 +162,7 @@ export class BackgroundLoader {
     // Drop what no longer needs a start (opened meanwhile, closed).
     this.queue = this.queue.filter((id) => this.deps.needsStart(id));
     this.total = this.done + this.inFlight + this.queue.length;
-    if (!this.queue.length) { this.report(); return; }
+    if (!this.queue.length || this.dispatched >= this.tuning.maxCells) { this.report(); return; }
     if (!this.deps.windowVisible()) return; // wake() resumes
     if (this.inFlight >= this.tuning.maxInFlight) return; // a finished start reschedules
     const now = this.deps.now();
@@ -150,6 +171,7 @@ export class BackgroundLoader {
     if (wait > 0) return this.schedule(wait);
     const id = this.queue.shift()!;
     this.lastStartAt = now;
+    this.dispatched++;
     this.inFlight++;
     this.report();
     const finish = () => {
@@ -160,7 +182,8 @@ export class BackgroundLoader {
     };
     let settled = false;
     const once = () => { if (!settled) { settled = true; finish(); } };
-    try { this.deps.start(id).then(once, once); } catch { once(); }
+    const handled = (result: boolean | void) => { if (result === false) this.dispatched--; once(); };
+    try { this.deps.start(id).then(handled, once); } catch { once(); }
     if (this.queue.length && this.inFlight < this.tuning.maxInFlight) this.schedule(this.tuning.spacingMs);
   }
 }
