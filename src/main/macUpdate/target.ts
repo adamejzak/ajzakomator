@@ -55,3 +55,6 @@ export async function probeBundleWrite(bundle: string, write: (path: string) => 
   try { await write(probe); await remove(probe); return true; }
   catch { await remove(probe).catch(() => {}); return false; }
 }
+
+/** Where the verified new bundle waits, next to the installed one (same directory and volume, so the swap is a rename). Not an `.app`. */
+export const stagedPathFor = (bundle: string, version: string): string => `${bundle}.new-${version}`;

@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { Readable } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
-import { MAC_MESSAGES, MacUpdater, plistString, type ExecResult, type MacOffer, type MacUpdaterDeps } from '../src/main/macUpdate/engine';
+import { MAC_MESSAGES, MacUpdater, plistString, REFUSAL_MESSAGES, stagedFileVersion, type ExecResult, type MacOffer, type MacUpdaterDeps } from '../src/main/macUpdate/engine';
 
 // ── fixtures ───────────────────────────────────────────────────────────────────────────────────
 
@@ -9,6 +9,9 @@ const APP = '/Applications/ajzakomator.app';
 const EXEC = `${APP}/Contents/MacOS/ajzakomator`;
 const DIR = '/Users/me/Library/Application Support/ajzakomator/updates/mac';
 const ZIP_NAME = 'ajzakomator-0.7.0-mac-arm64.zip';
+const STAGED = `${APP}.new-0.7.0`;
+const FEED_URL = 'https://github.com/adamejzak/ajzakomator/releases/latest/download/latest-mac.yml';
+const assetUrl = (version: string, name: string) => `https://github.com/adamejzak/ajzakomator/releases/download/v${version}/${name}`;
 const PAYLOAD = Buffer.from('pretend this is a 140 MB zip archive');
 const sha512 = (data: Uint8Array) => createHash('sha512').update(data).digest('base64');
 
@@ -90,8 +93,8 @@ const silentStream = (signal?: AbortSignal) => new ReadableStream<Uint8Array>({
   },
 });
 
-interface Harness { updater: MacUpdater; mem: ReturnType<typeof memFs>; deps: MacUpdaterDeps; exec: ReturnType<typeof vi.fn>; spawned: Array<[string, string[]]>; urls: string[]; setNow(ms: number): void }
-function harness(over: Partial<MacUpdaterDeps> & { zip?: Buffer; feed?: string; codesign?: Partial<ExecResult>; ditto?: Partial<ExecResult>; unpacked?: Record<string, string>; runningInfo?: Record<string, string> } = {}): Harness {
+interface Harness { updater: MacUpdater; mem: ReturnType<typeof memFs>; deps: MacUpdaterDeps; exec: ReturnType<typeof vi.fn>; copyTree(from: string, to: string): void; spawned: Array<[string, string[]]>; urls: string[]; setNow(ms: number): void }
+function harness(over: Partial<MacUpdaterDeps> & { zip?: Buffer; feed?: string; codesign?: Partial<ExecResult>; stagedCodesign?: Partial<ExecResult>; ditto?: Partial<ExecResult>; copy?: Partial<ExecResult>; unpacked?: Record<string, string>; runningInfo?: Record<string, string> } = {}): Harness {
   const mem = memFs();
   const zip = over.zip ?? PAYLOAD;
   mem.put(`${APP}/Contents/Info.plist`, plist({ ...INFO, CFBundleShortVersionString: '0.6.5', ...over.runningInfo }));
@@ -99,7 +102,16 @@ function harness(over: Partial<MacUpdaterDeps> & { zip?: Buffer; feed?: string; 
   let clock = 1_000_000;
   const urls: string[] = [];
   const spawned: Array<[string, string[]]> = [];
+  /** What `ditto <src> <dst>` does: copies a directory tree (files only exist as map entries). */
+  const copyTree = (from: string, to: string) => {
+    for (const [path, entry] of [...mem.files]) if (path.startsWith(`${from}/`)) mem.put(`${to}${path.slice(from.length)}`, entry.data, entry.mode);
+  };
   const exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+    if (command === '/usr/bin/ditto' && args[0] !== '-x') {
+      if (over.copy) return { code: 1, stdout: '', stderr: 'ditto: no space left', ...over.copy };
+      copyTree(args[0], args[1]);
+      return { code: 0, stdout: '', stderr: '' };
+    }
     if (command === '/usr/bin/ditto') {
       if (over.ditto) return { code: 1, stdout: '', stderr: 'ditto: bad archive', ...over.ditto };
       const target = args[args.length - 1];
@@ -108,12 +120,15 @@ function harness(over: Partial<MacUpdaterDeps> & { zip?: Buffer; feed?: string; 
       mem.put(`${target}/ajzakomator.app/Contents/MacOS/${info.CFBundleExecutable}`, 'binary', 0o755);
       return { code: 0, stdout: '', stderr: '' };
     }
-    if (command === '/usr/bin/codesign') return { code: 0, stdout: '', stderr: '', ...over.codesign };
+    if (command === '/usr/bin/codesign') {
+      if (over.stagedCodesign && args[args.length - 1].includes('.new-')) return { code: 0, stdout: '', stderr: '', ...over.stagedCodesign };
+      return { code: 0, stdout: '', stderr: '', ...over.codesign };
+    }
     return { code: 0, stdout: '', stderr: '' };
   });
   const deps: MacUpdaterDeps = {
     arch: 'arm64', currentVersion: '0.6.5', execPath: EXEC, pid: 4242, packaged: true, updateDir: DIR,
-    feedUrl: 'https://feed.test/latest-mac.yml', assetBase: (version) => `https://downloads.test/v${version}/`,
+    feedUrl: FEED_URL, assetBase: (version) => `https://github.com/adamejzak/ajzakomator/releases/download/v${version}/`,
     fetch: async (url, init) => {
       urls.push(url);
       if (url.endsWith('latest-mac.yml')) return new Response(over.feed ?? feedYml('0.7.0', zip), { status: 200 });
@@ -122,7 +137,7 @@ function harness(over: Partial<MacUpdaterDeps> & { zip?: Buffer; feed?: string; 
     fs: mem.fs, exec, spawnDetached: async (command, args) => { spawned.push([command, args]); return true; },
     uid: () => 501, now: () => clock, ...over,
   };
-  return { updater: new MacUpdater(deps), mem, deps, exec, spawned, urls, setNow: (ms) => { clock = ms; } };
+  return { updater: new MacUpdater(deps), mem, deps, exec, spawned, urls, copyTree, setNow: (ms) => { clock = ms; } };
 }
 
 const offerOf = async (h: Harness): Promise<MacOffer> => { const { offer } = await h.updater.check(); expect(offer).toBeDefined(); return offer!; };
@@ -142,7 +157,7 @@ describe('MacUpdater.check', () => {
     const h = harness();
     const { latest, offer } = await h.updater.check();
     expect(latest).toBe('0.7.0');
-    expect(offer).toMatchObject({ version: '0.7.0', url: `https://downloads.test/v0.7.0/${ZIP_NAME}`, asset: { name: ZIP_NAME, sha512: sha512(PAYLOAD), size: PAYLOAD.length } });
+    expect(offer).toMatchObject({ version: '0.7.0', url: assetUrl('0.7.0', ZIP_NAME), asset: { name: ZIP_NAME, sha512: sha512(PAYLOAD), size: PAYLOAD.length } });
     expect(offer?.refusal).toBeUndefined();
   });
   it('picks the x64 archive on Intel', async () => {
@@ -172,11 +187,11 @@ describe('MacUpdater.download', () => {
     const h = harness();
     const progress = vi.fn();
     const staged = await h.updater.download(await offerOf(h), progress);
-    expect(staged).toMatchObject({ version: '0.7.0', bundle: `${DIR}/extracted-0.7.0/ajzakomator.app`, executable: 'ajzakomator', zip: `${DIR}/${ZIP_NAME}` });
+    expect(staged).toMatchObject({ version: '0.7.0', bundle: STAGED, executable: 'ajzakomator', zip: `${DIR}/${ZIP_NAME}` });
     expect(h.mem.files.get(`${DIR}/${ZIP_NAME}`)?.data.equals(PAYLOAD)).toBe(true);
     expect(h.mem.files.has(`${DIR}/${ZIP_NAME}.part`)).toBe(false);
     expect(h.exec).toHaveBeenCalledWith('/usr/bin/ditto', ['-x', '-k', `${DIR}/${ZIP_NAME}`, `${DIR}/extracted-0.7.0`], expect.any(Number));
-    expect(h.exec).toHaveBeenCalledWith('/usr/bin/xattr', ['-cr', staged.bundle], expect.any(Number));
+    expect(h.exec).toHaveBeenCalledWith('/usr/bin/xattr', ['-cr', `${DIR}/extracted-0.7.0/ajzakomator.app`], expect.any(Number));
     expect(h.exec).toHaveBeenCalledWith('/usr/bin/codesign', ['--verify', '--deep', '--strict', staged.bundle], expect.any(Number));
     expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ percent: 100, transferred: PAYLOAD.length, total: PAYLOAD.length }));
   });
@@ -245,6 +260,54 @@ describe('MacUpdater.download', () => {
     expect(h.mem.text(`${DIR}/update.log`)).toContain('ditto failed');
   });
 
+  describe('staging next to the installed app', () => {
+    it('copies the verified bundle next to the target (same directory), verifies the copy and drops the unpacked one', async () => {
+      const h = harness();
+      const staged = await h.updater.download(await offerOf(h), vi.fn());
+      expect(staged.bundle).toBe(STAGED);
+      expect(h.exec).toHaveBeenCalledWith('/usr/bin/ditto', [`${DIR}/extracted-0.7.0/ajzakomator.app`, STAGED], expect.any(Number));
+      expect(h.exec).toHaveBeenCalledWith('/usr/bin/codesign', ['--verify', '--deep', '--strict', STAGED], expect.any(Number));
+      expect(h.mem.files.has(`${STAGED}/Contents/MacOS/ajzakomator`)).toBe(true);
+      expect([...h.mem.files.keys()].some((key) => key.startsWith(`${DIR}/extracted-0.7.0/`))).toBe(false);
+      expect(h.mem.text(`${DIR}/update.log`)).toContain(`staged at ${STAGED}`);
+    });
+    it('removes staged copies of other versions before staging', async () => {
+      const h = harness();
+      h.mem.put(`${APP}.new-0.6.9/Contents/Info.plist`, 'x');
+      h.mem.put(`${APP}.new-0.7.0/Contents/stale`, 'x');
+      await h.updater.download(await offerOf(h), vi.fn());
+      expect(h.mem.files.has(`${APP}.new-0.6.9/Contents/Info.plist`)).toBe(false);
+      expect(h.mem.files.has(`${STAGED}/Contents/stale`)).toBe(false);
+      expect(h.mem.files.has(`${STAGED}/Contents/MacOS/ajzakomator`)).toBe(true);
+    });
+    it('keeps the refusal when the folder of the app is not writable, copying nothing', async () => {
+      const h = harness();
+      const offer = await offerOf(h);
+      h.mem.denied.set('/Applications', 'EACCES');
+      await expect(h.updater.download(offer, vi.fn())).rejects.toThrow(REFUSAL_MESSAGES['not-writable']);
+      expect([...h.mem.files.keys()].some((key) => key.includes('.new-'))).toBe(false);
+    });
+    it('removes a copy that failed or does not verify', async () => {
+      const failedCopy = harness({ copy: { code: 1 } });
+      await expect(failedCopy.updater.download(await offerOf(failedCopy), vi.fn())).rejects.toThrow(MAC_MESSAGES.extract);
+      expect([...failedCopy.mem.files.keys()].some((key) => key.includes('.new-'))).toBe(false);
+      const badCopy = harness({ stagedCodesign: { code: 1, stderr: 'invalid signature' } });
+      await expect(badCopy.updater.download(await offerOf(badCopy), vi.fn())).rejects.toThrow(MAC_MESSAGES.verify);
+      expect([...badCopy.mem.files.keys()].some((key) => key.includes('.new-'))).toBe(false);
+    });
+    it('re-verifies the staged copy right before the swap and refuses a staged copy that changed or moved', async () => {
+      const h = harness();
+      const staged = await h.updater.download(await offerOf(h), vi.fn());
+      h.mem.put(`${STAGED}/Contents/Info.plist`, plist({ ...INFO, CFBundleShortVersionString: '0.9.9' }));
+      await expect(h.updater.install(staged)).rejects.toThrow(MAC_MESSAGES.verify);
+      expect(h.spawned).toEqual([]);
+      h.mem.put(`${STAGED}/Contents/Info.plist`, plist(INFO));
+      await expect(h.updater.install({ ...staged, bundle: `${DIR}/extracted-0.7.0/ajzakomator.app` })).rejects.toThrow(MAC_MESSAGES.verify);
+      expect(h.spawned).toEqual([]);
+      expect(await h.updater.install(staged)).toEqual({ ok: true });
+    });
+  });
+
   describe('bundle verification', () => {
     const failing = async (over: Parameters<typeof harness>[0]) => {
       const h = harness(over);
@@ -294,10 +357,10 @@ describe('MacUpdater.download', () => {
       const h = harness();
       const offer = await offerOf(h);
       h.exec.mockImplementation(async (command: string, args: string[]) => {
-        if (command === '/usr/bin/ditto') {
+        if (command === '/usr/bin/ditto' && args[0] === '-x') {
           h.mem.put(`${args[3]}/ajzakomator.app/Contents/Info.plist`, 'bplist00binary');
           h.mem.put(`${args[3]}/ajzakomator.app/Contents/MacOS/ajzakomator`, 'x', 0o755);
-        }
+        } else if (command === '/usr/bin/ditto') h.copyTree(args[0], args[1]);
         if (command === '/usr/bin/plutil') return { code: 0, stdout: plist(INFO), stderr: '' };
         return { code: 0, stdout: '', stderr: '' };
       });
@@ -318,6 +381,7 @@ describe('MacUpdater.install', () => {
     const script = h.mem.text(scriptPath)!;
     expect(script).toContain(`BUNDLE='${APP}'`);
     expect(script).toContain(`BACKUP='${APP}.old-0.6.5'`);
+    expect(script).toContain(`FAILED='${DIR}/rolled-back'`);
     expect(script).toContain(`NEW='${s.bundle}'`);
     expect(script).toContain('PID=4242');
     expect(h.mem.files.get(scriptPath)?.mode).toBe(0o700);
@@ -342,8 +406,9 @@ describe('MacUpdater.install', () => {
     expect(h.spawned).toEqual([]);
   });
   it('refuses an app owned by someone else', async () => {
-    const h = harness({ uid: () => 777 });
+    const h = harness();
     const s = await staged(h);
+    h.deps.uid = () => 777;
     expect(await h.updater.install(s)).toEqual({ ok: false, refusal: 'not-owner' });
   });
   it('fails and leaves no marker when the script cannot be started', async () => {
@@ -419,6 +484,51 @@ describe('MacUpdater after the swap', () => {
     expect(await h.updater.finishPrevious()).toEqual({ kind: 'none' });
     expect(h.mem.files.has(`${DIR}/pending.json`)).toBe(true);
   });
+  it('treats a rollback by the script as a failure at once, whatever the age of the marker, and cleans that version up', async () => {
+    const h = harness();
+    h.setNow(1_000_000 + 5_000);
+    h.mem.put(`${DIR}/pending.json`, marker());
+    h.mem.put(`${DIR}/rolled-back`, '0.7.0\n');
+    h.mem.put(`${DIR}/${ZIP_NAME}`, 'zip');
+    h.mem.put(`${DIR}/extracted-0.7.0/x`, 'x');
+    h.mem.put(`${STAGED}/Contents/Info.plist`, 'x');
+    expect(await h.updater.finishPrevious()).toEqual({ kind: 'failed', version: '0.7.0' });
+    expect(h.mem.files.has(`${DIR}/rolled-back`)).toBe(false);
+    expect(h.mem.files.has(`${DIR}/pending.json`)).toBe(false);
+    expect(h.mem.files.has(`${DIR}/${ZIP_NAME}`)).toBe(false);
+    expect(h.mem.files.has(`${STAGED}/Contents/Info.plist`)).toBe(false);
+    expect(h.mem.text(`${DIR}/update.log`)).toContain('rolled back by the update script');
+    // Reported once only.
+    expect(await h.updater.finishPrevious()).toEqual({ kind: 'none' });
+  });
+  it('ignores a rollback flag of a version that is already running', async () => {
+    const h = harness({ currentVersion: '0.7.0' });
+    h.mem.put(`${DIR}/rolled-back`, '0.7.0\n');
+    expect(await h.updater.finishPrevious()).toEqual({ kind: 'none' });
+    expect(h.mem.files.has(`${DIR}/rolled-back`)).toBe(false);
+  });
+  it('markReady and the start-up cleanup only remove files of this version or older, never a newer download', async () => {
+    const h = harness({ currentVersion: '0.7.0' });
+    h.mem.put(`${DIR}/pending.json`, marker());
+    for (const name of ['ajzakomator-0.7.0-mac-arm64.zip', 'ajzakomator-0.6.9-mac-arm64.zip', 'install-0.7.0.sh', 'extracted-0.7.0/a', 'update.log', 'notes.txt']) h.mem.put(`${DIR}/${name}`, 'x');
+    for (const name of ['ajzakomator-0.8.0-mac-arm64.zip', 'ajzakomator-0.8.0-mac-arm64.zip.part', 'extracted-0.8.0/a', 'install-0.8.0.sh']) h.mem.put(`${DIR}/${name}`, 'x');
+    h.mem.put(`${APP}.new-0.7.0/a`, 'x'); h.mem.put(`${APP}.new-0.8.0/a`, 'x'); h.mem.put(`${APP}.old-0.6.5/a`, 'x');
+    await h.updater.finishPrevious();
+    await h.updater.markReady();
+    for (const gone of ['ajzakomator-0.7.0-mac-arm64.zip', 'ajzakomator-0.6.9-mac-arm64.zip', 'install-0.7.0.sh', 'extracted-0.7.0/a']) expect(h.mem.files.has(`${DIR}/${gone}`), gone).toBe(false);
+    for (const kept of ['ajzakomator-0.8.0-mac-arm64.zip', 'ajzakomator-0.8.0-mac-arm64.zip.part', 'extracted-0.8.0/a', 'install-0.8.0.sh', 'update.log', 'notes.txt']) expect(h.mem.files.has(`${DIR}/${kept}`), kept).toBe(true);
+    expect(h.mem.files.has(`${APP}.new-0.7.0/a`)).toBe(false);
+    expect(h.mem.files.has(`${APP}.new-0.8.0/a`)).toBe(true);
+    expect(h.mem.files.has(`${APP}.old-0.6.5/a`)).toBe(false);
+  });
+  it('knows which version a staging file belongs to', () => {
+    expect(stagedFileVersion('ajzakomator-0.7.0-mac-arm64.zip')).toBe('0.7.0');
+    expect(stagedFileVersion('ajzakomator-0.7.0-beta.1-mac-x64.zip.part')).toBe('0.7.0-beta.1');
+    expect(stagedFileVersion('extracted-0.7.0')).toBe('0.7.0');
+    expect(stagedFileVersion('install-0.7.0.sh')).toBe('0.7.0');
+    expect(stagedFileVersion('update.log')).toBeUndefined();
+    expect(stagedFileVersion('ready')).toBeUndefined();
+  });
   it('ignores a corrupt marker', async () => {
     const h = harness();
     h.mem.put(`${DIR}/pending.json`, '{not json');
@@ -430,5 +540,66 @@ describe('MacUpdater after the swap', () => {
     await h.updater.note('fresh line');
     expect(h.mem.text(`${DIR}/update.log`)).toMatch(/fresh line\n$/);
     expect(h.mem.text(`${DIR}/update.log`)!.length).toBeLessThan(1024);
+  });
+});
+
+describe('MacUpdater redirects', () => {
+  const redirect = (location: string | null, status = 302) => new Response(null, { status, headers: location ? { location } : {} });
+  /** The feed answers directly; the archive goes through the given hops. */
+  const withHops = (hops: Array<Response | (() => Response)>, h = harness()) => {
+    const calls: Array<{ url: string; redirect?: string }> = [];
+    const queue = [...hops];
+    const direct = h.deps.fetch;
+    h.deps.fetch = async (url, init) => {
+      calls.push({ url, redirect: init.redirect });
+      if (url.endsWith('latest-mac.yml')) return direct(url, init);
+      const next = queue.shift();
+      if (!next) return direct(url, init);
+      return typeof next === 'function' ? next() : next;
+    };
+    return { h, calls, updater: new MacUpdater(h.deps) };
+  };
+
+  it('follows GitHub redirects to the release asset hosts, asking for manual handling so every hop is checked', async () => {
+    const { h, calls, updater } = withHops([redirect('https://objects.githubusercontent.com/github-production-release-asset/abc?x=1'), redirect('https://release-assets.githubusercontent.com/z')]);
+    await updater.download(await offerOf(h), vi.fn());
+    const archive = calls.filter((call) => !call.url.endsWith('latest-mac.yml'));
+    expect(archive.map((call) => new URL(call.url).hostname)).toEqual(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
+    expect(calls.every((call) => call.redirect === 'manual')).toBe(true);
+  });
+  it('resolves a relative Location against the current address', async () => {
+    const { h, calls, updater } = withHops([redirect('/elsewhere/file.zip')]);
+    await updater.download(await offerOf(h), vi.fn());
+    expect(calls.at(-1)?.url).toBe('https://github.com/elsewhere/file.zip');
+  });
+  it.each([
+    ['plain http', 'http://objects.githubusercontent.com/a.zip'],
+    ['another host', 'https://evil.example.com/a.zip'],
+    ['a look-alike host', 'https://evilgithubusercontent.com/a.zip'],
+    ['a suffix trick', 'https://github.com.evil.example/a.zip'],
+    ['credentials in the address', 'https://user:pass@github.com/a.zip'],
+    ['another port', 'https://github.com:8443/a.zip'],
+    ['a non-web scheme', 'file:///etc/passwd'],
+  ])('refuses a redirect to %s and fetches nothing from there', async (_name, location) => {
+    const { h, calls, updater } = withHops([redirect(location)]);
+    await expect(updater.download(await offerOf(h), vi.fn())).rejects.toThrow(MAC_MESSAGES.server);
+    expect(calls.some((call) => call.url === location)).toBe(false);
+    expect(h.mem.text(`${DIR}/update.log`)).toContain('not an https GitHub address');
+    expect([...h.mem.files.keys()].some((key) => key.includes('.zip'))).toBe(false);
+  });
+  it('refuses a redirect chain that is too long, or without a Location', async () => {
+    const loop = Array.from({ length: 10 }, () => () => redirect('https://github.com/again'));
+    const endless = withHops(loop);
+    await expect(endless.updater.download(await offerOf(endless.h), vi.fn())).rejects.toThrow(MAC_MESSAGES.server);
+    expect(endless.calls.length).toBeLessThanOrEqual(8);
+    const empty = withHops([redirect(null)]);
+    await expect(empty.updater.download(await offerOf(empty.h), vi.fn())).rejects.toThrow(MAC_MESSAGES.server);
+  });
+  it('refuses a feed or an archive address outside GitHub, and allows the development feed origin when configured', async () => {
+    const outside = harness({ feedUrl: 'https://example.com/latest-mac.yml' });
+    await expect(outside.updater.check()).rejects.toThrow(MAC_MESSAGES.server);
+    expect(outside.urls).toEqual([]);
+    const dev = harness({ feedUrl: 'http://localhost:8080/latest-mac.yml', assetBase: () => 'http://localhost:8080/', trustedOrigins: ['http://localhost:8080'] });
+    expect((await dev.updater.check()).offer?.url).toBe(`http://localhost:8080/${ZIP_NAME}`);
   });
 });

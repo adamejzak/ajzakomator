@@ -50,5 +50,6 @@ export function createMacUpdater(devFeed: string | undefined, log: (line: string
     uid: () => process.getuid?.(),
     now: () => Date.now(),
     log,
+    trustedOrigins: base ? [new URL(base).origin] : undefined,
   });
 }

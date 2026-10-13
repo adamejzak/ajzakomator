@@ -290,6 +290,12 @@ describe('macOS updater state machine', () => {
       api.signalMacUpdateReady();
       expect(mock.engine.markReady).toHaveBeenCalledOnce();
     });
+    it('shows the existing failure feedback when the previous update was rolled back', async () => {
+      const api = await setup();
+      mock.engine.finishPrevious.mockResolvedValueOnce({ kind: 'failed', version: '0.7.0' });
+      await api.previousMacUpdate();
+      expect(api.getUpdateState()).toMatchObject({ status: 'error', version: '0.7.0', message: MAC_MESSAGES.rolledBack });
+    });
     it('is a no-op on other platforms and in development', async () => {
       Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
       vi.resetModules();

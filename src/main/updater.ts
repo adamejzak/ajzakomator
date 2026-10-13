@@ -343,7 +343,12 @@ function macQuit(): void {
 /** At start: how the previous update ended (only ever not "none" on macOS); a failure is for the caller to remember. */
 export async function previousMacUpdate(): Promise<MacPreviousOutcome> {
   if (!isMac() || !updatesActive()) return { kind: 'none' };
-  try { return await macEngine().finishPrevious(); } catch { return { kind: 'none' }; }
+  try {
+    const outcome = await macEngine().finishPrevious();
+    // The existing failure feedback: the status bar shows the error until the next check (the failure itself is recorded by the caller).
+    if (outcome.kind === 'failed') set({ status: 'error', version: outcome.version, message: MAC_MESSAGES.rolledBack });
+    return outcome;
+  } catch { return { kind: 'none' }; }
 }
 
 /** The main window of this version is up: releases the waiting update script and cleans up (macOS only). */

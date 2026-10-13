@@ -10,9 +10,9 @@ import { constants } from 'fs';
 import type * as FsPromises from 'fs/promises';
 import { posix } from 'path';
 import { compareVersions } from '../startupGate';
-import { MAC_FEED_URL, macAssetBase, parseLatestMacYml, selectMacAsset, type MacAsset } from './feed';
+import { isTrustedUpdateUrl, MAC_FEED_URL, macAssetBase, parseLatestMacYml, selectMacAsset, type MacAsset } from './feed';
 import { buildInstallScript, SCRIPT_READY_SECONDS, SCRIPT_WAIT_SECONDS } from './script';
-import { backupPathFor, bundlePathFromExecPath, evaluateInstallTarget, probeBundleWrite, type MacRefusal, type TargetFs } from './target';
+import { backupPathFor, bundlePathFromExecPath, evaluateInstallTarget, probeBundleWrite, stagedPathFor, type MacRefusal, type TargetFs } from './target';
 
 export { MAC_FEED_URL, macAssetBase };
 export type { MacRefusal };
@@ -26,6 +26,7 @@ export const MAC_MESSAGES = {
   verify: 'Pobrana aktualizacja nie przeszła weryfikacji i nie zostanie zainstalowana.',
   spawn: 'Nie udało się uruchomić instalatora aktualizacji.',
   quitTimeout: 'Aplikacja nie zamknęła się na czas - aktualizacja została przerwana.',
+  rolledBack: 'Poprzednia aktualizacja nie powiodła się - działa dotychczasowa wersja.',
 } as const;
 
 /** Polish message keys describing why the app is not replaced in place (translated in the renderer). */
@@ -47,6 +48,7 @@ const EXEC_TIMEOUT_MS = 5 * 60 * 1000;
 /** A marker younger than this may still belong to a running update script. */
 export const PENDING_GRACE_MS = 2 * 60 * 1000;
 const LOG_LIMIT_BYTES = 100 * 1024;
+const MAX_REDIRECTS = 5;
 
 export type MacFs = Pick<typeof FsPromises, 'mkdir' | 'readdir' | 'rm' | 'stat' | 'writeFile' | 'readFile' | 'open' | 'access' | 'appendFile' | 'rename'>;
 
@@ -72,6 +74,8 @@ export interface MacUpdaterDeps {
   now(): number;
   /** Extra sink (console); the update log file is always written. */
   log?(line: string): void;
+  /** Extra origins update requests may use (the development feed); GitHub is always allowed. */
+  trustedOrigins?: string[];
   stallMs?: number;
   totalMs?: number;
   scriptWaitSeconds?: number;
@@ -104,6 +108,13 @@ export function plistString(xml: string, key: string): string | undefined {
 
 const fail = (message: string): Error => new Error(message);
 
+/** Version a file of the staging directory belongs to (archive, partial archive, unpacked bundle, script); undefined for other files. */
+export function stagedFileVersion(name: string): string | undefined {
+  return /-(\d+\.\d+\.\d+[^/]*?)-mac-(?:arm64|x64)\.zip(?:\.part)?$/.exec(name)?.[1]
+    ?? /^extracted-(.+)$/.exec(name)?.[1]
+    ?? /^install-(.+)\.sh$/.exec(name)?.[1];
+}
+
 export class MacUpdater {
   private readonly dir: string;
   constructor(private readonly d: MacUpdaterDeps) { this.dir = d.updateDir; }
@@ -111,6 +122,7 @@ export class MacUpdater {
   private get logFile(): string { return posix.join(this.dir, 'update.log'); }
   private get markerFile(): string { return posix.join(this.dir, 'pending.json'); }
   private get readyFile(): string { return posix.join(this.dir, 'ready'); }
+  private get failedFile(): string { return posix.join(this.dir, 'rolled-back'); }
 
   /** Appends to `update.log` (public information only: versions, file names and paths) and to the optional sink. */
   async note(line: string): Promise<void> {
@@ -132,13 +144,34 @@ export class MacUpdater {
     };
   }
 
+  /**
+   * GET that follows redirects by hand so that every hop can be checked: https and a GitHub host only (see
+   * `isTrustedUpdateUrl`). The sha512 of the feed proves the download arrived intact; who may publish the feed is
+   * decided by GitHub (a signed feed would be the next step).
+   */
   private async request(url: string, signal: AbortSignal): Promise<Response> {
-    const response = await this.d.fetch(url, { headers: { 'User-Agent': 'ajzakomator-updater', 'Cache-Control': 'no-cache', Pragma: 'no-cache' }, signal, redirect: 'follow' });
-    if (!response.ok) {
-      await this.note(`request failed: HTTP ${response.status} for ${url}`);
-      throw fail(MAC_MESSAGES.server);
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (!isTrustedUpdateUrl(current, this.d.trustedOrigins)) {
+        await this.note(`request refused: ${current} is not an https GitHub address`);
+        throw fail(MAC_MESSAGES.server);
+      }
+      const response = await this.d.fetch(current, { headers: { 'User-Agent': 'ajzakomator-updater', 'Cache-Control': 'no-cache', Pragma: 'no-cache' }, signal, redirect: 'manual' });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        await response.body?.cancel().catch(() => {});
+        if (!location) { await this.note(`redirect without a location from ${current}`); throw fail(MAC_MESSAGES.server); }
+        try { current = new URL(location, current).href; } catch { throw fail(MAC_MESSAGES.server); }
+        continue;
+      }
+      if (!response.ok) {
+        await this.note(`request failed: HTTP ${response.status} for ${current}`);
+        throw fail(MAC_MESSAGES.server);
+      }
+      return response;
     }
-    return response;
+    await this.note('too many redirects');
+    throw fail(MAC_MESSAGES.server);
   }
 
   /** Reads the feed. Without an offer the running version is current (`latest` is what the feed announces). */
@@ -162,7 +195,7 @@ export class MacUpdater {
 
   /** Removes everything in the staging directory except the log, the readiness flag, the marker and `keep`. */
   async cleanStaging(keep: string[] = []): Promise<void> {
-    const preserved = new Set(['update.log', 'ready', 'pending.json', ...keep]);
+    const preserved = new Set(['update.log', 'ready', 'rolled-back', 'pending.json', ...keep]);
     const names = await this.d.fs.readdir(this.dir).catch(() => [] as string[]);
     await Promise.all(names.filter((name) => !preserved.has(name)).map((name) => this.d.fs.rm(posix.join(this.dir, name), { recursive: true, force: true }).catch(() => {})));
   }
@@ -190,12 +223,51 @@ export class MacUpdater {
     }
     const apps = (await fs.readdir(extractDir)).filter((name) => name.endsWith('.app'));
     if (apps.length !== 1) { await this.note(`the archive holds ${apps.length} app bundles, expected 1`); throw fail(MAC_MESSAGES.verify); }
-    const bundle = posix.join(extractDir, apps[0]);
+    const unpackedBundle = posix.join(extractDir, apps[0]);
     // Files written by this process carry no quarantine flag; this only guards against one that was set anyway.
-    await this.d.exec('/usr/bin/xattr', ['-cr', bundle], EXEC_TIMEOUT_MS).catch(() => undefined);
-    const executable = await this.verifyBundle(bundle, offer.version);
-    await this.note(`update ${offer.version} downloaded, unpacked and verified`);
-    return { version: offer.version, bundle, executable, zip, extractDir };
+    await this.d.exec('/usr/bin/xattr', ['-cr', unpackedBundle], EXEC_TIMEOUT_MS).catch(() => undefined);
+    // A quick look first, so nothing unverified is copied next to the installed app.
+    await this.verifyBundle(unpackedBundle, offer.version, false);
+
+    // The verified bundle waits next to the installed app (same directory and volume), so the swap is two renames.
+    const target = await evaluateInstallTarget(this.d.execPath, this.d.packaged, this.targetFs());
+    if (!target.ok) { await this.note(`staging refused: ${target.reason}`); throw fail(REFUSAL_MESSAGES[target.reason]); }
+    const staged = stagedPathFor(target.bundle, offer.version);
+    await this.removeSiblings(target.bundle, '.new-', () => true);
+    const copied = await this.d.exec('/usr/bin/ditto', [unpackedBundle, staged], EXEC_TIMEOUT_MS);
+    if (copied.code !== 0) {
+      await this.note(`ditto copy failed (${copied.code}): ${copied.stderr.trim().slice(0, 300)}`);
+      await fs.rm(staged, { recursive: true, force: true }).catch(() => {});
+      throw fail(MAC_MESSAGES.extract);
+    }
+    let executable: string;
+    try { executable = await this.verifyBundle(staged, offer.version, true); }
+    catch (error) { await fs.rm(staged, { recursive: true, force: true }).catch(() => {}); throw error; }
+    await fs.rm(extractDir, { recursive: true, force: true }).catch(() => {});
+    await this.note(`update ${offer.version} downloaded, verified and staged at ${staged}`);
+    return { version: offer.version, bundle: staged, executable, zip, extractDir };
+  }
+
+  /** Removes the siblings `<bundle><infix><version>` of the installed app for which `remove(version)` holds. */
+  private async removeSiblings(bundle: string, infix: '.new-' | '.old-', remove: (version: string) => boolean): Promise<void> {
+    const parent = posix.dirname(bundle);
+    const prefix = `${posix.basename(bundle)}${infix}`;
+    const names = await this.d.fs.readdir(parent).catch(() => [] as string[]);
+    await Promise.all(names.filter((name) => name.startsWith(prefix) && remove(name.slice(prefix.length)))
+      .map((name) => this.d.fs.rm(posix.join(parent, name), { recursive: true, force: true }).catch(() => {})));
+  }
+
+  /**
+   * Removes leftovers of updates that are already installed (or older): archives, unpacked bundles, scripts and staged copies
+   * of versions up to `upTo`. Files of a newer version (a download in flight) are never touched.
+   */
+  private async cleanFinished(upTo: string): Promise<void> {
+    const old = (version: string) => compareVersions(version, upTo) <= 0;
+    const names = await this.d.fs.readdir(this.dir).catch(() => [] as string[]);
+    await Promise.all(names.filter((name) => { const version = stagedFileVersion(name); return version !== undefined && old(version); })
+      .map((name) => this.d.fs.rm(posix.join(this.dir, name), { recursive: true, force: true }).catch(() => {})));
+    const bundle = this.d.packaged ? bundlePathFromExecPath(this.d.execPath) : undefined;
+    if (bundle) await this.removeSiblings(bundle, '.new-', old);
   }
 
   private async hashFile(path: string): Promise<string> {
@@ -279,8 +351,8 @@ export class MacUpdater {
     return converted.stdout;
   }
 
-  /** Version, identifier, executable and code signature of the unpacked bundle; returns the executable name. */
-  private async verifyBundle(bundle: string, version: string): Promise<string> {
+  /** Version, identifier, executable (and, with `signature`, the code signature) of a bundle; returns the executable name. */
+  private async verifyBundle(bundle: string, version: string, signature: boolean): Promise<string> {
     const reject = async (why: string): Promise<never> => { await this.note(`verification failed: ${why}`); throw fail(MAC_MESSAGES.verify); };
     let info: string;
     let running: string | undefined;
@@ -298,9 +370,10 @@ export class MacUpdater {
     const exe = await this.d.fs.stat(posix.join(bundle, 'Contents', 'MacOS', executable)).catch(() => undefined);
     if (!exe?.isFile()) return reject(`the executable ${executable} is missing`);
     if (!(exe.mode & 0o111)) return reject(`the executable ${executable} is not executable`);
-    const signature = await this.d.exec('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle], EXEC_TIMEOUT_MS);
-    if (signature.missing) await this.note('codesign is not available, the signature was not checked');
-    else if (signature.code !== 0) return reject(`codesign: ${signature.stderr.trim().slice(0, 300)}`);
+    if (!signature) return executable;
+    const checked = await this.d.exec('/usr/bin/codesign', ['--verify', '--deep', '--strict', bundle], EXEC_TIMEOUT_MS);
+    if (checked.missing) await this.note('codesign is not available, the signature was not checked');
+    else if (checked.code !== 0) return reject(`codesign: ${checked.stderr.trim().slice(0, 300)}`);
     return executable;
   }
 
@@ -314,14 +387,18 @@ export class MacUpdater {
     if (!target.ok) { await this.note(`install refused: ${target.reason}`); return { ok: false, refusal: target.reason }; }
     const writable = await probeBundleWrite(target.bundle, (path) => fs.writeFile(path, ''), (path) => fs.rm(path, { force: true }));
     if (!writable) { await this.note('install refused: the app bundle cannot be modified (App Management permission?)'); return { ok: false, refusal: 'app-management' }; }
+    // The staged copy must sit next to the installed app and still be what it was when it was verified.
+    if (staged.bundle !== stagedPathFor(target.bundle, staged.version)) { await this.note('install aborted: the staged app is not next to the installed one'); throw fail(MAC_MESSAGES.verify); }
     const exe = await fs.stat(posix.join(staged.bundle, 'Contents', 'MacOS', staged.executable)).catch(() => undefined);
     if (!exe?.isFile()) { await this.note('install aborted: the staged app is missing'); throw fail(MAC_MESSAGES.verify); }
+    const executable = await this.verifyBundle(staged.bundle, staged.version, false);
+    if (executable !== staged.executable) { await this.note('install aborted: the staged executable changed'); throw fail(MAC_MESSAGES.verify); }
 
     const backup = backupPathFor(target.bundle, this.d.currentVersion);
     const scriptPath = posix.join(this.dir, `install-${staged.version}.sh`);
     const script = buildInstallScript({
       pid: this.d.pid, bundle: target.bundle, newBundle: staged.bundle, backup, executable: staged.executable,
-      log: this.logFile, readyFlag: this.readyFile, selfPath: scriptPath, cleanup: [staged.extractDir, staged.zip],
+      log: this.logFile, readyFlag: this.readyFile, failedFlag: this.failedFile, selfPath: scriptPath, cleanup: [staged.extractDir, staged.zip],
       fromVersion: this.d.currentVersion, toVersion: staged.version,
       waitSeconds: this.d.scriptWaitSeconds ?? SCRIPT_WAIT_SECONDS, readySeconds: this.d.scriptReadySeconds ?? SCRIPT_READY_SECONDS,
     });
@@ -353,6 +430,20 @@ export class MacUpdater {
    * logged and reported as a failure of that version.
    */
   async finishPrevious(): Promise<MacPreviousOutcome> {
+    await this.cleanFinished(this.d.currentVersion);
+    // The script itself restored (or never touched) the old app and relaunched it: that is a failure whatever the age of the marker.
+    const flagged = await this.d.fs.readFile(this.failedFile, 'utf8').then((text) => text.trim(), () => undefined);
+    if (flagged !== undefined) {
+      await this.d.fs.rm(this.failedFile, { force: true });
+      if (flagged && compareVersions(this.d.currentVersion, flagged) < 0) {
+        await this.d.fs.rm(this.markerFile, { force: true });
+        await this.note(`update to ${flagged} was rolled back by the update script; running ${this.d.currentVersion}`);
+        const bundle = this.d.packaged ? bundlePathFromExecPath(this.d.execPath) : undefined;
+        if (bundle) await this.removeSiblings(bundle, '.new-', (version) => version === flagged);
+        await this.cleanStagingOf(flagged);
+        return { kind: 'failed', version: flagged };
+      }
+    }
     const marker = await this.readMarker();
     if (!marker) return { kind: 'none' };
     if (compareVersions(this.d.currentVersion, marker.to) >= 0) return { kind: 'updated', version: marker.to };
@@ -360,8 +451,15 @@ export class MacUpdater {
     const backupKept = await this.d.fs.stat(marker.backup).then(() => true, () => false);
     await this.note(`update ${marker.from} -> ${marker.to} did not take effect; running ${this.d.currentVersion}${backupKept ? `; the previous version is still at ${marker.backup}` : ''}`);
     await this.d.fs.rm(this.markerFile, { force: true });
-    await this.cleanStaging();
+    await this.cleanStagingOf(marker.to);
     return { kind: 'failed', version: marker.to };
+  }
+
+  /** Removes the staging files of one failed version (the app has not started downloading anything yet at this point). */
+  private async cleanStagingOf(version: string): Promise<void> {
+    const names = await this.d.fs.readdir(this.dir).catch(() => [] as string[]);
+    await Promise.all(names.filter((name) => stagedFileVersion(name) === version)
+      .map((name) => this.d.fs.rm(posix.join(this.dir, name), { recursive: true, force: true }).catch(() => {})));
   }
 
   /** Called once the main window of the new version is up: releases the waiting script and cleans up after a finished update. */
@@ -373,11 +471,9 @@ export class MacUpdater {
     await fs.writeFile(this.readyFile, this.d.currentVersion);
     await fs.rm(this.markerFile, { force: true });
     await this.note(`update ${marker.from} -> ${marker.to} is running`);
-    await this.cleanStaging();
+    // Only what belongs to this version or older: a newer download may already be running.
+    await this.cleanFinished(this.d.currentVersion);
     // The script normally removes the previous version itself; this covers a script that gave up waiting.
-    const parent = posix.dirname(marker.bundle);
-    const prefix = `${posix.basename(marker.bundle)}.old-`;
-    const names = await fs.readdir(parent).catch(() => [] as string[]);
-    await Promise.all(names.filter((name) => name.startsWith(prefix)).map((name) => fs.rm(posix.join(parent, name), { recursive: true, force: true }).catch(() => {})));
+    await this.removeSiblings(marker.bundle, '.old-', () => true);
   }
 }

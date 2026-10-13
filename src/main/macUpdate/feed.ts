@@ -79,3 +79,16 @@ export function selectMacAsset(feed: MacFeed, arch: string): MacAsset | undefine
     return !!match && match[1] === arch && file.name.includes(`-${feed.version}-`);
   });
 }
+
+/**
+ * Update traffic (the feed, the archive and every redirect hop in between) may only go to https GitHub hosts: github.com and
+ * *.githubusercontent.com (release assets are served from objects.githubusercontent.com / release-assets.githubusercontent.com).
+ * `extraOrigins` allows the origin of a development feed.
+ */
+export function isTrustedUpdateUrl(url: string, extraOrigins: string[] = []): boolean {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; }
+  if (extraOrigins.includes(parsed.origin)) return true;
+  return parsed.protocol === 'https:' && parsed.port === '' && !parsed.username && !parsed.password
+    && (parsed.hostname === 'github.com' || parsed.hostname.endsWith('.githubusercontent.com'));
+}

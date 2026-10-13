@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAC_FEED_URL, macAssetBase, parseLatestMacYml, selectMacAsset } from '../src/main/macUpdate/feed';
+import { isTrustedUpdateUrl, MAC_FEED_URL, macAssetBase, parseLatestMacYml, selectMacAsset } from '../src/main/macUpdate/feed';
 import { compareVersions } from '../src/main/startupGate';
 
 /** The real latest-mac.yml of release 0.6.5: base64 hashes are folded onto their own line by electron-builder. */
@@ -75,6 +75,19 @@ describe('asset selection', () => {
     expect(MAC_FEED_URL).toBe('https://github.com/adamejzak/ajzakomator/releases/latest/download/latest-mac.yml');
     expect(new URL('ajzakomator-0.6.5-mac-arm64.zip', macAssetBase('0.6.5')).href)
       .toBe('https://github.com/adamejzak/ajzakomator/releases/download/v0.6.5/ajzakomator-0.6.5-mac-arm64.zip');
+  });
+});
+
+describe('isTrustedUpdateUrl', () => {
+  it('accepts https GitHub hosts only', () => {
+    expect(isTrustedUpdateUrl(MAC_FEED_URL)).toBe(true);
+    expect(isTrustedUpdateUrl('https://objects.githubusercontent.com/a')).toBe(true);
+    expect(isTrustedUpdateUrl('https://release-assets.githubusercontent.com/a')).toBe(true);
+    for (const bad of ['http://github.com/a', 'https://githubusercontent.com/a', 'https://evilgithubusercontent.com/a', 'https://github.com.evil.example/a', 'https://github.com:444/a', 'https://u:p@github.com/a', 'ftp://github.com/a', 'not a url', '']) expect(isTrustedUpdateUrl(bad), bad).toBe(false);
+  });
+  it('allows extra origins (development feed) exactly', () => {
+    expect(isTrustedUpdateUrl('http://localhost:8080/latest-mac.yml', ['http://localhost:8080'])).toBe(true);
+    expect(isTrustedUpdateUrl('http://localhost:9999/latest-mac.yml', ['http://localhost:8080'])).toBe(false);
   });
 });
 
