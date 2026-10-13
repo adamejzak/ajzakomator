@@ -20,6 +20,7 @@ const api: McApi = {
   installOptions: (cli) => ipcRenderer.invoke('install:options', cli),
   startInstall: (request) => ipcRenderer.invoke('install:start', request),
   cancelInstall: (id) => ipcRenderer.send('install:cancel', id),
+  installCurrent: () => ipcRenderer.invoke('install:current'),
   killCell: (cellId) => ipcRenderer.send('cell:kill', cellId),
   killCellAndWait: (cellId) => ipcRenderer.invoke('cell:killAndWait', cellId),
   bindCodexSession: (cellId, cwd) => ipcRenderer.invoke('codex:bind', cellId, cwd),

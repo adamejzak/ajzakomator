@@ -25,6 +25,8 @@ export type HostToMain =
   | { t: 'exit'; id: string; code: number }
   /** Output of a terminal spawned with `tap`. */
   | { t: 'tap'; id: string; data: string }
+  /** The user typed Ctrl+C into a terminal spawned with `tap`. */
+  | { t: 'interrupt'; id: string }
   | { t: 'killed'; id: string }
   | { t: 'killedAll' };
 

@@ -41,6 +41,8 @@ const PROBE_OUT = (path: string, claude = '', codex = ''): ExecResult => ({
   ok: true, timedOut: false, stdout: `banner\n__AJZ_PATH__=${path}\n__AJZ_CLAUDE__=${claude}\n__AJZ_CODEX__=${codex}\n`,
 });
 const isProbe = (args: string[]) => args[0] === '-ilc';
+const WIN_PROBE = (claude = '', codex = ''): ExecResult => ({ ok: true, timedOut: false, stdout: `Loading personal profile...\r\n__AJZ_CMD_CLAUDE__=${claude}\r\n__AJZ_CMD_CODEX__=${codex}\r\n` });
+const isWinProbe = (file: string) => file === 'powershell.exe' || file === 'pwsh.exe';
 
 afterEach(() => vi.useRealTimers());
 
@@ -92,6 +94,29 @@ describe('CliDetector on macOS', () => {
     expect(await detector(w).get('claude')).toMatchObject({ state: 'missing', reason: 'notOnPath' });
   });
 
+  it('never reports "missing" when the login shell resolves the name to an alias or function', async () => {
+    const aliased = (value: string) => world({ exec: (_f, args) => (isProbe(args) ? PROBE_OUT('/usr/bin:/bin', value) : VERSION_OK) });
+    for (const value of ["alias claude='/opt/x/claude --flag'", 'claude', 'claude is a shell function']) {
+      expect(await detector(aliased(value)).get('claude')).toMatchObject({ state: 'unknown', reason: 'shellAlias' });
+    }
+    // the other CLI of the same probe is still judged on its own
+    const w = aliased("alias claude='x'");
+    expect(await detector(w).get('codex')).toMatchObject({ state: 'missing' });
+  });
+
+  it('probes with the shell the cells run (settings.shell), not $SHELL', async () => {
+    const w = world({ env: { PATH: '/usr/bin:/bin', SHELL: '/bin/zsh' }, files: new Set(['/bin/bash']), exec: (_f, args) => (isProbe(args) ? PROBE_OUT('/usr/bin:/bin') : VERSION_OK) });
+    await detector(w, { shell: () => 'bash' }).get('claude');
+    expect(w.calls.find((c) => isProbe(c.args))!.file).toBe('/bin/bash');
+    const zsh = world({ env: { PATH: '/usr/bin:/bin', SHELL: '/bin/bash' }, files: new Set(['/bin/zsh']), exec: (_f, args) => (isProbe(args) ? PROBE_OUT('/usr/bin:/bin') : VERSION_OK) });
+    await detector(zsh, { shell: () => 'zsh' }).get('claude');
+    expect(zsh.calls.find((c) => isProbe(c.args))!.file).toBe('/bin/zsh');
+    // a configured shell that is not there falls back to $SHELL
+    const absent = world({ env: { PATH: '/usr/bin:/bin', SHELL: '/bin/zsh' }, exec: (_f, args) => (isProbe(args) ? PROBE_OUT('/usr/bin:/bin') : VERSION_OK) });
+    await detector(absent, { shell: () => 'bash' }).get('claude');
+    expect(absent.calls.find((c) => isProbe(c.args))!.file).toBe('/bin/zsh');
+  });
+
   it('fails open (unknown) when the login shell probe times out or the shell is unsupported', async () => {
     const timedOut = world({ exec: () => ({ ok: false, stdout: '', timedOut: true }) });
     expect(await detector(timedOut).get('claude')).toMatchObject({ state: 'unknown', reason: 'timeout' });
@@ -138,10 +163,13 @@ describe('CliDetector on Windows', () => {
     expect(w.calls[0].options.verbatim).toBe(true);
   });
 
-  it('does not run a shim whose path could break out of the command line', async () => {
-    const w = win({ files: new Set(['C:\\Users\\a&b\\x\\claude.cmd']), env: { Path: 'C:\\Users\\a&b\\x', PATHEXT: '.CMD' } });
-    expect(await detector(w).get('claude')).toMatchObject({ state: 'found', reason: 'versionFailed' });
-    expect(w.calls).toHaveLength(0);
+  it('quotes a shim path so that `&` in a folder name works, and refuses what cannot be quoted', async () => {
+    const amp = win({ files: new Set(['C:\\Users\\R&D\\x\\claude.cmd']), env: { Path: 'C:\\Users\\R&D\\x', PATHEXT: '.CMD', ComSpec: 'C:\\Windows\\System32\\cmd.exe' } });
+    expect(await detector(amp).get('claude')).toMatchObject({ state: 'found', version: '2.1.211' });
+    expect(amp.calls[0].args).toEqual(['/d', '/s', '/c', '""C:\\Users\\R&D\\x\\claude.cmd" --version"']);
+    const percent = win({ files: new Set(['C:\\100%\\claude.cmd']), env: { Path: 'C:\\100%', PATHEXT: '.CMD' } });
+    expect(await detector(percent).get('claude')).toMatchObject({ state: 'found', reason: 'versionFailed' });
+    expect(percent.calls).toHaveLength(0);
   });
 
   it('picks up a directory only the registry PATH has (installer ran after the app started)', async () => {
@@ -154,9 +182,9 @@ describe('CliDetector on Windows', () => {
   });
 
   it('reports "missing" with a readable registry and "unknown" when the registry cannot be read', async () => {
-    const readable = win({ registry: { machine: 'C:\\Windows', user: null } });
+    const readable = win({ registry: { machine: 'C:\\Windows', user: null }, exec: (file) => (isWinProbe(file) ? WIN_PROBE() : VERSION_OK) });
     expect(await detector(readable).get('claude')).toMatchObject({ state: 'missing' });
-    const broken = win({ registry: null });
+    const broken = win({ registry: null, exec: (file) => (isWinProbe(file) ? WIN_PROBE() : VERSION_OK) });
     expect(await detector(broken).get('claude')).toMatchObject({ state: 'unknown', reason: 'registryFailed' });
   });
 
@@ -176,6 +204,66 @@ describe('CliDetector on Windows', () => {
     const d = detector(w);
     await d.get('claude');
     expect((await d.applyEnv({ Path: 'C:\\Windows' }, 'claude')).Path).toBe('C:\\Windows');
+  });
+
+  describe('profile probe (what the user\'s own PowerShell resolves)', () => {
+    const probed = (claude: string, extra: Partial<World> = {}) => win({
+      files: new Set(['C:\\Tools\\claude.exe']), exec: (file) => (isWinProbe(file) ? WIN_PROBE(claude) : VERSION_OK), ...extra,
+    });
+
+    it('finds an Application the profile put on the PATH and verifies it', async () => {
+      const w = probed('Application|C:\\Tools\\claude.exe');
+      expect(await detector(w, { shell: () => 'powershell' }).get('claude')).toMatchObject({ state: 'found', path: 'C:\\Tools\\claude.exe', source: 'shell', version: '2.1.211' });
+      const probe = w.calls.find((c) => isWinProbe(c.file))!;
+      expect(probe.file).toBe('powershell.exe');
+      expect(probe.args).toContain('-Command');
+      expect(probe.args).not.toContain('-NoProfile'); // the profile is the point
+      expect(probe.options.timeout).toBe(8000);
+    });
+
+    it('treats an alias, function or script as unknown, never as missing (no lock-out)', async () => {
+      for (const kind of ['Alias|claude-real', 'Function|', 'ExternalScript|C:\\Tools\\claude.ps1', 'Cmdlet|']) {
+        const w = probed(kind);
+        expect(await detector(w, { shell: () => 'powershell' }).get('claude')).toMatchObject({ state: 'unknown', reason: 'shellAlias' });
+      }
+    });
+
+    it('is missing only when the shell itself ran and knows nothing', async () => {
+      expect(await detector(probed(''), { shell: () => 'powershell' }).get('claude')).toMatchObject({ state: 'missing' });
+      const broken = probed('', { exec: () => ({ ok: false, stdout: '', timedOut: true }) });
+      expect(await detector(broken, { shell: () => 'powershell' }).get('claude')).toMatchObject({ state: 'unknown', reason: 'timeout' });
+      const noOutput = probed('', { exec: () => ({ ok: true, stdout: 'garbage', timedOut: false }) });
+      expect(await detector(noOutput, { shell: () => 'powershell' }).get('claude')).toMatchObject({ state: 'unknown', reason: 'probeFailed' });
+    });
+
+    it('runs one probe for both CLIs, and none when the binary is found on the PATH', async () => {
+      const w = probed('');
+      const d = detector(w, { shell: () => 'powershell' });
+      await Promise.all([d.get('claude'), d.get('codex')]);
+      expect(w.calls.filter((c) => isWinProbe(c.file))).toHaveLength(1);
+      const hit = win({ files: new Set(['C:\\Windows\\claude.exe']) });
+      await detector(hit, { shell: () => 'powershell' }).get('claude');
+      expect(hit.calls.filter((c) => isWinProbe(c.file))).toHaveLength(0);
+    });
+
+    it('uses pwsh for the pwsh shell (falling back to Windows PowerShell) and skips the probe for cmd', async () => {
+      const w = probed('Application|C:\\Tools\\claude.exe');
+      await detector(w, { shell: () => 'pwsh' }).get('claude');
+      expect(w.calls.find((c) => isWinProbe(c.file))!.file).toBe('pwsh.exe');
+      const fallback = probed('Application|C:\\Tools\\claude.exe', { exec: (file) => (file === 'pwsh.exe' ? { ok: false, stdout: '', timedOut: false } : file === 'powershell.exe' ? WIN_PROBE('Application|C:\\Tools\\claude.exe') : VERSION_OK) });
+      expect(await detector(fallback, { shell: () => 'pwsh' }).get('claude')).toMatchObject({ state: 'found', source: 'shell' });
+      const cmd = probed('Application|C:\\Tools\\claude.exe');
+      expect(await detector(cmd, { shell: () => 'cmd' }).get('claude')).toMatchObject({ state: 'missing' });
+      expect(cmd.calls.filter((c) => isWinProbe(c.file))).toHaveLength(0);
+    });
+
+    it('dot-sources the test profile instead of the real one when asked (unpackaged hook)', async () => {
+      const w = probed('');
+      await detector(w, { shell: () => 'powershell', probeProfile: 'D:\\lab\\profile.ps1' }).get('claude');
+      const probe = w.calls.find((c) => isWinProbe(c.file))!;
+      expect(probe.args).toContain('-NoProfile');
+      expect(probe.args.at(-1)).toContain(". 'D:\\lab\\profile.ps1'; ");
+    });
   });
 });
 

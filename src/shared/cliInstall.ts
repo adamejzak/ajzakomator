@@ -12,8 +12,8 @@ export const INSTALL_PTY_PREFIX = 'install:';
 /** Login (`auth:`) and install (`install:`) terminals are windows of the app, not cells. */
 export const isAuxPtyId = (id: string): boolean => id.startsWith('auth:') || id.startsWith(INSTALL_PTY_PREFIX);
 
-export type InstallReason = 'network' | 'proxy' | 'permission' | 'npmMissing' | 'policy' | 'notOnPath' | 'timeout' | 'generic';
-export const INSTALL_REASONS: readonly InstallReason[] = ['network', 'proxy', 'permission', 'npmMissing', 'policy', 'notOnPath', 'timeout', 'generic'];
+export type InstallReason = 'network' | 'proxy' | 'permission' | 'npmMissing' | 'policy' | 'notOnPath' | 'timeout' | 'aborted' | 'generic';
+export const INSTALL_REASONS: readonly InstallReason[] = ['network', 'proxy', 'permission', 'npmMissing', 'policy', 'notOnPath', 'timeout', 'aborted', 'generic'];
 
 export interface InstallRequest { cli: CliId; method: InstallMethod }
 
@@ -70,6 +70,9 @@ export function shellFamily(shell: ShellKind, platform: InstallPlatform): ShellF
   return shell === 'cmd' ? 'cmd' : 'powershell';
 }
 
+/** Runs a PowerShell command line in a child powershell.exe; its exit code is the result. */
+export const childPowerShell = (command: string): string => `powershell -NoProfile -ExecutionPolicy Bypass -Command "${command}"`;
+
 /** The command in the form the configured shell runs it. Null = impossible combination (allow-list). */
 export function installCommandFor(cli: CliId, method: InstallMethod, platform: InstallPlatform, shell: ShellKind): string | null {
   if (!isCliId(cli) || !isInstallMethod(method)) return null;
@@ -77,8 +80,10 @@ export function installCommandFor(cli: CliId, method: InstallMethod, platform: I
   if (official === null) return null;
   const family = shellFamily(shell, platform);
   if (platform === 'win32') {
-    // `irm ... | iex` is PowerShell syntax: from cmd.exe it runs in a one-off PowerShell (no policy change).
-    if (family === 'cmd' && official.startsWith('irm ')) return `powershell -NoProfile -ExecutionPolicy Bypass -Command "${official}"`;
+    // `irm ... | iex` always runs in a one-off child PowerShell (this process only, no policy change): the vendor script sets
+    // $ErrorActionPreference = 'Stop' and calls Write-Error / exit, which would abort the whole typed line (and with it the
+    // end marker) in the interactive shell. The child turns every failure into an exit code. From cmd.exe it is the only way anyway.
+    if (official.startsWith('irm ')) return childPowerShell(official);
     // `npm` resolves to npm.ps1 first in PowerShell, which a default execution policy blocks; npm.cmd is the same program.
     if (family === 'powershell' && method === 'npm') return official.replace(/^npm /, 'npm.cmd ');
   }
@@ -101,10 +106,13 @@ export function typedInstallCommand(command: string, family: ShellFamily): strin
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]/g;
 export const stripAnsi = (text: string): string => text.replace(ANSI, '').replace(/\r(?!\n)/g, '\n');
 
-/** The exit code of the last marker in the output (ANSI stripped by this function), or null. */
+/**
+ * The exit code of the last marker in the output (ANSI stripped by this function), or null. The digits must be followed by
+ * the end of the line: a marker split inside a multi-digit code (chunk boundary) is not complete yet.
+ */
 export function parseInstallMarker(text: string): number | null {
   let code: number | null = null;
-  const pattern = new RegExp(`${INSTALL_MARKER}(\\d{1,3})(?![0-9A-Za-z_])`, 'g');
+  const pattern = new RegExp(`${INSTALL_MARKER}(\\d{1,3})[ \\t]*(?=[\\r\\n])`, 'g');
   for (const match of stripAnsi(text).matchAll(pattern)) code = Number(match[1]);
   return code;
 }
@@ -112,8 +120,9 @@ export function parseInstallMarker(text: string): number | null {
 // ── failures ─────────────────────────────────────────────────────────────────
 
 /** Coarse reason from the finished command; `installedButMissing` = it exited cleanly but the detector still finds nothing. */
-export function classifyInstallFailure(input: { exitCode: number | null; output: string; method: InstallMethod; installedButMissing?: boolean; timedOut?: boolean }): InstallReason {
+export function classifyInstallFailure(input: { exitCode: number | null; output: string; method: InstallMethod; installedButMissing?: boolean; timedOut?: boolean; aborted?: boolean }): InstallReason {
   if (input.timedOut) return 'timeout';
+  if (input.aborted) return 'aborted';
   const text = stripAnsi(input.output);
   if (input.installedButMissing && (input.exitCode === 0 || input.exitCode === null)) return 'notOnPath';
   if (/running scripts is disabled|cannot be loaded because running scripts|PSSecurityException|is not digitally signed|UnauthorizedAccess|AuthorizationManager|execution policy/i.test(text)) return 'policy';

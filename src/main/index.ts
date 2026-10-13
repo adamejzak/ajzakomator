@@ -49,7 +49,7 @@ import { createCliHandlers, createInstallHandlers } from './cliIpc';
 import { InstallManager } from './cliInstall';
 import { killProcessTree, runProgram, systemCliDeps } from './cliSystem';
 import { INSTALL_PTY_PREFIX } from '../shared/cliInstall';
-import { cliForProfile, CLI_NAMES, isCliId, missingCli, spawnDecision, type CliId, type CliStatus } from '../shared/cliStatus';
+import { cliForProfile, CLI_NAMES, isCliId, missingCli, resolveExecFile, spawnDecision, type CliId, type CliStatus } from '../shared/cliStatus';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
@@ -106,14 +106,19 @@ const usage = new UsageService({
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
-const cliDetector = new CliDetector(systemCliDeps({ disableRegistry: !app.isPackaged && process.env.MC_CLI_NO_REGISTRY === '1' }));
+const cliDetector = new CliDetector(systemCliDeps({
+  disableRegistry: !app.isPackaged && process.env.MC_CLI_NO_REGISTRY === '1',
+  shell: () => state.settings.shell,
+  // Unpackaged builds only: a script dot-sourced instead of the real PowerShell profile (UI checks must not run the user's profile).
+  probeProfile: !app.isPackaged ? process.env.MC_CLI_PROBE_PROFILE || undefined : undefined,
+}));
 /** How long a spawn may wait for a detection before it proceeds anyway (unknown never blocks). */
 const CLI_WAIT_MS = 7000;
 const execText = async (command: string, args: string[], env: NodeJS.ProcessEnv): Promise<string | null> => {
   // `claude` / `codex` run from where they were detected, with a PATH that has their directory.
   const cli = isCliId(command) ? command : undefined;
   const status = cli ? await cliDetector.get(cli, { waitMs: CLI_WAIT_MS }).catch(() => undefined) : undefined;
-  const file = status?.state === 'found' && status.path ? (process.platform === 'win32' && /\s/.test(status.path) ? `"${status.path}"` : status.path) : command;
+  const file = resolveExecFile(command, status, process.platform);
   const runEnv = await cliDetector.applyEnv(cleanEnv(env), cli);
   return new Promise((resolve) => {
     execFile(file, args, { env: runEnv, timeout: 15000, windowsHide: true, shell: process.platform === 'win32' }, (error, stdout) => resolve(error ? null : stdout));
@@ -307,12 +312,15 @@ function createWindow(): void {
   });
   const created = win;
   // Async callbacks outlive the native window (shutdown, update hand-over); they must see "no window", not a destroyed one.
-  created.once('closed', () => { if (win === created) win = null; });
+  created.once('closed', () => { install.dispose(); if (win === created) win = null; });
   win.on('minimize', () => usage.setActive(false));
   win.on('hide', () => usage.setActive(false));
   win.on('restore', () => usage.setActive(true));
   win.on('show', () => usage.setActive(true));
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
+  // The install window lives in the renderer: a reload or crash must not leave an invisible install running.
+  win.webContents.on('did-start-loading', () => install.dispose());
+  win.webContents.on('render-process-gone', () => install.dispose());
   win.webContents.on('did-finish-load', () => { if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
@@ -423,7 +431,8 @@ async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
   if (!existsSync(req.cwd)) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const killsBefore = killCount.get(req.cellId) ?? 0;
   const cli = cliForProfile(req.profile);
-  if (cli) {
+  // `force`: the user chose "start anyway" on the install card (the detection may be wrong, e.g. an alias).
+  if (cli && req.force !== true) {
     // A definite "not installed" never spawns a shell that would only print "command not found"; unknown fails open.
     const status = await cliDetector.get(cli, { waitMs: CLI_WAIT_MS }).catch(() => undefined);
     if (!spawnDecision(req.profile, status).spawn) {
@@ -498,6 +507,7 @@ const installHandlers = createInstallHandlers(install);
 ipcMain.handle('install:options', (_e, cli?: unknown) => installHandlers.options(cli));
 ipcMain.handle('install:start', (_e, request?: unknown) => installHandlers.start(request));
 ipcMain.on('install:cancel', (_e, id?: unknown) => { installHandlers.cancel(id); });
+ipcMain.handle('install:current', () => installHandlers.current());
 ipcMain.on('cell:runtime', (_e, cellId: string, status: string, reason?: string, hooked?: boolean) => {
   const found = findCell(state, cellId);
   if (!found || !alive.has(cellId)) return;

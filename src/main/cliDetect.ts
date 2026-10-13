@@ -3,8 +3,9 @@
 // All I/O is injected, so the whole decision logic is tested with fakes.
 import { posix, win32 } from 'path';
 import {
-  CLI_IDS, executableNames, getEnv, joinPath, knownCliDirs, mergePaths, npmPrefixBinDir, parseShellProbe, parseVersion,
-  prependDir, registryPathEntries, sameStatus, shellProbeScript, sortVersionsDesc, splitPath, versionedCliDirs, withPath,
+  CLI_IDS, executableNames, getEnv, joinPath, knownCliDirs, mergePaths, npmPrefixBinDir, parseShellProbe, parseVersion, parseWindowsCommandProbe,
+  posixShellFile, prependDir, quoteForCmd, registryPathEntries, sameStatus, shellProbeScript, sortVersionsDesc, splitPath, versionedCliDirs,
+  windowsCommandProbeScript, withPath,
   type CliId, type CliReason, type CliSource, type CliStatus, type CliStatusMap,
 } from '../shared/cliStatus';
 import { cleanEnv } from '../shared/env';
@@ -29,6 +30,10 @@ export interface CliDetectorDeps {
   exec(file: string, args: string[], options: ExecOptions): Promise<ExecResult>;
   /** Raw (unexpanded) Machine and User PATH from the Windows registry; null when unreadable. The only registry access. */
   readWindowsPath?(): Promise<{ machine: string | null; user: string | null } | null>;
+  /** The shell kind cells run (settings.shell). POSIX: that shell does the login probe; Windows: PowerShell kinds get the profile probe, cmd does not. */
+  shell?(): string | undefined;
+  /** Test hook (unpackaged builds): a PowerShell script dot-sourced instead of the user's real profile in the Windows probe. */
+  probeProfile?: string;
 }
 
 export const FOUND_TTL_MS = 10 * 60_000;
@@ -36,10 +41,9 @@ export const MISSING_TTL_MS = 30_000;
 export const EXEC_TIMEOUT_MS = 5000;
 const REGISTRY_TTL_MS = 5000;
 const NODE_VERSIONS_TRIED = 8;
-/** Characters that could break out of the quoted `cmd.exe /c` command line. */
-const UNSAFE_CMD = /["&|<>^%\r\n]/;
+const WINDOWS_PROBE_TIMEOUT_MS = 8000;
 
-interface ProbeResult { ok: boolean; reason?: CliReason; path: string[]; found: Partial<Record<CliId, string>> }
+interface ProbeResult { ok: boolean; reason?: CliReason; path: string[]; found: Partial<Record<CliId, string>>; aliased: Partial<Record<CliId, true>> }
 
 export class CliDetector {
   private cache = new Map<CliId, CliStatus>();
@@ -50,6 +54,7 @@ export class CliDetector {
   private listeners = new Set<(map: CliStatusMap) => void>();
   private probe?: { at: number; promise: Promise<ProbeResult> };
   private registry?: { at: number; promise: Promise<string[] | null> };
+  private winProbe?: { at: number; promise: Promise<ProbeResult> };
 
   constructor(private readonly deps: CliDetectorDeps) {}
 
@@ -97,6 +102,7 @@ export class CliDetector {
   invalidate(cli?: CliId): void {
     this.generation++;
     this.probe = undefined;
+    this.winProbe = undefined;
     this.registry = undefined;
     for (const id of cli ? [cli] : CLI_IDS) { this.cache.delete(id); this.inflight.delete(id); }
   }
@@ -186,6 +192,16 @@ export class CliDetector {
           const hit = await inDir(dir);
           if (hit) return found(hit, 'shell');
         }
+        // An alias or function is not a file, but a cell (login shell) can run it: never a "missing" verdict.
+        if (probe.aliased[cli]) probeReason = 'shellAlias';
+      } else probeReason = probe.reason ?? 'probeFailed';
+    } else if (this.windowsProbeShell()) {
+      // The user's PowerShell (profile loaded, like a cell) may know the command by a PATH the profile builds, or as an alias.
+      const probe = await this.windowsShellProbe(env, entries);
+      if (probe.ok) {
+        const direct = probe.found[cli];
+        if (direct && await this.deps.isFile(direct)) return found(direct, 'shell');
+        if (direct || probe.aliased[cli]) probeReason = 'shellAlias';
       } else probeReason = probe.reason ?? 'probeFailed';
     }
 
@@ -240,19 +256,65 @@ export class CliDetector {
   private shellProbe(env: Record<string, string | undefined>): Promise<ProbeResult> {
     const current = this.probe;
     if (current && this.deps.now() - current.at <= MISSING_TTL_MS) return current.promise;
-    const promise = this.runProbe(env).catch((): ProbeResult => ({ ok: false, reason: 'probeFailed', path: [], found: {} }));
+    const promise = this.runProbe(env).catch((): ProbeResult => ({ ok: false, reason: 'probeFailed', path: [], found: {}, aliased: {} }));
     this.probe = { at: this.deps.now(), promise };
     return promise;
   }
 
-  /** `$SHELL -ilc` prints marker lines (rc files may print anything else); this also harvests the user's real PATH. */
+  /** Cells use PowerShell kinds with their profile; cmd.exe has no profile worth asking. */
+  private windowsProbeShell(): 'pwsh' | 'powershell' | null {
+    const kind = this.deps.shell?.();
+    if (kind === 'cmd') return null;
+    return kind === 'pwsh' ? 'pwsh' : 'powershell';
+  }
+
+  private windowsShellProbe(env: Record<string, string | undefined>, entries: string[]): Promise<ProbeResult> {
+    const current = this.winProbe;
+    if (current && this.deps.now() - current.at <= MISSING_TTL_MS) return current.promise;
+    const promise = this.runWindowsProbe(env, entries).catch((): ProbeResult => ({ ok: false, reason: 'probeFailed', path: [], found: {}, aliased: {} }));
+    this.winProbe = { at: this.deps.now(), promise };
+    return promise;
+  }
+
+  /** `powershell -Command Get-Command ...` with the profile loaded; stdin is closed, the time and output are capped. */
+  private async runWindowsProbe(env: Record<string, string | undefined>, entries: string[]): Promise<ProbeResult> {
+    const platform = this.deps.platform;
+    const script = windowsCommandProbeScript();
+    const profile = this.deps.probeProfile;
+    const args = profile
+      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `. '${profile.replace(/'/g, "''")}'; ${script}`]
+      : ['-NoLogo', '-NonInteractive', '-Command', script];
+    const runEnv = withPath(cleanEnv(env), joinPath(entries, platform), platform);
+    const files = this.windowsProbeShell() === 'pwsh' ? ['pwsh.exe', 'powershell.exe'] : ['powershell.exe'];
+    let timedOut = false;
+    for (const file of files) {
+      const result = await this.deps.exec(file, args, { timeout: WINDOWS_PROBE_TIMEOUT_MS, env: runEnv });
+      const parsed = parseWindowsCommandProbe(result.stdout);
+      if (parsed.ran) return { ok: true, path: [], found: parsed.found, aliased: parsed.aliased };
+      timedOut = timedOut || result.timedOut;
+    }
+    return { ok: false, reason: timedOut ? 'timeout' : 'probeFailed', path: [], found: {}, aliased: {} };
+  }
+
+  /** The shell cells run (settings.shell) does the login probe; `$SHELL` only when that is not a known POSIX shell file. */
+  private async probeShellFile(env: Record<string, string | undefined>): Promise<string> {
+    const { platform } = this.deps;
+    const configured = this.deps.shell?.();
+    if (configured) {
+      const file = posixShellFile(configured, platform);
+      if (await this.deps.isFile(file)) return file;
+    }
+    return getEnv(env, 'SHELL', platform) || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
+  }
+
+  /** The login shell prints marker lines (rc files may print anything else); this also harvests the user's real PATH. */
   private async runProbe(env: Record<string, string | undefined>): Promise<ProbeResult> {
-    const shell = getEnv(env, 'SHELL', this.deps.platform) || (this.deps.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
+    const shell = await this.probeShellFile(env);
     const script = shell.startsWith('/') ? shellProbeScript(shell) : null;
-    if (!script) return { ok: false, reason: 'probeFailed', path: [], found: {} };
+    if (!script) return { ok: false, reason: 'probeFailed', path: [], found: {}, aliased: {} };
     const result = await this.deps.exec(shell, ['-ilc', script], { timeout: EXEC_TIMEOUT_MS, env: { ...cleanEnv(env), AJZAKOMATOR_PROBE: '1' } });
     const parsed = parseShellProbe(result.stdout);
-    if (!parsed.path.length) return { ok: false, reason: result.timedOut ? 'timeout' : 'probeFailed', path: [], found: {} };
+    if (!parsed.path.length) return { ok: false, reason: result.timedOut ? 'timeout' : 'probeFailed', path: [], found: {}, aliased: {} };
     return { ok: true, ...parsed };
   }
 
@@ -268,9 +330,11 @@ export class CliDetector {
     let args = ['--version'];
     let verbatim = false;
     if (platform === 'win32' && /\.(cmd|bat)$/i.test(path)) {
-      if (UNSAFE_CMD.test(path)) return { ...base, reason: 'versionFailed' };
+      // Inside quotes `& | < > ^` are literal (`C:\Users\R&D` works); only `"`, `%` and line breaks cannot be quoted.
+      const quoted = quoteForCmd(path);
+      if (!quoted) return { ...base, reason: 'versionFailed' };
       file = getEnv(env, 'ComSpec', platform) || 'cmd.exe';
-      args = ['/d', '/s', '/c', `""${path}" --version"`];
+      args = ['/d', '/s', '/c', `"${quoted} --version"`];
       verbatim = true;
     }
     const result = await this.deps.exec(file, args, { timeout: EXEC_TIMEOUT_MS, env: execEnv, verbatim }).catch((): ExecResult => ({ ok: false, stdout: '', timedOut: false }));

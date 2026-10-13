@@ -71,7 +71,7 @@ describe('InstallManager options', () => {
     expect(options).toEqual({
       cli: 'claude',
       options: [
-        { method: 'native', command: 'irm https://claude.ai/install.ps1 | iex' },
+        { method: 'native', command: 'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"' },
         { method: 'winget', command: 'winget install Anthropic.ClaudeCode' },
         { method: 'npm', command: 'npm.cmd install -g @anthropic-ai/claude-code' },
       ],
@@ -154,16 +154,16 @@ describe('InstallManager start validation (allow-list)', () => {
     await h.manager.start({ cli: 'claude', method: 'native', command: 'calc.exe', env: { X: '1' }, cwd: 'C:\\' });
     expect(h.spawned).toHaveLength(1);
     expect(h.spawned[0].command).not.toContain('calc');
-    expect(h.spawned[0].command).toContain('irm https://claude.ai/install.ps1 | iex');
+    expect(h.spawned[0].command).toContain('irm https://claude.ai/install.ps1 | iex"');
   });
 
   it('types the command with its end marker, in a clean environment with the refreshed PATH', async () => {
     const h = setup();
     const result = await h.begin();
     expect(result.ptyId).toMatch(/^install:/);
-    expect(result.command).toBe('irm https://claude.ai/install.ps1 | iex');
+    expect(result.command).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"');
     expect(h.spawned[0].id).toBe(result.ptyId);
-    expect(h.spawned[0].command).toBe("irm https://claude.ai/install.ps1 | iex; Write-Host ('__AJZ_DONE_' + '_' + [int](-not $?))");
+    expect(h.spawned[0].command).toBe("powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://claude.ai/install.ps1 | iex\"; Write-Host ('__AJZ_DONE_' + '_' + [int](-not $?))");
     expect(h.spawned[0].env.PATH).toBe('C:\\bin;C:\\fresh');
     expect(h.spawned[0].env.CLAUDECODE).toBeUndefined();
     expect(h.states).toEqual([{ sessionId: result.sessionId, status: 'running' }]);
@@ -182,7 +182,7 @@ describe('InstallManager start validation (allow-list)', () => {
     const h = setup({ override: 'powershell -File D:\\lab\\fake.ps1' });
     const result = await h.begin();
     expect(h.spawned[0].command.startsWith('powershell -File D:\\lab\\fake.ps1; Write-Host')).toBe(true);
-    expect(result.command).toBe('irm https://claude.ai/install.ps1 | iex');
+    expect(result.command).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"');
     expect(await h.manager.start({ cli: 'claude', method: 'bogus' })).toEqual({ ok: false, error: 'invalid' }); // validation still applies
   });
 
@@ -403,7 +403,7 @@ describe('InstallManager early detection', () => {
 
 describe('install IPC handlers', () => {
   const make = () => {
-    const manager = { options: vi.fn(async () => null), start: vi.fn(async () => ({ ok: false as const, error: 'invalid' as const })), cancel: vi.fn() };
+    const manager = { options: vi.fn(async () => null), start: vi.fn(async () => ({ ok: false as const, error: 'invalid' as const })), cancel: vi.fn(), active: vi.fn(() => null) };
     return { manager, handlers: createInstallHandlers(manager) };
   };
 
@@ -429,5 +429,87 @@ describe('install IPC handlers', () => {
     expect(manager.cancel).not.toHaveBeenCalled();
     handlers.cancel('abc');
     expect(manager.cancel).toHaveBeenCalledWith('abc');
+  });
+});
+
+describe('InstallManager Ctrl+C and attaching', () => {
+  it('ends as aborted when the user hits Ctrl+C and no marker follows, instead of waiting 10 minutes', async () => {
+    const h = setup({}, { abortGraceMs: 2000 });
+    const { sessionId, ptyId } = await h.begin();
+    h.host({ t: 'spawned', id: ptyId, pid: 11 });
+    h.host({ t: 'tap', id: ptyId, data: 'Downloading...\r\n^C\r\nPS C:\\Users\\a> ' });
+    h.host({ t: 'interrupt', id: ptyId });
+    await vi.advanceTimersByTimeAsync(1900);
+    expect(h.states).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(h.states.at(-1)).toEqual({ sessionId, status: 'failed', reason: 'aborted' });
+    expect(h.deps.killTree).toHaveBeenCalledWith(11);
+    expect(h.deps.killPty).toHaveBeenCalledWith(ptyId);
+    expect(h.manager.isActive()).toBe(false);
+  });
+
+  it('lets a marker that still arrives after Ctrl+C decide (cmd keeps running the line)', async () => {
+    const h = setup({ shell: 'cmd' }, { abortGraceMs: 2000 });
+    const { ptyId } = await h.begin();
+    h.host({ t: 'interrupt', id: ptyId });
+    await vi.advanceTimersByTimeAsync(500);
+    h.host({ t: 'tap', id: ptyId, data: '^C\r\n__AJZ_DONE__1\r\n' });
+    await flush();
+    expect(h.states.at(-1)).toMatchObject({ status: 'failed', reason: 'generic', exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.states.filter((s) => s.status === 'failed')).toHaveLength(1);
+  });
+
+  it('succeeds after Ctrl+C when the CLI turns out to be installed', async () => {
+    const h = setup({}, { abortGraceMs: 1000 });
+    const { ptyId } = await h.begin();
+    h.status.value = found('claude');
+    h.host({ t: 'interrupt', id: ptyId });
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(h.states.at(-1)?.status).toBe('succeeded');
+  });
+
+  it('ignores an interrupt of another terminal or without a session', async () => {
+    const h = setup({}, { abortGraceMs: 100 });
+    h.host({ t: 'interrupt', id: 'install:none' });
+    await h.begin();
+    h.host({ t: 'interrupt', id: 'install:other' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.states).toHaveLength(1);
+  });
+
+  it('does not finish on half of a multi-digit exit code', async () => {
+    const h = setup();
+    const { ptyId } = await h.begin();
+    h.host({ t: 'tap', id: ptyId, data: 'curl: (22) The requested URL returned error: 403\r\n__AJZ_DONE__1' });
+    await flush();
+    expect(h.states).toHaveLength(1);
+    h.host({ t: 'tap', id: ptyId, data: '30\r\n' });
+    await flush();
+    expect(h.states.at(-1)).toMatchObject({ status: 'failed', exitCode: 130 });
+  });
+
+  it('exposes the running install so a window opened later attaches to it', async () => {
+    const h = setup();
+    expect(h.manager.active()).toBeNull();
+    const started = await h.begin();
+    expect(h.manager.active()).toEqual({ sessionId: started.sessionId, ptyId: started.ptyId, cli: 'claude', method: 'native', command: started.command });
+    h.manager.cancel(started.sessionId);
+    expect(h.manager.active()).toBeNull();
+  });
+
+  it('probes the tools with the shell the cells run (settings.shell)', async () => {
+    const probe = '__AJZ_TOOL_curl__=/usr/bin/curl\n';
+    const h = setup({ platform: 'darwin', probe, shell: 'bash' });
+    await h.manager.options('claude');
+    expect(h.exec.mock.calls[0][0]).toBe('/bin/bash');
+  });
+});
+
+describe('install IPC current', () => {
+  it('answers with the manager\'s running install', () => {
+    const active = { sessionId: 's', ptyId: 'install:s', cli: 'codex' as const, method: 'native' as const, command: 'x' };
+    const handlers = createInstallHandlers({ options: vi.fn(), start: vi.fn(), cancel: vi.fn(), active: vi.fn(() => active) } as never);
+    expect(handlers.current()).toBe(active);
   });
 });

@@ -1,6 +1,6 @@
 import type { HookEvent, HookInfo } from '../shared/status';
 import type { CellStatus, StatusReason } from '../shared/status';
-import type { CliId, CliStatus, CliStatusMap } from '../shared/cliStatus';
+import type { CliId, CliStatus, CliStatusMap, InstallMethod } from '../shared/cliStatus';
 import type { InstallOptions, InstallRequest, InstallStartResult, InstallState } from '../shared/cliInstall';
 import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
@@ -15,6 +15,8 @@ import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePrevi
 export type { SessionInfo };
 
 export interface SpawnCellRequest {
+  /** Start although the CLI is known to be missing ("Uruchom mimo to"). */
+  force?: boolean;
   cellId: string;
   cwd: string;
   cols: number;
@@ -47,6 +49,8 @@ export interface McApi {
   /** Starts the guided install in a visible terminal; main validates {cli, method} against its allow-list. */
   startInstall(request: InstallRequest): Promise<InstallStartResult>;
   cancelInstall(sessionId: string): void;
+  /** The install that is running now (a window opened while it runs attaches to it), or null. */
+  installCurrent(): Promise<{ sessionId: string; ptyId: string; cli: CliId; method: InstallMethod; command: string } | null>;
   killCell(cellId: string): void;
   killCellAndWait(cellId: string): Promise<void>;
   /** Binds the freshest unclaimed Codex session in `cwd` to the cell (emits cell:session). */

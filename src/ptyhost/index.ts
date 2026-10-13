@@ -34,8 +34,10 @@ function attachRenderer(port: MessagePortMain): void {
   rendererPort = port;
   port.on('message', (e) => {
     const m = e.data as RendererToHost;
-    if (m.t === 'write') manager.write(m.id, m.data);
-    else if (m.t === 'resize') manager.resize(m.id, m.cols, m.rows);
+    if (m.t === 'write') {
+      manager.write(m.id, m.data);
+      if (tapped.has(m.id) && m.data.includes('\x03')) toMain({ t: 'interrupt', id: m.id });
+    } else if (m.t === 'resize') manager.resize(m.id, m.cols, m.rows);
     else if (m.t === 'ack') manager.ack(m.id, m.chars);
   });
   port.on('close', () => {

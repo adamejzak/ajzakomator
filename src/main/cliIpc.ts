@@ -5,6 +5,8 @@ import type { InstallOptions, InstallStartResult } from '../shared/cliInstall';
 import type { CliDetector } from './cliDetect';
 import type { InstallManager } from './cliInstall';
 
+export type ActiveInstall = NonNullable<ReturnType<InstallManager['active']>>;
+
 export interface CliHandlers {
   status(): CliStatusMap;
   recheck(id?: unknown): Promise<CliStatusMap>;
@@ -38,11 +40,14 @@ export interface InstallHandlers {
   options(cli?: unknown): Promise<InstallOptions | null>;
   start(request?: unknown): Promise<InstallStartResult>;
   cancel(sessionId?: unknown): void;
+  /** The running install, if any (a window opened later attaches to it). */
+  current(): ActiveInstall | null;
 }
 
 /** The renderer names a CLI and a method; nothing else (no command text, no paths) is ever forwarded. */
-export function createInstallHandlers(manager: Pick<InstallManager, 'options' | 'start' | 'cancel'>): InstallHandlers {
+export function createInstallHandlers(manager: Pick<InstallManager, 'options' | 'start' | 'cancel' | 'active'>): InstallHandlers {
   return {
+    current: () => manager.active(),
     options: (cli) => (isCliId(cli) ? manager.options(cli) : Promise.resolve(null)),
     start(request) {
       if (typeof request !== 'object' || request === null || Array.isArray(request)) return Promise.resolve({ ok: false, error: 'invalid' });

@@ -20,8 +20,14 @@ import { terminals } from './terminals/TerminalManager';
 /** Cells whose pty was started (or found alive) during this renderer session. */
 const started = new Set<string>();
 let aliveAtStart = new Set<string>();
-/** Cells whose start was skipped because their CLI is not installed; they start by themselves once it is found. */
-const blockedCells = new Set<string>();
+/** Cells the user chose to start although their CLI is detected as missing (an alias, a profile-defined PATH...). */
+const forcedCells = new Set<string>();
+
+// Held cells (start skipped, CLI missing) live in the store so the install card is only drawn for them.
+const hold = (cellId: string): void => { if (!getUi().heldCells[cellId]) setUi((ui) => ({ heldCells: { ...ui.heldCells, [cellId]: true } })); };
+const unhold = (cellId: string): void => {
+  if (getUi().heldCells[cellId]) setUi((ui) => { const { [cellId]: _, ...rest } = ui.heldCells; return { heldCells: rest }; });
+};
 
 export function setAliveAtStart(ids: string[]): void {
   aliveAtStart = new Set(ids);
@@ -67,8 +73,8 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
   started.add(cellId);
   ensureTerminal(cellId);
   // A CLI known to be missing never gets a shell that only prints "command not found": the cell shows an install card.
-  if (!profileAvailable(profile, getUi().cliStatus)) return holdForCli(cellId);
-  blockedCells.delete(cellId);
+  if (!forcedCells.has(cellId) && !profileAvailable(profile, getUi().cliStatus)) return holdForCli(cellId);
+  unhold(cellId);
 
   let sessionId: string | undefined;
   const sameCli = cell.session && cell.session.cli === profile.cli;
@@ -91,7 +97,7 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
   });
   const { cols, rows } = terminals.size(cellId);
   const r = await window.mc.spawnCell({
-    cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId,
+    cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId, ...(forcedCells.has(cellId) ? { force: true } : {}),
     sessionConfirmed: mode === 'resume' && cell.session?.confirmed === true,
     startupPrompt: mode === 'new' && profile.cli !== 'shell' ? cell.startupPrompt : undefined,
   });
@@ -109,19 +115,28 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
 }
 
 function holdForCli(cellId: string): void {
-  blockedCells.add(cellId);
+  hold(cellId);
   window.mc.killCell(cellId); // a previous shell of this cell (profile switch) must not keep running behind the card
 }
 
-export const hasBlockedCells = (): boolean => blockedCells.size > 0;
+export const hasBlockedCells = (): boolean => Object.keys(getUi().heldCells).length > 0;
+
+/** "Uruchom mimo to": starts a held cell although its CLI is detected as missing; later detections do not hold it again. */
+export function startCellAnyway(cellId: string): void {
+  const found = findCell(getS(), cellId);
+  if (!found) return;
+  forcedCells.add(cellId);
+  unhold(cellId);
+  void spawnCell(cellId, found.cell.session ? 'resume' : 'new');
+}
 
 /** Starts, exactly once, every held cell whose CLI is not known to be missing any more (resume rules unchanged). */
 export function resumeBlockedCells(): void {
-  for (const cellId of [...blockedCells]) {
+  for (const cellId of Object.keys(getUi().heldCells)) {
     const found = findCell(getS(), cellId);
-    if (!found) { blockedCells.delete(cellId); continue; }
+    if (!found) { unhold(cellId); continue; }
     if (!profileAvailable(getProfile(getS(), found.cell.profileId), getUi().cliStatus)) continue;
-    blockedCells.delete(cellId);
+    unhold(cellId);
     void spawnCell(cellId, found.cell.session ? 'resume' : 'new');
   }
 }
@@ -157,6 +172,7 @@ export function restartCell(cellId: string, mode: 'new' | 'resume'): void {
 }
 
 export function changeCellProfile(cellId: string, profileId: string): void {
+  forcedCells.delete(cellId);
   update((s) => updateCell(s, cellId, { profileId, session: undefined }));
   update((s) => updateSettings(s, { lastProfileId: profileId }));
   ensureTerminal(cellId);
@@ -203,7 +219,8 @@ function killAndDispose(cellId: string): void {
 export function releaseCellTerminal(cellId: string): void {
   terminals.dispose(cellId);
   started.delete(cellId);
-  blockedCells.delete(cellId);
+  unhold(cellId);
+  forcedCells.delete(cellId);
   aliveAtStart.delete(cellId);
   setUi((ui) => {
     const { [cellId]: _s, ...statuses } = ui.statuses;

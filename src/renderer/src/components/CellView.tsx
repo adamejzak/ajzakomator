@@ -3,7 +3,7 @@ import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { getProfile, PROJECT_COLORS } from '../../../shared/state';
-import { missingCli } from '../../../shared/cliStatus';
+import { missingCardCli } from '../../../shared/cliStatus';
 import { profileOptionLabel } from '../cliUi';
 import { CliMissingCard } from './CliMissingCard';
 import type { Cell } from '../../../shared/types';
@@ -36,7 +36,9 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const error = useStore((st) => st.ui.cellErrors[cell.id]);
   const epoch = useStore((st) => st.ui.epoch);
   const cliStatus = useStore((st) => st.ui.cliStatus);
-  const lackingCli = missingCli(profile, cliStatus);
+  const held = useStore((st) => st.ui.heldCells[cell.id] === true);
+  // The card replaces the terminal only while the cell is held; a running terminal is never hidden by a late "missing".
+  const lackingCli = missingCardCli(profile, cliStatus, held);
   const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
   const [drop, setDrop] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -179,7 +181,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         </span>
       </div>
       <div className="cell-body" ref={bodyRef} style={lackingCli ? { visibility: 'hidden' } : undefined} />
-      {lackingCli && <CliMissingCard cli={lackingCli} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
+      {lackingCli && <CliMissingCard cli={lackingCli} cellId={cell.id} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
       {error && (
         <div className="cell-error">
           <span className="grow">{errorText(error)}</span>

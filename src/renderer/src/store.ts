@@ -51,6 +51,8 @@ export interface Ui {
   cliStatus: CliStatusMap;
   /** The install window of a missing CLI; it sits above every modal. `locked` = an install runs (it cannot be dismissed by accident). */
   install: { cli: CliId; locked: boolean } | null;
+  /** Cells whose start was skipped because their CLI is not installed (they show the install card and start by themselves once it is found). */
+  heldCells: Record<string, true>;
 }
 
 interface Store {
@@ -86,6 +88,7 @@ export const useStore = create<Store>((set, get) => ({
     mcpInfo: { running: false },
     cliStatus: {},
     install: null,
+    heldCells: {},
   },
   ready: false,
   update(fn) {

@@ -33,6 +33,10 @@ export function InstallModal({ cli }: { cli: CliId }) {
   const [copied, setCopied] = useState(false);
   const container = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<Session | null>(null);
+  /** This instance is on screen; a start that resolves after it was closed is cancelled instead of adopted. */
+  const mounted = useRef(false);
+  /** The user cancelled while the start request was still in flight. */
+  const cancelWhileStarting = useRef(false);
   const { providers } = useUsage();
 
   const loadOptions = () => {
@@ -45,9 +49,20 @@ export function InstallModal({ cli }: { cli: CliId }) {
 
   useEffect(() => {
     // The latest state may arrive before startInstall resolves, so it is matched to the session at render time.
+    mounted.current = true;
     const off = window.mc.on('install:state', (next) => setState(next));
     loadOptions();
+    // An install that is already running (window reopened, or opened while one started) is shown, not refused as "busy".
+    void window.mc.installCurrent().then((active) => {
+      if (!active || active.cli !== cli || !mounted.current || sessionRef.current) return;
+      terminals.ensure(active.ptyId, { fontSize: 13, agent: false });
+      sessionRef.current = { sessionId: active.sessionId, ptyId: active.ptyId };
+      setSession(sessionRef.current);
+      setMethod(active.method);
+      setOptions((current) => current ?? { cli, options: [{ method: active.method, command: active.command }] });
+    }).catch(() => undefined);
     return () => {
+      mounted.current = false;
       off();
       const active = sessionRef.current;
       if (active) { window.mc.cancelInstall(active.sessionId); terminals.dispose(active.ptyId); } // harmless after the end
@@ -82,6 +97,7 @@ export function InstallModal({ cli }: { cli: CliId }) {
   const begin = async (chosen: InstallMethod) => {
     if (starting) return;
     setRefusal(null);
+    cancelWhileStarting.current = false;
     setStarting(true);
     dropSession();
     let result: Awaited<ReturnType<typeof window.mc.startInstall>>;
@@ -89,7 +105,7 @@ export function InstallModal({ cli }: { cli: CliId }) {
     setStarting(false);
     if (!result.ok) { setRefusal(result.error); return; }
     // The window may have been closed while the request was in flight.
-    if (getUi().install?.cli !== cli) { window.mc.cancelInstall(result.sessionId); return; }
+    if (!mounted.current || cancelWhileStarting.current) { window.mc.cancelInstall(result.sessionId); return; }
     const next = { sessionId: result.sessionId, ptyId: result.ptyId };
     terminals.ensure(next.ptyId, { fontSize: 13, agent: false });
     sessionRef.current = next;
@@ -105,6 +121,7 @@ export function InstallModal({ cli }: { cli: CliId }) {
     if (choice !== 'stop') return;
     const active = sessionRef.current;
     if (active) window.mc.cancelInstall(active.sessionId);
+    else cancelWhileStarting.current = true;
     closeInstall();
   };
 
@@ -140,6 +157,7 @@ export function InstallModal({ cli }: { cli: CliId }) {
         ? tr('Instalator zakończył się bez błędu, ale polecenie „{command}” nadal nie jest widoczne. Sprawdź katalog {dir} i dodaj go do PATH.', { command: cli, dir })
         : tr('Instalator zakończył się bez błędu, ale polecenie „{command}” nadal nie jest widoczne. Dodaj katalog instalacji do PATH i sprawdź ponownie.', { command: cli });
       case 'timeout': return tr('Instalacja trwała zbyt długo i została przerwana.');
+      case 'aborted': return tr('Instalacja została przerwana w terminalu (Ctrl+C).');
       default: return tr('Polecenie zakończyło się błędem. Szczegóły są w terminalu.');
     }
   };

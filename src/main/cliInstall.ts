@@ -8,7 +8,7 @@ import {
   parseInstallMarker, parseToolProbe, shellFamily, toolProbeScript, typedInstallCommand,
   type InstallOptions, type InstallStartResult, type InstallState, type InstallTools,
 } from '../shared/cliInstall';
-import { isCliId, parseVersion, type CliId, type CliStatus, type InstallMethod, type InstallPlatform } from '../shared/cliStatus';
+import { isCliId, parseVersion, posixShellFile, type CliId, type CliStatus, type InstallMethod, type InstallPlatform } from '../shared/cliStatus';
 import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
 import type { ShellKind } from '../shared/types';
@@ -35,12 +35,15 @@ export interface InstallDeps {
   pollMs?: number;
   /** After the detector found the CLI while the command still runs: how long to wait for the command to return. */
   graceMs?: number;
+  abortGraceMs?: number;
   toolsTtlMs?: number;
 }
 
 export const INSTALL_TIMEOUT_MS = 10 * 60_000;
 const POLL_MS = 5000;
 const GRACE_MS = 20_000;
+/** After Ctrl+C in the install terminal: how long the shell may still print the end marker before the run counts as aborted. */
+const ABORT_GRACE_MS = 3000;
 const TOOLS_TTL_MS = 30_000;
 const TOOL_TIMEOUT_MS = 5000;
 const OUTPUT_KEEP = 16 * 1024;
@@ -52,6 +55,7 @@ interface Session {
   ptyId: string;
   cli: CliId;
   method: InstallMethod;
+  command: string;
   pid?: number;
   output: string;
   ended: boolean;
@@ -60,6 +64,7 @@ interface Session {
   poll?: Timer;
   timeout?: Timer;
   grace?: Timer;
+  abort?: Timer;
 }
 
 const installPlatform = (platform: NodeJS.Platform): InstallPlatform => (platform === 'win32' ? 'win32' : platform === 'darwin' ? 'darwin' : 'linux');
@@ -74,6 +79,12 @@ export class InstallManager {
   private now(): number { return this.deps.now ? this.deps.now() : Date.now(); }
 
   isActive(): boolean { return this.current !== null; }
+
+  /** The running install (a window opened later attaches to it instead of being refused). */
+  active(): { sessionId: string; ptyId: string; cli: CliId; method: InstallMethod; command: string } | null {
+    const session = this.current;
+    return session && !session.ended ? { sessionId: session.id, ptyId: session.ptyId, cli: session.cli, method: session.method, command: session.command } : null;
+  }
 
   /** Methods that can work on this machine, each with the exact command that will be typed. Nothing runs here. */
   async options(cliValue: unknown): Promise<InstallOptions | null> {
@@ -96,7 +107,7 @@ export class InstallManager {
     if (this.current) return { ok: false, error: 'busy' };
 
     const id = randomUUID();
-    const session: Session = { id, ptyId: `${INSTALL_PTY_PREFIX}${id}`, cli, method, output: '', ended: false, finishing: false, polling: false };
+    const session: Session = { id, ptyId: `${INSTALL_PTY_PREFIX}${id}`, cli, method, command: official, output: '', ended: false, finishing: false, polling: false };
     this.current = session; // claimed before the first await, so a second request is refused
 
     try {
@@ -114,7 +125,7 @@ export class InstallManager {
     }
 
     session.poll = setInterval(() => void this.tick(session), this.deps.pollMs ?? POLL_MS);
-    session.timeout = setTimeout(() => void this.complete(session, null, true), this.deps.timeoutMs ?? INSTALL_TIMEOUT_MS);
+    session.timeout = setTimeout(() => void this.complete(session, null, 'timeout'), this.deps.timeoutMs ?? INSTALL_TIMEOUT_MS);
     this.deps.emit({ sessionId: id, status: 'running' });
     return { ok: true, sessionId: id, ptyId: session.ptyId, command: official };
   }
@@ -129,10 +140,13 @@ export class InstallManager {
       session.output = (session.output + message.data).slice(-OUTPUT_KEEP);
       if (session.finishing) return;
       const code = parseInstallMarker(session.output);
-      if (code !== null) void this.complete(session, code, false);
+      if (code !== null) void this.complete(session, code, 'normal');
+    } else if (message.t === 'interrupt') {
+      // Ctrl+C aborts the rest of the typed line in PowerShell and POSIX shells, so the marker may never come.
+      if (!session.finishing && !session.abort) session.abort = setTimeout(() => void this.complete(session, null, 'aborted'), this.deps.abortGraceMs ?? ABORT_GRACE_MS);
     } else if (message.t === 'exit' && !session.finishing) {
       // The shell itself ended (an installer called `exit`, or the user closed it): that is the command's result.
-      void this.complete(session, parseInstallMarker(session.output) ?? message.code, false);
+      void this.complete(session, parseInstallMarker(session.output) ?? message.code, 'normal');
     }
   }
 
@@ -169,12 +183,12 @@ export class InstallManager {
     if (session.ended || session.finishing || session.grace) return;
     // A verified version means the binary runs; a half-written file is not announced as success.
     if (status?.state === 'found' && status.version) {
-      session.grace = setTimeout(() => void this.complete(session, null, false), this.deps.graceMs ?? GRACE_MS);
+      session.grace = setTimeout(() => void this.complete(session, null, 'normal'), this.deps.graceMs ?? GRACE_MS);
     }
   }
 
   /** The command returned (marker, shell exit), the grace period after an early find ran out, or the time limit hit. */
-  private async complete(session: Session, exitCode: number | null, timedOut: boolean): Promise<void> {
+  private async complete(session: Session, exitCode: number | null, mode: 'normal' | 'timeout' | 'aborted'): Promise<void> {
     if (session.ended || session.finishing) return;
     session.finishing = true;
     this.clearTimers(session);
@@ -187,7 +201,7 @@ export class InstallManager {
       this.finish(session, { sessionId: session.id, status: 'succeeded', ...(status.version ? { version: status.version } : {}), ...(path ? { path } : {}), ...(dir ? { dir } : {}) });
       return;
     }
-    const reason = classifyInstallFailure({ exitCode, output: session.output, method: session.method, installedButMissing: exitCode === 0, timedOut });
+    const reason = classifyInstallFailure({ exitCode, output: session.output, method: session.method, installedButMissing: exitCode === 0, timedOut: mode === 'timeout', aborted: mode === 'aborted' });
     this.fail(session, reason, exitCode ?? undefined);
   }
 
@@ -207,7 +221,8 @@ export class InstallManager {
     if (session.poll) clearInterval(session.poll);
     if (session.timeout) clearTimeout(session.timeout);
     if (session.grace) clearTimeout(session.grace);
-    session.poll = session.timeout = session.grace = undefined;
+    if (session.abort) clearTimeout(session.abort);
+    session.poll = session.timeout = session.grace = session.abort = undefined;
   }
 
   private end(session: Session): void {
@@ -245,8 +260,9 @@ export class InstallManager {
       }
       return { winget, brew: false, npm, node, curl: true, ...(nodeVersion ? { nodeVersion } : {}) };
     }
-    const shell = env.SHELL || (this.deps.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
-    const script = shell.startsWith('/') ? toolProbeScript(shell) : null;
+    // The shell cells (and this install) run in, so the PATH of its rc files is what counts.
+    const shell = posixShellFile(this.deps.shell(), this.deps.platform);
+    const script = toolProbeScript(shell);
     // macOS always ships curl; without a usable probe only the native installer is offered.
     const fallback: InstallTools = { ...NO_TOOLS, curl: this.deps.platform === 'darwin' };
     if (!script) return fallback;

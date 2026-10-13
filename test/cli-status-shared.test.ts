@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   CLI_DOCS, cliForProfile, executableNames, expandWindowsVars, findEnvKey, installCommand, installMethods, isCliId, knownCliDirs,
-  mergePaths, missingCli, missingClis, npmPrefixBinDir, parseRegQueryPath, parseShellProbe, parseVersion, prependDir,
-  profileAvailable, registryPathEntries, shellProbeScript, sortVersionsDesc, spawnDecision, splitPath, versionedCliDirs, withPath,
+  mergePaths, missingCardCli, missingCli, missingClis, npmPrefixBinDir, parseRegQueryPath, parseShellProbe, parseVersion, prependDir,
+  parseWindowsCommandProbe, posixShellFile, profileAvailable, quoteForCmd, registryPathEntries, resolveExecFile, shellProbeScript, sortVersionsDesc, spawnDecision, splitPath, versionedCliDirs, windowsCommandProbeScript, withPath,
   type CliStatus, type CliStatusMap,
 } from '../src/shared/cliStatus';
 import { cliMessages } from '../src/shared/cliMessages';
@@ -155,9 +155,61 @@ describe('login shell probe', () => {
     expect(shellProbeScript('/usr/bin/nu')).toBeNull();
   });
 
-  it('keeps only the marker lines and absolute paths', () => {
+  it('keeps only the marker lines and absolute paths, and reports aliases separately', () => {
     const out = 'Welcome to my shell!\n\u001b[1mnoise\u001b[0m\n__AJZ_PATH__=/opt/homebrew/bin:/usr/bin:relative:/bin\n__AJZ_CLAUDE__=/Users/a/.local/bin/claude\n__AJZ_CODEX__=alias codex=foo\n';
-    expect(parseShellProbe(out)).toEqual({ path: ['/opt/homebrew/bin', '/usr/bin', '/bin'], found: { claude: '/Users/a/.local/bin/claude' } });
-    expect(parseShellProbe('nothing useful')).toEqual({ path: [], found: {} });
+    expect(parseShellProbe(out)).toEqual({ path: ['/opt/homebrew/bin', '/usr/bin', '/bin'], found: { claude: '/Users/a/.local/bin/claude' }, aliased: { codex: true } });
+    expect(parseShellProbe('nothing useful')).toEqual({ path: [], found: {}, aliased: {} });
+  });
+});
+
+describe('Windows profile probe', () => {
+  it('builds a script that asks for both CLIs', () => {
+    const script = windowsCommandProbeScript();
+    expect(script).toContain('Get-Command claude');
+    expect(script).toContain('Get-Command codex');
+    expect(script).toContain('__AJZ_CMD_CLAUDE__=');
+  });
+
+  it('parses Application paths and treats everything else as an alias', () => {
+    const out = 'Loading profile...\r\n\u001b[32m__AJZ_CMD_CLAUDE__=Application|C:\\Tools\\claude.exe\u001b[0m\r\n__AJZ_CMD_CODEX__=Alias|cx\r\n';
+    expect(parseWindowsCommandProbe(out)).toEqual({ ran: true, found: { claude: 'C:\\Tools\\claude.exe' }, aliased: { codex: true } });
+    expect(parseWindowsCommandProbe('__AJZ_CMD_CLAUDE__=\r\n__AJZ_CMD_CODEX__=\r\n')).toEqual({ ran: true, found: {}, aliased: {} });
+    expect(parseWindowsCommandProbe('nothing')).toEqual({ ran: false, found: {}, aliased: {} });
+    // an Application without an absolute Source (relative or empty) is not trusted as a file
+    expect(parseWindowsCommandProbe('__AJZ_CMD_CLAUDE__=Application|claude.exe')).toMatchObject({ found: {}, aliased: { claude: true } });
+  });
+});
+
+describe('shell for the login probe and running a found binary', () => {
+  it('mirrors how cells pick their POSIX shell', () => {
+    expect(posixShellFile('zsh', 'darwin')).toBe('/bin/zsh');
+    expect(posixShellFile('bash', 'darwin')).toBe('/bin/bash');
+    expect(posixShellFile(undefined, 'darwin')).toBe('/bin/zsh');
+    expect(posixShellFile('zsh', 'linux')).toBe('/bin/zsh');
+    expect(posixShellFile('powershell', 'linux')).toBe('/bin/bash');
+  });
+
+  it('always quotes the detected path on Windows, so a folder like R&D works', () => {
+    const found = (path: string) => ({ state: 'found' as const, path });
+    expect(resolveExecFile('claude', found('C:\\Users\\R&D\\.local\\bin\\claude.exe'), 'win32')).toBe('"C:\\Users\\R&D\\.local\\bin\\claude.exe"');
+    expect(resolveExecFile('claude', found('C:\\Users\\a\\claude.exe'), 'win32')).toBe('"C:\\Users\\a\\claude.exe"');
+    expect(resolveExecFile('claude', found('/Users/a/.local/bin/claude'), 'darwin')).toBe('/Users/a/.local/bin/claude');
+    // what cannot be quoted falls back to the bare name (resolved through the PATH)
+    expect(resolveExecFile('claude', found('C:\\100%\\claude.exe'), 'win32')).toBe('claude');
+    expect(resolveExecFile('claude', found('C:\\a"b\\claude.exe'), 'win32')).toBe('claude');
+    expect(resolveExecFile('claude', { state: 'missing' }, 'win32')).toBe('claude');
+    expect(resolveExecFile('claude', undefined, 'darwin')).toBe('claude');
+    expect(quoteForCmd('C:\\a b\\x.exe')).toBe('"C:\\a b\\x.exe"');
+  });
+});
+
+describe('install card only for held cells', () => {
+  const missing: CliStatusMap = { claude: { cli: 'claude', state: 'missing', checkedAt: 1 } };
+  it('shows the card for a held cell with a missing CLI and never for a running one', () => {
+    expect(missingCardCli({ cli: 'claude' }, missing, true)).toBe('claude');
+    expect(missingCardCli({ cli: 'claude' }, missing, false)).toBeNull(); // a late "missing" must not hide a live terminal
+    expect(missingCardCli({ cli: 'shell' }, missing, true)).toBeNull();
+    expect(missingCardCli({ cli: 'claude' }, { claude: { cli: 'claude', state: 'unknown', checkedAt: 1 } }, true)).toBeNull();
+    expect(missingCardCli({ cli: 'codex' }, missing, true)).toBeNull();
   });
 });

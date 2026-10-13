@@ -67,7 +67,7 @@ async function readRegistryPath(): Promise<{ machine: string | null; user: strin
   return machine === null && user === null ? null : { machine, user };
 }
 
-export function systemCliDeps(options: { disableRegistry?: boolean } = {}): CliDetectorDeps {
+export function systemCliDeps(options: { disableRegistry?: boolean; shell?: () => string | undefined; probeProfile?: string } = {}): CliDetectorDeps {
   return {
     platform: process.platform,
     home: homedir(),
@@ -79,5 +79,7 @@ export function systemCliDeps(options: { disableRegistry?: boolean } = {}): CliD
     exec: runProgram,
     // MC_CLI_NO_REGISTRY (unpackaged builds only) lets UI checks run against a sanitized PATH.
     readWindowsPath: process.platform === 'win32' && !options.disableRegistry ? readRegistryPath : undefined,
+    shell: options.shell,
+    probeProfile: options.probeProfile,
   };
 }

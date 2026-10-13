@@ -1,7 +1,10 @@
-import { execFileSync } from 'node:child_process';
-import { describe, expect, it } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
-  availableMethods, classifyInstallFailure, expectedBinDir, INSTALL_MARKER, installCommandFor, isAuxPtyId, isInstallMethod, nodeMajor,
+  availableMethods, childPowerShell, classifyInstallFailure, expectedBinDir, INSTALL_MARKER, installCommandFor, isAuxPtyId, isInstallMethod, nodeMajor,
   NO_TOOLS, parseInstallMarker, parseToolProbe, shellFamily, stripAnsi, toolProbeScript, typedInstallCommand, type InstallTools,
 } from '../src/shared/cliInstall';
 import { CLI_IDS } from '../src/shared/cliStatus';
@@ -45,12 +48,13 @@ describe('install methods per machine', () => {
 });
 
 describe('commands per shell', () => {
-  it('keeps the documented command for PowerShell and wraps the PowerShell form for cmd', () => {
-    expect(installCommandFor('claude', 'native', 'win32', 'powershell')).toBe('irm https://claude.ai/install.ps1 | iex');
-    expect(installCommandFor('claude', 'native', 'win32', 'pwsh')).toBe('irm https://claude.ai/install.ps1 | iex');
-    expect(installCommandFor('claude', 'native', 'win32', 'cmd')).toBe('powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"');
+  it('runs the Claude iex in a child PowerShell for every Windows shell, and keeps the other documented commands', () => {
+    const wrapped = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://claude.ai/install.ps1 | iex"';
+    for (const shell of ['powershell', 'pwsh', 'cmd'] as const) expect(installCommandFor('claude', 'native', 'win32', shell)).toBe(wrapped);
+    expect(installCommandFor('codex', 'native', 'win32', 'powershell')).toBe('powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"');
     expect(installCommandFor('codex', 'native', 'win32', 'cmd')).toBe('powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"');
     expect(installCommandFor('claude', 'winget', 'win32', 'cmd')).toBe('winget install Anthropic.ClaudeCode');
+    expect(installCommandFor('claude', 'native', 'darwin', 'zsh')).toBe('curl -fsSL https://claude.ai/install.sh | bash');
   });
 
   it('runs npm through npm.cmd in PowerShell (npm.ps1 is blocked by the default execution policy)', () => {
@@ -203,5 +207,58 @@ describe('auxiliary ptys', () => {
     expect(isAuxPtyId('install:abc')).toBe(true);
     expect(isAuxPtyId('3f2a')).toBe(false);
     expect(isAuxPtyId('my-install:x')).toBe(false);
+  });
+});
+
+describe('real PowerShell: the vendor script must never swallow the end marker', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ajza-ps-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const script = (name: string, body: string) => { const path = join(dir, name); writeFileSync(path, body); return path; };
+  // Like install.ps1: strict error preference, Write-Error and exit codes.
+  const scripts = {
+    stopWriteError: script('stop-write-error.ps1', "$ErrorActionPreference = 'Stop'\nWrite-Host 'downloading'\nWrite-Error 'Failed to download'\nexit 1\n"),
+    stopExit: script('stop-exit.ps1', "$ErrorActionPreference = 'Stop'\nWrite-Host 'checking'\nexit 1\n"),
+    thrown: script('thrown.ps1', "throw 'something went wrong'\n"),
+    ok: script('ok.ps1', "$ErrorActionPreference = 'Stop'\nWrite-Host 'installed'\n"),
+    okExit0: script('ok-exit0.ps1', "Write-Host 'installed'\nexit 0\n"),
+  };
+  const iexOf = (path: string) => `iex ([IO.File]::ReadAllText('${path}'))`;
+  const run = (file: string, args: string[]): string => {
+    const result = spawnSync(file, args, { encoding: 'utf8', windowsHide: true, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] });
+    return result.stdout ?? '';
+  };
+  const hasPwsh = process.platform === 'win32' && spawnSync('pwsh', ['-NoProfile', '-Command', '1'], { stdio: 'ignore', windowsHide: true }).status === 0;
+  const shells: Array<[string, string, boolean]> = [['Windows PowerShell 5.1', 'powershell.exe', process.platform === 'win32'], ['pwsh', 'pwsh', hasPwsh]];
+
+  for (const [label, exe, available] of shells) {
+    describe.skipIf(!available)(label, () => {
+      const typed = (path: string) => typedInstallCommand(childPowerShell(iexOf(path)), 'powershell');
+      const outcome = (path: string) => parseInstallMarker(run(exe, ['-NoProfile', '-NonInteractive', '-Command', typed(path)]));
+
+      it('reports failure (1) for Write-Error with Stop, an exit 1 and a throw', () => {
+        expect(outcome(scripts.stopWriteError)).toBe(1);
+        expect(outcome(scripts.stopExit)).toBe(1);
+        expect(outcome(scripts.thrown)).toBe(1);
+      });
+
+      it('reports success (0) for a script that succeeds', () => {
+        expect(outcome(scripts.ok)).toBe(0);
+        expect(outcome(scripts.okExit0)).toBe(0);
+      });
+    });
+  }
+
+  it.skipIf(process.platform !== 'win32')('shows why the iex must not run in the interactive shell itself (Stop aborts the marker)', () => {
+    const bare = typedInstallCommand(iexOf(scripts.stopWriteError), 'powershell');
+    expect(parseInstallMarker(run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', bare]))).toBeNull();
+  });
+
+  it.skipIf(process.platform !== 'win32')('works from the real cmd.exe too (child PowerShell, && / || marker)', () => {
+    const typed = (path: string) => typedInstallCommand(childPowerShell(iexOf(path)), 'cmd');
+    // verbatim, like the interactive cmd.exe sees the typed line (node would re-escape the inner quotes)
+    const outcome = (path: string) => parseInstallMarker(spawnSync('cmd.exe', ['/d', '/s', '/c', `"${typed(path)}"`], { encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] }).stdout ?? '');
+    expect(outcome(scripts.stopWriteError)).toBe(1);
+    expect(outcome(scripts.thrown)).toBe(1);
+    expect(outcome(scripts.ok)).toBe(0);
   });
 });

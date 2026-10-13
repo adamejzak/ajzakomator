@@ -10,7 +10,7 @@ export const isCliId = (value: unknown): value is CliId => value === 'claude' ||
 export const CLI_NAMES: Record<CliId, string> = { claude: 'Claude Code', codex: 'Codex' };
 
 export type CliState = 'found' | 'missing' | 'unknown';
-export type CliReason = 'notOnPath' | 'versionFailed' | 'timeout' | 'probeFailed' | 'registryFailed';
+export type CliReason = 'notOnPath' | 'versionFailed' | 'timeout' | 'probeFailed' | 'registryFailed' | 'shellAlias';
 export type CliSource = 'known' | 'path' | 'shell';
 
 export interface CliStatus {
@@ -72,6 +72,14 @@ export function cliForProfile(profile: Pick<Profile, 'cli'>): CliId | null {
 export function missingCli(profile: Pick<Profile, 'cli'>, map: CliStatusMap | undefined): CliId | null {
   const cli = cliForProfile(profile);
   return cli && map?.[cli]?.state === 'missing' ? cli : null;
+}
+
+/**
+ * The CLI an install card is shown for: only a cell that is actually HELD (its start was skipped) shows it. A cell whose
+ * terminal already runs keeps showing that terminal, whatever a later detection says.
+ */
+export function missingCardCli(profile: Pick<Profile, 'cli'>, map: CliStatusMap | undefined, held: boolean): CliId | null {
+  return held ? missingCli(profile, map) : null;
 }
 
 export const profileAvailable = (profile: Pick<Profile, 'cli'>, map: CliStatusMap | undefined): boolean => missingCli(profile, map) === null;
@@ -273,10 +281,15 @@ export function executableNames(cli: CliId, platform: string, pathExt?: string):
   return wanted.map((ext) => `${cli}${ext}`);
 }
 
-/** Parses the marker lines printed by the login-shell probe; rc-file noise around them is ignored. */
-export function parseShellProbe(output: string): { path: string[]; found: Partial<Record<CliId, string>> } {
+/**
+ * Parses the marker lines printed by the login-shell probe; rc-file noise around them is ignored.
+ * `aliased` = the shell resolves the name to something that is not a file (alias, function, builtin text): the CLI may well
+ * work in a cell, so it is never reported as missing.
+ */
+export function parseShellProbe(output: string): { path: string[]; found: Partial<Record<CliId, string>>; aliased: Partial<Record<CliId, true>> } {
   let path: string[] = [];
   const found: Partial<Record<CliId, string>> = {};
+  const aliased: Partial<Record<CliId, true>> = {};
   for (const raw of output.split(/\r?\n/)) {
     const line = raw.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').trim();
     if (line.startsWith('__AJZ_PATH__=')) path = splitPath(line.slice('__AJZ_PATH__='.length), 'linux').filter((dir) => dir.startsWith('/'));
@@ -286,9 +299,67 @@ export function parseShellProbe(output: string): { path: string[]; found: Partia
       const value = line.slice(prefix.length).trim();
       // `command -v` also prints aliases and function names; only absolute file paths count.
       if (value.startsWith('/')) found[cli] = value;
+      else if (value) aliased[cli] = true;
     }
   }
-  return { path, found };
+  return { path, found, aliased };
+}
+
+/** The shell file cells run for a configured shell kind on POSIX (mirrors the pty host's resolveShell). */
+export function posixShellFile(kind: string | undefined, platform: string): string {
+  return kind === 'bash' || (platform !== 'darwin' && kind !== 'zsh') ? '/bin/bash' : '/bin/zsh';
+}
+
+// ── Windows: what the user's own PowerShell (profile loaded) resolves the name to ──
+
+/** Script for `powershell -Command`; prints `__AJZ_CMD_<CLI>__=<CommandType>|<Source>` (nothing after `=` = not found). */
+export function windowsCommandProbeScript(): string {
+  return CLI_IDS.map((cli) => {
+    const marker = `__AJZ_CMD_${cli.toUpperCase()}__=`;
+    return `$c = Get-Command ${cli} -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { Write-Output ('${marker}' + $c.CommandType + '|' + $c.Source) } else { Write-Output '${marker}' }`;
+  }).join('; ');
+}
+
+export interface WindowsCommandProbe {
+  /** At least one marker line was printed (the shell and its profile ran). */
+  ran: boolean;
+  /** Application commands: the file the shell would run. */
+  found: Partial<Record<CliId, string>>;
+  /** Alias, function, cmdlet, script: resolvable by the shell but not a plain executable. */
+  aliased: Partial<Record<CliId, true>>;
+}
+
+/** Parses the output of {@link windowsCommandProbeScript}; profile noise around the markers is ignored. */
+export function parseWindowsCommandProbe(output: string): WindowsCommandProbe {
+  const result: WindowsCommandProbe = { ran: false, found: {}, aliased: {} };
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').trim();
+    for (const cli of CLI_IDS) {
+      const prefix = `__AJZ_CMD_${cli.toUpperCase()}__=`;
+      if (!line.startsWith(prefix)) continue;
+      result.ran = true;
+      const [type, ...rest] = line.slice(prefix.length).split('|');
+      const source = rest.join('|').trim();
+      if (!type.trim()) continue;
+      if (type.trim() === 'Application' && /^(?:[A-Za-z]:[\\/]|\\\\)/.test(source)) result.found[cli] = source;
+      else result.aliased[cli] = true;
+    }
+  }
+  return result;
+}
+
+// ── running a found binary through cmd.exe (execFile with shell: true) ──
+
+/** `"path"` for a cmd.exe command line, or null when the path holds characters that cannot be quoted safely (`"`, `%`, line breaks). */
+export function quoteForCmd(path: string): string | null {
+  return /["%\r\n]/.test(path) ? null : `"${path}"`;
+}
+
+/** The program to run for `command`: the detected file (always quoted for cmd.exe on Windows, so `C:\Users\R&D` works), or the bare name. */
+export function resolveExecFile(command: string, status: Pick<CliStatus, 'state' | 'path'> | undefined, platform: string): string {
+  if (status?.state !== 'found' || !status.path) return command;
+  if (platform !== 'win32') return status.path;
+  return quoteForCmd(status.path) ?? command;
 }
 
 /** The script run by `$SHELL -ilc`; POSIX shells and fish only. null = unsupported shell (no probe). */
