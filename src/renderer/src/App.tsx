@@ -1,5 +1,5 @@
 import { tr, useI18n } from './i18n';
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { isAuxPtyId } from '../../shared/cliInstall';
@@ -18,9 +18,10 @@ import { TitleBar, WorkspaceTabs } from './components/TitleBar';
 import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
 import { statusLog, terminals } from './terminals/TerminalManager';
-import { AutomationPanel } from './components/AutomationPanel';
-import { FileEditor } from './components/FileEditor';
-import { SettingsPage } from './components/SettingsPage';
+// Rarely used screens load on demand: the editor alone (CodeMirror, language packs, Markdown preview) is about a third of the bundle.
+const AutomationPanel = lazy(() => import('./components/AutomationPanel').then((m) => ({ default: m.AutomationPanel })));
+const FileEditor = lazy(() => import('./components/FileEditor').then((m) => ({ default: m.FileEditor })));
+const SettingsPage = lazy(() => import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 import { useFileStore } from './files';
 
 let booted = false;
@@ -29,10 +30,11 @@ async function boot(): Promise<void> {
   if (booted) return;
   booted = true;
   terminals.setWindowsBuild(window.mc.windowsBuild);
-  window.mc.on('state:changed', (snapshot) => {
+  window.mc.on('state:changed', (change) => {
     const previous = getS().projects.flatMap((p) => p.tabs.flatMap((t) => t.cells));
-    useStore.getState().sync(snapshot);
-    for (const cell of previous) if (!findCell(getS(), cell.id)) releaseCellTerminal(cell.id);
+    const releaseGone = () => { for (const cell of previous) if (!findCell(getS(), cell.id)) releaseCellTerminal(cell.id); };
+    if (useStore.getState().applyChange(change)) releaseGone();
+    else void useStore.getState().resync().then(releaseGone); // a change that does not follow ours: take the full state
   });
   window.mc.on('automation:start-cells', (ids) => ids.forEach(ensureStarted));
   // Listening first: the startup scan may finish before the first answer arrives.
@@ -150,9 +152,16 @@ export function App() {
   useEffect(() => void boot(), []);
   useEffect(() => {
     if (!ready) return;
-    const refresh = () => void window.mc.getMcpInfo().then((mcpInfo) => setUi({ mcpInfo })).catch(() => {});
+    // Not while the window is hidden, and the store is only touched when the answer differs (every cell reads mcpInfo).
+    const refresh = () => {
+      if (document.hidden) return;
+      void window.mc.getMcpInfo().then((mcpInfo) => {
+        if (JSON.stringify(mcpInfo) !== JSON.stringify(getUi().mcpInfo)) setUi({ mcpInfo });
+      }).catch(() => {});
+    };
     const timer = window.setInterval(refresh, 3000);
-    return () => window.clearInterval(timer);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
   }, [ready]);
   useEffect(() => {
     document.documentElement.lang = language;
@@ -187,10 +196,10 @@ export function App() {
           <WorkspaceTabs />
           <div className="workspace-content">
             <div className="terminal-workspace" style={{ display: fileOpen || settingsActive ? 'none' : 'flex' }}><GridView /></div>
-            {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><SettingsPage /></div>}
-            {!settingsActive && fileOpen && <FileEditor />}
+            {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><Suspense fallback={null}><SettingsPage /></Suspense></div>}
+            {!settingsActive && fileOpen && <Suspense fallback={null}><FileEditor /></Suspense>}
           </div>
-          {automationOpen && <AutomationPanel />}
+          {automationOpen && <Suspense fallback={null}><AutomationPanel /></Suspense>}
         </div>
         {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
       </div>

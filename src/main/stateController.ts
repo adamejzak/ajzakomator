@@ -19,12 +19,14 @@ export class StateController {
     return this.change((state) => {
       const next = mergeStateEdit(state, edit);
       // The renderer cannot store arbitrary alert values (unknown presets, relative or UNC sound paths): they are normalized here.
-      return { ...next, settings: { ...next.settings, alerts: normalizeAlerts(next.settings.alerts) }, projects: next.projects.map((project) => ({ ...project,
-        tabs: project.tabs.map((tab) => {
+      return { ...next, settings: { ...next.settings, alerts: normalizeAlerts(next.settings.alerts) }, projects: next.projects.map((project) => {
+        const tabs = project.tabs.map((tab) => {
           if (tab.cells.length < 1 || tab.cells.length > MAX_CELLS) throw new Error('Concurrent grid change exceeds the cell limit.');
           return tab.layout.areas.length === tab.cells.length ? tab : { ...tab, layout: layoutForCount(tab.cells.length) };
-        }),
-      })) };
+        });
+        // Untouched projects keep their identity, so the change that is sent on is computed cheaply.
+        return tabs.every((tab, i) => tab === project.tabs[i]) ? project : { ...project, tabs };
+      }) };
     }, edit.id);
   }
 }

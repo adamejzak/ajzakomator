@@ -4,6 +4,7 @@ import type { CliId, CliStatus, CliStatusMap, InstallMethod } from '../shared/cl
 import type { InstallOptions, InstallRequest, InstallStartResult, InstallState } from '../shared/cliInstall';
 import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
+import type { StateAck, StateChange } from '../shared/statePatch';
 import type { AppPlatform } from '../shared/platform';
 import type { ChangelogResult } from '../shared/changelog';
 import type { AlertEventId } from '../shared/alerts';
@@ -34,7 +35,7 @@ export interface McApi {
   platform: AppPlatform;
   loadState(): Promise<AppState>;
   loadSnapshot(): Promise<StateSnapshot>;
-  applyStateEdit(edit: StateEdit): Promise<StateSnapshot>;
+  applyStateEdit(edit: StateEdit): Promise<StateAck>;
   getMcpInfo(): Promise<McpInfo>;
   automation<K extends AutomationOperation>(operation: K, input: AutomationInput<K>): Promise<unknown>;
   /** `cliMissing` = the profile's CLI is not installed: nothing was spawned. */
@@ -115,7 +116,7 @@ export interface McApi {
   on(channel: 'update:state', cb: (s: UpdateState) => void): () => void;
   on(channel: 'usage:state', cb: (state: UsageState) => void): () => void;
   on(channel: 'accounts:swapPending', cb: (pending: boolean) => void): () => void;
-  on(channel: 'state:changed', cb: (snapshot: StateSnapshot) => void): () => void;
+  on(channel: 'state:changed', cb: (change: StateChange) => void): () => void;
   on(channel: 'fs:progress', cb: (progress: FileOpProgress) => void): () => void;
   on(channel: 'automation:start-cells', cb: (cellIds: string[]) => void): () => void;
 }

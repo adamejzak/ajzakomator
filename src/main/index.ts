@@ -56,6 +56,7 @@ import { INSTALL_PTY_PREFIX } from '../shared/cliInstall';
 import { cliForProfile, CLI_NAMES, isCliId, missingCli, resolveExecFile, spawnDecision, type CliId, type CliStatus } from '../shared/cliStatus';
 import { automationSchemas, type AutomationOperation, type McpInfo } from '../shared/automation';
 import type { StateEdit } from '../shared/stateEdits';
+import { stateChange } from '../shared/statePatch';
 import { findCell, getProfile } from '../shared/state';
 import { automationHintForHook, automationStatusFor } from '../shared/runtimeStatus';
 import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
@@ -245,11 +246,12 @@ const controller = new StateController(state, (snapshot) => {
   for (const project of state.projects) for (const tab of project.tabs) for (const cell of tab.cells) {
     if (cell.role && !findCell(snapshot.state, cell.id)?.cell.role) mcp.revokeCell(cell.id);
   }
+  const previous = state;
   state = snapshot.state;
   const key = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
   if (key !== usageKey) { usageKey = key; usage.reschedule(); }
   saver.save(state);
-  send('state:changed', snapshot);
+  send('state:changed', stateChange(previous, snapshot));
 });
 const automation = new AutomationService(controller, {
   createWorktree,
@@ -440,7 +442,8 @@ ipcMain.handle('codex:bind', (_e, cellId: string, cwd: string) => {
 
 ipcMain.handle('state:load', () => state);
 ipcMain.handle('state:snapshot', () => controller.snapshot());
-ipcMain.handle('state:edit', (_e, edit: StateEdit) => controller.apply(edit));
+// The answer is an acknowledgement; the new state reaches the renderer once, as the patch `state:changed` carries.
+ipcMain.handle('state:edit', (_e, edit: StateEdit) => { const { revision, editId } = controller.apply(edit); return { revision, editId }; });
 ipcMain.handle('mcp:info', (): McpInfo => ({ ...mcp.getInfo(), error: mcpError }));
 ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input: unknown) => {
   if (!Object.hasOwn(automationSchemas, operation)) throw new Error('Unknown operation.');

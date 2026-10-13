@@ -44,6 +44,16 @@ const basename = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ||
 
 // ── cells ───────────────────────────────────────────────────────────────────
 
+/** Ctrl+wheel resizes the font on every notch; the saved value follows once the wheel rests (one edit instead of dozens). */
+const fontSizeTimers = new Map<string, number>();
+function saveFontSize(cellId: string, size: number): void {
+  window.clearTimeout(fontSizeTimers.get(cellId));
+  fontSizeTimers.set(cellId, window.setTimeout(() => {
+    fontSizeTimers.delete(cellId);
+    update((s) => updateCell(s, cellId, { fontSize: size }));
+  }, 250));
+}
+
 export function ensureTerminal(cellId: string): void {
   const found = findCell(getS(), cellId);
   if (!found) return;
@@ -52,7 +62,7 @@ export function ensureTerminal(cellId: string): void {
     fontSize: found.cell.fontSize ?? getS().settings.fontSize,
     agent: profile.cli !== 'shell',
     codex: profile.cli === 'codex',
-    onFontSize: (size) => update((s) => updateCell(s, cellId, { fontSize: size })),
+    onFontSize: (size) => saveFontSize(cellId, size),
   });
 }
 

@@ -4,6 +4,7 @@ import type { CellStatus } from '../../shared/status';
 import type { AppState } from '../../shared/types';
 import { OptimisticState } from '../../shared/optimisticState';
 import type { StateSnapshot } from '../../shared/stateEdits';
+import { pruneEdit, type StateChange } from '../../shared/statePatch';
 import type { McpInfo } from '../../shared/automation';
 import type { LoginTarget } from '../../shared/accounts';
 import type { CliId, CliStatusMap } from '../../shared/cliStatus';
@@ -67,6 +68,10 @@ interface Store {
   setUi(patch: Partial<Ui> | ((ui: Ui) => Partial<Ui>)): void;
   init(snapshot: StateSnapshot): void;
   sync(snapshot: StateSnapshot): void;
+  /** Applies main's change (a patch); false when it does not follow the state we have (call `resync`). */
+  applyChange(change: StateChange): boolean;
+  /** Fetches the full state of main again. */
+  resync(): Promise<void>;
 }
 
 const optimistic = new OptimisticState({ state: defaultState(window.mc.platform), revision: -1 });
@@ -104,7 +109,11 @@ export const useStore = create<Store>((set, get) => ({
     const edit = { id: crypto.randomUUID(), base, next };
     optimistic.stage(edit);
     set({ s: next });
-    void window.mc.applyStateEdit(edit).then((snapshot) => get().sync(snapshot)).catch((error) => {
+    // Only what changed goes over the wire; the new state comes back as the patch of `state:changed`, the answer just acknowledges.
+    void window.mc.applyStateEdit(pruneEdit(edit)).then(() => {
+      // The patch normally arrived before this answer. If our edit is still waiting after a grace period, the patch was lost: look again.
+      setTimeout(() => { if (optimistic.isPending(edit.id)) void get().resync(); }, 1500);
+    }).catch((error) => {
       set({ s: optimistic.reject(edit.id) });
       toast(String(error), 'error');
     });
@@ -116,6 +125,13 @@ export const useStore = create<Store>((set, get) => ({
     set({ s: optimistic.accept(snapshot), ready: true });
   },
   sync(snapshot) { set({ s: optimistic.accept(snapshot) }); },
+  applyChange(change) {
+    const next = optimistic.acceptChange(change);
+    if (!next) return false;
+    set({ s: next });
+    return true;
+  },
+  async resync() { get().sync(await window.mc.loadSnapshot()); },
 }));
 
 export const getS = () => useStore.getState().s;
