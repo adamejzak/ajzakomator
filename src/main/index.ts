@@ -593,7 +593,11 @@ ipcMain.handle('fs:writeProjectFile', (_e, projectId: string, path: string, text
 });
 registerFileOpsIpc({ projectPath: (projectId) => state.projects.find((p) => p.id === projectId)?.path, send });
 ipcMain.handle('sessions:list', (_e, projectPath: string) => listSessionsAsync(homedir(), projectPath));
-registerGitIpc({ projectPath: (projectId) => state.projects.find((p) => p.id === projectId)?.path });
+registerGitIpc({
+  projectPath: (projectId) => state.projects.find((p) => p.id === projectId)?.path,
+  worktreePaths: (projectId) => state.projects.find((p) => p.id === projectId)?.tabs.flatMap((t) => t.cells.flatMap((c) => (c.worktree ? [c.worktree.path] : []))) ?? [],
+  trustFile: join(DATA_DIR, 'git-trust.json'),
+});
 ipcMain.handle('git:isRepo', (_e, p: string) => isGitRepo(p));
 ipcMain.handle('git:createWorktree', (_e, p: string, name: string) => createWorktree(p, name));
 ipcMain.handle('git:removeWorktree', (_e, p: string, wt: Worktree, del: boolean) => removeWorktree(p, wt, del));

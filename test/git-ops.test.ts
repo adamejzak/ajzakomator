@@ -47,6 +47,12 @@ function remotePair(name: string): { bare: string; clone: string; other: string 
   return { bare, clone, other };
 }
 
+/** A push request for what the panel would confirm now (remote, branch and URL id from the status). */
+async function pushTo(dir: string, over: Partial<{ remote: string; branch: string; urlId: string }> = {}) {
+  const target = data<GitStatus>(await git.status(dir)).push;
+  return git.push(dir, { requestId: id(), remote: target?.remote ?? 'origin', branch: target?.branch ?? 'main', urlId: target?.urlId ?? '0'.repeat(16), ...over });
+}
+
 const data = <T>(result: { ok: boolean }): T => {
   if (!result.ok) throw new Error(`expected ok, got ${JSON.stringify(result)}`);
   return (result as unknown as { data: T }).data;
@@ -361,16 +367,16 @@ describe('fetch, pull and push', () => {
     write(clone, 'p.txt', 'p\n');
     sh(clone, 'add', '.');
     sh(clone, 'commit', '-q', '-m', 'to push');
-    const wrong = await git.push(clone, { requestId: id(), remote: 'origin', branch: 'elsewhere' });
+    const wrong = await pushTo(clone, { branch: 'elsewhere' });
     expect(wrong).toMatchObject({ ok: false, code: 'invalid' });
     expect(sh(bare, 'log', '-1', '--format=%s', 'main').trim()).toBe('first');
-    data(await git.push(clone, { requestId: id(), remote: 'origin', branch: 'main' }));
+    data(await pushTo(clone));
     expect(sh(bare, 'log', '-1', '--format=%s', 'main').trim()).toBe('to push');
     // a rejected (non fast-forward) push stays rejected: no force exists
     write(other, 'x.txt', 'x\n');
     sh(other, 'add', '.');
     sh(other, 'commit', '-q', '-m', 'other work');
-    const rejected = await git.push(other, { requestId: id(), remote: 'origin', branch: 'main' });
+    const rejected = await pushTo(other);
     expect(rejected).toMatchObject({ ok: false });
     expect(sh(bare, 'log', '-1', '--format=%s', 'main').trim()).toBe('to push');
   });
@@ -382,8 +388,11 @@ describe('fetch, pull and push', () => {
     sh(clone, 'add', '.');
     sh(clone, 'commit', '-q', '-m', 'topic work');
     const status = data<GitStatus>(await git.status(clone));
-    expect(status.push).toEqual({ remote: 'origin', branch: 'topic', setUpstream: true });
-    data(await git.push(clone, { requestId: id(), ...{ remote: 'origin', branch: 'topic' } }));
+    expect(status.push).toMatchObject({ remote: 'origin', branch: 'topic', setUpstream: true });
+    const slashes = (value: string) => value.split(String.fromCharCode(92)).join('/');
+    expect(slashes(status.push!.url)).toBe(slashes(join(lab, 'upstream.git')));
+    expect(status.push!.urlId).toMatch(/^[0-9a-f]{16}$/);
+    data(await pushTo(clone));
     expect(sh(bare, 'log', '-1', '--format=%s', 'topic').trim()).toBe('topic work');
     expect(sh(clone, 'rev-parse', '--abbrev-ref', '@{upstream}').trim()).toBe('origin/topic');
   });
@@ -391,7 +400,7 @@ describe('fetch, pull and push', () => {
   it('has no push target without a remote', async () => {
     const dir = repo('noremote', 1);
     expect(data<GitStatus>(await git.status(dir)).push).toBeNull();
-    expect(await git.push(dir, { requestId: id(), remote: 'origin', branch: 'main' })).toMatchObject({ ok: false, code: 'invalid' });
+    expect(await pushTo(dir)).toMatchObject({ ok: false, code: 'invalid' });
   });
 });
 
@@ -444,6 +453,9 @@ describe('stage, unstage and commit', () => {
     chmodSync(hook, 0o755);
     write(dir, 'x.txt', 'x');
     sh(dir, 'add', '.');
+    // a repository with a hook is untrusted until the user says otherwise: nothing runs
+    expect(await git.commit(dir, { requestId: id(), message: 'refused' })).toMatchObject({ ok: false, code: 'untrusted' });
+    data(await git.grantTrust(dir, id()));
     const blocked = await git.commit(dir, { requestId: id(), message: 'should be blocked' });
     expect(blocked).toMatchObject({ ok: false });
     expect((blocked as { error: string }).error).toContain('hook says no');
@@ -474,7 +486,15 @@ describe('failures', () => {
 
   it('stops a slow git at the timeout', async () => {
     const script = join(lab, 'slow-git.js');
-    writeFileSync(script, 'setTimeout(() => process.stdout.write("late"), 20000);\n');
+    // answers the questions that ask for places (rev-parse, config, worktree) at once and hangs on everything else, like git behind a dead network
+    writeFileSync(script, [
+      "const a = process.argv; const path = require('path');",
+      "if (a.includes('--show-toplevel')) console.log(process.cwd());",
+      "else if (a.includes('--absolute-git-dir')) { console.log(path.join(process.cwd(), '.git')); console.log('.git'); }",
+      "else if (a.includes('config') || a.includes('worktree') || a.includes('rev-parse')) { /* nothing to say */ }",
+      "else setTimeout(() => process.stdout.write('late'), 20000);",
+      '',
+    ].join('\n'));
     const slow = new Git({ bin: process.execPath, prefixArgs: [script], env, readTimeoutMs: 400 });
     const dir = repo('slow', 1);
     const started = Date.now();
@@ -506,16 +526,21 @@ describe('failures', () => {
 describe('worktrees and IPC handling', () => {
   it('lists worktrees and only accepts one git lists', async () => {
     const dir = repo('wt', 1);
-    const wt = join(lab, 'wt-linked');
+    const wt = join(lab, 'wt-wt-linked'); // next to the project as the app makes them: <project>-wt-<name>
     sh(dir, 'worktree', 'add', '-q', '-b', 'mc/linked', wt);
-    const list = data<Array<{ path: string; branch: string | null; main: boolean }>>(await git.worktrees(dir));
-    expect(list).toHaveLength(2);
+    const elsewhere = join(lab, 'elsewhere-checkout');
+    sh(dir, 'worktree', 'add', '-q', '-b', 'mc/elsewhere', elsewhere);
+    const list = data<Array<{ path: string; branch: string | null; main: boolean; allowed: boolean }>>(await git.worktrees(dir, dir));
+    expect(list).toHaveLength(3);
+    expect(list.map((w) => `${w.branch}:${w.allowed}`).sort()).toEqual(['main:true', 'mc/elsewhere:false', 'mc/linked:true']);
+    // a worktree outside the project is refused unless a cell of the project uses it
+    expect(await git.resolveDir(dir, elsewhere)).toMatchObject({ ok: false, code: 'invalid' });
+    expect((await git.resolveDir(dir, elsewhere, [elsewhere])).ok).toBe(true);
     expect(list[0].main).toBe(true);
-    expect(list[1].branch).toBe('mc/linked');
     const resolved = await git.resolveDir(dir, wt);
     expect(resolved.ok).toBe(true);
     expect(await git.resolveDir(dir, lab)).toMatchObject({ ok: false, code: 'invalid' });
-    expect(await git.resolveDir(dir, join(lab, 'wt-linked', '..'))).toMatchObject({ ok: false, code: 'invalid' });
+    expect(await git.resolveDir(dir, join(lab, 'wt-wt-linked', '..'))).toMatchObject({ ok: false, code: 'invalid' });
     const status = await handleGit(git, dir, 'status', { worktree: wt }, process.platform === 'win32');
     expect(data<GitStatus>(status).branch).toBe('mc/linked');
   });

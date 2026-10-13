@@ -8,11 +8,15 @@ import { GIT_CHANNELS, GONE, handleGit } from './gitHandler';
 
 export interface GitIpcDeps {
   projectPath(projectId: string): string | undefined;
+  /** Worktrees the project's cells use (they may sit anywhere). */
+  worktreePaths?(projectId: string): string[];
   git?: Git;
+  /** Where the trusted repositories are remembered. */
+  trustFile?: string;
 }
 
 export function registerGitIpc(deps: GitIpcDeps): void {
-  const git = deps.git ?? new Git();
+  const git = deps.git ?? new Git({ trustFile: deps.trustFile });
   const windows = appPlatform(process.platform) === 'win32';
   ipcMain.handle('git:probe', async (_e, projectId: unknown): Promise<GitProbe> => {
     const path = typeof projectId === 'string' ? deps.projectPath(projectId) : undefined;
@@ -20,12 +24,12 @@ export function registerGitIpc(deps: GitIpcDeps): void {
   });
   ipcMain.handle('git:worktrees', async (_e, projectId: unknown): Promise<GitResult<unknown>> => {
     const path = typeof projectId === 'string' ? deps.projectPath(projectId) : undefined;
-    return path ? git.worktrees(path) : { ok: false, code: 'gone', error: GONE };
+    return path ? git.worktrees(path, path, deps.worktreePaths?.(projectId as string) ?? []) : { ok: false, code: 'gone', error: GONE };
   });
   for (const channel of GIT_CHANNELS) {
     ipcMain.handle(`git:${channel}`, (_e, projectId: unknown, request: unknown) => {
       const path = typeof projectId === 'string' ? deps.projectPath(projectId) : undefined;
-      return handleGit(git, path, channel, request, windows);
+      return handleGit(git, path, channel, request, windows, typeof projectId === 'string' ? deps.worktreePaths?.(projectId) ?? [] : []);
     });
   }
 }

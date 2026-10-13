@@ -1,18 +1,27 @@
-// The Git panel's engine: the system `git`, started with execFile (never through a shell), always inside a repository folder the caller
-// resolved, with timeouts, output caps and a quiet environment (nothing may wait for a terminal). Every argument that comes from the
-// renderer was validated by shared/git.ts before it gets here, and the ones that could still look like an option go behind "--" or
-// travel on stdin (paths, commit messages).
-import { execFile, type ChildProcess } from 'child_process';
-import { existsSync } from 'fs';
+// The Git panel's engine: the system `git`, started without a shell, always inside a repository folder the caller resolved, with
+// timeouts, output caps and a quiet environment (nothing may wait for a terminal). Every argument that comes from the renderer was
+// validated by shared/git.ts before it gets here, and the ones that could still look like an option go behind "--" or travel on
+// stdin (paths, commit messages).
+//
+// Trust: a repository's own configuration (filters, hooks, fsmonitor, ssh command ...) can name programs that git runs during
+// status, add, commit, fetch ... Opening a hostile repository must not run them, so every operation that can start such a program is
+// refused until the user explicitly trusts the repository (see `scan` and `GitTrustStore`); only reads that were measured to start
+// nothing (log, show, branches, commit and staged diffs, worktree list) work without trust.
+import { execFile, spawn, type ChildProcess } from 'child_process';
+import { createHash } from 'crypto';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { realpath } from 'fs/promises';
+import { dirname, join, resolve } from 'path';
 import { cleanEnv } from '../shared/env';
 import { normalizeProjectPath } from '../shared/platform';
 import {
   BRANCH_FORMAT, DETAILS_FORMAT, GIT_COMMIT_FILE_LIMIT, GIT_MAX_FILES, LOG_FORMAT, isSafeRef, isSafeRemote, parseBranches, parseDetails,
-  parseDiffTree, parseLog, parseStatusV2, parseWorktrees, redactSecrets, trimGitText,
+  parseDiffTree, parseLog, parseStatusV2, parseWorktrees, redactSecrets, trimGitText, worktreeAllowed,
   type GitBranch, type GitCheckoutRequest, type GitCommitDetails, type GitCommitRequest, type GitDiffRequest, type GitDiffResult,
   type GitErrorCode, type GitLogPage, type GitLogRequest, type GitOpResult, type GitPathsRequest, type GitProbe, type GitPushRequest,
-  type GitPushTarget, type GitResult, type GitStatus, type GitWorktree,
+  type GitPushTarget, type GitResult, type GitStatus, type GitTrustInfo, type GitWorktree,
 } from '../shared/git';
+import { attributeDrivers, configuredAttributeDrivers, dangerousConfigKeys, parseConfigList, type ConfigEntry } from '../shared/gitTrust';
 
 export interface GitOptions {
   /** The executable (default "git"); tests point it at a stand-in. */
@@ -25,16 +34,24 @@ export interface GitOptions {
   readTimeoutMs?: number;
   /** Operations that talk to a remote, and the ones that run hooks. */
   networkTimeoutMs?: number;
-  /** Cap of the output kept from one command. */
+  /** Cap of the output kept from one read (the command is stopped when it prints more). */
   maxOutputBytes?: number;
+  /** Cap of the output kept from one write (the excess is discarded; the command is never stopped for it). */
+  writeOutputBytes?: number;
+  /** Where the trusted repositories are remembered (memory only when absent). */
+  trustFile?: string;
 }
 
 export const READ_TIMEOUT_MS = 10_000;
 export const NETWORK_TIMEOUT_MS = 60_000;
 const OUTPUT_CAP = 4 * 1024 * 1024;
+const WRITE_OUTPUT_CAP = 64 * 1024 * 1024;
 const DIFF_CAP = 1024 * 1024;
+const SCAN_TTL_MS = 3000;
 
 const INSTALL_HINT = 'Nie znaleziono polecenia git. Zainstaluj Git (git-scm.com) i uruchom aplikację ponownie.';
+const UNTRUSTED = 'To repozytorium ma w konfiguracji programy, które git może uruchomić. Zaufaj mu, aby użyć tej operacji.';
+const NOT_REPO = 'To nie jest repozytorium git.';
 
 class GitFailure extends Error {
   constructor(readonly code: GitErrorCode, message: string) { super(message); }
@@ -44,8 +61,10 @@ interface RunOptions {
   timeoutMs: number;
   maxBytes?: number;
   input?: string;
-  /** Local read: no optional locks, no fsmonitor, no external diff programs. */
+  /** Local read: no optional locks; its output is capped (the command is stopped) and a truncated result is an error unless allowed. */
   read?: boolean;
+  /** A read whose caller copes with a cut-off result (it says so to the user). */
+  allowTruncate?: boolean;
   /** Exit codes besides 0 that are an answer, not a failure (diff --no-index exits 1 when there is a difference). */
   okCodes?: number[];
 }
@@ -55,15 +74,60 @@ interface RunOutput { code: number; stdout: string; stderr: string; truncated: b
 const ok = <T>(data: T): GitResult<T> => ({ ok: true, data });
 const fail = (code: GitErrorCode, error: string): GitResult<never> => ({ ok: false, code, error });
 
-/** Ends the process and what it started (a credential helper or ssh keeps the pipes open after git itself is gone). */
-function killTree(child: ChildProcess): void {
+/** Ends the process and what it started (a credential helper or ssh keeps the pipes open after git itself is gone); resolves once it is done. */
+function killTree(child: ChildProcess): Promise<void> {
   try { child.stdout?.destroy(); child.stderr?.destroy(); } catch { /* already closed */ }
-  if (process.platform === 'win32' && child.pid) {
-    execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => undefined);
-    return;
-  }
-  try { child.kill('SIGKILL'); } catch { /* already gone */ }
+  return new Promise((done) => {
+    if (process.platform === 'win32' && child.pid) {
+      execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => done());
+      return;
+    }
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    done();
+  });
 }
+
+/** Variables that would point git at another repository, index or configuration than the folder we run it in. */
+const SCRUBBED_ENV = /^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|GIT_OBJECT_DIRECTORY|GIT_ALTERNATE_OBJECT_DIRECTORIES|GIT_NAMESPACE|GIT_PREFIX|GIT_CONFIG|GIT_CONFIG_SYSTEM|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+|GIT_CONFIG_PARAMETERS|GIT_EXTERNAL_DIFF|GIT_DIFF_OPTS)$/i;
+
+const sameFolder = (a: string, b: string): boolean => normalizeProjectPath(a) === normalizeProjectPath(b);
+const insidePath = (parent: string, child: string): boolean => {
+  const p = normalizeProjectPath(parent);
+  const c = normalizeProjectPath(child);
+  return c === p || c.startsWith(`${p}/`);
+};
+const caseFold = (value: string): string => (process.platform === 'win32' ? value.toLowerCase() : value);
+
+/** The repositories the user trusted: root -> fingerprint of the configuration that was trusted. */
+export class GitTrustStore {
+  private readonly map = new Map<string, string>();
+
+  constructor(private readonly file?: string) {
+    if (!file) return;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+      if (parsed && typeof parsed === 'object') for (const [key, value] of Object.entries(parsed)) if (typeof value === 'string') this.map.set(key, value);
+    } catch { /* first start, or a damaged file: nothing is trusted */ }
+  }
+
+  private key = (root: string): string => normalizeProjectPath(root);
+  get(root: string): string | undefined { return this.map.get(this.key(root)); }
+  set(root: string, hash: string): void { this.map.set(this.key(root), hash); this.save(); }
+  delete(root: string): void { if (this.map.delete(this.key(root))) this.save(); }
+
+  private save(): void {
+    if (!this.file) return;
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      const temporary = `${this.file}.tmp`;
+      writeFileSync(temporary, JSON.stringify(Object.fromEntries(this.map), null, 2));
+      renameSync(temporary, this.file);
+    } catch { /* trust then lasts until the app closes */ }
+  }
+}
+
+interface RepoScan { keys: string[]; hash: string }
+interface GitDirs { gitDir: string; commonDir: string }
 
 export class Git {
   private readonly bin: string;
@@ -72,9 +136,13 @@ export class Git {
   private readonly readTimeout: number;
   private readonly networkTimeout: number;
   private readonly cap: number;
+  private readonly writeCap: number;
   private readonly busy = new Set<string>();
   private readonly seen = new Map<string, number>();
   private readonly roots = new Map<string, { root: string; at: number }>();
+  private readonly dirs = new Map<string, GitDirs>();
+  private readonly scans = new Map<string, { scan: RepoScan; at: number }>();
+  readonly trust: GitTrustStore;
 
   constructor(options: GitOptions = {}) {
     this.bin = options.bin ?? 'git';
@@ -83,12 +151,17 @@ export class Git {
     this.readTimeout = options.readTimeoutMs ?? READ_TIMEOUT_MS;
     this.networkTimeout = options.networkTimeoutMs ?? NETWORK_TIMEOUT_MS;
     this.cap = options.maxOutputBytes ?? OUTPUT_CAP;
+    this.writeCap = options.writeOutputBytes ?? WRITE_OUTPUT_CAP;
+    this.trust = new GitTrustStore(options.trustFile);
   }
 
   // ---------- running git ----------
 
-  private env(read: boolean): Record<string, string> {
+  private env(read: boolean, cwd: string): Record<string, string> {
     const env = cleanEnv(this.baseEnv);
+    for (const key of Object.keys(env)) if (SCRUBBED_ENV.test(key)) delete env[key];
+    // The user's own global configuration stays; one that lives inside the repository folder would be repository content.
+    for (const key of Object.keys(env)) if (/^GIT_CONFIG_GLOBAL$/i.test(key) && insidePath(cwd, env[key])) delete env[key];
     env.GIT_TERMINAL_PROMPT = '0';
     env.GCM_INTERACTIVE = 'never';
     env.GIT_EDITOR = 'true';
@@ -99,38 +172,86 @@ export class Git {
     return env;
   }
 
-  private args(args: string[], read: boolean): string[] {
-    const global = ['--no-pager', '--literal-pathspecs', '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'protocol.ext.allow=never'];
-    // A repository can name a program in its config that status would start on its own (core.fsmonitor): not while only looking.
-    if (read) global.push('-c', 'core.fsmonitor=false');
+  private args(args: string[]): string[] {
+    // fsmonitor names a program in the repository's config that even `status` would start; showSignature would call gpg for log.
+    const global = [
+      '--no-pager', '--literal-pathspecs', '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'protocol.ext.allow=never',
+      '-c', 'core.fsmonitor=false', '-c', 'log.showSignature=false',
+    ];
     return [...this.prefix, ...global, ...args];
   }
 
   private run(cwd: string, args: string[], options: RunOptions): Promise<RunOutput> {
     const read = options.read ?? false;
-    return new Promise((resolve, reject) => {
+    const cap = read ? options.maxBytes ?? this.cap : this.writeCap;
+    const started = Date.now();
+    return new Promise<RunOutput>((resolveRun, reject) => {
       let settled = false;
+      let timedOut = false;
+      let stoppedForSize = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = (action: () => void): void => { if (!settled) { settled = true; clearTimeout(timer); action(); } };
-      const child = execFile(this.bin, this.args(args, read), {
-        cwd, env: this.env(read), windowsHide: true, encoding: 'utf8', maxBuffer: options.maxBytes ?? this.cap,
-      }, (error, stdout, stderr) => {
-        const out = String(stdout ?? '');
-        const err = String(stderr ?? '');
-        if (!error) return finish(() => resolve({ code: 0, stdout: out, stderr: err, truncated: false }));
-        const e = error as NodeJS.ErrnoException & { code?: string | number };
-        if (e.code === 'ENOENT') return finish(() => reject(new GitFailure('no-git', INSTALL_HINT)));
-        if (e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return finish(() => resolve({ code: 0, stdout: out, stderr: err, truncated: true }));
-        const code = typeof e.code === 'number' ? e.code : -1;
-        if (options.okCodes?.includes(code)) return finish(() => resolve({ code, stdout: out, stderr: err, truncated: false }));
-        finish(() => reject(new GitFailure('failed', trimGitText(err || out || e.message))));
+      const spawnFailure = (error: unknown): GitFailure => {
+        const e = error as NodeJS.ErrnoException;
+        return e.code === 'ENOENT' ? new GitFailure('no-git', INSTALL_HINT) : new GitFailure('failed', trimGitText(e.message ?? String(error)));
+      };
+      let child: ChildProcess;
+      try {
+        child = spawn(this.bin, this.args(args), { cwd, env: this.env(read, cwd), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      } catch (error) { reject(spawnFailure(error)); return; }
+
+      const chunks: Buffer[][] = [[], []];
+      const sizes = [0, 0];
+      let truncated = false;
+      const collect = (index: 0 | 1) => (chunk: Buffer): void => {
+        const room = Math.max(0, cap - sizes[index]);
+        if (room > 0) { const part = chunk.length > room ? chunk.subarray(0, room) : chunk; chunks[index].push(part); sizes[index] += part.length; }
+        if (chunk.length > room) {
+          truncated = true;
+          // A read is stopped when it prints more than it may; a write is never stopped for its output (that could leave a lock behind).
+          if (read && !stoppedForSize) { stoppedForSize = true; void killTree(child); }
+        }
+      };
+      child.stdout?.on('data', collect(0));
+      child.stderr?.on('data', collect(1));
+      child.on('error', (error) => finish(() => reject(spawnFailure(error))));
+      child.on('close', (code) => {
+        if (timedOut) return;
+        finish(() => {
+          const stdout = Buffer.concat(chunks[0]).toString('utf8');
+          const stderr = Buffer.concat(chunks[1]).toString('utf8');
+          const exit = code ?? -1;
+          if (stoppedForSize) {
+            if (options.allowTruncate) resolveRun({ code: 0, stdout, stderr, truncated: true });
+            else reject(new GitFailure('too-large', 'Wynik polecenia git jest zbyt duży.'));
+          } else if (exit === 0 || options.okCodes?.includes(exit)) resolveRun({ code: exit, stdout, stderr, truncated });
+          else reject(new GitFailure('failed', trimGitText(stderr || stdout || `git: ${exit}`)));
+        });
       });
-      const timer = setTimeout(() => finish(() => {
-        killTree(child);
-        reject(new GitFailure('timeout', 'Git nie odpowiedział w wyznaczonym czasie.'));
-      }), options.timeoutMs);
+      timer = setTimeout(() => {
+        timedOut = true;
+        void (async () => {
+          await killTree(child);
+          if (!read) this.releaseStaleLock(cwd, started);
+          finish(() => reject(new GitFailure('timeout', 'Git nie odpowiedział w wyznaczonym czasie.')));
+        })();
+      }, options.timeoutMs);
       child.stdin?.on('error', () => undefined);
       child.stdin?.end(options.input ?? '');
     });
+  }
+
+  /**
+   * A write we had to kill may leave `index.lock` behind, which blocks every later git command of the user. We hold the repository's
+   * write lock, so no other process of ours can own it: a lock created since this operation started is ours and goes away.
+   */
+  private releaseStaleLock(cwd: string, startedAt: number): void {
+    try {
+      const dirs = this.dirs.get(cwd);
+      if (!dirs) return;
+      const lock = join(dirs.gitDir, 'index.lock');
+      if (statSync(lock).mtimeMs >= startedAt - 2000) unlinkSync(lock);
+    } catch { /* no lock, or it is not ours to remove */ }
   }
 
   private async attempt<T>(work: () => Promise<GitResult<T>>): Promise<GitResult<T>> {
@@ -149,64 +270,148 @@ export class Git {
     let out: RunOutput;
     try { out = await this.run(dir, ['rev-parse', '--show-toplevel'], { timeoutMs: this.readTimeout, read: true }); }
     catch (error) {
-      if (error instanceof GitFailure && error.code === 'failed' && !/dubious ownership/i.test(error.message)) throw new GitFailure('not-repo', 'To nie jest repozytorium git.');
+      if (error instanceof GitFailure && error.code === 'failed' && !/dubious ownership/i.test(error.message)) throw new GitFailure('not-repo', NOT_REPO);
       throw error;
     }
     const root = out.stdout.trim();
-    if (!root) throw new GitFailure('not-repo', 'To nie jest repozytorium git.');
+    if (!root) throw new GitFailure('not-repo', NOT_REPO);
     this.roots.set(dir, { root, at: Date.now() });
     return root;
   }
 
-  // ---------- reads ----------
+  /** The git directory of this checkout and the one it shares with its other worktrees (config, hooks and the write lock live there). */
+  private async gitDirs(root: string): Promise<GitDirs> {
+    const known = this.dirs.get(root);
+    if (known) return known;
+    const out = await this.run(root, ['rev-parse', '--absolute-git-dir', '--git-common-dir'], { timeoutMs: this.readTimeout, read: true });
+    const [gitDir = '', common = ''] = out.stdout.split('\n').map((line) => line.trim());
+    if (!gitDir) throw new GitFailure('not-repo', NOT_REPO);
+    const dirs = { gitDir, commonDir: resolve(root, common || gitDir) };
+    this.dirs.set(root, dirs);
+    return dirs;
+  }
+
+  // ---------- trust ----------
+
+  /** Reads (and starts) nothing from the repository: its local configuration, attributes files and hooks, as a list of risky keys. */
+  private async scan(root: string, fresh: boolean): Promise<RepoScan> {
+    const cached = this.scans.get(root);
+    if (!fresh && cached && Date.now() - cached.at < SCAN_TTL_MS) return cached.scan;
+    const dirs = await this.gitDirs(root);
+    const fingerprint: string[] = [];
+    const keys = new Set<string>();
+
+    const local: ConfigEntry[] = parseConfigList((await this.run(root, ['config', '--local', '--list', '-z'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true })).stdout);
+    try { local.push(...parseConfigList((await this.run(root, ['config', '--worktree', '--list', '-z'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true })).stdout)); }
+    catch { /* no per-worktree configuration */ }
+    const risky = new Set(dangerousConfigKeys(local));
+    for (const key of risky) keys.add(key);
+    for (const entry of local) if (risky.has(redactSecrets(entry.key))) fingerprint.push(`config:${entry.key}=${entry.value}`);
+
+    // Attributes naming a driver that some configuration defines with a program (a hostile .gitattributes can use a global driver).
+    const attributes: Array<{ kind: 'filter' | 'diff' | 'merge'; name: string }> = [];
+    for (const file of [join(root, '.gitattributes'), join(dirs.commonDir, 'info', 'attributes')]) {
+      try { if (statSync(file).size <= 256 * 1024) attributes.push(...attributeDrivers(readFileSync(file, 'utf8'))); } catch { /* none */ }
+    }
+    if (attributes.length) {
+      const everything = parseConfigList((await this.run(root, ['config', '--list', '-z'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true })).stdout);
+      for (const key of configuredAttributeDrivers(attributes, everything)) { keys.add(key); fingerprint.push(`attr:${key}`); }
+    }
+
+    // Hooks git would run: any file that is not a ".sample" (on Windows git runs a hook by its shebang, so the executable bit says nothing).
+    try {
+      for (const name of readdirSync(join(dirs.commonDir, 'hooks'))) {
+        if (name.endsWith('.sample')) continue;
+        const file = join(dirs.commonDir, 'hooks', name);
+        const info = statSync(file);
+        if (!info.isFile() || (process.platform !== 'win32' && (info.mode & 0o111) === 0)) continue;
+        keys.add(`hooks/${name}`);
+        fingerprint.push(`hook:${name}:${createHash('sha256').update(info.size <= 1024 * 1024 ? readFileSync(file) : String(info.size)).digest('hex')}`);
+      }
+    } catch { /* no hooks folder */ }
+
+    const scan = { keys: [...keys].sort(), hash: createHash('sha256').update(JSON.stringify(fingerprint.sort())).digest('hex') };
+    this.scans.set(root, { scan, at: Date.now() });
+    return scan;
+  }
+
+  private async stateOf(root: string, fresh: boolean): Promise<{ state: GitTrustInfo['state']; scan: RepoScan }> {
+    const scan = await this.scan(root, fresh);
+    if (!scan.keys.length) return { state: 'safe', scan };
+    return { state: this.trust.get(root) === scan.hash ? 'trusted' : 'untrusted', scan };
+  }
+
+  /** Throws unless git may start the repository's programs (nothing to start, or the user trusted exactly this configuration). */
+  private async requireTrust(root: string, fresh: boolean): Promise<void> {
+    if ((await this.stateOf(root, fresh)).state === 'untrusted') throw new GitFailure('untrusted', UNTRUSTED);
+  }
+
+  /** Is the repository's root the project folder or inside it? A larger repository around the project must never be written to. */
+  private async withinScope(scope: string, root: string): Promise<boolean> {
+    const real = async (path: string): Promise<string> => { try { return await realpath(path); } catch { return path; } };
+    return insidePath(await real(scope), await real(root));
+  }
+
+  trustInfo(dir: string, scope?: string): Promise<GitResult<GitTrustInfo>> {
+    return this.attempt(async () => {
+      const root = await this.root(dir);
+      const { state, scan } = await this.stateOf(root, true);
+      return ok({ state, keys: scan.keys, root, parent: scope ? !(await this.withinScope(scope, root)) : false });
+    });
+  }
+
+  /** "Trust this repository": scans again right now and remembers that exact configuration. Only the dedicated IPC calls this. */
+  grantTrust(dir: string, requestId: string, scope?: string): Promise<GitResult<GitTrustInfo>> {
+    return this.attempt(async () => {
+      this.consume(requestId);
+      const root = await this.root(dir);
+      const { scan } = await this.stateOf(root, true);
+      if (scan.keys.length) this.trust.set(root, scan.hash);
+      return this.trustInfo(dir, scope);
+    });
+  }
+
+  revokeTrust(dir: string, requestId: string, scope?: string): Promise<GitResult<GitTrustInfo>> {
+    return this.attempt(async () => {
+      this.consume(requestId);
+      this.trust.delete(await this.root(dir));
+      return this.trustInfo(dir, scope);
+    });
+  }
+
+  private consume(requestId: string): void {
+    const now = Date.now();
+    for (const [id, at] of this.seen) if (now - at > 10 * 60_000) this.seen.delete(id);
+    if (this.seen.has(requestId)) throw new GitFailure('invalid', 'To żądanie zostało już wykonane.');
+    this.seen.set(requestId, now);
+  }
+
+  // ---------- reads that start nothing ----------
 
   async probe(dir: string): Promise<GitProbe> {
     try { await this.root(dir); return 'repo'; }
     catch (error) { return error instanceof GitFailure && error.code === 'no-git' ? 'no-git' : 'no-repo'; }
   }
 
-  worktrees(dir: string): Promise<GitResult<GitWorktree[]>> {
+  /** The repository's worktrees; those the project may use are marked `allowed`. */
+  worktrees(dir: string, projectPath?: string, extra: readonly string[] = []): Promise<GitResult<GitWorktree[]>> {
     return this.attempt(async () => {
       const root = await this.root(dir);
-      const out = await this.run(root, ['worktree', 'list', '--porcelain'], { timeoutMs: this.readTimeout, read: true });
-      return ok(parseWorktrees(out.stdout));
+      const out = await this.run(root, ['worktree', 'list', '--porcelain'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true });
+      return ok(parseWorktrees(out.stdout).map((w) => ({ ...w, allowed: projectPath ? worktreeAllowed(projectPath, w.path, extra) : true })));
     });
   }
 
   /**
    * The folder to run in: the project folder, or one of the repository's worktrees named by the renderer (matched against what
-   * git itself lists, so no other folder can be reached this way).
+   * git itself lists and limited to the ones the project may use, so no other folder can be reached this way).
    */
-  async resolveDir(projectPath: string, worktree?: string): Promise<GitResult<string>> {
+  async resolveDir(projectPath: string, worktree?: string, extra: readonly string[] = []): Promise<GitResult<string>> {
     if (!worktree) return ok(projectPath);
-    const list = await this.worktrees(projectPath);
+    const list = await this.worktrees(projectPath, projectPath, extra);
     if (!list.ok) return list;
-    const wanted = normalizeProjectPath(worktree);
-    const found = list.data.find((w) => normalizeProjectPath(w.path) === wanted);
-    return found ? ok(found.path) : fail('invalid', 'To nie jest worktree tego repozytorium.');
-  }
-
-  status(dir: string): Promise<GitResult<GitStatus>> {
-    return this.attempt(async () => {
-      const root = await this.root(dir);
-      const out = await this.run(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], { timeoutMs: this.readTimeout, read: true });
-      const parsed = parseStatusV2(out.stdout, GIT_MAX_FILES);
-      const push = parsed.branch && !parsed.initial ? await this.pushTarget(root, parsed.branch) : null;
-      return ok({ ...parsed, truncated: parsed.truncated || out.truncated, root, push });
-    });
-  }
-
-  /** Where a push of the branch goes: its upstream, or (without one) the only remote / "origin" with the same name and --set-upstream. */
-  private async pushTarget(root: string, branch: string): Promise<GitPushTarget | null> {
-    if (!isSafeRef(branch)) return null;
-    try {
-      const out = await this.run(root, ['for-each-ref', '--format=%(upstream:remotename)%1f%(upstream:remoteref)', `refs/heads/${branch}`], { timeoutMs: this.readTimeout, read: true });
-      const [remote = '', ref = ''] = out.stdout.trim().split('\x1f');
-      if (isSafeRemote(remote) && ref.startsWith('refs/heads/') && isSafeRef(ref.slice(11))) return { remote, branch: ref.slice(11), setUpstream: false };
-      const remotes = (await this.run(root, ['remote'], { timeoutMs: this.readTimeout, read: true })).stdout.split('\n').map((r) => r.trim()).filter(isSafeRemote);
-      const chosen = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0] : null;
-      return chosen ? { remote: chosen, branch, setUpstream: true } : null;
-    } catch { return null; }
+    const found = list.data.find((w) => sameFolder(w.path, worktree));
+    return found && found.allowed ? ok(found.path) : fail('invalid', 'To nie jest worktree tego repozytorium.');
   }
 
   log(dir: string, req: GitLogRequest): Promise<GitResult<GitLogPage>> {
@@ -218,7 +423,7 @@ export class Git {
       if (req.author) args.push('--fixed-strings', '--regexp-ignore-case', `--author=${req.author}`);
       if (req.path) args.push('--', req.path);
       let out: RunOutput;
-      try { out = await this.run(root, args, { timeoutMs: this.readTimeout, read: true }); }
+      try { out = await this.run(root, args, { timeoutMs: this.readTimeout, read: true, allowTruncate: true }); }
       catch (error) {
         // A repository without commits has no HEAD to walk: that is an empty history, not an error.
         if (error instanceof GitFailure && /does not have any commits|unknown revision|bad default revision/i.test(error.message)) return ok({ commits: [], hasMore: false });
@@ -240,20 +445,88 @@ export class Git {
     return this.attempt(async () => {
       const root = await this.root(dir);
       let info: RunOutput;
-      try { info = await this.run(root, ['show', '-s', '--decorate=full', `--format=${DETAILS_FORMAT}`, hash, '--'], { timeoutMs: this.readTimeout, read: true }); }
+      try { info = await this.run(root, ['show', '-s', '--decorate=full', `--format=${DETAILS_FORMAT}`, hash, '--'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true }); }
       catch (error) { if (error instanceof GitFailure && error.code === 'failed') throw new GitFailure('invalid', 'Nie ma takiego commita.'); throw error; }
-      const details = parseDetails(info.stdout);
-      if (!details) throw new GitFailure('failed', 'Nie udało się odczytać commita.');
+      const parsed = parseDetails(info.stdout);
+      if (!parsed) throw new GitFailure('failed', 'Nie udało się odczytać commita.');
+      const details = { ...parsed, commit: { ...parsed.commit, subject: redactSecrets(parsed.commit.subject) }, message: redactSecrets(parsed.message) };
       // A merge is shown against its first parent (diff-tree -m would list the changes against every parent).
       const parent = details.commit.parents.length ? await this.parentOf(root, hash) : null;
       const range = parent ? [parent, hash] : ['--root', hash];
-      const tree = await this.run(root, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--raw', '--numstat', '--no-ext-diff', ...range], { timeoutMs: this.readTimeout, read: true });
+      const tree = await this.run(root, ['diff-tree', '-r', '-z', '-M', '--no-commit-id', '--raw', '--numstat', '--no-ext-diff', ...range], { timeoutMs: this.readTimeout, read: true, allowTruncate: true });
       const { files, truncated } = parseDiffTree(tree.stdout, GIT_COMMIT_FILE_LIMIT);
       let added = 0;
       let deleted = 0;
       for (const file of files) { added += file.added ?? 0; deleted += file.deleted ?? 0; }
       return ok({ ...details, files, filesTruncated: truncated || tree.truncated, added, deleted });
     });
+  }
+
+  branches(dir: string): Promise<GitResult<GitBranch[]>> {
+    return this.attempt(async () => {
+      const root = await this.root(dir);
+      const out = await this.run(root, ['for-each-ref', '--count=400', '--sort=-committerdate', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true });
+      const all = parseBranches(out.stdout);
+      // A remote branch that already has a local twin is not offered a second time.
+      const local = new Set(all.filter((b) => !b.remote).map((b) => b.name));
+      return ok(all.filter((b) => !b.remote || !local.has(b.name.slice(b.name.indexOf('/') + 1))));
+    });
+  }
+
+  // ---------- reads that need trust ----------
+
+  status(dir: string, scope?: string): Promise<GitResult<GitStatus>> {
+    return this.attempt(async () => {
+      const root = await this.root(dir);
+      await this.requireTrust(root, false);
+      const out = await this.run(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true });
+      const parsed = parseStatusV2(out.stdout, GIT_MAX_FILES);
+      const push = parsed.branch && !parsed.initial ? await this.pushTarget(root, parsed.branch) : null;
+      const parent = scope ? !(await this.withinScope(scope, root)) : false;
+      return ok({ ...parsed, truncated: parsed.truncated || out.truncated, root, push, parent });
+    });
+  }
+
+  /**
+   * Where a push of the branch goes: its upstream, or (without one) the only remote / "origin" with the same name and --set-upstream.
+   * Includes the URL git would really push to (pushurl and insteadOf rewriting applied), for the confirmation and the check at push time.
+   */
+  private async pushTarget(root: string, branch: string): Promise<GitPushTarget | null> {
+    if (!isSafeRef(branch)) return null;
+    try {
+      const read = { timeoutMs: this.readTimeout, read: true };
+      const out = await this.run(root, ['for-each-ref', '--format=%(upstream:remotename)%1f%(upstream:remoteref)', `refs/heads/${branch}`], read);
+      const [remote = '', ref = ''] = out.stdout.trim().split('\x1f');
+      let target: { remote: string; branch: string; setUpstream: boolean } | null = null;
+      if (isSafeRemote(remote) && ref.startsWith('refs/heads/') && isSafeRef(ref.slice(11))) target = { remote, branch: ref.slice(11), setUpstream: false };
+      else {
+        const remotes = (await this.run(root, ['remote'], read)).stdout.split('\n').map((r) => r.trim()).filter(isSafeRemote);
+        const chosen = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0] : null;
+        if (chosen) target = { remote: chosen, branch, setUpstream: true };
+      }
+      if (!target) return null;
+      const raw = (await this.run(root, ['remote', 'get-url', '--push', target.remote], read)).stdout.trim();
+      if (!raw) return null;
+      return { ...target, url: redactSecrets(raw), urlId: createHash('sha256').update(raw).digest('hex').slice(0, 16) };
+    } catch { return null; }
+  }
+
+  /**
+   * An untracked file may only be shown when git itself lists it as untracked, and when no part of its path is a link or an alias
+   * (a junction, a symlink, an 8.3 short name such as GIT~1) that leads somewhere else than where the path says.
+   */
+  private async confineUntracked(root: string, path: string): Promise<void> {
+    const refuse = new GitFailure('invalid', 'To nie jest nieśledzony plik tego repozytorium.');
+    const listing = await this.run(root, ['ls-files', '--others', '--exclude-standard', '-z', '--', path], { timeoutMs: this.readTimeout, read: true });
+    if (!listing.stdout.split('\0').includes(path)) throw refuse;
+    let current = await realpath(root);
+    for (const part of path.split('/')) {
+      const literal = join(current, part);
+      let real: string;
+      try { real = await realpath(literal); } catch { throw refuse; }
+      if (caseFold(real) !== caseFold(literal)) throw refuse;
+      current = real;
+    }
   }
 
   diff(dir: string, req: GitDiffRequest): Promise<GitResult<GitDiffResult>> {
@@ -263,6 +536,8 @@ export class Git {
       let args: string[];
       let okCodes: number[] | undefined;
       if (req.source === 'untracked') {
+        await this.requireTrust(root, false);
+        await this.confineUntracked(root, req.path);
         args = ['diff', '--no-index', ...flags, '--', '/dev/null', req.path];
         okCodes = [1];
       } else if (req.source === 'commit') {
@@ -270,39 +545,33 @@ export class Git {
         args = ['diff-tree', '-p', '-r', '-M', ...flags, ...(parent ? [parent, req.hash!] : ['--root', req.hash!]), '--', req.path];
         if (req.oldPath) args.push(req.oldPath);
       } else {
+        // Comparing the work tree to the index runs the repository's clean filters; the index to HEAD does not.
+        if (req.source === 'working') await this.requireTrust(root, false);
         args = ['diff', ...(req.source === 'staged' ? ['--cached'] : []), '-M', ...flags, '--', ...(req.oldPath ? [req.oldPath] : []), req.path];
       }
-      const out = await this.run(root, args, { timeoutMs: this.readTimeout, read: true, maxBytes: DIFF_CAP, okCodes });
-      return ok({ text: out.stdout, truncated: out.truncated, binary: /^Binary files .* differ$|^GIT binary patch$/m.test(out.stdout) });
-    });
-  }
-
-  branches(dir: string): Promise<GitResult<GitBranch[]>> {
-    return this.attempt(async () => {
-      const root = await this.root(dir);
-      const out = await this.run(root, ['for-each-ref', '--count=400', '--sort=-committerdate', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes'], { timeoutMs: this.readTimeout, read: true });
-      const all = parseBranches(out.stdout);
-      // A remote branch that already has a local twin is not offered a second time.
-      const local = new Set(all.filter((b) => !b.remote).map((b) => b.name));
-      return ok(all.filter((b) => !b.remote || !local.has(b.name.slice(b.name.indexOf('/') + 1))));
+      const out = await this.run(root, args, { timeoutMs: this.readTimeout, read: true, maxBytes: DIFF_CAP, okCodes, allowTruncate: true });
+      const text = redactSecrets(out.stdout);
+      return ok({ text, truncated: out.truncated, binary: /^Binary files .* differ$|^GIT binary patch$/m.test(text) });
     });
   }
 
   // ---------- changes ----------
 
-  /** One mutating operation per repository at a time, and one use per request id (a repeated or replayed request does nothing). */
-  private mutate<T>(dir: string, requestId: string, work: (root: string) => Promise<GitResult<T>>): Promise<GitResult<T>> {
+  /**
+   * One mutating operation per repository (all its worktrees share the lock) at a time, one use per request id, never in a repository
+   * that is larger than the project, and only in a trusted one (the configuration is scanned again for every write).
+   */
+  private mutate<T>(dir: string, requestId: string, scope: string | undefined, work: (root: string) => Promise<GitResult<T>>): Promise<GitResult<T>> {
     return this.attempt(async () => {
-      const now = Date.now();
-      for (const [id, at] of this.seen) if (now - at > 10 * 60_000) this.seen.delete(id);
-      if (this.seen.has(requestId)) return fail('invalid', 'To żądanie zostało już wykonane.');
       const root = await this.root(dir);
-      const key = normalizeProjectPath(root);
+      if (scope && !(await this.withinScope(scope, root))) return fail('parent', 'To repozytorium nadrzędne wobec projektu: zapisy są wyłączone.');
+      await this.requireTrust(root, true);
+      const key = normalizeProjectPath((await this.gitDirs(root)).commonDir);
+      this.consume(requestId);
       if (this.busy.has(key)) return fail('busy', 'Inna operacja git w tym repozytorium jeszcze trwa.');
-      this.seen.set(requestId, now);
       this.busy.add(key);
       try { return await work(root); }
-      finally { this.busy.delete(key); this.roots.delete(dir); }
+      finally { this.busy.delete(key); this.roots.delete(dir); this.scans.delete(root); }
     });
   }
 
@@ -311,34 +580,36 @@ export class Git {
     return { message: lines.slice(-2).join(' ') || fallback };
   }
 
-  fetch(dir: string, requestId: string): Promise<GitResult<GitOpResult>> {
-    return this.mutate(dir, requestId, async (root) => ok(this.opMessage(await this.run(root, ['fetch'], { timeoutMs: this.networkTimeout }), 'OK')));
+  fetch(dir: string, requestId: string, scope?: string): Promise<GitResult<GitOpResult>> {
+    return this.mutate(dir, requestId, scope, async (root) => ok(this.opMessage(await this.run(root, ['fetch'], { timeoutMs: this.networkTimeout }), 'OK')));
   }
 
   /** Fast-forward only: it never creates a merge commit, never rebases and stops when the branches diverged. */
-  pull(dir: string, requestId: string): Promise<GitResult<GitOpResult>> {
-    return this.mutate(dir, requestId, async (root) => ok(this.opMessage(await this.run(root, ['pull', '--ff-only', '--no-rebase', '--no-edit'], { timeoutMs: this.networkTimeout }), 'OK')));
+  pull(dir: string, requestId: string, scope?: string): Promise<GitResult<GitOpResult>> {
+    return this.mutate(dir, requestId, scope, async (root) => ok(this.opMessage(await this.run(root, ['pull', '--ff-only', '--no-rebase', '--no-edit'], { timeoutMs: this.networkTimeout }), 'OK')));
   }
 
   /**
-   * Pushes the current branch to the target the status showed. The renderer sends the remote and branch it confirmed with the
-   * user; they must be exactly what this repository would push to now. Never forced, hooks are not skipped.
+   * Pushes the current branch to the target the status showed. The renderer sends the remote, branch and URL id it confirmed with
+   * the user; they must be exactly what this repository would push to now. Never forced, hooks are not skipped.
    */
-  push(dir: string, req: GitPushRequest): Promise<GitResult<GitOpResult>> {
-    return this.mutate(dir, req.requestId, async (root) => {
+  push(dir: string, req: GitPushRequest, scope?: string): Promise<GitResult<GitOpResult>> {
+    return this.mutate(dir, req.requestId, scope, async (root) => {
       const status = await this.run(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], { timeoutMs: this.readTimeout, read: true });
       const parsed = parseStatusV2(status.stdout);
       if (!parsed.branch || parsed.initial) return fail('invalid', 'Push wymaga gałęzi z co najmniej jednym commitem.');
       const target = await this.pushTarget(root, parsed.branch);
       if (!target) return fail('invalid', 'Brak zdalnego repozytorium, do którego można wypchnąć tę gałąź.');
-      if (target.remote !== req.remote || target.branch !== req.branch) return fail('invalid', 'Cel push zmienił się od ostatniego odświeżenia. Odśwież panel i spróbuj ponownie.');
+      if (target.remote !== req.remote || target.branch !== req.branch || target.urlId !== req.urlId) {
+        return fail('invalid', 'Cel push zmienił się od ostatniego odświeżenia. Odśwież panel i spróbuj ponownie.');
+      }
       const args = ['push', ...(target.setUpstream ? ['--set-upstream'] : []), target.remote, `refs/heads/${parsed.branch}:refs/heads/${target.branch}`];
       return ok(this.opMessage(await this.run(root, args, { timeoutMs: this.networkTimeout }), 'OK'));
     });
   }
 
-  stage(dir: string, req: GitPathsRequest): Promise<GitResult<GitOpResult>> {
-    return this.mutate(dir, req.requestId, async (root) => {
+  stage(dir: string, req: GitPathsRequest, scope?: string): Promise<GitResult<GitOpResult>> {
+    return this.mutate(dir, req.requestId, scope, async (root) => {
       const out = req.all
         ? await this.run(root, ['add', '-A'], { timeoutMs: this.readTimeout })
         : await this.run(root, ['add', '--pathspec-from-file=-', '--pathspec-file-nul'], { timeoutMs: this.readTimeout, input: req.paths.join('\0') });
@@ -346,8 +617,8 @@ export class Git {
     });
   }
 
-  unstage(dir: string, req: GitPathsRequest): Promise<GitResult<GitOpResult>> {
-    return this.mutate(dir, req.requestId, async (root) => {
+  unstage(dir: string, req: GitPathsRequest, scope?: string): Promise<GitResult<GitOpResult>> {
+    return this.mutate(dir, req.requestId, scope, async (root) => {
       let hasHead = true;
       try { await this.run(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], { timeoutMs: this.readTimeout, read: true }); } catch { hasHead = false; }
       // Without a first commit there is no HEAD to restore from: the files only leave the index.
@@ -360,8 +631,8 @@ export class Git {
   }
 
   /** Commits what is staged. The message goes in on stdin; there is no amend and no way to skip the hooks. */
-  commit(dir: string, req: GitCommitRequest): Promise<GitResult<GitOpResult>> {
-    return this.mutate(dir, req.requestId, async (root) => {
+  commit(dir: string, req: GitCommitRequest, scope?: string): Promise<GitResult<GitOpResult>> {
+    return this.mutate(dir, req.requestId, scope, async (root) => {
       const staged = await this.run(root, ['diff', '--cached', '--quiet', '--no-ext-diff'], { timeoutMs: this.readTimeout, read: true, okCodes: [1] });
       if (staged.code === 0) return fail('invalid', 'Nic nie jest dodane do commita. Dodaj najpierw pliki.');
       const out = await this.run(root, ['commit', '-F', '-'], { timeoutMs: this.networkTimeout, input: req.message.replace(/\r\n/g, '\n') });
@@ -370,8 +641,8 @@ export class Git {
   }
 
   /** Switches branch, only when nothing tracked is modified; a remote branch gets a local branch that tracks it. */
-  checkout(dir: string, req: GitCheckoutRequest): Promise<GitResult<GitOpResult>> {
-    return this.mutate(dir, req.requestId, async (root) => {
+  checkout(dir: string, req: GitCheckoutRequest, scope?: string): Promise<GitResult<GitOpResult>> {
+    return this.mutate(dir, req.requestId, scope, async (root) => {
       const status = await this.run(root, ['status', '--porcelain=v2', '-z', '--untracked-files=no'], { timeoutMs: this.readTimeout, read: true });
       if (parseStatusV2(status.stdout).files.length) return fail('dirty', 'Masz niezatwierdzone zmiany. Zatwierdź je lub odłóż, zanim zmienisz gałąź.');
       const full = `refs/${req.remote ? 'remotes' : 'heads'}/${req.branch}`;
@@ -382,5 +653,3 @@ export class Git {
     });
   }
 }
-
-export { redactSecrets };

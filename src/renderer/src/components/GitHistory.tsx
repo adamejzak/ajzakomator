@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatAgo } from '../../../shared/i18n';
-import { GIT_LOG_PAGE, layoutGraph, type GitCommit, type GitCommitDetails, type GitStatus } from '../../../shared/git';
+import { GIT_LOG_PAGE, layoutGraph, type GitCommit, type GitCommitDetails } from '../../../shared/git';
 import { useI18n } from '../i18n';
 import { setUi } from '../store';
 import { baseName, chipRefs, dirName, letterOf } from '../../../shared/gitUi';
@@ -11,10 +11,11 @@ import { IBranch, IChevron, IX } from './icons';
 /** Loaded rows stop here: the list stays light, a filter or the search finds older commits. */
 const MAX_LOADED = 3000;
 
-interface Props { projectId: string; status: GitStatus; opts: { worktree?: string }; nonce: number }
+/** `historyKey` changes when HEAD or the branches moved (the list then starts again); `initial`: the repository has no commit yet. */
+interface Props { projectId: string; historyKey: string; initial: boolean; opts: { worktree?: string }; nonce: number }
 
 /** The History section: commits in pages of 50 (loaded while scrolling), a thin graph, filters, and the details of one commit. */
-export function GitHistory({ projectId, status, opts, nonce }: Props) {
+export function GitHistory({ projectId, historyKey, initial, opts, nonce }: Props) {
   const { tr, language, errorText } = useI18n();
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -29,7 +30,7 @@ export function GitHistory({ projectId, status, opts, nonce }: Props) {
   const worktree = opts.worktree;
 
   // The first page again whenever HEAD moved, an operation finished or the filter changed.
-  const key = `${status.branch ?? ''}:${status.head}:${status.upstream ?? ''}:${status.ahead}:${status.behind}:${nonce}:${query}:${all}:${worktree ?? ''}`;
+  const key = `${historyKey}:${nonce}:${query}:${all}:${worktree ?? ''}`;
   useEffect(() => {
     const mine = ++sequence.current;
     loadingMore.current = false;
@@ -88,7 +89,7 @@ export function GitHistory({ projectId, status, opts, nonce }: Props) {
         onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore(); }}
       >
         {error && <p className="git-note error">{errorText(error)}</p>}
-        {!error && !loading && !commits.length && <p className="git-note muted">{status.initial ? tr('Repozytorium nie ma jeszcze commitów.') : tr('Brak commitów.')}</p>}
+        {!error && !loading && !commits.length && <p className="git-note muted">{initial ? tr('Repozytorium nie ma jeszcze commitów.') : tr('Brak commitów.')}</p>}
         {commits.map((commit, i) => {
           const { shown, more } = chipRefs(commit.refs);
           return (

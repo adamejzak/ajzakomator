@@ -11,6 +11,10 @@ interface Props {
   projectId: string;
   status: GitStatus;
   busy: boolean;
+  /** False in a repository above the project folder: files are listed but not staged or committed. */
+  writable: boolean;
+  /** Reminder that repository hooks and filters may run (a trusted repository with such configuration). */
+  programsNote: string | null;
   opts: { worktree?: string };
   run(action: string, call: () => Promise<GitResult<GitOpResult>>, quiet?: boolean): Promise<boolean>;
   onOpen(file: GitFileChange, source: Source): void;
@@ -18,7 +22,7 @@ interface Props {
 }
 
 /** The Changes section: files grouped as conflicts, staged, changed and untracked, with stage / unstage and a commit box. */
-export function GitChanges({ projectId, status, busy, opts, run, onOpen, onMenu }: Props) {
+export function GitChanges({ projectId, status, busy, writable, programsNote, opts, run, onOpen, onMenu }: Props) {
   const { tr } = useI18n();
   const [open, setOpen] = useState(true);
   const [message, setMessage] = useState('');
@@ -46,7 +50,7 @@ export function GitChanges({ projectId, status, busy, opts, run, onOpen, onMenu 
       <div className="git-group" key={id}>
         <div className="git-group-head">
           <span>{title} <span className="git-count">{files.length}</span></span>
-          {id !== 'conflict' && <button className="btn ghost small" disabled={busy} onClick={bulk.onClick} title={bulk.label} aria-label={bulk.label}>{id === 'staged' ? '−' : '+'}</button>}
+          {writable && id !== 'conflict' && <button className="btn ghost small" disabled={busy} onClick={bulk.onClick} title={bulk.label} aria-label={bulk.label}>{id === 'staged' ? '−' : '+'}</button>}
         </div>
         {files.map((file) => {
           const letter: Letter = id === 'conflict' ? CONFLICT_LETTER : id === 'staged' ? letterOf(file.x) : letterOf(file.untracked ? '?' : file.y);
@@ -63,13 +67,13 @@ export function GitChanges({ projectId, status, busy, opts, run, onOpen, onMenu 
             >
               <span className={`git-letter ${letter.cls}`} title={tr(letter.title)}>{letter.letter}</span>
               <span className="git-file-name">{baseName(file.path)}<span className="git-file-dir">{dirName(file.path)}</span></span>
-              <button
+              {writable && <button
                 className="btn ghost small git-file-action"
                 disabled={busy}
                 aria-label={id === 'staged' ? tr('Usuń z commita') : tr('Dodaj do commita')}
                 title={id === 'staged' ? tr('Usuń z commita') : tr('Dodaj do commita')}
                 onClick={(e) => { e.stopPropagation(); if (id === 'staged') unstage(pathsOf([file])); else stage(pathsOf([file])); }}
-              >{id === 'staged' ? '−' : '+'}</button>
+              >{id === 'staged' ? '−' : '+'}</button>}
             </div>
           );
         })}
@@ -94,7 +98,7 @@ export function GitChanges({ projectId, status, busy, opts, run, onOpen, onMenu 
           {status.truncated && <p className="git-note muted">{tr('Pokazano pierwsze {count} zmian.', { count: status.files.length })}</p>}
         </div>
       )}
-      {open && staged > 0 && (
+      {open && writable && staged > 0 && (
         <div className="git-commit-box">
           <textarea
             className="input"
@@ -108,6 +112,7 @@ export function GitChanges({ projectId, status, busy, opts, run, onOpen, onMenu 
           <button className="btn small primary" disabled={busy || !message.trim()} onClick={() => void commit()} title={titleWithShortcut(tr('Zatwierdź dodane pliki'), 'git.commit')}>
             {tr('Commit')} ({staged})
           </button>
+          {programsNote && <span className="git-note muted">{programsNote}</span>}
         </div>
       )}
     </section>

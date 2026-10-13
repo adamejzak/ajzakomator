@@ -61,7 +61,7 @@ describe('request validation', () => {
     expect(validateGitRequest('status', { worktree: 'D:\\wt' })).toEqual({ ok: true, value: { worktree: 'D:\\wt' } });
     expect(validateGitRequest('diff', { source: 'commit', hash: 'deadbeef', path: 'a.txt', oldPath: 'b.txt' })).toEqual({ ok: true, value: { source: 'commit', hash: 'deadbeef', path: 'a.txt', oldPath: 'b.txt' } });
     expect(validateGitRequest('stage', { requestId: rid, paths: [], all: true })).toEqual({ ok: true, value: { requestId: rid, paths: [], all: true } });
-    expect(validateGitRequest('push', { requestId: rid, remote: 'origin', branch: 'main' }).ok).toBe(true);
+    expect(validateGitRequest('push', { requestId: rid, remote: 'origin', branch: 'main', urlId: 'abcdef0123456789' }).ok).toBe(true);
     expect(validateGitRequest('commit', { requestId: rid, message: 'Dodaj ✓\n\nbody' }).ok).toBe(true);
     expect(validateGitRequest('checkout', { requestId: rid, branch: 'origin/x', remote: true })).toEqual({ ok: true, value: { requestId: rid, branch: 'origin/x', remote: true } });
   });
@@ -76,7 +76,8 @@ describe('request validation', () => {
       ['diff', { source: 'working', path: 'a', oldPath: '../b' }],
       ['fetch', {}], ['fetch', { requestId: 'short' }], ['fetch', { requestId: 'has space 12345' }], ['pull', { requestId: 5 }],
       ['push', { requestId: rid, remote: '--receive-pack=x', branch: 'main' }], ['push', { requestId: rid, remote: 'origin', branch: '-f' }],
-      ['push', { requestId: rid, remote: 'origin' }],
+      ['push', { requestId: rid, remote: 'origin' }], ['push', { requestId: rid, remote: 'origin', branch: 'main' }],
+      ['push', { requestId: rid, remote: 'origin', branch: 'main', urlId: 'xyz' }], ['push', { requestId: rid, remote: 'origin', branch: 'main', urlId: 'ABCDEF0123456789' }],
       ['stage', { requestId: rid, paths: [] }], ['stage', { requestId: rid, paths: ['../a'] }], ['stage', { requestId: rid, paths: 'a' }],
       ['stage', { requestId: rid, paths: [5] }], ['stage', { requestId: rid, paths: new Array(2001).fill('a') }],
       ['unstage', { requestId: rid, paths: ['a'], all: 'x' }],
@@ -212,8 +213,8 @@ describe('log and details parsers', () => {
     ]);
     const list = parseWorktrees(['worktree D:/p/app', 'HEAD 0123456789abcdef', 'branch refs/heads/main', '', 'worktree D:/p/app-wt-a', 'HEAD fedcba9876543210', 'detached', ''].join('\n'));
     expect(list).toEqual([
-      { path: 'D:/p/app', branch: 'main', head: '0123456', main: true, detached: false },
-      { path: 'D:/p/app-wt-a', branch: null, head: 'fedcba9', main: false, detached: true },
+      { path: 'D:/p/app', branch: 'main', head: '0123456', main: true, detached: false, allowed: true },
+      { path: 'D:/p/app-wt-a', branch: null, head: 'fedcba9', main: false, detached: true, allowed: true },
     ]);
   });
 });
@@ -298,7 +299,7 @@ describe('panel helpers', () => {
 describe('translations of the strings main sends', () => {
   it('has a translation for every Polish message literal in the git engine', () => {
     const source = ['src/main/git.ts', 'src/main/gitHandler.ts'].map((file) => readFileSync(file, 'utf8')).join('\n');
-    const pattern = /(?:GitFailure\(\s*'[a-z-]+',\s*|fail\(\s*'[a-z-]+',\s*|const (?:INSTALL_HINT|GONE|INVALID) = )'((?:\\.|[^'\\])*)'/g;
+    const pattern = /(?:GitFailure\(\s*'[a-z-]+',\s*|fail\(\s*'[a-z-]+',\s*|const (?:INSTALL_HINT|GONE|INVALID|UNTRUSTED|NOT_REPO) = )'((?:\\.|[^'\\])*)'/g;
     const literals = [...source.matchAll(pattern)].map((m) => m[1].replace(/\\'/g, "'"));
     expect(literals.length).toBeGreaterThan(8);
     for (const literal of literals) expect(Object.hasOwn(messages, literal), literal).toBe(true);

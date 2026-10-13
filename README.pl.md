@@ -46,6 +46,22 @@ Przełączaj projekty, gdy terminale nadal pracują w tle.
 
 Zrzuty przedstawiają rzeczywistą aplikację w języku angielskim, z jednorazowymi projektami demonstracyjnymi i wynikami prawdziwych poleceń powłoki. Nie zawierają rozmów z modelami. [Instrukcja odtworzenia zrzutów](docs/screenshots/README.md).
 
+## Panel Git i zaufanie do repozytorium
+
+Kafelek **Git** w lewym pasku (aktywny dla projektów będących repozytoriami git) pokazuje gałąź z liczbą commitów do wysłania i pobrania, zmiany (dodawanie, cofanie, commit), historię commitów z cienkim grafem, szczegóły commita i diffy tylko do odczytu oraz daje **Fetch**, **Pull** (tylko fast-forward), **Push** (po potwierdzeniu z nazwą zdalnego repozytorium, gałęzi i adresem, na który faktycznie pójdzie) i zmianę gałęzi (tylko przy czystym drzewie). Używa systemowego `git` bez powłoki, z limitami czasu i rozmiaru wyniku. Nie ma kasowania zmian, force push, amend ani pomijania hooków.
+
+Repozytorium git może mieć własną konfigurację, przez którą git uruchamia programy: `filter.*.clean/smudge` (odpala je `status` i `add`), `core.fsmonitor`, hooki, `core.hooksPath`, `core.sshCommand`, `diff.*.textconv`, `remote.*.uploadpack/receivepack`, pomocnicy poświadczeń, pliki `include` i inne. Otwarcie świeżo pobranego repozytorium nie może nic z tego uruchomić, dlatego panel ma model zaufania:
+
+- Po otwarciu projektu panel czyta **lokalną** konfigurację repozytorium, `.gitattributes` / `.git/info/attributes` i `.git/hooks` **niczego nie uruchamiając** i szuka takich kluczy.
+- Repozytorium bez nich działa normalnie. Repozytorium z nimi startuje w **trybie tylko do odczytu**: działają historia, szczegóły commitów, diffy commitów i lista gałęzi (sprawdzone, że niczego nie uruchamiają), a status, zmiany, diffy plików roboczych, dodawanie, commit, fetch, pull, push i zmiana gałęzi są wyłączone; status nie jest nawet pobierany przy powrocie do okna. Baner wymienia klucze (nigdy ich wartości).
+- **Zaufaj temu repozytorium** zapamiętuje ścieżkę repozytorium razem z hashem dokładnie tej konfiguracji (i plików hooków) w `git-trust.json` w folderze danych aplikacji. Każda zmiana konfiguracji lub hooków pyta ponownie. Zaufanie nadaje tylko ten jawny przycisk; nic, co strona aplikacji dołączy do zwykłego żądania, go nie nada.
+- Zaufane repozytorium działa normalnie, a panel w potwierdzeniach i przy polu commita przypomina, że jego hooki i filtry mogą się uruchamiać.
+- Zawsze, także w zaufanych: `core.fsmonitor=false`, `--no-textconv`, `--no-ext-diff`, `--no-pager`, `protocol.ext.allow=never` oraz usuwanie ze środowiska zmiennych `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_CONFIG_*`.
+- Projekt będący podfolderem większego repozytorium (np. repozytorium w folderze domowym) otwiera się jako **repozytorium nadrzędne**: można je czytać, ale panel niczego w nim nie doda, nie zatwierdzi ani nie wyśle.
+- Diff pliku nieśledzonego pokazuje tylko pliki, które git wymienia jako nieśledzone, nigdy przez link, junction ani alias 8.3 (`GIT~1`), a poświadczenia w diffach, opisach commitów i komunikatach błędów są maskowane.
+
+Panel wymaga gita 2.26 lub nowszego w `PATH`.
+
 ## Instalacja
 
 **Windows**

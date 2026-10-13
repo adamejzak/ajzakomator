@@ -1,7 +1,9 @@
 // Types, request validation and output parsers of the Git panel. Everything here is pure (no process, no DOM), so the main process
 // (src/main/git.ts), the IPC layer and the renderer share it and the tests can drive it directly.
 
-export type GitErrorCode = 'not-repo' | 'no-git' | 'timeout' | 'busy' | 'invalid' | 'dirty' | 'too-large' | 'gone' | 'failed';
+import { normalizeProjectPath } from './platform';
+
+export type GitErrorCode = 'not-repo' | 'no-git' | 'timeout' | 'busy' | 'invalid' | 'dirty' | 'too-large' | 'gone' | 'untrusted' | 'parent' | 'failed';
 
 export type GitResult<T> = { ok: true; data: T } | { ok: false; code: GitErrorCode; error: string };
 
@@ -35,7 +37,11 @@ export interface GitFileChange {
   conflict: boolean;
 }
 
-export interface GitPushTarget { remote: string; branch: string; setUpstream: boolean }
+/**
+ * Where "Push" would go. `url` is the push URL git resolves (pushurl and insteadOf rewriting applied) with credentials removed, for
+ * the confirmation dialog; `urlId` identifies the raw URL, and a push is refused when it no longer matches what the user confirmed.
+ */
+export interface GitPushTarget { remote: string; branch: string; setUpstream: boolean; url: string; urlId: string }
 
 export interface GitStatus {
   /** Absolute path of the repository root (git's spelling, forward slashes). */
@@ -55,6 +61,8 @@ export interface GitStatus {
   truncated: boolean;
   /** Where "Push" would go (null: detached HEAD, no commits or no remote). */
   push: GitPushTarget | null;
+  /** The repository root is above the project folder (the project is a subfolder of a larger repository): no write operations. */
+  parent: boolean;
 }
 
 export interface GitRef { name: string; kind: 'head' | 'branch' | 'remote' | 'tag'; current?: boolean }
@@ -96,7 +104,23 @@ export interface GitBranch {
   track: string;
 }
 
-export interface GitWorktree { path: string; branch: string | null; head: string; main: boolean; detached: boolean }
+export interface GitWorktree {
+  path: string;
+  branch: string | null;
+  head: string;
+  main: boolean;
+  detached: boolean;
+  /** Inside the project folder, next to it as an app-created sibling, or used by a cell: only these can be picked. */
+  allowed: boolean;
+}
+
+/**
+ * Whether a repository's configuration can make git start programs, and whether the user allowed it.
+ *   safe       nothing in the repository can start a program
+ *   trusted    it can, and the user trusted exactly this configuration
+ *   untrusted  it can and the user has not (or the configuration changed since): only read-only operations that start nothing work
+ */
+export interface GitTrustInfo { state: 'safe' | 'trusted' | 'untrusted'; keys: string[]; root: string; parent: boolean }
 
 export type GitDiffSource = 'working' | 'staged' | 'commit' | 'untracked';
 
@@ -120,7 +144,9 @@ export interface GitBranchesRequest extends Base {}
 export interface GitMutation extends Base { requestId: string }
 export interface GitFetchRequest extends GitMutation {}
 export interface GitPullRequest extends GitMutation {}
-export interface GitPushRequest extends GitMutation { remote: string; branch: string }
+export interface GitPushRequest extends GitMutation { remote: string; branch: string; urlId: string }
+export interface GitTrustRequest extends Base {}
+export interface GitTrustGrantRequest extends GitMutation {}
 export interface GitPathsRequest extends GitMutation { paths: string[]; all?: boolean }
 export interface GitCommitRequest extends GitMutation { message: string }
 export interface GitCheckoutRequest extends GitMutation { branch: string; remote?: boolean }
@@ -140,6 +166,11 @@ export interface GitApi {
   unstage(projectId: string, req: GitPathsRequest): Promise<GitResult<GitOpResult>>;
   commit(projectId: string, req: GitCommitRequest): Promise<GitResult<GitOpResult>>;
   checkout(projectId: string, req: GitCheckoutRequest): Promise<GitResult<GitOpResult>>;
+  /** What the repository's configuration could start, and whether it is trusted. */
+  trust(projectId: string, req: GitTrustRequest): Promise<GitResult<GitTrustInfo>>;
+  /** The user's explicit "trust this repository": main scans again and stores the result (nothing the renderer sends can grant trust). */
+  trustGrant(projectId: string, req: GitTrustGrantRequest): Promise<GitResult<GitTrustInfo>>;
+  trustRevoke(projectId: string, req: GitTrustGrantRequest): Promise<GitResult<GitTrustInfo>>;
 }
 
 // ---------- validation ----------
@@ -166,7 +197,8 @@ export const isSafeRemote = (value: unknown): value is string => typeof value ==
 export const isRequestId = (value: unknown): value is string => typeof value === 'string' && REQUEST_ID.test(value);
 
 /**
- * A path inside the repository, as git prints it: relative, forward slashes, no "..", no control characters, no ".git" part.
+ * A path inside the repository, as git prints it: relative, forward slashes, no "..", no control characters, no ".git" part
+ * (on Windows also no 8.3 alias, trailing dot or space, or stream name).
  * Returns the normalized path or null. (Backslashes are separators on Windows only.)
  */
 export function normalizeRepoPath(value: unknown, windows = false): string | null {
@@ -181,6 +213,10 @@ export function normalizeRepoPath(value: unknown, windows = false): string | nul
     const part = parts[i];
     if (part === '' && i === last && i > 0) continue; // trailing "/" of a folder
     if (part === '' || part === '.' || part === '..' || part.toLowerCase() === '.git') return null;
+    if (windows) {
+      // NTFS: ".git." and ".git " name the .git folder, "GIT~1" is its 8.3 alias, "a:stream" is an alternate data stream.
+      if (/[:~]\d|:/.test(part) || /[. ]$/.test(part) || part.replace(/[. ]+$/, '').toLowerCase() === '.git') return null;
+    }
   }
   return path;
 }
@@ -197,14 +233,14 @@ function worktreeOf(req: Record<string, unknown>): Checked<string | undefined> {
   return { ok: true, value: value || undefined };
 }
 
-export type GitChannel = 'status' | 'log' | 'show' | 'diff' | 'branches' | 'fetch' | 'pull' | 'push' | 'stage' | 'unstage' | 'commit' | 'checkout';
+export type GitChannel = 'status' | 'log' | 'show' | 'diff' | 'branches' | 'fetch' | 'pull' | 'push' | 'stage' | 'unstage' | 'commit' | 'checkout' | 'trust' | 'trustGrant' | 'trustRevoke';
 
-export const MUTATING_CHANNELS: ReadonlySet<GitChannel> = new Set(['fetch', 'pull', 'push', 'stage', 'unstage', 'commit', 'checkout']);
+export const MUTATING_CHANNELS: ReadonlySet<GitChannel> = new Set(['fetch', 'pull', 'push', 'stage', 'unstage', 'commit', 'checkout', 'trustGrant', 'trustRevoke']);
 
 export interface GitRequestMap {
   status: GitStatusRequest; log: GitLogRequest; show: GitShowRequest; diff: GitDiffRequest; branches: GitBranchesRequest;
   fetch: GitFetchRequest; pull: GitPullRequest; push: GitPushRequest; stage: GitPathsRequest; unstage: GitPathsRequest;
-  commit: GitCommitRequest; checkout: GitCheckoutRequest;
+  commit: GitCommitRequest; checkout: GitCheckoutRequest; trust: GitTrustRequest; trustGrant: GitTrustGrantRequest; trustRevoke: GitTrustGrantRequest;
 }
 
 /** Checks (and normalizes) what the renderer sent for a channel: unknown fields are dropped, every value is bounds-checked. */
@@ -220,6 +256,7 @@ export function validateGitRequest<C extends GitChannel>(channel: C, input: unkn
   switch (channel) {
     case 'status':
     case 'branches':
+    case 'trust':
       return done(base);
     case 'log': {
       const skip = input.skip ?? 0;
@@ -255,14 +292,16 @@ export function validateGitRequest<C extends GitChannel>(channel: C, input: unkn
       return done({ ...base, source, path, ...(oldPath ? { oldPath } : {}), ...(source === 'commit' ? { hash: input.hash } : {}) });
     }
     case 'fetch':
-    case 'pull': {
+    case 'pull':
+    case 'trustGrant':
+    case 'trustRevoke': {
       const id = requestId();
       return id ? done({ ...base, requestId: id }) : invalid;
     }
     case 'push': {
       const id = requestId();
-      if (!id || !isSafeRemote(input.remote) || !isSafeRef(input.branch)) return invalid;
-      return done({ ...base, requestId: id, remote: input.remote, branch: input.branch });
+      if (!id || !isSafeRemote(input.remote) || !isSafeRef(input.branch) || typeof input.urlId !== 'string' || !/^[0-9a-f]{16}$/.test(input.urlId)) return invalid;
+      return done({ ...base, requestId: id, remote: input.remote, branch: input.branch, urlId: input.urlId });
     }
     case 'stage':
     case 'unstage': {
@@ -490,7 +529,7 @@ export function parseWorktrees(stdout: string): GitWorktree[] {
   let current: GitWorktree | null = null;
   for (const line of stdout.split('\n').map((l) => l.replace(/\r$/, ''))) {
     if (line.startsWith('worktree ')) {
-      current = { path: line.slice(9), branch: null, head: '', main: list.length === 0, detached: false };
+      current = { path: line.slice(9), branch: null, head: '', main: list.length === 0, detached: false, allowed: true };
       list.push(current);
     } else if (current) {
       if (line.startsWith('HEAD ')) current.head = line.slice(5, 12);
@@ -606,4 +645,19 @@ export function projectRelativePath(root: string, projectPath: string, file: str
   const base = norm(projectPath);
   if (absolute === base || !absolute.startsWith(`${base}/`)) return null;
   return `${root.replace(/[\\/]+$/, '')}/${file}`.replace(/\\/g, '/').slice(base.length + 1).replace(/\/+$/, '');
+}
+
+/**
+ * May the project use this worktree? Inside the project folder, next to it as one the app made (`<project>-wt-<name>`), or one of the
+ * worktrees its cells already use. Any other worktree of the repository (a checkout elsewhere on the disk) is listed but not selectable.
+ */
+export function worktreeAllowed(projectPath: string, worktreePath: string, extra: readonly string[] = []): boolean {
+  const base = normalizeProjectPath(projectPath);
+  const wt = normalizeProjectPath(worktreePath);
+  if (wt === base || wt.startsWith(`${base}/`)) return true;
+  if (extra.some((path) => normalizeProjectPath(path) === wt)) return true;
+  const slash = base.lastIndexOf('/');
+  const parent = base.slice(0, slash);
+  const name = base.slice(slash + 1);
+  return wt.startsWith(`${parent}/${name}-wt-`) && !wt.slice(parent.length + 1).includes('/');
 }

@@ -101,3 +101,15 @@
 .git-diff-line.hunk .code { padding-left: 14px; }
 .git-diff-line.note, .git-diff-line.meta { color: var(--muted); font-style: italic; }
 .git-diff-line.note .code, .git-diff-line.meta .code { padding-left: 14px; }
+
+/* Trust model: a repository whose configuration can start programs is read-only until trusted */
+.git-trust { flex: none; display: flex; flex-direction: column; gap: 6px; margin: 6px 10px; padding: 8px 10px; border: 1px solid #5a4a14; border-radius: 8px; background: #2b2410; color: #fde68a; font-size: 11.5px; line-height: 1.45; }
+.git-trust.folded { flex-direction: row; align-items: center; gap: 8px; }
+.git-trust.folded span { flex: 1; min-width: 0; }
+.git-trust.folded .btn { flex: none; }
+.git-trust-keys { margin: 0; padding: 0 0 0 16px; max-height: 120px; overflow: auto; color: #fcd34d; }
+.git-trust-keys code { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 10.5px; overflow-wrap: anywhere; }
+.git-trust-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.git-branch.static { cursor: default; }
+.git-branch.static:hover { background: var(--bg-2); }
+.git-commit-box .git-note { padding: 0; font-size: 10.5px; }

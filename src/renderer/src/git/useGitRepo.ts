@@ -13,7 +13,11 @@ export interface GitRepoState {
   refresh(delay?: number): void;
 }
 
-export function useGitRepo(projectId: string, worktree: string | undefined): GitRepoState {
+/**
+ * `enabled` is false while the repository is not trusted: the status runs the repository's filters, so it is not asked for at all
+ * (neither on opening the panel nor when the window gets the focus).
+ */
+export function useGitRepo(projectId: string, worktree: string | undefined, enabled = true): GitRepoState {
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [error, setError] = useState<RepoError | null>(null);
   const [loading, setLoading] = useState(true);
@@ -21,6 +25,7 @@ export function useGitRepo(projectId: string, worktree: string | undefined): Git
   const timer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
+    if (!enabled) return;
     const mine = ++sequence.current;
     try {
       const result = await window.mc.git.status(projectId, worktree ? { worktree } : {});
@@ -32,7 +37,7 @@ export function useGitRepo(projectId: string, worktree: string | undefined): Git
     } finally {
       if (mine === sequence.current) setLoading(false);
     }
-  }, [projectId, worktree]);
+  }, [projectId, worktree, enabled]);
 
   const refresh = useCallback((delay = 250) => {
     window.clearTimeout(timer.current);
@@ -41,12 +46,12 @@ export function useGitRepo(projectId: string, worktree: string | undefined): Git
 
   useEffect(() => {
     setStatus(null);
-    setLoading(true);
+    setLoading(enabled);
     void load();
     const onFocus = (): void => refresh(400);
     window.addEventListener('focus', onFocus);
     return () => { window.clearTimeout(timer.current); sequence.current++; window.removeEventListener('focus', onFocus); };
-  }, [load, refresh]);
+  }, [load, refresh, enabled]);
 
   return { status, error, loading, refresh };
 }
