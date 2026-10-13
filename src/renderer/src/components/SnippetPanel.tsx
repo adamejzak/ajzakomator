@@ -1,4 +1,4 @@
-import { keyLabel } from '../platform';
+import { shortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useState } from 'react';
 import { fuzzyScore } from '../../../shared/fuzzy';
@@ -36,7 +36,7 @@ export function SnippetPanel({ resize }: { resize: PanelResizeProps }) {
       ...(projectId ? [{ label: tr("Nowy snippet tylko w tym projekcie…"), onClick: () => create(projectId) }] : []),
       { sep: true },
       { label: tr("Przywróć szerokość panelu"), onClick: () => resize.onFinish(PANEL_LIMITS.snippets.default) },
-      { label: tr("Ukryj panel snippetów"), hint: keyLabel("Ctrl+Shift+B"), onClick: () => update((st) => ({ ...st, snippetsOpen: false })) },
+      { label: tr("Ukryj panel snippetów"), hint: shortcutText('snippets.toggle') || undefined, onClick: () => update((st) => ({ ...st, snippetsOpen: false })) },
     ]);
   };
   const snippetMenu = (e: React.MouseEvent, sn: Snippet) => {

@@ -1,4 +1,4 @@
-import { keyLabel } from '../platform';
+import { shortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useState } from 'react';
 import { activeProject, moveProject, PROJECT_COLORS, renameTab, updateProject, type DropEdge } from '../../../shared/state';
@@ -96,7 +96,7 @@ export function ProjectsPanel({ resize }: PanelProps) {
         update((st) => ({ ...st, snippetsOpen: true }));
         setUi({ modal: { kind: 'snippet', snippetId: null } });
       } },
-      { label: s.snippetsOpen ? tr("Ukryj snippety") : tr("Pokaż snippety"), hint: keyLabel("Ctrl+Shift+B"), onClick: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) },
+      { label: s.snippetsOpen ? tr("Ukryj snippety") : tr("Pokaż snippety"), hint: shortcutText('snippets.toggle') || undefined, onClick: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) },
       { sep: true },
       { label: tr("Przywróć szerokość panelu"), onClick: () => resize.onFinish(PANEL_LIMITS.sidebar.default) },
     ]);

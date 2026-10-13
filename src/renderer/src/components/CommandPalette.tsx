@@ -1,4 +1,4 @@
-import { keyLabel } from '../platform';
+import { useShortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fuzzyFilter } from '../../../shared/fuzzy';
@@ -28,6 +28,7 @@ export function CommandPalette() {
 
 function PaletteInner() {
   const { tr } = useI18n();
+  const keys = useShortcutText();
   const s = useStore((st) => st.s);
   const cliStatus = useStore((st) => st.ui.cliStatus);
   const [q, setQ] = useState('');
@@ -49,26 +50,26 @@ function PaletteInner() {
     // actions first so short queries like "his" / "ust" find them
     out.push({ kind: tr('Akcja'), title: tr("Nowy projekt") + '…', run: () => void createProject() });
     if (project) {
-      out.push({ kind: tr('Akcja'), title: tr("Nowy grid / preset…"), desc: keyLabel("Ctrl+Shift+G"), run: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) });
-      out.push({ kind: tr('Akcja'), title: tr("Nowy terminal (zakładka)"), desc: keyLabel("Ctrl+Shift+T"), run: () => quickTab() });
-      out.push({ kind: tr('Akcja'), title: tr("Historia projektu"), desc: keyLabel("Ctrl+Shift+H"), run: () => setUi({ modal: { kind: 'history', projectId: project.id } }) });
+      out.push({ kind: tr('Akcja'), title: tr("Nowy grid / preset…"), desc: keys('grid.new') || undefined, run: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) });
+      out.push({ kind: tr('Akcja'), title: tr("Nowy terminal (zakładka)"), desc: keys('terminal.new') || undefined, run: () => quickTab() });
+      out.push({ kind: tr('Akcja'), title: tr("Historia projektu"), desc: keys('history.open') || undefined, run: () => setUi({ modal: { kind: 'history', projectId: project.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz folder projektu"), run: () => window.mc.openPath(project.path) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz projekt w Cursorze"), run: () => window.mc.openInEditor(project.path) });
-      if (tab) out.push({ kind: tr('Akcja'), title: tr('Zamknij zakładkę „{name}”', { name: tab.name }), desc: keyLabel("Ctrl+Shift+W"), run: () => closeTab(project.id, tab.id) });
+      if (tab) out.push({ kind: tr('Akcja'), title: tr('Zamknij zakładkę „{name}”', { name: tab.name }), desc: keys('tab.close') || undefined, run: () => closeTab(project.id, tab.id) });
     }
     if (focused) {
-      out.push({ kind: tr('Akcja'), title: tr("Maksymalizuj / przywróć komórkę"), desc: keyLabel("Ctrl+Shift+M"), run: () => toggleMaximize(focused) });
+      out.push({ kind: tr('Akcja'), title: tr("Maksymalizuj / przywróć komórkę"), desc: keys('cell.maximize') || undefined, run: () => toggleMaximize(focused) });
       out.push({ kind: tr('Akcja'), title: tr("Komórka: wznów rozmowę od nowa (restart)"), run: () => restartCell(focused, 'resume') });
       out.push({ kind: tr('Akcja'), title: tr("Komórka: nowa rozmowa"), run: () => restartCell(focused, 'new') });
       out.push({ kind: tr('Akcja'), title: tr("Komórka: zresetuj terminal (tryby myszy i klawiatury)"), run: () => { terminals.resetInput(focused); toast(tr("Terminal zresetowany - historia została zachowana.")); } });
       const moves: Array<[string, string, number, number]> = [
-        [tr('Komórka: przesuń w lewo'), 'Left', -1, 0], [tr('Komórka: przesuń w prawo'), 'Right', 1, 0],
-        [tr('Komórka: przesuń w górę'), 'Up', 0, -1], [tr('Komórka: przesuń w dół'), 'Down', 0, 1],
+        [tr('Komórka: przesuń w lewo'), 'left', -1, 0], [tr('Komórka: przesuń w prawo'), 'right', 1, 0],
+        [tr('Komórka: przesuń w górę'), 'up', 0, -1], [tr('Komórka: przesuń w dół'), 'down', 0, 1],
       ];
-      for (const [title, arrow, dx, dy] of moves) out.push({ kind: tr('Akcja'), title, desc: keyLabel(`Ctrl+Alt+Shift+${arrow}`), run: () => moveCellBy(dx, dy) });
+      for (const [title, arrow, dx, dy] of moves) out.push({ kind: tr('Akcja'), title, desc: keys(`cell.move.${arrow}`) || undefined, run: () => moveCellBy(dx, dy) });
     }
-    out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj snippety"), desc: keyLabel("Ctrl+Shift+B"), run: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) });
-    out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj panel projektów"), desc: keyLabel("Ctrl+Shift+E"), run: () => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed })) });
+    out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj snippety"), desc: keys('snippets.toggle') || undefined, run: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) });
+    out.push({ kind: tr('Akcja'), title: tr("Pokaż / ukryj panel projektów"), desc: keys('sidebar.toggle') || undefined, run: () => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed })) });
     out.push({ kind: tr('Akcja'), title: tr("Nowy snippet") + '…', run: () => setUi({ modal: { kind: 'snippet', snippetId: null } }) });
     out.push({ kind: tr('Akcja'), title: tr("Ustawienia"), run: () => setUi({ settingsTabOpen: true, settingsActive: true }) });
     out.push({ kind: tr('Akcja'), title: tr('Skopiuj dziennik statusów'), run: () => {
@@ -97,7 +98,7 @@ function PaletteInner() {
         out.push({ kind: x.cli, title: x.title, desc: tr("wznów w nowej zakładce · Shift: w nowej komórce"), run: (shift) => resumeSession(x, shift ? 'newCell' : 'newTab') });
     }
     return out;
-  }, [s, sessions, project, tr, cliStatus]);
+  }, [s, sessions, project, tr, cliStatus, keys]);
 
   const results = fuzzyFilter(items, q, (i) => `${i.title} ${i.kind} ${i.desc ?? ''}`, 80);
   useEffect(() => setSel(0), [q]);

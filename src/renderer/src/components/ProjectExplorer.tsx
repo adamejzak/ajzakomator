@@ -9,7 +9,7 @@ import { RefreshIcon, useHoldBusy } from './Spinner';
 import { ProjectIconView } from './ProjectIcon';
 import { fullProjectPath as projectPath } from '../../../shared/platform';
 import { baseName, parentPath, renameSelectionEnd, summarizeNames, topLevelPaths, validateEntryName } from '../../../shared/fileOps';
-import { keyLabel } from '../platform';
+import { matchesShortcut, shortcutText } from '../shortcuts';
 import { buildPathPayload, PATH_MIME } from '../../../shared/pathDrop';
 import { addTreePathsToFocusedCell, focusedCellId } from '../pathDrop';
 import {
@@ -275,19 +275,19 @@ export function ProjectExplorer({ project }: { project: Project }) {
           { label: tr("Nowy folder") + '…', onClick: () => void createEntry(project.id, dir, 'directory') },
         ]),
         { sep: true },
-        ...(multi ? [] : [{ label: tr("Zmień nazwę"), hint: 'F2', onClick: () => startRename(entry.path) }]),
+        ...(multi ? [] : [{ label: tr("Zmień nazwę"), hint: shortcutText('tree.rename') || undefined, onClick: () => startRename(entry.path) }]),
         { label: tr("Dodaj do rozmowy"), disabled: !focusedCellId(), onClick: () => addTreePathsToFocusedCell(project.id, targets) },
         { label: tr("Duplikuj"), onClick: () => void duplicateEntries(project.id, targets) },
-        { label: tr("Wytnij"), hint: keyLabel('Ctrl+X'), onClick: () => copyToClipboard(project.id, targets, 'cut') },
-        { label: tr("Kopiuj"), hint: keyLabel('Ctrl+C'), onClick: () => copyToClipboard(project.id, targets, 'copy') },
-        { label: tr("Wklej"), hint: keyLabel('Ctrl+V'), disabled: !canPaste || multi, onClick: () => void pasteInto(project.id, dir) },
+        { label: tr("Wytnij"), hint: shortcutText('tree.cut') || undefined, onClick: () => copyToClipboard(project.id, targets, 'cut') },
+        { label: tr("Kopiuj"), hint: shortcutText('tree.copy') || undefined, onClick: () => copyToClipboard(project.id, targets, 'copy') },
+        { label: tr("Wklej"), hint: shortcutText('tree.paste') || undefined, disabled: !canPaste || multi, onClick: () => void pasteInto(project.id, dir) },
         ...(multi ? [] : [
           { sep: true as const },
           { label: tr("Kopiuj ścieżkę"), onClick: () => window.mc.clipboardWrite(fullPath) },
           { label: tr("Kopiuj ścieżkę względną"), onClick: () => window.mc.clipboardWrite(entry.path) },
         ]),
         { sep: true },
-        { label: tr("Przenieś do kosza"), danger: true, hint: 'Del', onClick: () => void trashEntries(project.id, targets) },
+        { label: tr("Przenieś do kosza"), danger: true, hint: shortcutText('tree.delete') || undefined, onClick: () => void trashEntries(project.id, targets) },
       ]);
     },
     dragStart: (e, entry) => {
@@ -333,13 +333,14 @@ export function ProjectExplorer({ project }: { project: Project }) {
     if ((e.target as HTMLElement).closest('input, textarea')) return;
     const mod = e.ctrlKey || e.metaKey;
     const targets = commandTargets();
-    if (e.key === 'F2' && targets.length === 1) { e.preventDefault(); startRename(targets[0]); }
-    else if (e.key === 'Delete' && targets.length) { e.preventDefault(); void trashEntries(project.id, targets); }
-    else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyC' && targets.length) { e.preventDefault(); copyToClipboard(project.id, targets, 'copy'); }
-    else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyX' && targets.length) { e.preventDefault(); copyToClipboard(project.id, targets, 'cut'); }
-    else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyV') { e.preventDefault(); void pasteInto(project.id, targetDirectory(project.id)); }
-    else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyZ') { e.preventDefault(); void undoLast(project.id); }
-    else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyA') { e.preventDefault(); selectPaths(project.id, visiblePaths()); }
+    // The key of each file operation comes from the shortcut settings (shared/shortcuts.ts).
+    if (matchesShortcut('tree.rename', e) && targets.length === 1) { e.preventDefault(); startRename(targets[0]); }
+    else if (matchesShortcut('tree.delete', e) && targets.length) { e.preventDefault(); void trashEntries(project.id, targets); }
+    else if (matchesShortcut('tree.copy', e) && targets.length) { e.preventDefault(); copyToClipboard(project.id, targets, 'copy'); }
+    else if (matchesShortcut('tree.cut', e) && targets.length) { e.preventDefault(); copyToClipboard(project.id, targets, 'cut'); }
+    else if (matchesShortcut('tree.paste', e)) { e.preventDefault(); void pasteInto(project.id, targetDirectory(project.id)); }
+    else if (matchesShortcut('tree.undo', e)) { e.preventDefault(); void undoLast(project.id); }
+    else if (matchesShortcut('tree.selectAll', e)) { e.preventDefault(); selectPaths(project.id, visiblePaths()); }
     else if (!mod && !e.altKey && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
       const list = visiblePaths();
       if (!list.length) return;
@@ -366,7 +367,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
       { header: project.name },
       { label: tr("Nowy plik") + '…', onClick: () => void createEntry(project.id, '', 'file') },
       { label: tr("Nowy folder") + '…', onClick: () => void createEntry(project.id, '', 'directory') },
-      { label: tr("Wklej"), hint: keyLabel('Ctrl+V'), disabled: !clipboard || clipboard.projectId !== project.id, onClick: () => void pasteInto(project.id, '') },
+      { label: tr("Wklej"), hint: shortcutText('tree.paste') || undefined, disabled: !clipboard || clipboard.projectId !== project.id, onClick: () => void pasteInto(project.id, '') },
       { sep: true },
       { label: tr("Odśwież pliki"), onClick: reload },
       { label: tr("Znajdź i zamień w plikach…"), onClick: findInFiles },

@@ -1,0 +1,33 @@
+/* Settings > Keyboard shortcuts. */
+.kbd:empty { display: none; }
+.settings-card .shortcuts-settings { display: flex; flex-direction: column; gap: 16px; padding: 14px 0 18px; }
+.shortcuts-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.shortcuts-toolbar .input { flex: 1 1 220px; min-width: 0; }
+.shortcut-group { display: flex; flex-direction: column; }
+.shortcut-group h3 { margin: 6px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.shortcut-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(130px, auto) auto; align-items: center; column-gap: 14px; row-gap: 6px; padding: 8px 0; border-bottom: 1px solid #ffffff08; }
+.shortcut-row:last-child { border-bottom: 0; }
+.shortcut-row > .shortcut-warning, .shortcut-row > .shortcut-reason { grid-column: 1 / -1; }
+.shortcut-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; color: #dedede; font-size: 12px; }
+.shortcut-keys { display: flex; align-items: center; justify-content: flex-end; min-width: 0; }
+.shortcut-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.keycaps { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.keycap { display: inline-block; min-width: 22px; padding: 2px 7px; text-align: center; font: 600 10.5px 'Cascadia Mono', Consolas, monospace; color: var(--text); background: #181818; border: 1px solid #383838; border-bottom-width: 2px; border-radius: 5px; }
+.shortcut-row.fixed .keycap { color: var(--text-2); background: transparent; border-style: dashed; }
+.shortcut-badge { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; font-size: 10px; line-height: 16px; color: var(--text-2); background: #ffffff0a; border: 1px solid #ffffff10; border-radius: 8px; }
+.shortcut-badge.bad { padding: 0 4px; color: #f5b942; background: #f5b9421a; border-color: #f5b94240; }
+.shortcut-warn-icon { flex: none; color: #f5b942; }
+.shortcut-warning { display: flex; align-items: flex-start; gap: 7px; padding: 7px 10px; font-size: 11.5px; line-height: 1.5; color: #f3d9a4; background: #f5b9421a; border: 1px solid #f5b94238; border-radius: 6px; }
+.shortcut-warning .keycap { margin-right: 4px; }
+.shortcut-row.problem .shortcut-name > span:first-child { color: #f3d9a4; }
+.shortcut-reason { font-size: 11px; line-height: 1.5; }
+.shortcut-recorder { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; width: 100%; padding: 8px 10px; background: #181818; border: 1px solid #a8a29e; border-radius: 6px; outline: none; }
+.shortcut-recorder:focus-visible { box-shadow: 0 0 0 2px #a8a29e55; }
+.shortcut-prompt { color: var(--text); font-size: 11.5px; }
+.shortcut-held { font: 600 11px 'Cascadia Mono', Consolas, monospace; color: var(--text-2); }
+.shortcut-conflict { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.shortcut-conflict-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+@media (max-width: 760px) {
+  .shortcut-row { grid-template-columns: 1fr; }
+  .shortcut-keys, .shortcut-actions { justify-content: flex-start; }
+}

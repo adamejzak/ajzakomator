@@ -10,6 +10,7 @@ import { USAGE_INTERVALS_MINUTES } from './usage';
 import { defaultAlerts, LEGACY_ALERT_KEYS, readAlerts } from './alerts';
 import { DEFAULT_UPDATE_MODE, normalizeUpdateMode } from './updateMode';
 import { DEFAULT_BACKGROUND_LOAD, normalizeBackgroundLoad } from './backgroundLoad';
+import { normalizeShortcutOverrides } from './shortcuts';
 import type {
   AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
@@ -28,7 +29,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
-    settings: { language: null, fontSize: 13, shell: defaultShell(platform), lastProfileId: 'claude', updateMode: DEFAULT_UPDATE_MODE, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, alerts: defaultAlerts(), backgroundLoad: DEFAULT_BACKGROUND_LOAD },
+    settings: { language: null, fontSize: 13, shell: defaultShell(platform), lastProfileId: 'claude', updateMode: DEFAULT_UPDATE_MODE, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, alerts: defaultAlerts(), backgroundLoad: DEFAULT_BACKGROUND_LOAD, shortcuts: {} },
     sidebarCollapsed: false,
     snippetsOpen: true,
     sidebarWidth: PANEL_LIMITS.sidebar.default,
@@ -327,6 +328,7 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       usageIntervalMinutes: (USAGE_INTERVALS_MINUTES as readonly number[]).includes(r.settings?.usageIntervalMinutes as number) ? r.settings!.usageIntervalMinutes! : d.settings.usageIntervalMinutes,
       usageCollapsed: typeof r.settings?.usageCollapsed === 'boolean' ? r.settings.usageCollapsed : d.settings.usageCollapsed,
       backgroundLoad: normalizeBackgroundLoad(r.settings?.backgroundLoad),
+      shortcuts: normalizeShortcutOverrides(r.settings?.shortcuts, platform),
       // The retired notifications / waitingSound* keys only seed the alerts when none are saved yet; they are never written again.
       alerts: readAlerts(r.settings as Record<string, unknown> | undefined),
     },

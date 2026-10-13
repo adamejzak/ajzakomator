@@ -10,6 +10,7 @@ import { gridMessages } from './gridMessages';
 import { macUpdateMessages } from './macUpdateMessages';
 import { perfMessages } from './perfMessages';
 import { railMessages } from './railMessages';
+import { shortcutMessages } from './shortcutMessages';
 import { statusMessages } from './statusMessages';
 import { swapMessages } from './swapMessages';
 import { termMessages } from './termMessages';
@@ -27,6 +28,7 @@ export const messages = {
   ...macUpdateMessages,
   ...perfMessages,
   ...railMessages,
+  ...shortcutMessages,
   ...statusMessages,
   ...swapMessages,
   ...termMessages,

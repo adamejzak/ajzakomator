@@ -4,6 +4,7 @@ import { closeFile, editFile, fileErrorLabel, fileLabel, isFileDirty, retryFile,
 import { isMarkdownPath, MarkdownPreview } from './MarkdownPreview';
 import { useI18n } from '../i18n';
 import { getUi, useStore } from '../store';
+import { matchesShortcut } from '../shortcuts';
 import { fullProjectPath } from '../../../shared/platform';
 
 export function FileEditor() {
@@ -14,7 +15,7 @@ export function FileEditor() {
     if (!doc) return;
     const onKey = (event: KeyboardEvent) => {
       if (getUi().dialog || getUi().modal || getUi().palette) return;
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.code === 'KeyS') {
+      if (matchesShortcut('editor.save', event)) {
         event.preventDefault(); event.stopPropagation(); void saveFile(doc.id);
       }
     };

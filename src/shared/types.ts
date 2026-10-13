@@ -4,6 +4,7 @@ import type { AlertSettings } from './alerts';
 import type { UpdateMode } from './updateMode';
 import type { AgentRole, AutomationState } from './automation';
 import type { BackgroundLoadMode } from './backgroundLoad';
+import type { Overrides as ShortcutOverrides } from './shortcuts';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
 /** A forced path format of a shell cell: Claude (@path), Codex (plain path) or the quoted shell form. */
@@ -123,6 +124,8 @@ export interface Settings {
   alerts: AlertSettings;
   /** Which grids start in the background after launch (see shared/backgroundLoad.ts). */
   backgroundLoad: BackgroundLoadMode;
+  /** Keyboard shortcuts the user changed: action id to combo (`Ctrl+Shift+E`), or null when the shortcut is switched off (see shared/shortcuts.ts). */
+  shortcuts: ShortcutOverrides;
 }
 
 export interface AppState {

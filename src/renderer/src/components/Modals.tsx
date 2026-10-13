@@ -1,4 +1,4 @@
-import { keyLabel, hasPrimaryModifier } from '../platform';
+import { matchesShortcut, shortcutText } from '../shortcuts';
 import { tr, useI18n } from '../i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { describeLayout } from '../../../shared/layout';
@@ -220,7 +220,7 @@ function SnippetEditor({ snippetId, projectId }: { snippetId: string | null; pro
         <div className="field">
           <label>{tr("Treść promptu")}</label>
           <textarea className="textarea" value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })}
-            onKeyDown={(e) => e.key === 'Enter' && hasPrimaryModifier(e) && save()} />
+            onKeyDown={(e) => matchesShortcut('modal.save', e) && save()} />
         </div>
         <div className="field">
           <label>{tr("Kolor")}</label>
@@ -252,7 +252,7 @@ function SnippetEditor({ snippetId, projectId }: { snippetId: string | null; pro
         {existing && <button className="btn danger" onClick={() => { update((st) => removeSnippet(st, existing.id)); closeModal(); }}>{tr("Usuń")}</button>}
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={closeModal}>{tr("Anuluj")}</button>
-        <button className="btn primary" onClick={save}>{tr("Zapisz")} <span className="kbd">{keyLabel("Ctrl+Enter")}</span></button>
+        <button className="btn primary" onClick={save}>{tr("Zapisz")} <span className="kbd">{shortcutText('modal.save')}</span></button>
       </div>
     </div>
   );
@@ -313,7 +313,7 @@ function ProjectEditor({ projectId }: { projectId: string }) {
   };
   const preview = { name, color, icon };
   return (
-    <div className="modal" onKeyDown={(e) => { if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); save(); } }}>
+    <div className="modal" onKeyDown={(e) => { if (matchesShortcut('modal.save', e)) { e.preventDefault(); save(); } }}>
       <div className="modal-head">
         <h3>{tr("Edytuj projekt")}</h3>
         <button className="btn ghost icon" aria-label={tr("Zamknij edytor projektu")} onClick={closeModal}><IX /></button>

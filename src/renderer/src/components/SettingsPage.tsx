@@ -5,6 +5,7 @@ import { updateSettings, upsertProfile, removeProfile, uid } from '../../../shar
 import type { CliKind, ShellKind } from '../../../shared/types';
 import { normalizeUpdateMode } from '../../../shared/updateMode';
 import { AlertsSettings } from './AlertsSettings';
+import { ShortcutsSettings } from './ShortcutsSettings';
 import { isLanguage, LANGUAGES } from '../../../shared/languages';
 import { shellsForPlatform } from '../../../shared/platform';
 import { USAGE_INTERVALS_MINUTES } from '../../../shared/usage';
@@ -18,7 +19,7 @@ const BACKGROUND_HINT: Record<BackgroundLoadMode, MessageKey> = {
   project: 'Pozostałe zakładki aktywnego projektu startują w tle (do {max} sesji po uruchomieniu). Inne projekty i reszta sesji startują po otwarciu.',
   all: 'Zakładki wszystkich projektów startują w tle, po kolei (do {max} sesji po uruchomieniu). Reszta startuje po otwarciu. Zużywa więcej pamięci i procesora.',
 };
-const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia i dźwięki", "Aktualizacje", "Konta AI", "Profile agentów"] as const;
+const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia i dźwięki", "Aktualizacje", "Konta AI", "Profile agentów", "Skróty klawiszowe"] as const;
 export function SettingsPage() {
   const { tr, language } = useI18n();
   const s = useStore((st) => st.s);
@@ -141,6 +142,7 @@ export function SettingsPage() {
           <button className="btn" onClick={() => update((st) => upsertProfile(st, { id: uid(), name: tr("Nowy profil"), cli: 'claude', args: '', color: '#8b5cf6' }))}>{tr("+ Dodaj profil")}</button>
         </div>
       </>}
+      {section === 6 && <ShortcutsSettings />}
       </div>
     </div>
   </div>;

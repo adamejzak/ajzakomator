@@ -1,4 +1,4 @@
-import { keyLabel } from '../platform';
+import { shortcutText, titleWithShortcut } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { workspaceOrder, reorderWorkspace } from '../../../shared/workspaceOrder';
@@ -30,13 +30,13 @@ export function TitleBar() {
       <Brand collapsed={s.sidebarCollapsed} />
       <div className="spacer" />
       <div className="row no-drag" style={{ gap: 2 }}>
-        <button className="tb-btn" title={tr("Szukaj wszędzie") + keyLabel(" (Ctrl+K)")} aria-label={tr("Szukaj wszędzie")} onClick={() => setUi({ palette: true })}><ISearch /></button>
+        <button className="tb-btn" title={titleWithShortcut(tr("Szukaj wszędzie"), 'palette.open')} aria-label={tr("Szukaj wszędzie")} onClick={() => setUi({ palette: true })}><ISearch /></button>
         <button className={`tb-btn team-toggle ${automationOpen ? 'on' : ''}`} title={tr('Zadania i wiadomości agentów')} onClick={() => setUi({ automationOpen: !automationOpen })}>
           AI{pendingTasks > 0 && <span className="team-count">{pendingTasks}</span>}
         </button>
-        {project && <button className="tb-btn" title={tr("Historia czatów i gridów") + keyLabel(" (Ctrl+Shift+H)")} onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
-        <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title={tr("Snippety") + keyLabel(" (Ctrl+Shift+B)")} onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
-        <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title={tr("Panel projektów") + keyLabel(" (Ctrl+Shift+E)")} onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
+        {project && <button className="tb-btn" title={titleWithShortcut(tr("Historia czatów i gridów"), 'history.open')} onClick={() => setUi({ modal: { kind: 'history', projectId: project.id } })}><THistory /></button>}
+        <button className={`tb-btn ${s.snippetsOpen ? 'on' : ''}`} title={titleWithShortcut(tr("Snippety"), 'snippets.toggle')} onClick={() => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen }))}><TSnippet /></button>
+        <button className={`tb-btn ${!s.sidebarCollapsed ? 'on' : ''}`} title={titleWithShortcut(tr("Panel projektów"), 'sidebar.toggle')} onClick={() => update((st) => ({ ...st, sidebarCollapsed: !st.sidebarCollapsed }))}><TSidebar /></button>
         <button className={`tb-btn ${settingsActive ? 'on' : ''}`} title={tr("Ustawienia")} aria-label={tr("Ustawienia")} onClick={() => setUi({ settingsTabOpen: true, settingsActive: true })}><TSettings /></button>
       </div>
     </div>
@@ -185,7 +185,7 @@ export function WorkspaceTabs() {
   const agentMenu = (el: HTMLElement) =>
     openMenuAt(el, [
       { header: tr("Dodaj komórkę do siatki") },
-      ...s.profiles.map((p) => ({ label: profileOptionLabel(p, cliStatus, tr), onClick: () => void addAgent(p.id), hint: p.id === s.settings.lastProfileId ? keyLabel("Ctrl+Shift+N") : undefined })),
+      ...s.profiles.map((p) => ({ label: profileOptionLabel(p, cliStatus, tr), onClick: () => void addAgent(p.id), hint: p.id === s.settings.lastProfileId ? shortcutText('agent.add') || undefined : undefined })),
       { sep: true as const },
       { header: tr("W osobnym git worktree") },
       ...s.profiles.filter((p) => p.cli !== 'shell').map((p) => ({ label: `${profileOptionLabel(p, cliStatus, tr)} + worktree`, onClick: () => void addAgent(p.id, true) })),
@@ -220,7 +220,7 @@ export function WorkspaceTabs() {
                     ...(t.color ? [{ label: tr('Usuń kolor'), onClick: () => update((st) => ({ ...st, projects: st.projects.map((p) => p.id === project.id ? { ...p, tabs: p.tabs.map((tab) => tab.id === t.id ? { ...tab, color: undefined } : tab) } : p) })) }] : []),
                     { label: tr("Nowy grid") + '…', onClick: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) },
                     { sep: true },
-                    { label: tr("Zamknij (do historii)"), danger: true, onClick: () => closeTab(project.id, t.id), hint: keyLabel("Ctrl+Shift+W") },
+                    { label: tr("Zamknij (do historii)"), danger: true, onClick: () => closeTab(project.id, t.id), hint: shortcutText('tab.close') || undefined },
                   ]);
                 }}
                 title={tr("Dwuklik lub prawy klik: zmień nazwę · środkowy przycisk: zamknij")}
@@ -266,8 +266,8 @@ export function WorkspaceTabs() {
     {(edges.canLeft || edges.canRight) && <button className="tabs-scroll no-drag" disabled={!edges.canRight} title={tr('Przewiń karty w prawo')} aria-label={tr('Przewiń karty w prawo')} onClick={() => scrollStrip(1)}><span className="chev-right"><IChevron /></span></button>}
     {project && <>
       <button className="tabs-scroll tabs-all no-drag" title={tr('Wszystkie karty')} aria-label={tr('Wszystkie karty')} aria-haspopup="menu" onClick={(e) => allTabsMenu(e.currentTarget)}><IChevron /></button>
-      <button className="tb-btn" title={tr("Nowy grid") + keyLabel(" (Ctrl+Shift+G)")} onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
-      <button className="tb-add" title={tr("Dodaj agenta do siatki") + keyLabel(" (Ctrl+Shift+N)")} onClick={(e) => agentMenu(e.currentTarget)}>
+      <button className="tb-btn" title={titleWithShortcut(tr("Nowy grid"), 'grid.new')} onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><TGrid /></button>
+      <button className="tb-add" title={titleWithShortcut(tr("Dodaj agenta do siatki"), 'agent.add')} onClick={(e) => agentMenu(e.currentTarget)}>
         <IPlusBold />  {tr("Dodaj")} <IChevron />
       </button>
     </>}

@@ -1,5 +1,5 @@
 import { changeAgentRole } from '../agentRoles';
-import { keyLabel } from '../platform';
+import { shortcutText, titleWithShortcut, useShortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { errorPhrase, failureLabel } from '../../../shared/alerts';
@@ -31,6 +31,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   onHeadPointerDown?: (e: React.PointerEvent<HTMLElement>, cell: Cell) => void;
 }) {
   const { tr, errorText } = useI18n();
+  useShortcutText(); // the shortcut in the tooltips follows the settings
   const bodyRef = useRef<HTMLDivElement>(null);
   const profiles = useStore((st) => st.s.profiles);
   const profile = useStore((st) => getProfile(st.s, cell.profileId));
@@ -108,7 +109,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       ...(profile.cli !== 'shell' ? [
         { label: cell.muted ? tr("Włącz alerty tej komórki") : tr("Wycisz alerty tej komórki"), onClick: () => update((s) => updateCell(s, cell.id, { muted: cell.muted ? undefined : true })) },
       ] : []),
-      { label: maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), onClick: () => toggleMaximize(cell.id), hint: keyLabel("Ctrl+Shift+M") },
+      { label: maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), onClick: () => toggleMaximize(cell.id), hint: shortcutText('cell.maximize') || undefined },
       { label: tr("Zresetuj terminal"), onClick: () => { terminals.resetInput(cell.id); setFloodHint(false); toast(tr("Terminal zresetowany - historia została zachowana.")); } },
       { sep: true },
       ...profileItems(),
@@ -231,7 +232,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         </button>}
         <span className="actions">
           <button title={tr("Uruchom ponownie")} onClick={(e) => openMenuAt(e.currentTarget, restartItems())}><IRestart /></button>
-          <button title={maximized ? tr("Przywróć siatkę") + keyLabel(" (Ctrl+Shift+M)") : tr("Maksymalizuj") + keyLabel(" (Ctrl+Shift+M)")} onClick={() => toggleMaximize(cell.id)}>
+          <button title={titleWithShortcut(maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), 'cell.maximize')} onClick={() => toggleMaximize(cell.id)}>
             {maximized ? <IRestore /> : <IMax />}
           </button>
           <button title={tr("Zamknij komórkę")} onClick={() => void removeCell(cell.id)}><IX /></button>

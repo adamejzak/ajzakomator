@@ -1,4 +1,4 @@
-import { keyLabel } from '../platform';
+import { shortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { areaRects, type GridLayout } from '../../../shared/layout';
@@ -45,9 +45,9 @@ export function GridView() {
           <div className="sub">{tr("Dodaj projekt, otwórz w nim grid terminali i odpal tyle Claude i Codexów, ile potrzebujesz.")}</div>
           <button className="btn white lg" onClick={() => void createProject()}><IPlus />  {tr("Nowy projekt")}</button>
           <div className="keys">
-            <span><span className="kbd">{keyLabel("Ctrl+K")}</span>  {tr("Szukaj")}</span>
-            <span><span className="kbd">{keyLabel("Ctrl+Shift+G")}</span>  {tr("Nowy grid")}</span>
-            <span><span className="kbd">{keyLabel("Ctrl+Shift+N")}</span>  {tr("Dodaj agenta")}</span>
+            <span><span className="kbd">{shortcutText('palette.open')}</span>  {tr("Szukaj")}</span>
+            <span><span className="kbd">{shortcutText('grid.new')}</span>  {tr("Nowy grid")}</span>
+            <span><span className="kbd">{shortcutText('agent.add')}</span>  {tr("Dodaj agenta")}</span>
           </div>
         </div>
       </div>
@@ -73,9 +73,9 @@ export function GridView() {
             <IHistory />  {tr("Historia czatów i gridów")}
           </button>
           <div className="keys">
-            <span><span className="kbd">{keyLabel("Ctrl+K")}</span>  {tr("Szukaj")}</span>
-            <span><span className="kbd">{keyLabel("Ctrl+Shift+T")}</span>  {tr("Terminal")}</span>
-            <span><span className="kbd">{keyLabel("Ctrl+Shift+G")}</span>  {tr("Grid")}</span>
+            <span><span className="kbd">{shortcutText('palette.open')}</span>  {tr("Szukaj")}</span>
+            <span><span className="kbd">{shortcutText('terminal.new')}</span>  {tr("Terminal")}</span>
+            <span><span className="kbd">{shortcutText('grid.new')}</span>  {tr("Grid")}</span>
           </div>
         </div>
       </div>

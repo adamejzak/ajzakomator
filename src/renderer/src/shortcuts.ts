@@ -1,57 +1,108 @@
-// App-wide shortcuts, handled in the capture phase so they win over the focused terminal.
-// Chosen to avoid keys Claude/Codex use themselves (Ctrl+T, Ctrl+B, Ctrl+W, Alt+arrows …).
+// App-wide shortcuts, handled in the capture phase so they win over the focused terminal. Which key does what comes from the
+// registry in shared/shortcuts.ts (defaults plus the user's overrides in the settings); the decision itself is shared/shortcutDispatch.ts.
+// Defaults avoid keys Claude/Codex use themselves (Ctrl+T, Ctrl+B, Ctrl+W, Alt+arrows ...).
 import { useEffect } from 'react';
 import { activeProject, activeTab } from '../../shared/state';
+import { decideShortcut } from '../../shared/shortcutDispatch';
+import { displayCombo, matchCombo, resolveShortcuts, shortcutDef, type ShortcutResolution } from '../../shared/shortcuts';
 import { addAgent, closeTab, cycleTab, moveCellBy, moveFocus, quickTab, toggleMaximize } from './actions';
-import { getS, getUi, setUi, update } from './store';
-import { hasPrimaryModifier } from './platform';
+import { getS, getUi, setUi, update, useStore } from './store';
+
+let cached: { overrides: unknown; platform: string; resolution: ShortcutResolution } | null = null;
+
+/** The combos in force (defaults plus overrides); recomputed only when the saved overrides change. */
+export function currentShortcuts(): ShortcutResolution {
+  const overrides = getS().settings.shortcuts;
+  const platform = window.mc.platform;
+  if (!cached || cached.overrides !== overrides || cached.platform !== platform) cached = { overrides, platform, resolution: resolveShortcuts(overrides, platform) };
+  return cached.resolution;
+}
+
+/** Does this key press trigger the action `id` (for the shortcuts a component handles itself: file tree, editor, dialogs)? */
+export function matchesShortcut(id: string, event: KeyboardEvent | React.KeyboardEvent): boolean {
+  return matchCombo(event, currentShortcuts().combos[id]);
+}
+
+/** The key combination of an action as the user reads it ("Ctrl+Shift+E", "Cmd+K"), or '' when it is switched off. */
+export function shortcutText(id: string): string {
+  const combo = currentShortcuts().combos[id];
+  if (combo) return displayCombo(combo, window.mc.platform);
+  const fixed = shortcutDef(id)?.fixedText;
+  return fixed ? fixed.replace(/\bMod\b/, window.mc.platform === 'darwin' ? 'Cmd' : 'Ctrl') : '';
+}
+
+/** `Title (Ctrl+K)`, or just the title when the shortcut is switched off. */
+export function titleWithShortcut(title: string, id: string): string {
+  const text = shortcutText(id);
+  return text ? `${title} (${text})` : title;
+}
+
+/** For components that show a combo: re-renders them when the user changes a shortcut. */
+export function useShortcutText(): (id: string) => string {
+  useStore((st) => st.s.settings.shortcuts);
+  return shortcutText;
+}
+
+let recording = false;
+/** While the Settings screen records a new combination the app's own shortcuts are off. */
+export function setShortcutRecording(active: boolean): void { recording = active; }
+
+function focusTarget(target: EventTarget | null): 'terminal' | 'input' | 'other' {
+  const el = target instanceof HTMLElement ? target : null;
+  if (!el) return 'other';
+  if (el.closest('.xterm')) return 'terminal';
+  if (el.isContentEditable || el.closest('input, textarea, select, .cm-editor')) return 'input';
+  return 'other';
+}
+
+function run(id: string): void {
+  const project = activeProject(getS());
+  switch (id) {
+    case 'palette.open': case 'palette.openAlt': setUi((ui) => ({ palette: !ui.palette })); break;
+    case 'terminal.new': quickTab(); break;
+    case 'agent.add': void addAgent(getS().settings.lastProfileId); break;
+    case 'grid.new': if (project) setUi({ modal: { kind: 'grid', projectId: project.id } }); break;
+    case 'history.open': if (project) setUi({ modal: { kind: 'history', projectId: project.id } }); break;
+    case 'tab.close': {
+      if (getUi().settingsActive) { setUi({ settingsTabOpen: false, settingsActive: false }); break; }
+      const tab = activeTab(project);
+      if (project && tab) closeTab(project.id, tab.id);
+      break;
+    }
+    case 'snippets.toggle': update((s) => ({ ...s, snippetsOpen: !s.snippetsOpen })); break;
+    case 'sidebar.toggle': update((s) => ({ ...s, sidebarCollapsed: !s.sidebarCollapsed })); break;
+    case 'cell.maximize': toggleMaximize(); break;
+    case 'tab.next': cycleTab(1); break;
+    case 'tab.prev': cycleTab(-1); break;
+    case 'cell.focus.left': moveFocus(-1, 0); break;
+    case 'cell.focus.right': moveFocus(1, 0); break;
+    case 'cell.focus.up': moveFocus(0, -1); break;
+    case 'cell.focus.down': moveFocus(0, 1); break;
+    case 'cell.move.left': moveCellBy(-1, 0); break;
+    case 'cell.move.right': moveCellBy(1, 0); break;
+    case 'cell.move.up': moveCellBy(0, -1); break;
+    case 'cell.move.down': moveCellBy(0, 1); break;
+  }
+}
 
 export function useShortcuts(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.type !== 'keydown') return;
-      if (!getS().settings.language) return;
-      const primary = hasPrimaryModifier(e);
+      const s = getS();
       const ui = getUi();
-      if (ui.dialog || ui.modal || ui.palette) {
-        if (primary && !e.altKey && e.code === 'KeyK' && ui.palette) stop(e, () => setUi({ palette: false }));
-        return;
-      }
-      const ctrl = primary && !e.altKey;
-      const ctrlShift = ctrl && e.shiftKey;
-      const project = activeProject(getS());
-
-      if (ctrl && !e.shiftKey && e.code === 'KeyK') return stop(e, () => setUi({ palette: true }));
-      if (ctrlShift && e.code === 'KeyP') return stop(e, () => setUi({ palette: true }));
-      if (ctrlShift && e.code === 'KeyT') return stop(e, () => quickTab());
-      if (ctrlShift && e.code === 'KeyN') return stop(e, () => void addAgent(getS().settings.lastProfileId));
-      if (ctrlShift && e.code === 'KeyG' && project) return stop(e, () => setUi({ modal: { kind: 'grid', projectId: project.id } }));
-      if (ctrlShift && e.code === 'KeyH' && project) return stop(e, () => setUi({ modal: { kind: 'history', projectId: project.id } }));
-      if (ctrlShift && e.code === 'KeyW') {
-        if (ui.settingsActive) return stop(e, () => setUi({ settingsTabOpen: false, settingsActive: false }));
-        if (!project) return;
-        const tab = activeTab(project);
-        if (tab) return stop(e, () => closeTab(project.id, tab.id));
-      }
-      if (ctrlShift && e.code === 'KeyB') return stop(e, () => update((s) => ({ ...s, snippetsOpen: !s.snippetsOpen })));
-      if (ctrlShift && e.code === 'KeyE') return stop(e, () => update((s) => ({ ...s, sidebarCollapsed: !s.sidebarCollapsed })));
-      if (ui.settingsActive) return;
-      if (ctrlShift && e.code === 'KeyM') return stop(e, () => toggleMaximize());
-      if (ctrl && e.code === 'Tab') return stop(e, () => cycleTab(e.shiftKey ? -1 : 1));
-      if (primary && e.altKey && !e.getModifierState('AltGraph')) {
-        const dir: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-        const d = dir[e.code];
-        // Ctrl+Alt+Shift+arrows move the focused cell, Ctrl+Alt+arrows only the focus.
-        if (d) return stop(e, () => (e.shiftKey ? moveCellBy(d[0], d[1]) : moveFocus(d[0], d[1])));
-      }
+      const project = activeProject(s);
+      const id = decideShortcut(e, {
+        resolution: currentShortcuts(), languageChosen: !!s.settings.language, recording,
+        overlayOpen: !!(ui.dialog || ui.modal), paletteOpen: ui.palette, settingsActive: ui.settingsActive,
+        hasProject: !!project, hasTab: !!activeTab(project), target: focusTarget(e.target),
+      });
+      if (!id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      run(id);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
-}
-
-function stop(e: KeyboardEvent, fn: () => void): void {
-  e.preventDefault();
-  e.stopPropagation();
-  fn();
 }

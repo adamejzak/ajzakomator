@@ -169,6 +169,8 @@ MCP tasks and messages are persisted handoffs, not a promise of automatic model 
 
 On macOS, replace **Ctrl** with **Cmd** and **Alt** with **Option** in the app shortcuts below.
 
+The shortcuts below are the defaults. Every one of them can be changed, disabled or restored in **Settings > Keyboard shortcuts**: click **Change**, press the new combination, and the app warns when another action already uses it (you can swap them) or when the keys are reserved by the system or the terminal.
+
 | Shortcut | Action |
 |---|---|
 | `Ctrl+K` / `Ctrl+Shift+P` | Command palette |
@@ -186,7 +188,7 @@ On macOS, replace **Ctrl** with **Cmd** and **Alt** with **Option** in the app s
 
 Plain `Ctrl+T`, `Ctrl+B` and `Ctrl+W` in terminals are left alone on purpose: Claude Code and Codex use them.
 
-In an editor tab, `Ctrl+S` / `Cmd+S` saves the file and **Tab** inserts indentation. The editor toolbar offers line wrapping and a close button with unsaved-change protection.
+In the Files tree, `F2` renames, `Delete` moves to the trash, and `Ctrl+C` / `Ctrl+X` / `Ctrl+V` / `Ctrl+Z` / `Ctrl+A` copy, cut, paste, undo and select all. In an editor tab, `Ctrl+S` / `Cmd+S` saves the file and **Tab** inserts indentation. The editor toolbar offers line wrapping and a close button with unsaved-change protection.
 
 ## How it works
 

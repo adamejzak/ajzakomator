@@ -105,6 +105,8 @@ Zadania i wiadomości są trwałym zapisem przekazania pracy. Nie gwarantują au
 
 Na macOS w skrótach aplikacji używaj **Cmd** zamiast **Ctrl** oraz **Option** zamiast **Alt**.
 
+Poniższe skróty są domyślne. Każdy z nich można zmienić, wyłączyć lub przywrócić w **Ustawienia > Skróty klawiszowe**: kliknij **Zmień**, naciśnij nową kombinację, a aplikacja ostrzeże, gdy używa jej już inna akcja (można je zamienić) albo gdy klawisze są zarezerwowane przez system lub terminal.
+
 | Skrót | Akcja |
 |---|---|
 | `Ctrl+K` / `Ctrl+Shift+P` | paleta poleceń |
@@ -122,7 +124,7 @@ Na macOS w skrótach aplikacji używaj **Cmd** zamiast **Ctrl** oraz **Option** 
 
 Zwykłe `Ctrl+T`, `Ctrl+B` i `Ctrl+W` w terminalach są pozostawione agentom Claude Code i Codex.
 
-W zakładce edytora **Ctrl+S** / **Cmd+S** zapisuje plik, a **Tab** wstawia wcięcie. Pasek edytora pozwala zawijać wiersze i zamknąć plik. Niezapisane zmiany są oznaczone; zamknięcie proponuje zapis, odrzucenie albo anulowanie. Szkice przetrwają przeładowanie interfejsu, a zapis sprawdza, czy plik na dysku nie został zmieniony.
+W drzewie Plików `F2` zmienia nazwę, `Delete` przenosi do kosza, a `Ctrl+C` / `Ctrl+X` / `Ctrl+V` / `Ctrl+Z` / `Ctrl+A` kopiują, wycinają, wklejają, cofają i zaznaczają wszystko. W zakładce edytora **Ctrl+S** / **Cmd+S** zapisuje plik, a **Tab** wstawia wcięcie. Pasek edytora pozwala zawijać wiersze i zamknąć plik. Niezapisane zmiany są oznaczone; zamknięcie proponuje zapis, odrzucenie albo anulowanie. Szkice przetrwają przeładowanie interfejsu, a zapis sprawdza, czy plik na dysku nie został zmieniony.
 
 Więcej szczegółów, w tym architektura i instrukcja dla deweloperów, jest w [README po angielsku](README.md).
 
