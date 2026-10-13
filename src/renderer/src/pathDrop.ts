@@ -1,6 +1,5 @@
 // Puts files and folders (dragged from the Files tree, or added from its context menu) into a cell's input, never submitting.
-import { fullProjectPath } from '../../shared/platform';
-import { buildPathText, dropBlock, parsePathPayload, resolveDropTarget, validRelPath, type DropTarget, type PathItem } from '../../shared/pathDrop';
+import { buildPathText, capItems, dropAbsPath, dropBlock, MAX_DROP_ITEMS, parsePathPayload, resolveDropTarget, validRelPath, type DropTarget, type PathItem } from '../../shared/pathDrop';
 import { activeProject, activeTab, findCell, getProfile } from '../../shared/state';
 import { ensureStarted, focusCell, isStarted } from './actions';
 import { kindOf } from './explorer';
@@ -33,7 +32,8 @@ export const readDroppedPaths = (raw: string) => parsePathPayload(raw, window.mc
  * Inserts the items at the cursor of the cell's input. Absolute paths are rebuilt here from the project that the item names;
  * whatever absolute path the drag carried is ignored.
  */
-export function addPathsToCell(cellId: string, items: PathItem[], rejected = 0): void {
+export async function addPathsToCell(cellId: string, items: PathItem[], rejected = 0, cut = false): Promise<void> {
+  if (cut) toast(tr('Dodano pierwsze {count} ścieżek', { count: MAX_DROP_ITEMS }));
   const state = getS();
   const found = findCell(state, cellId);
   if (!found) return void toast(tr('Nie udało się dodać ścieżki.'), 'error');
@@ -47,11 +47,16 @@ export function addPathsToCell(cellId: string, items: PathItem[], rejected = 0):
 
   const platform = window.mc.platform;
   const resolved: Array<{ kind: PathItem['kind']; abs: string }> = [];
+  const worktree = found.cell.worktree?.path;
   for (const item of items) {
     const project = state.projects.find((p) => p.id === item.projectId);
     if (!project) { rejected++; continue; }
-    resolved.push({ kind: item.kind, abs: fullProjectPath(project.path, item.relPath, platform) });
+    const sameProject = project.id === found.project.id;
+    const existsInWorktree = worktree && sameProject ? await window.mc.pathExists(dropAbsPath({ projectPath: worktree, relPath: item.relPath, sameProject, platform })).catch(() => false) : false;
+    resolved.push({ kind: item.kind, abs: dropAbsPath({ projectPath: project.path, relPath: item.relPath, sameProject, worktreePath: worktree, existsInWorktree, platform }) });
   }
+  // The cell may have been closed or restarted while the files were looked up.
+  if (!findCell(getS(), cellId) || cellRefusesPaths(cellId)) return void toast(tr('Nie dodano ścieżki: komórka nie jest uruchomiona.'), 'error');
   const format = cellDropFormat(cellId)!;
   const { text, skipped } = buildPathText(format.target, resolved, { cwd: format.cwd, platform, shell: state.settings.shell });
   rejected += skipped;
@@ -72,6 +77,7 @@ export function addTreePathsToFocusedCell(projectId: string, paths: string[]): v
   const cellId = focusedCellId();
   if (!cellId) return;
   const valid = paths.filter((path) => validRelPath(path, window.mc.platform));
-  const items: PathItem[] = valid.map((relPath) => ({ kind: kindOf(projectId, relPath) === 'directory' ? 'dir' : 'file', projectId, relPath }));
-  addPathsToCell(cellId, items, paths.length - valid.length);
+  const capped = capItems(valid);
+  const items: PathItem[] = capped.items.map((relPath) => ({ kind: kindOf(projectId, relPath) === 'directory' ? 'dir' : 'file', projectId, relPath }));
+  void addPathsToCell(cellId, items, paths.length - valid.length, capped.cut);
 }

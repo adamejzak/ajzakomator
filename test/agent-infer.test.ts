@@ -117,7 +117,9 @@ function shell(opts: { caseInsensitive?: boolean } = {}) {
     infer,
     get now() { return now; },
     advance: (ms: number) => { now += ms; },
-    show: (text: string, row = 5) => { screen = { text, row }; },
+    show: (text: string, row = 5, extra: Partial<ScreenLine> = {}) => { screen = { text, row, ...extra }; },
+    /** The screen has gone full screen (alternate buffer): the cursor line is not readable. */
+    hide: () => { screen = null; },
     /** Types text; the screen line shows prompt + typed text, like a shell echoing it. */
     type: (data: string) => infer.input(data, now, () => screen),
     state: (over: Partial<ScreenState> = {}): ScreenState => ({ line: screen, alternate: false, mouse: false, ...over }),
@@ -299,7 +301,7 @@ describe('what happens to typed lines while an agent runs', () => {
     s.show('│ > codex                    │', 9);
     s.type('codex\r');
     expect(s.infer.agent).toBe('claude');
-    s.show('> exit', 9);
+    s.show('> exit', 9, { above: '────────────────────' }); // the agent's input box has a rule above it
     s.type('exit\r');
     expect(s.infer.agent).toBe('claude'); // `exit` went to the agent, not to the shell
   });
@@ -523,5 +525,155 @@ describe('texts', () => {
       expect(translate('en', key)).not.toBe(key);
     }
     expect(/\u2014/.test(JSON.stringify(agentModeMessages))).toBe(false);
+  });
+});
+
+describe('shell prompts that look like none of the known ones', () => {
+  it('clears after the agent exits and a plain "> " prompt returns (the reviewer repro)', () => {
+    const s = shell();
+    s.type('claude\r'); // at a PowerShell prompt
+    s.show('│ > │', 9);
+    s.type('exit\r'); // typed into the agent, which quits
+    expect(s.infer.agent).toBe('claude');
+    s.advance(400);
+    s.out();
+    s.show('> ', 14, { beforeCursor: '> ' });
+    expect(s.observe()).toBe(false);
+    s.advance(PROMPT_STABLE_MS);
+    expect(s.observe()).toBe(true);
+    s.type('ls\r');
+    expect(s.infer.agent).toBeNull();
+  });
+
+  it('clears when the next line is typed at such a prompt before any tick', () => {
+    const s = shell();
+    s.type('claude\r');
+    s.show('│ > │', 9);
+    s.type('exit\r');
+    s.show('> ls', 14, { beforeCursor: '> ls' });
+    s.type('ls\r');
+    expect(s.infer.agent).toBeNull();
+  });
+
+  it('works with starship, oh-my-zsh and a learned prompt', () => {
+    for (const prompt of ['~/app main ❯ ', '➜  app git:(main) ', 'λ ', 'user » ']) {
+      const s = shell();
+      s.show(`${prompt}claude`, 5, { beforeCursor: `${prompt}claude` });
+      s.type('claude\r');
+      expect(s.infer.agent, prompt).toBe('claude');
+      s.show('✻ thinking', 9);
+      s.type('hello\r');
+      s.advance(500);
+      s.out();
+      s.advance(500);
+      s.show(prompt, 12, { beforeCursor: prompt });
+      s.observe();
+      s.advance(PROMPT_STABLE_MS);
+      expect(s.observe(), prompt).toBe(true);
+    }
+    const t = shell(); // an unusual prompt is learned from the line that started the agent
+    t.show('[app]~~ claude', 5, { beforeCursor: '[app]~~ claude' });
+    t.type('claude\r');
+    t.show('✻', 9);
+    t.type('exit\r');
+    t.advance(300);
+    t.out();
+    t.show('[app]~~', 14, { beforeCursor: '[app]~~' });
+    t.observe();
+    t.advance(PROMPT_STABLE_MS);
+    expect(t.observe()).toBe(true);
+  });
+
+  it('accepts a new agent command typed at such a prompt', () => {
+    const s = shell();
+    s.show('➜  app claude', 5, { beforeCursor: '➜  app claude' }); // the prompt is learned from the line that started the agent
+    s.type('claude\r');
+    s.show('➜  app codex', 14, { beforeCursor: '➜  app codex' });
+    s.type('codex\r');
+    expect(s.infer.agent).toBe('codex');
+  });
+
+  it('never clears while the agent shows its own input box, whatever was typed into it', () => {
+    const s = shell();
+    s.type('claude\r');
+    const rule = '────────────────────';
+    s.show('> ', 12, { beforeCursor: '> ', above: rule });
+    s.type('summarize the repo\r');
+    s.advance(500);
+    s.out();
+    s.advance(PROMPT_STABLE_MS * 4);
+    expect(s.observe()).toBe(false);
+    s.show('│ > ', 12, { beforeCursor: '│ > ' });
+    s.advance(PROMPT_STABLE_MS * 4);
+    expect(s.observe()).toBe(false);
+    expect(s.infer.agent).toBe('claude');
+  });
+
+  it('does not clear without output after the submit, nor in a full-screen program', () => {
+    const s = shell();
+    s.type('codex\r');
+    s.show('✻', 9);
+    s.type('hello\r');
+    s.show('~ ❯ ', 12, { beforeCursor: '~ ❯ ' });
+    s.advance(PROMPT_STABLE_MS * 2);
+    expect(s.observe()).toBe(false); // no output since the line: the prompt may be old
+    s.advance(100);
+    s.out();
+    expect(s.observe({ alternate: true })).toBe(false);
+    s.advance(PROMPT_STABLE_MS * 2);
+    expect(s.observe({ mouse: true })).toBe(false);
+    expect(s.infer.agent).toBe('codex');
+  });
+
+  it('clears after ten silent minutes with a prompt-like cursor line, but not behind an input box or in a full-screen mode', () => {
+    const s = shell();
+    s.type('claude\r');
+    s.show('~ ❯ ', 12, { beforeCursor: '~ ❯ ' });
+    s.advance(9 * 60_000);
+    expect(s.observe()).toBe(false);
+    s.advance(60_000 + 1);
+    expect(s.observe({ alternate: true })).toBe(false);
+    expect(s.observe()).toBe(true);
+
+    const t = shell();
+    t.type('claude\r');
+    t.show('> ', 12, { beforeCursor: '> ', above: '────────────────────' });
+    t.advance(30 * 60_000);
+    expect(t.observe()).toBe(false);
+    expect(t.infer.agent).toBe('claude');
+  });
+});
+
+describe('inline suggestions', () => {
+  it('Right, End, Ctrl+E and Ctrl+F at the end of the line may accept one: the screen decides at Enter', () => {
+    for (const key of ['\x1b[C', '\x1b[F', '\x1bOC', '\x05', '\x06', '\x1b[4~']) {
+      const s = shell();
+      s.type('cl');
+      s.type(key);
+      s.show('PS D:\\app> claude', 5, { beforeCursor: 'PS D:\\app> claude' });
+      s.type('\r');
+      expect(s.infer.agent, JSON.stringify(key)).toBe('claude');
+    }
+  });
+
+  it('Right in the middle of the line only moves the cursor', () => {
+    const s = shell();
+    s.type('claude');
+    s.type('\x1b[H\x1b[C'); // Home, then Right: not at the end, so no suggestion can be accepted
+    s.show('PS D:\\app> dir', 5); // would be read if the buffer were dirty
+    s.type('\r');
+    expect(s.infer.agent).toBe('claude');
+  });
+});
+
+describe('typed lines in a full-screen program', () => {
+  it('do not start an agent (vim, nano, a REPL), but the same line at a prompt does', () => {
+    const s = shell();
+    s.hide();
+    s.type('claude\r');
+    expect(s.infer.agent).toBeNull();
+    s.show('PS D:\\app>', 5);
+    s.type('claude\r');
+    expect(s.infer.agent).toBe('claude');
   });
 });

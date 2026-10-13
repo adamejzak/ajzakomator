@@ -157,7 +157,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         if (paths) {
           e.preventDefault();
           const parsed = readDroppedPaths(paths);
-          if (parsed) addPathsToCell(cell.id, parsed.items, parsed.rejected);
+          if (parsed) void addPathsToCell(cell.id, parsed.items, parsed.rejected, parsed.cut);
           else toast(tr('Nie udało się dodać ścieżki.'), 'error');
           return;
         }

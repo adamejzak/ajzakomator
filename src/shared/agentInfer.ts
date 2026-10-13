@@ -8,6 +8,8 @@ export type InferredAgent = 'claude' | 'codex';
 
 /** A shell prompt that stays on a quiet screen this long means the agent is gone. */
 export const PROMPT_STABLE_MS = 1500;
+/** An agent TUI that shows no shell prompt for this long, yet leaves a prompt-like cursor line, is taken for gone. */
+export const IDLE_CLEAR_MS = 10 * 60_000;
 const MAX_LINE = 4096;
 const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
@@ -165,6 +167,19 @@ export function commandFromScreenLine(text: string): string | null {
   return generic ? generic[1] : null;
 }
 
+/** A prompt that is not one of the three above (starship, oh-my-zsh, a plain `> `) ends in one of these. */
+const GENERIC_PROMPT_TAIL = /[$#%>➜❯»λ]\s*$/;
+/** Characters that draw an agent's input box: a cursor line inside one is the agent's, not a shell's. */
+const BOX_CHARS = /[│┃╭╮╰╯]/;
+const RULE = /[─━═]{8,}/;
+
+/** The prompt part of a screen line when `command` is what was typed after it, else null. */
+function promptBefore(text: string, command: string): string | null {
+  const typed = command.trimEnd();
+  const line = text.trimEnd();
+  return typed && line.endsWith(typed) ? line.slice(0, line.length - typed.length) : null;
+}
+
 /** Titles that name a shell: seen after an agent started, they say the shell took the terminal back. */
 const SHELL_TITLE = /(?:^|[\\/ ])(?:Windows PowerShell|PowerShell|pwsh|powershell|cmd|Command Prompt|bash|zsh)(?:\.exe)?$/i;
 
@@ -201,7 +216,14 @@ export function keySequence(ev: KeyLike): string {
 // ── the state machine ────────────────────────────────────────────────────────
 
 /** The cursor's logical screen line (wrapped rows joined; `row` is where it starts), null in a full-screen program. */
-export interface ScreenLine { text: string; row: number }
+export interface ScreenLine {
+  text: string;
+  row: number;
+  /** The line up to the cursor (an inline suggestion after it is not typed text). */
+  beforeCursor?: string;
+  /** The screen line above this one. */
+  above?: string | null;
+}
 export interface ScreenState { line: ScreenLine | null; /** Alternate buffer on. */ alternate: boolean; /** Mouse tracking on. */ mouse: boolean }
 
 export class AgentInference {
@@ -223,6 +245,10 @@ export class AgentInference {
   private promptRow: number | null = null;
   private promptSince = 0;
   private titleShellAt: number | null = null;
+  /** The prompt text seen in front of the command that started the agent (any prompt, however it looks). */
+  private shellPrompt: string | null = null;
+  /** A line that was not an agent command was submitted while the agent was believed to run (at the TUI, or at a prompt we cannot read). */
+  private submitMark: number | null = null;
 
   constructor(private readonly caseInsensitive = true) {}
 
@@ -247,9 +273,9 @@ export class AgentInference {
       } else if (ch === '\x7f' || ch === '\b') this.backspace();
       else if (ch === '\x03' || ch === '\x15') this.resetLine();
       else if (ch === '\x01') this.cursor = 0;
-      else if (ch === '\x05') this.cursor = this.line.length;
+      else if (ch === '\x05') this.toEnd();
       else if (ch === '\x02') this.cursor = Math.max(0, this.cursor - 1);
-      else if (ch === '\x06') this.cursor = Math.min(this.line.length, this.cursor + 1);
+      else if (ch === '\x06') this.right(1);
       else if (ch === '\x0b') this.line = this.line.slice(0, this.cursor);
       else if (ch === '\x17') this.deleteWord();
       else if (ch === '\x04') this.line = this.line.slice(0, this.cursor) + this.line.slice(this.cursor + 1);
@@ -281,6 +307,7 @@ export class AgentInference {
     this.resetLine();
     this.inPaste = false;
     this.reportedCwd = null;
+    this.shellPrompt = null;
     this.lastOutput = 0;
   }
 
@@ -298,7 +325,15 @@ export class AgentInference {
     }
     const quietSince = (since: number) => now - Math.max(since, this.lastOutput) >= PROMPT_STABLE_MS;
     if (this.titleShellAt !== null && quietSince(this.titleShellAt)) return this.clear();
-    const row = screen.line && parsePrompt(screen.line.text) && (screen.line.row !== this.submitRow || this.tuiSeen) ? screen.line.row : null;
+    const line = screen.line;
+    const before = line ? line.beforeCursor ?? line.text : '';
+    const generic = line !== null && this.looksLikePrompt(before, line.above ?? null);
+    // A long silence with a prompt-like cursor line outside any full-screen mode: the agent is gone.
+    if (generic && now - Math.max(this.lastOutput, this.startedAt) >= IDLE_CLEAR_MS) return this.clear();
+    const strict = line && parsePrompt(line.text) && (line.row !== this.submitRow || this.tuiSeen);
+    // A prompt-like cursor line after a non-agent line was submitted and the screen answered with output.
+    const afterSubmit = generic && this.submitMark !== null && this.lastOutput > this.submitMark;
+    const row = line && (strict || afterSubmit) ? line.row : null;
     if (row === null) {
       this.promptRow = null;
       return false;
@@ -310,6 +345,13 @@ export class AgentInference {
     return quietSince(this.promptSince) ? this.clear() : false;
   }
 
+  /** A cursor line that looks like a shell prompt and not like the agent's input box. */
+  private looksLikePrompt(before: string, above: string | null): boolean {
+    const text = before.trimEnd();
+    if (!text.trim() || BOX_CHARS.test(text) || (above !== null && RULE.test(above))) return false;
+    return GENERIC_PROMPT_TAIL.test(text) || (this.shellPrompt !== null && text.trim() === this.shellPrompt);
+  }
+
   private clear(): boolean {
     const had = this.agent !== null;
     this.agent = null;
@@ -317,15 +359,17 @@ export class AgentInference {
     this.tuiSeen = false;
     this.promptRow = null;
     this.titleShellAt = null;
+    this.submitMark = null;
     return had;
   }
 
-  private start(agent: InferredAgent, now: number, cwd: string | null, row: number): void {
+  private start(agent: InferredAgent, now: number, cwd: string | null, row: number, prompt: string | null): void {
     this.clear();
     this.agent = agent;
     this.cwd = cwd ?? this.reportedCwd;
     this.startedAt = now;
     this.submitRow = row;
+    if (prompt !== null && prompt.trim() && prompt.length < 200 && !BOX_CHARS.test(prompt)) this.shellPrompt = prompt.trim();
   }
 
   private submit(now: number, screen?: () => ScreenLine | null): void {
@@ -334,14 +378,37 @@ export class AgentInference {
     this.resetLine();
     if (!wasDirty && !typed.trim()) return;
     const onScreen = screen?.() ?? null; // the prompt names the folder; with a dirty buffer it also holds the command
+    // A full-screen program (vim, a REPL, an agent's alternate screen) owns the terminal: nothing typed there is a shell command.
+    if (screen && !onScreen && !this.agent) return;
     const prompt = onScreen ? parsePrompt(onScreen.text) : null;
-    // Lines typed inside a running agent are its input, not shell commands: only a line at a visible shell prompt counts.
-    if (this.agent && !prompt) return;
     const command = wasDirty ? (onScreen ? commandFromScreenLine(onScreen.text) : null) : typed;
-    if (command === null) return;
+    if (command === null) {
+      if (this.agent) this.submitMark = now;
+      return;
+    }
+    const lastLine = wasDirty ? command : command.split('\n').filter((l) => l.trim()).pop() ?? '';
+    const before = onScreen ? promptBefore(onScreen.text, lastLine) : null;
+    const shellLike = prompt !== null || (before !== null && this.looksLikePrompt(before, onScreen?.above ?? null));
+    // Lines typed inside a running agent are its input, not shell commands. Whether the shell took the terminal back is
+    // then decided later from the screen (observe), so a prompt of any shape clears the guess.
+    if (this.agent && !shellLike) {
+      this.submitMark = now;
+      return;
+    }
     const agent = commandLineAgent(command, this.caseInsensitive);
-    if (agent) this.start(agent, now, prompt?.cwd ?? null, onScreen?.row ?? -1);
+    if (agent) this.start(agent, now, prompt?.cwd ?? null, onScreen?.row ?? -1, before);
     else if (this.agent) this.clear();
+  }
+
+  /** At the end of the line these keys accept an inline suggestion (PSReadLine prediction, zsh-autosuggestions, fish): the buffer is then unknown. */
+  private toEnd(): void {
+    if (this.cursor >= this.line.length) this.dirty = true;
+    this.cursor = this.line.length;
+  }
+
+  private right(count: number): void {
+    if (this.cursor >= this.line.length) this.dirty = true;
+    this.cursor = Math.min(this.line.length, this.cursor + count);
   }
 
   private resetLine(): void {
@@ -416,13 +483,13 @@ export class AgentInference {
     const count = Math.max(1, parseInt(params, 10) || 1);
     switch (final) {
       case 'D': this.cursor = Math.max(0, this.cursor - count); break;
-      case 'C': this.cursor = Math.min(this.line.length, this.cursor + count); break;
+      case 'C': this.right(count); break;
       case 'H': this.cursor = 0; break;
-      case 'F': this.cursor = this.line.length; break;
+      case 'F': this.toEnd(); break;
       case 'A': case 'B': this.dirty = true; break; // history
       case '~':
         if (params === '1' || params === '7') this.cursor = 0;
-        else if (params === '4' || params === '8') this.cursor = this.line.length;
+        else if (params === '4' || params === '8') this.toEnd();
         else if (params === '3') this.line = this.line.slice(0, this.cursor) + this.line.slice(this.cursor + 1);
         break;
       default: break; // focus and mouse reports, device replies, page keys

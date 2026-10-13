@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildPathPayload, buildPathText, dropBlock, hasControlChars, MAX_DROP_ITEMS, MAX_DROP_TEXT, parsePathPayload, psLiteral, quoteForShell,
+  buildPathPayload, buildPathText, capItems, dropAbsPath, dropBlock, hasControlChars, MAX_DROP_ITEMS, MAX_DROP_TEXT, parsePathPayload, psLiteral, quoteForShell,
   relativeInside, validRelPath,
 } from '../src/shared/pathDrop';
 
@@ -88,8 +88,29 @@ describe('text inserted into a shell cell', () => {
   });
 });
 
+/** Invisible and direction-changing characters that make one name read as another. */
+const BIDI = [0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0xfeff].map((code) => String.fromCharCode(code));
+
 describe('unsafe names', () => {
-  const hostile = ['a\nb', 'a\rb', 'a\u001b[201~b', 'a\u0000b', `a${ch(0x2028)}b`, `a${ch(0x2029)}b`, 'a\u0085b', 'a\u007fb'];
+  it('treats bidi and invisible formatting characters like controls', () => {
+    for (const c of BIDI) expect(hasControlChars(`a${c}b`), c.charCodeAt(0).toString(16)).toBe(true);
+    expect(hasControlChars('zażółć gęślą jaźń 日本語 ü')).toBe(false);
+    expect(validRelPath(`src/a${BIDI[5]}b.txt`, 'linux')).toBe(false);
+    for (const target of ['claude', 'codex', 'shell'] as const) {
+      const result = buildPathText(target, [item(`/home/u/app/gp${BIDI[9]}j.txt`), item('/home/u/app/ok.txt')], posixOpts);
+      expect(result).toEqual({ text: expect.stringContaining('ok.txt'), skipped: 1 });
+    }
+  });
+
+  it('refuses a path with % for cmd (it would be expanded even in quotes) but not for other shells', () => {
+    const cmd = { ...winOpts, shell: 'cmd' as const };
+    expect(quoteForShell('D:\\x\\100%.txt', 'cmd')).toBeNull();
+    expect(buildPathText('shell', [item('D:\\Projekty\\app\\%PATH%.txt'), item('D:\\Projekty\\app\\ok.txt')], cmd)).toEqual({ text: '"D:\\Projekty\\app\\ok.txt" ', skipped: 1 });
+    expect(buildPathText('shell', [item('D:\\Projekty\\app\\100%.txt')], winOpts).text).toBe("'D:\\Projekty\\app\\100%.txt' ");
+    expect(buildPathText('claude', [item('D:\\Projekty\\app\\100%.txt')], cmd).text).toBe('@100%.txt ');
+  });
+
+  const hostile = ['a\nb', 'a\rb', 'a\u001b[201~b', 'a\u0000b', `a${ch(0x2028)}b`, `a${ch(0x2029)}b`, 'a\u0085b', 'a\u007fb', ...BIDI.map((c) => `a${c}b`)];
   it('never lets control characters or newlines into the inserted text', () => {
     for (const name of hostile) {
       for (const target of ['claude', 'codex', 'shell'] as const) {
@@ -148,7 +169,7 @@ describe('drag payload', () => {
   });
 
   it('treats an object without a usable item list as one refused item', () => {
-    expect(parsePathPayload('{"items":5}')).toEqual({ items: [], rejected: 1 });
+    expect(parsePathPayload('{"items":5}')).toEqual({ items: [], rejected: 1, cut: false });
   });
 
   it('refuses malformed, escaping and unsafe items and counts them', () => {
@@ -175,8 +196,12 @@ describe('drag payload', () => {
     const many = Array.from({ length: MAX_DROP_ITEMS + 20 }, (_, i) => ({ kind: 'file', projectId: 'p', relPath: `f${i}` }));
     const parsed = parsePathPayload(JSON.stringify({ items: many }))!;
     expect(parsed.items).toHaveLength(MAX_DROP_ITEMS);
-    expect(parsed.rejected).toBe(20);
+    expect(parsed.rejected).toBe(0);
+    expect(parsed.cut).toBe(true);
     const built = buildPathPayload('p', '/r', many.map((m) => ({ relPath: m.relPath, kind: 'file' as const })), 'linux');
+    expect(JSON.parse(built).cut).toBe(true);
+    expect(JSON.parse(buildPathPayload('p', '/r', [{ relPath: 'a', kind: 'file' }], 'linux')).cut).toBeUndefined();
+    expect(parsePathPayload(JSON.stringify({ items: [{ kind: 'file', projectId: 'p', relPath: 'a' }] }))!.cut).toBe(false);
     expect(JSON.parse(built).items).toHaveLength(MAX_DROP_ITEMS);
   });
 });
@@ -191,5 +216,39 @@ describe('cells that cannot take a drop', () => {
     expect(dropBlock({ ...ok, error: true })).toBe('error');
     expect(dropBlock({ ...ok, started: false })).toBe('starting');
     expect(dropBlock({ ...ok, status: 'exited' })).toBe('exited');
+  });
+});
+
+describe('item cap', () => {
+  it('keeps the first MAX_DROP_ITEMS and says that the rest was left out', () => {
+    expect(capItems([1, 2, 3])).toEqual({ items: [1, 2, 3], cut: false });
+    const many = Array.from({ length: MAX_DROP_ITEMS + 5 }, (_, i) => i);
+    const capped = capItems(many);
+    expect(capped.items).toHaveLength(MAX_DROP_ITEMS);
+    expect(capped.items[0]).toBe(0);
+    expect(capped.cut).toBe(true);
+    expect(capItems(many.slice(0, MAX_DROP_ITEMS)).cut).toBe(false);
+  });
+});
+
+describe('files dropped on a cell that runs in a worktree', () => {
+  const base = { projectPath: 'D:\\Projekty\\app', relPath: 'src/a.ts', platform: 'win32' as const };
+  const wt = 'D:\\Projekty\\app-wt\\feature';
+
+  it('maps the file into the worktree when it exists there', () => {
+    const abs = dropAbsPath({ ...base, sameProject: true, worktreePath: wt, existsInWorktree: true });
+    expect(abs).toBe('D:\\Projekty\\app-wt\\feature\\src\\a.ts');
+    expect(buildPathText('claude', [{ kind: 'file', abs }], { cwd: wt, platform: 'win32', shell: 'pwsh' }).text).toBe('@src/a.ts ');
+  });
+
+  it('falls back to the main checkout path when the worktree has no such file', () => {
+    const abs = dropAbsPath({ ...base, sameProject: true, worktreePath: wt, existsInWorktree: false });
+    expect(abs).toBe('D:\\Projekty\\app\\src\\a.ts');
+    expect(buildPathText('claude', [{ kind: 'file', abs }], { cwd: wt, platform: 'win32', shell: 'pwsh' }).text).toBe('@D:\\Projekty\\app\\src\\a.ts ');
+  });
+
+  it('keeps the project path for cells without a worktree and for files of another project', () => {
+    expect(dropAbsPath({ ...base, sameProject: true })).toBe('D:\\Projekty\\app\\src\\a.ts');
+    expect(dropAbsPath({ ...base, sameProject: false, worktreePath: wt, existsInWorktree: true })).toBe('D:\\Projekty\\app\\src\\a.ts');
   });
 });

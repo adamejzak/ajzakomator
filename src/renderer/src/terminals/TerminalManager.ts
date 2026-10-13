@@ -643,17 +643,21 @@ class TerminalManager {
   private screenLine(e: Entry): ScreenLine | null {
     const buffer = e.term.buffer.active;
     if (buffer.type === 'alternate') return null;
-    let row = buffer.baseY + buffer.cursorY;
+    const cursorRow = buffer.baseY + buffer.cursorY;
+    let row = cursorRow;
     let line = buffer.getLine(row);
     if (!line) return null;
     let text = line.translateToString(true);
+    let beforeCursor = line.translateToString(true, 0, buffer.cursorX);
     for (let up = 0; line?.isWrapped && row > 0 && up < 20; up++) {
       row--;
       line = buffer.getLine(row);
       if (!line) break;
-      text = line.translateToString(false) + text;
+      const part = line.translateToString(false);
+      text = part + text;
+      beforeCursor = part + beforeCursor;
     }
-    return { text, row };
+    return { text, row, beforeCursor, above: row > 0 ? buffer.getLine(row - 1)?.translateToString(true) ?? null : null };
   }
 
   private screenState(e: Entry): ScreenState {
