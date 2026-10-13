@@ -4,6 +4,7 @@ import { delimiter, join } from 'path';
 import * as pty from 'node-pty';
 import type { SpawnRequest } from '../shared/ipc';
 import type { ShellKind } from '../shared/types';
+import { PTY_REPLAY_CHARS } from '../shared/terminalLimits';
 import { coalesceDelay, FLUSH_NOW_CHARS, FlowGate, TailBuffer } from './flow';
 
 export interface PtySink {
@@ -12,7 +13,6 @@ export interface PtySink {
   exit(id: string, code: number): void;
 }
 
-const REPLAY_LIMIT = 512 * 1024;
 /** A paused pty is resumed anyway when no acknowledgement arrives for this long (renderer gone or stuck). */
 const PAUSE_WATCHDOG_MS = 3000;
 /** How long the last output of a paused pty that exited may still arrive. */
@@ -91,7 +91,7 @@ export class PtyManager {
       ...(process.platform === 'win32' ? { useConpty: true, useConptyDll: true } : {}),
     });
     let resolveExit!: () => void;
-    const entry: Entry = { proc, buf: '', timer: null, history: new TailBuffer(REPLAY_LIMIT), gate: new FlowGate(), watchdog: null, lastWrite: -Infinity, exiting: false, exited: new Promise((r) => (resolveExit = r)) };
+    const entry: Entry = { proc, buf: '', timer: null, history: new TailBuffer(PTY_REPLAY_CHARS), gate: new FlowGate(), watchdog: null, lastWrite: -Infinity, exiting: false, exited: new Promise((r) => (resolveExit = r)) };
     this.entries.set(req.id, entry);
 
     let pendingCommand = req.command;

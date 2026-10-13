@@ -14,6 +14,8 @@ import { INPUT_MODES_OFF, isMouseReport, MouseFloodGuard, terminalModeReset } fr
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
 import { confirmTerminalLink } from '../terminalLinks';
+import { MAX_WEBGL_CONTEXTS, PENDING_OUTPUT_CHARS, SCROLLBACK_LINES } from '../../../shared/terminalLimits';
+import { planWebglSlot } from '../../../shared/webglPool';
 
 // Campbell (Windows Terminal / PowerShell default) on a Cursor-like background.
 export const THEME: ITheme = {
@@ -26,13 +28,14 @@ export const THEME: ITheme = {
 };
 
 const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, Menlo, "SFMono-Regular", "Courier New", monospace';
-const PENDING_LIMIT = 512 * 1024;
 
 interface Entry {
   id: string;
   term: Terminal;
   fit: FitAddon;
   webgl: WebglAddon | null;
+  /** When the terminal was last shown (LRU order of the WebGL contexts kept by parked terminals). */
+  shownAt: number;
   host: HTMLDivElement;
   tracker: StatusTracker;
   win32: boolean;
@@ -76,14 +79,20 @@ class TerminalManager {
   private exitListeners = new Set<(cellId: string) => void>();
   private bindListeners = new Set<(cellId: string, thread: BoundThread) => void>();
   private floodListeners = new Set<(cellId: string) => void>();
+  /** Where a terminal is opened (xterm measures its glyphs there, so it has a real size). */
+  private staging: HTMLDivElement;
+  /** Where terminals wait while no cell shows them: `display: none` so the browser spends no style or layout work on them (xterm pauses its renderer by itself). */
   private parking: HTMLDivElement;
   private buildNumber = 0;
   private acks = new Map<string, number>();
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
+    this.staging = document.createElement('div');
+    this.staging.style.cssText = 'position:fixed;left:-20000px;top:0;width:1200px;height:800px;overflow:hidden;visibility:hidden;';
+    document.body.appendChild(this.staging);
     this.parking = document.createElement('div');
-    this.parking.style.cssText = 'position:fixed;left:-20000px;top:0;width:1200px;height:800px;overflow:hidden;visibility:hidden;';
+    this.parking.style.cssText = 'display:none;';
     document.body.appendChild(this.parking);
     window.addEventListener('message', (e) => {
       if (e.data === 'mc:pty-port' && e.ports[0]) this.setPort(e.ports[0]);
@@ -141,9 +150,9 @@ class TerminalManager {
       this.ack(m); // queued output is bounded below, so the host need not wait for it
       if (m.t === 'replay') q.length = 0;
       q.push({ data: m.data, replay: m.t === 'replay' });
-      // Bound memory for busy cells that are never shown: keep roughly the newest PENDING_LIMIT.
+      // Bound memory for busy cells that are never shown: keep roughly the newest PENDING_OUTPUT_CHARS.
       let size = q.reduce((n, x) => n + x.data.length, 0);
-      while (size > PENDING_LIMIT && q.length > 1) size -= q.shift()!.data.length;
+      while (size > PENDING_OUTPUT_CHARS && q.length > 1) size -= q.shift()!.data.length;
       this.pending.set(m.id, q);
       return;
     }
@@ -196,7 +205,7 @@ class TerminalManager {
     this.disposed.delete(cellId);
     const host = document.createElement('div');
     host.className = 'term-host';
-    this.parking.appendChild(host);
+    this.staging.appendChild(host);
 
     const term = new Terminal({
       theme: THEME,
@@ -205,7 +214,7 @@ class TerminalManager {
       fontSize: opts.fontSize,
       lineHeight: 1.1,
       cursorBlink: true,
-      scrollback: 10000,
+      scrollback: SCROLLBACK_LINES,
       allowProposedApi: true,
       ...(window.mc.platform === 'win32' ? { windowsPty: { backend: 'conpty' as const, buildNumber: this.buildNumber || 26100 } } : {}),
       rightClickSelectsWord: false,
@@ -217,9 +226,11 @@ class TerminalManager {
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
     term.open(host);
+    // Measured and opened: from now on it waits out of the layout until a cell shows it.
+    this.parking.appendChild(host);
 
     const entry: Entry = {
-      id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
+      id: cellId, term, fit, webgl: null, shownAt: 0, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
       codex: opts.codex === true, scanner: new FailureScanner(), guard: new MouseFloodGuard(), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
       parkedSelection: null, applySelection: null,
     };
@@ -383,19 +394,8 @@ class TerminalManager {
     if (!e || e.attachedTo === el) return;
     el.appendChild(e.host);
     e.attachedTo = el;
-    if (!e.webgl) {
-      try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => {
-          webgl.dispose();
-          if (e.webgl === webgl) e.webgl = null;
-        });
-        e.term.loadAddon(webgl);
-        e.webgl = webgl;
-      } catch {
-        e.webgl = null; // DOM renderer fallback
-      }
-    }
+    e.shownAt = performance.now();
+    if (!e.webgl) this.acquireWebgl(e);
     if (e.parkedSelection) {
       e.applySelection?.(e.parkedSelection);
       e.parkedSelection = null;
@@ -410,13 +410,35 @@ class TerminalManager {
     this.refit(e);
   }
 
+  /** Gives a shown terminal a WebGL renderer, within MAX_WEBGL_CONTEXTS: the least recently shown parked terminal pays for it. */
+  private acquireWebgl(e: Entry): void {
+    const plan = planWebglSlot([...this.entries.values()].map((o) => ({ id: o.id, hasWebgl: o.webgl !== null, attached: o.attachedTo !== null, shownAt: o.shownAt })), MAX_WEBGL_CONTEXTS);
+    if (!plan.allowed) return; // everything alive is on screen: this one falls back to the DOM renderer
+    for (const id of plan.release) {
+      const victim = this.entries.get(id);
+      victim?.webgl?.dispose();
+      if (victim) victim.webgl = null;
+    }
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+        if (e.webgl === webgl) e.webgl = null;
+      });
+      e.term.loadAddon(webgl);
+      e.webgl = webgl;
+    } catch {
+      e.webgl = null; // DOM renderer fallback
+    }
+  }
+
   detach(cellId: string, el: HTMLElement): void {
     const e = this.entries.get(cellId);
     if (!e || e.attachedTo !== el) return;
     e.resizeObs?.disconnect();
     e.resizeObs = null;
-    e.webgl?.dispose();
-    e.webgl = null;
+    e.shownAt = performance.now();
+    // The WebGL context stays with the parked terminal (xterm pauses it while hidden), so showing the grid again is instant.
     this.parking.appendChild(e.host);
     e.attachedTo = null;
   }
