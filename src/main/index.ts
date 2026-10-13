@@ -55,6 +55,7 @@ import type { StateEdit } from '../shared/stateEdits';
 import { findCell, getProfile } from '../shared/state';
 import { automationHintForHook, automationStatusFor } from '../shared/runtimeStatus';
 import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
+import { codexThreadSession, CodexThreads, shouldBindCodexThread, type CodexNotice } from '../shared/codexHooks';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadEventSound } from './alertSound';
 import { notificationOptions } from './notifyOptions';
@@ -390,6 +391,31 @@ hooks.on('session', (cellId: string, sessionId: string) => {
   send('cell:session', cellId, followedSession(sessionId));
 });
 
+/** Which conversation each running Codex cell is on (reported by its notify hook). */
+const codexThreads = new CodexThreads();
+/** Cells whose notify hook reported in this process: their session is exact and the file-timestamp guess never touches it. */
+const codexHooked = new Set<string>();
+
+// A Codex turn completed (its `notify` program posted the payload): the turn end is precise, and the payload names the
+// cell's conversation, so it is bound right away, per cell (several Codex cells may share a folder).
+hooks.on('codex', (cellId: string, notice: CodexNotice) => {
+  const found = findCell(state, cellId);
+  if (!found || !alive.has(cellId) || getProfile(state, found.cell.profileId).cli !== 'codex') return; // stale or foreign
+  const verdict = codexThreads.observe(cellId, notice.threadId);
+  if (!verdict.own) return; // another thread of the process (a sub-agent, or a conversation switch that has not repeated yet)
+  codexHooked.add(cellId);
+  if (verdict.bind && notice.threadId && shouldBindCodexThread({
+    known: true, isCodex: true, alive: true, currentId: found.cell.session?.id,
+    currentConfirmed: found.cell.session?.confirmed === true, reportedId: notice.threadId,
+  })) {
+    claimedCodex.add(notice.threadId);
+    send('cell:session', cellId, codexThreadSession(notice.threadId));
+  }
+  const hint = automationHintForHook('stop');
+  if (hint) automation.statuses.set(cellId, hint);
+  send('cell:hook', cellId, 'stop', { codex: true, ...(notice.turnId ? { turnId: notice.turnId } : {}) });
+});
+
 function boundCodexIds(): Set<string> {
   const ids = new Set<string>(claimedCodex);
   for (const p of state.projects)
@@ -407,6 +433,7 @@ ipcMain.handle('codex:bind', (_e, cellId: string, cwd: string) => {
     .filter((c) => alive.has(c.id) && getProfile(state, c.profileId).cli === 'codex' && (c.worktree?.path ?? p.path) === cwd)));
   // Shared-directory simultaneous starts are ambiguous. Never guess a message recipient.
   if (peers.length !== 1 || peers[0].id !== cellId) return null;
+  if (codexHooked.has(cellId)) return null; // its notify hook binds the exact thread; a timestamp guess must never overwrite it
   const id = findRecentCodexSession(homedir(), cwd, 20_000, boundCodexIds());
   if (!id) return null;
   claimedCodex.add(id);
@@ -472,7 +499,14 @@ async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
     } } }), 'utf8');
     mcpConfig = { url, tokenEnv: 'AJZ_MCP_TOKEN', claudeConfigPath };
   } else mcp.revokeCell(req.cellId);
-  const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath,
+  // Codex reports every finished turn (and its conversation id) to the local hook server through a per-process `notify`.
+  let codexNotifyUrl: string | undefined;
+  if (req.profile.cli === 'codex') {
+    codexNotifyUrl = hooks.prepareCodex(req.cellId);
+    codexThreads.begin(req.cellId, mode === 'resume' ? req.sessionId : undefined);
+    codexHooked.delete(req.cellId);
+  }
+  const command = buildLaunchCommand(req.profile, { mode, sessionId: req.sessionId, claudeSettingsPath, codexNotifyUrl,
     shell: state.settings.shell, model: findCell(state, req.cellId)?.cell.model, initialPrompt, mcp: mcpConfig }) ?? undefined;
   verifiedCodex.delete(req.cellId);
   if (req.profile.cli === 'codex' && mode === 'resume' && req.sessionId && req.sessionConfirmed) verifiedCodex.set(req.cellId, req.sessionId);

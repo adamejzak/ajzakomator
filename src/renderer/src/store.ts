@@ -30,6 +30,8 @@ export type Dialog =
 
 export interface Ui {
   statuses: Record<string, CellStatus>;
+  /** Cells whose last turn failed (waiting with reason error) and why: a StopFailure code or 'usage-limit'. */
+  failures: Record<string, string>;
   focusedCellId: string | null;
   maximizedCellId: string | null;
   palette: boolean;
@@ -71,6 +73,7 @@ export const useStore = create<Store>((set, get) => ({
   s: defaultState(window.mc.platform),
   ui: {
     statuses: {},
+    failures: {},
     focusedCellId: null,
     maximizedCellId: null,
     palette: false,

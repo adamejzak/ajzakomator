@@ -2,7 +2,8 @@ import { changeAgentRole } from '../agentRoles';
 import { keyLabel } from '../platform';
 import { useI18n } from '../i18n';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { getProfile, PROJECT_COLORS } from '../../../shared/state';
+import { errorPhrase, failureLabel } from '../../../shared/alerts';
+import { getProfile, PROJECT_COLORS, updateCell } from '../../../shared/state';
 import { missingCardCli } from '../../../shared/cliStatus';
 import { profileOptionLabel } from '../cliUi';
 import { CliMissingCard } from './CliMissingCard';
@@ -10,7 +11,7 @@ import type { Cell } from '../../../shared/types';
 import {
   changeCellProfile, ensureStarted, ensureTerminal, removeCell, renameCell, restartCell, sendSnippet, setCellColor, toggleMaximize,
 } from '../actions';
-import { setUi, toast, useStore } from '../store';
+import { setUi, toast, update, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { openMenu, openMenuAt, type MenuItem } from './ContextMenu';
 import { IBranch, IMax, IRestart, IRestore, IX } from './icons';
@@ -31,6 +32,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const profiles = useStore((st) => st.s.profiles);
   const profile = useStore((st) => getProfile(st.s, cell.profileId));
   const status = useStore((st) => st.ui.statuses[cell.id] ?? 'idle');
+  const failure = useStore((st) => st.ui.failures[cell.id]);
   const focused = useStore((st) => st.ui.focusedCellId === cell.id);
   const mcpInfo = useStore((st) => st.ui.mcpInfo);
   const error = useStore((st) => st.ui.cellErrors[cell.id]);
@@ -78,6 +80,9 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       ...(cell.color ? [{ label: tr("Usuń kolor"), onClick: () => setCellColor(cell.id, undefined) }] : []),
       { sep: true },
       ...restartItems(),
+      ...(profile.cli !== 'shell' ? [
+        { label: cell.muted ? tr("Włącz alerty tej komórki") : tr("Wycisz alerty tej komórki"), onClick: () => update((s) => updateCell(s, cell.id, { muted: cell.muted ? undefined : true })) },
+      ] : []),
       { label: maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), onClick: () => toggleMaximize(cell.id), hint: keyLabel("Ctrl+Shift+M") },
       { sep: true },
       ...profileItems(),
@@ -122,7 +127,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         onDoubleClick={(e) => (e.target as HTMLElement).closest('button,.cell-name,input') || toggleMaximize(cell.id)}
       >
         <span className="idx">{index + 1}</span>
-        <span className={`dot ${status}`} />
+        <span className={`dot ${status}${status === 'waiting' && failure !== undefined ? ' error' : ''}`} />
         <span className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title={tr("Zmień profil")}>
           <span className="pchip" style={{ background: profile.color }} />
           {profile.name}
@@ -157,7 +162,12 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         {cell.worktree && (
           <span className="branch" title={cell.worktree.path}><IBranch /> {cell.worktree.branch}</span>
         )}
-        {status !== 'idle' && <span className={`status-text ${status}`}>{status === 'working' ? tr('pracuje') : status === 'waiting' ? tr('czeka na Ciebie') : tr('zakończony')}{status === 'working' ? '…' : ''}</span>}
+        {status === 'waiting' && failure !== undefined
+          ? <span className="status-text error" title={tr(errorPhrase(failure))}>{tr(failureLabel(failure))}</span>
+          : status !== 'idle' && <span className={`status-text ${status}`}>{status === 'working' ? tr('pracuje') : status === 'waiting' ? tr('czeka na Ciebie') : tr('zakończony')}{status === 'working' ? '…' : ''}</span>}
+        {cell.muted && <span className="muted-mark" title={tr("Alerty tej komórki są wyciszone")} aria-label={tr("Alerty tej komórki są wyciszone")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0M3 3l18 18" /></svg>
+        </span>}
         <span className="grow" />
         {profile.cli !== 'shell' && <button className={`mcp-control ${cell.role ?? 'disabled'} ${mcpInfo.connectedCellIds?.includes(cell.id) ? 'connected' : ''}`}
           aria-label={`${tr('Rola / MCP')}: ${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')}`}

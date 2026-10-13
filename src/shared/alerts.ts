@@ -173,13 +173,17 @@ export interface AlertContext {
   userLooking: boolean;
   /** Claude or Codex cell (never a shell). */
   agent: boolean;
+  /** The user muted this cell's alerts (cell menu). */
+  muted?: boolean;
+  /** This turn already raised its alert (see `createTurnDedupe`). */
+  duplicate?: boolean;
   now: Date;
   /** Asked only when a sound would play; allowed calls open a new quiet window (see createAlertSoundThrottle). */
   allowSound?: (nowMs: number, event: AlertEventId) => boolean;
 }
 
 /** Why a real alert transition raised nothing (or no sound); recorded in the status log so bug reports show it. */
-export type AlertSuppression = 'focused' | 'quiet-hours' | 'disabled' | 'sound-throttled';
+export type AlertSuppression = 'focused' | 'quiet-hours' | 'disabled' | 'sound-throttled' | 'muted' | 'duplicate';
 
 /** One burst throttle per event: a finished sound must not swallow the needs-you or error sound that follows. */
 export function createAlertSoundThrottle(windowMs = SOUND_THROTTLE_MS): (nowMs: number, event: AlertEventId) => boolean {
@@ -196,9 +200,29 @@ export interface AlertDecision {
   suppressed?: AlertSuppression;
 }
 
-/** The event of a cell that just started waiting: the hook reason, or "finished" for any heuristic. */
+/**
+ * One alert per turn and event: finished / error alerts of a cell are raised once for each turn key (a user turn of the
+ * heuristic, the turn id of a Codex notify). Attention is never deduped (every approval is a new question), and a missing
+ * key (hook-driven Claude, whose "Stop that continued" legitimately alerts again) is always allowed.
+ */
+export function createTurnDedupe(): (cellId: string, event: AlertEventId, turn: string | undefined) => boolean {
+  const last = new Map<string, string>();
+  return (cellId, event, turn) => {
+    if (turn === undefined || event === 'attention') return true;
+    const key = `${cellId}:${event}`;
+    if (last.get(key) === turn) return false;
+    last.set(key, turn);
+    return true;
+  };
+}
+
+/**
+ * The event of a cell that just started waiting: an error is an error however it was learned (a hook, or the failure line
+ * of Codex output); attention needs a precise hook; anything else is "finished".
+ */
 export function alertEventOf(cause: StatusCause, reason: StatusReason): AlertEventId {
-  return cause === 'hook' && (reason === 'attention' || reason === 'error') ? reason : 'done';
+  if (reason === 'error') return 'error';
+  return cause === 'hook' && reason === 'attention' ? reason : 'done';
 }
 
 /**
@@ -211,6 +235,8 @@ export function decideAlert(alerts: AlertSettings, ctx: AlertContext): AlertDeci
   const event = alertEventOf(ctx.cause, ctx.reason);
   const none: AlertDecision = { event, notify: false, sound: null };
   if (!ctx.agent || !shouldNotify(ctx.prev, ctx.status, ctx.cause, ctx.hooked)) return none;
+  if (ctx.muted) return { ...none, suppressed: 'muted' };
+  if (ctx.duplicate) return { ...none, suppressed: 'duplicate' };
   if (!shouldAlertUser(true, ctx.userLooking, alerts.notifyWhenFocused)) return { ...none, suppressed: 'focused' };
   if (inQuietHours(alerts.quietHours, ctx.now)) return { ...none, suppressed: 'quiet-hours' };
   const config = alerts.events[event];
@@ -239,7 +265,17 @@ export const ERROR_PHRASES: Record<string, MessageKey> = {
   max_output_tokens: 'limit tokenów odpowiedzi',
   cloud_credential_error: 'błąd poświadczeń chmury',
   unknown: 'nieznany błąd',
+  /** Codex: "You've hit your usage limit" in its output. */
+  'usage-limit': 'limit osiągnięty',
 };
+
+/** Error codes that mean "a limit was reached": the cell header says so instead of a generic error. */
+export const LIMIT_ERRORS: ReadonlySet<string> = new Set(['rate_limit', 'usage-limit']);
+
+/** Header label of a cell whose last turn failed: "limit reached" for limits, a plain "error" otherwise. */
+export function failureLabel(code: string | undefined): MessageKey {
+  return code && LIMIT_ERRORS.has(code) ? 'limit osiągnięty' : 'błąd';
+}
 
 export function errorPhrase(code: string | undefined): MessageKey {
   return (code && Object.hasOwn(ERROR_PHRASES, code) ? ERROR_PHRASES[code] : ERROR_PHRASES.unknown);

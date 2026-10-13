@@ -82,7 +82,11 @@ async function boot(): Promise<void> {
   terminals.onStatus((cellId, status, prev, cause, reason, hooked, info) => {
     if (isAuxPtyId(cellId)) return; // login and install windows are not cells
     window.mc.reportCellStatus(cellId, status, reason, hooked);
-    setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: status } }));
+    setUi((ui) => {
+      const { [cellId]: previous, ...rest } = ui.failures;
+      const failures = status === 'waiting' && reason === 'error' ? { ...rest, [cellId]: info?.error ?? 'unknown' } : previous === undefined ? ui.failures : rest;
+      return { statuses: { ...ui.statuses, [cellId]: status }, failures };
+    });
     if (status !== 'waiting') return;
     alertForStatus(cellId, status, prev, cause, reason, hooked, info);
     bindCodexSession(cellId);
@@ -93,7 +97,10 @@ async function boot(): Promise<void> {
   terminals.onExit((cellId) => {
     if (isAuxPtyId(cellId)) return; // login and install windows are not cells
     // Shell exited (e.g. user typed `exit`) - keep the cell, offer a restart from its header.
-    setUi((ui) => ({ statuses: { ...ui.statuses, [cellId]: 'exited' } }));
+    setUi((ui) => {
+      const { [cellId]: _f, ...failures } = ui.failures;
+      return { statuses: { ...ui.statuses, [cellId]: 'exited' }, failures };
+    });
   });
   // Restore background cells with unfinished assigned work, without changing the user's selection.
   for (const task of state.automation.tasks) {
@@ -101,7 +108,10 @@ async function boot(): Promise<void> {
   }
 }
 
-/** A Codex cell just finished a turn: its session file is fresh, so bind it if not known yet. */
+/**
+ * A Codex cell just finished a turn. Cells with a working notify hook are bound exactly by the hook (main process); this
+ * heuristic (the freshest unclaimed session file of the folder) only serves cells whose hook never reported.
+ */
 function bindCodexSession(cellId: string): void {
   const found = findCell(getS(), cellId);
   if (!found || found.cell.session || getProfile(getS(), found.cell.profileId).cli !== 'codex') return;

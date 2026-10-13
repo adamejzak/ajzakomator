@@ -41,6 +41,8 @@ export interface Cell {
   worktree?: Worktree;
   session?: CellSession;
   fontSize?: number;
+  /** The user muted this cell's alerts (notification and sound); its status is still shown. */
+  muted?: boolean;
 }
 
 export interface Tab {

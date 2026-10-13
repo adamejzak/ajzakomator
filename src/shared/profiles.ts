@@ -1,3 +1,4 @@
+import { codexHookOverrides } from './codexHooks';
 import type { Profile, ShellKind } from './types';
 
 export const DEFAULT_PROFILES: Profile[] = [
@@ -25,6 +26,8 @@ export interface LaunchOptions {
   /** Per-cell Claude settings file carrying our status hooks. */
   claudeSettingsPath?: string;
   shell?: ShellKind;
+  /** Per-process hook URL of a Codex cell (see codexHooks.ts); without it Codex only gets plain terminal notifications. */
+  codexNotifyUrl?: string;
   /** App-owned, per-cell MCP configuration; never changes the user's global config. */
   mcp?: { url: string; tokenEnv: string; claudeConfigPath: string };
   /**
@@ -53,7 +56,10 @@ export function buildLaunchCommand(profile: Profile, opts: LaunchOptions): strin
   } else if (profile.cli === 'codex') {
     parts.push('codex');
     if (opts.mode === 'resume' && opts.sessionId) parts.push('resume', opts.sessionId);
-    parts.push('-c', 'tui.notifications=true');
+    if (opts.codexNotifyUrl) {
+      // Single-quoted TOML inside; cmd has no single-quote strings, so it gets double quotes around the whole override.
+      for (const override of codexHookOverrides(opts.codexNotifyUrl)) parts.push('-c', opts.shell === 'cmd' ? `"${override}"` : shellQuote(override, opts.shell));
+    } else parts.push('-c', 'tui.notifications=true');
     if (opts.mcp) {
       for (const [key, value] of [['url', opts.mcp.url], ['bearer_token_env_var', opts.mcp.tokenEnv]]) {
         const setting = `mcp_servers.ajzakomator.${key}=${JSON.stringify(value)}`;

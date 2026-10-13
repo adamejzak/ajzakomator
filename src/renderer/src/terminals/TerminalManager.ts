@@ -6,6 +6,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
+import { FailureScanner } from '../../../shared/outputFailure';
 import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
 import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
 import { encodeWin32Key } from '../../../shared/win32input';
@@ -34,6 +35,9 @@ interface Entry {
   tracker: StatusTracker;
   win32: boolean;
   agent: boolean;
+  /** Codex cell: approval OSC 9 is an attention signal and the output is scanned for a failed turn (usage limit). */
+  codex: boolean;
+  scanner: FailureScanner;
   attachedTo: HTMLElement | null;
   resizeObs: ResizeObserver | null;
   /** >0 while replayed history is being parsed: terminal query replies must not reach the pty. */
@@ -44,7 +48,7 @@ interface Entry {
   applySelection: ((args: unknown[]) => void) | null;
 }
 
-/** `reason` is why the cell last became waiting (done / attention / error); `hooked` = Claude hooks drive this cell. */
+/** `reason` is why the cell last became waiting (done / attention / error); `hooked` = precise hooks drive this cell; `info.turn` keys the alert of a turn. */
 type StatusListener = (cellId: string, status: CellStatus, prev: CellStatus, cause: StatusCause, reason: StatusReason, hooked: boolean, info?: HookInfo) => void;
 
 /** Recent status transitions of every cell, for bug reports (no message text). */
@@ -53,6 +57,8 @@ export const statusLog = new StatusLog();
 export interface EnsureOptions {
   fontSize: number;
   agent: boolean;
+  /** The profile runs Codex. */
+  codex?: boolean;
   onFontSize?: (size: number) => void;
 }
 
@@ -77,6 +83,14 @@ class TerminalManager {
       if (e.data === 'mc:pty-port' && e.ports[0]) this.setPort(e.ports[0]);
     });
     setInterval(() => this.tickStatuses(), 400);
+    // Minimize / restore / hide / show / focus changes make agents redraw: that output is not work (see StatusTracker.environment).
+    const environment = () => {
+      const now = performance.now();
+      for (const e of this.entries.values()) e.tracker.environment(now);
+    };
+    document.addEventListener('visibilitychange', environment);
+    window.addEventListener('focus', environment);
+    window.addEventListener('blur', environment);
   }
 
   setWindowsBuild(n: number): void {
@@ -134,6 +148,11 @@ class TerminalManager {
       e.term.write(m.data, () => this.ack(m));
       // Published right away: output alone can flip the status to "working" (it used to surface only later).
       this.setStatus(e, () => e.tracker.output(performance.now()), 'output');
+      // Live output only (a replay never comes through here): a failed Codex turn prints a red error line and fires no hook.
+      if (e.codex) {
+        const failure = e.scanner.feed(m.data);
+        if (failure) e.tracker.failure(failure);
+      }
     }
   }
 
@@ -162,6 +181,8 @@ class TerminalManager {
     const existing = this.entries.get(cellId);
     if (existing) {
       existing.agent = opts.agent;
+      existing.codex = opts.codex === true;
+      existing.tracker.setCodex(existing.codex);
       return existing;
     }
     this.disposed.delete(cellId);
@@ -191,9 +212,10 @@ class TerminalManager {
 
     const entry: Entry = {
       id: cellId, term, fit, webgl: null, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
-      attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
+      codex: opts.codex === true, scanner: new FailureScanner(), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
       parkedSelection: null, applySelection: null,
     };
+    entry.tracker.setCodex(entry.codex);
     this.entries.set(cellId, entry);
     this.deferParkedSelection(entry);
 
@@ -388,6 +410,8 @@ class TerminalManager {
     }
     if (e.term.cols !== e.lastSize.cols || e.term.rows !== e.lastSize.rows) {
       e.lastSize = { cols: e.term.cols, rows: e.term.rows };
+      e.tracker.environment(performance.now()); // the agent redraws after a resize
+
       this.post({ t: 'resize', id: e.id, cols: e.term.cols, rows: e.term.rows });
     }
   }
@@ -425,6 +449,7 @@ class TerminalManager {
     this.exited.delete(cellId);
     if (!e) return;
     e.win32 = false;
+    e.scanner.reset();
     e.term.reset();
     this.setStatus(e, () => e.tracker.reset(), 'restore');
   }
@@ -473,19 +498,24 @@ class TerminalManager {
   private setStatus(e: Entry, change: () => unknown, trigger: StatusTrigger, info?: HookInfo): void {
     const prev = e.tracker.status;
     const result = change();
-    const { status, lastCause, lastReason } = e.tracker;
+    const { status, lastCause, lastReason, lastError } = e.tracker;
     const hookEvent = trigger === 'stop' || trigger === 'stopbg' || trigger === 'notify' || trigger === 'busy' || trigger === 'fail' || trigger === 'prompt' || trigger === 'session';
     // Transitions are always logged; hook events that changed nothing only when they matter (busy spam would evict the history).
     const changed = status !== prev;
     if (changed || (hookEvent && (trigger !== 'busy' || result === 'ignored'))) {
-      const detail = [hookDetail(info), trigger === 'tick-stall' && e.tracker.lastStallKind ? `stall=${e.tracker.lastStallKind}` : ''].filter(Boolean).join(' ');
+      const detail = [hookDetail(info ?? (status === 'waiting' && lastReason === 'error' && lastError ? { error: lastError } : undefined)), trigger === 'tick-stall' && e.tracker.lastStallKind ? `stall=${e.tracker.lastStallKind}` : ''].filter(Boolean).join(' ');
       statusLog.push({
         at: Date.now(), cellId: e.id, from: prev, to: status, cause: lastCause, trigger, reason: status === 'waiting' ? lastReason : undefined,
         note: result === 'ignored' ? 'ignored' : changed ? undefined : 'no-change', detail: detail || undefined,
       });
     }
     // A renotify (the real Stop after a continued turn) is reported as working -> waiting so the alert rules see a transition.
-    if (changed || result === 'renotify') this.statusListeners.forEach((l) => l(e.id, status, changed ? prev : 'working', lastCause, lastReason, e.tracker.isHooked, info));
+    if (changed || result === 'renotify') {
+      // Failures learned from the output carry their code like a StopFailure hook does; every alert carries its turn key.
+      const failure = status === 'waiting' && lastReason === 'error' && lastError ? { error: lastError } : undefined;
+      const detailInfo: HookInfo = { ...failure, ...info, turn: e.tracker.turnKey };
+      this.statusListeners.forEach((l) => l(e.id, status, changed ? prev : 'working', lastCause, lastReason, e.tracker.isHooked, detailInfo));
+    }
   }
 
   private tickStatuses(): void {

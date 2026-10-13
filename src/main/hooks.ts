@@ -6,17 +6,20 @@ import { appendFileSync, mkdirSync, statSync, writeFileSync } from 'fs';
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 import { join } from 'path';
+import { parseCodexNotify, type CodexNotice } from '../shared/codexHooks';
 import { SESSION_ID } from '../shared/sessionTrack';
 import type { HookEvent, HookInfo } from '../shared/status';
 
-/** URL events: the status events plus SubagentStop, which reaches the tracker as a "subagent" busy hook. */
-type HookUrlEvent = HookEvent | 'subagent';
-const EVENTS: HookUrlEvent[] = ['prompt', 'stop', 'stopbg', 'notify', 'busy', 'fail', 'subagent'];
+/** URL events: the status events plus SubagentStop, which reaches the tracker as a "subagent" busy hook, and Codex's notify. */
+type HookUrlEvent = HookEvent | 'subagent' | 'codex';
+const EVENTS: HookUrlEvent[] = ['prompt', 'stop', 'stopbg', 'notify', 'busy', 'fail', 'subagent', 'codex'];
 /** Notification types that do not mean "the agent needs you now" (idle_prompt follows Stop, or fires mid-work). */
 const IGNORED_NOTIFICATIONS = new Set(['idle_prompt', 'auth_success']);
 const MAX_BODY = 16 * 1024;
 /** The Stop / StopFailure payload carries last_assistant_message, so it may be much larger. */
 const MAX_STOP_BODY = 512 * 1024;
+/** Codex appends its whole notify payload (user and assistant messages) to the command line; one that big still means "turn done". */
+const MAX_CODEX_BODY = 1024 * 1024;
 const DEBUG_LOG_MAX = 256 * 1024;
 const MAX_STATUS_STRINGS = 8;
 const FINISHED_TASK = new Set(['completed', 'complete', 'done', 'finished', 'failed', 'error', 'killed', 'stopped', 'cancelled', 'canceled', 'exited', 'timeout']);
@@ -173,8 +176,8 @@ export class HookServer extends EventEmitter {
       // Each spawn gets a fresh nonce: late requests of a killed process (or old-format URLs without one) are dropped.
       const current = this.nonces.get(cellId) === parts[4] && parts[4] !== undefined;
       let body = '';
-      const bigPayload = event === 'stop' || event === 'fail';
-      const maxBody = bigPayload ? MAX_STOP_BODY : MAX_BODY;
+      const bigPayload = event === 'stop' || event === 'fail' || event === 'codex';
+      const maxBody = event === 'codex' ? MAX_CODEX_BODY : bigPayload ? MAX_STOP_BODY : MAX_BODY;
       req.setEncoding('utf8');
       let oversized = false;
       req.on('data', (chunk: string) => {
@@ -191,6 +194,12 @@ export class HookServer extends EventEmitter {
         // 204 without a body: hook stdout would otherwise be fed back to Claude as context.
         res.writeHead(204).end();
         if (!cellId || !current) return;
+        if (event === 'codex') {
+          // An oversized payload (nothing parsed) still ends the turn, just without ids.
+          const notice = oversized ? {} : parseCodexNotify(body);
+          if (notice) this.emit('codex', cellId, notice satisfies CodexNotice);
+          return;
+        }
         if (event === 'session') {
           const parsed = parseSessionStart(body);
           if (parsed) {
@@ -235,6 +244,12 @@ export class HookServer extends EventEmitter {
     let nonce = this.nonces.get(cellId);
     if (!nonce) this.nonces.set(cellId, (nonce = randomBytes(8).toString('hex')));
     return `http://127.0.0.1:${this.port}/h/${this.token}/${encodeURIComponent(cellId)}/${event}/${nonce}`;
+  }
+
+  /** Hook URL a Codex process of the cell posts its notify payload to; a fresh nonce invalidates the previous process. */
+  prepareCodex(cellId: string): string {
+    this.nonces.set(cellId, randomBytes(8).toString('hex'));
+    return this.url(cellId, 'codex');
   }
 
   /** Writes the per-cell Claude settings file and returns its path. */

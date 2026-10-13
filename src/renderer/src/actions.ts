@@ -50,6 +50,7 @@ export function ensureTerminal(cellId: string): void {
   terminals.ensure(cellId, {
     fontSize: found.cell.fontSize ?? getS().settings.fontSize,
     agent: profile.cli !== 'shell',
+    codex: profile.cli === 'codex',
     onFontSize: (size) => update((s) => updateCell(s, cellId, { fontSize: size })),
   });
 }
@@ -224,8 +225,10 @@ export function releaseCellTerminal(cellId: string): void {
   aliveAtStart.delete(cellId);
   setUi((ui) => {
     const { [cellId]: _s, ...statuses } = ui.statuses;
+    const { [cellId]: _f, ...failures } = ui.failures;
     return {
       statuses,
+      failures,
       focusedCellId: ui.focusedCellId === cellId ? null : ui.focusedCellId,
       maximizedCellId: ui.maximizedCellId === cellId ? null : ui.maximizedCellId,
     };

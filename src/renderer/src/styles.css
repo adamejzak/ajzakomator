@@ -142,6 +142,7 @@ html[data-platform="darwin"] .first-run-titlebar { padding-left: 84px; }
 .dot.working { background: var(--working); box-shadow: 0 0 0 0 #f5b94266; animation: pulse 1.4s infinite; }
 .dot.waiting { background: var(--waiting); }
 .dot.exited { background: var(--error); }
+.dot.waiting.error { background: var(--error); }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 #f5b94266; } 70% { box-shadow: 0 0 0 5px #f5b94200; } 100% { box-shadow: 0 0 0 0 #f5b94200; } }
 
 /* ── tab bar (inside titlebar) ─────────────────────────────────────────── */
@@ -182,6 +183,8 @@ html[data-platform="darwin"] .first-run-titlebar { padding-left: 84px; }
 .cell-head .status-text.working { color: var(--working); }
 .cell-head .status-text.waiting { color: var(--waiting); }
 .cell-head .status-text.exited { color: var(--error); }
+.cell-head .status-text.error { color: var(--error); font-weight: 600; }
+.cell-head .muted-mark { flex: none; display: inline-flex; color: var(--text-2); opacity: .8; }
 .cell-head .grow { flex: 0; }
 .cell-head .actions { flex: none; display: flex; gap: 1px; opacity: .55; }
 .cell:hover .cell-head .actions, .cell.focused .cell-head .actions { opacity: 1; }

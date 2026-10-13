@@ -1,5 +1,5 @@
-// Per-cell agent status. Precise signals (Claude hooks, Codex OSC 9) win; otherwise (and until the first
-// hook arrives) a heuristic:
+// Per-cell agent status. Precise signals (Claude hooks, Codex notify and its approval OSC 9) win; otherwise (and until the
+// first hook arrives) a heuristic:
 // after the user submits (Enter), non-echo output means "working", and silence after that
 // means the agent finished and is "waiting" for the user. Nothing is inferred before a turn was
 // observed in this session, so restored/resumed agents never start out as "waiting".
@@ -31,6 +31,12 @@ export interface HookInfo {
   error?: string;
   /** SessionStart: startup | resume | clear | compact | fork. */
   source?: string;
+  /** Stop of a Codex cell (its notify hook: the turn completed). */
+  codex?: boolean;
+  /** Codex notify: the turn that completed; one alert per turn. */
+  turnId?: string;
+  /** Listener side: the turn the alert belongs to (undefined = no per-turn dedupe, i.e. hook-driven Claude). */
+  turn?: string;
 }
 
 export const ECHO_MS = 250;
@@ -55,6 +61,15 @@ export const END_GRACE_MS = 3000;
 export const ANSWER_GRACE_MS = 600;
 /** Silence after the user pressed Esc / Ctrl-C on a hooked, working agent. */
 export const INTERRUPT_QUIET_MS = 4000;
+/**
+ * A window minimize / restore, a tab switch or a wake from sleep makes the agent redraw (or the terminal replay output):
+ * for this long such output neither starts a "working" run nor revives a waiting cell.
+ */
+export const ENV_QUIET_MS = 8000;
+/** Silence net of a Codex cell whose notify hook works: its turn-end hook did not come (command line too long, curl failed). */
+export const CODEX_QUIET_MS = 8000;
+/** A failed turn (usage limit) is the last thing Codex prints: waiting follows after this much silence. */
+export const FAILURE_QUIET_MS = 1500;
 
 /** Focus-in / focus-out and mouse reports: what a click on the cell makes the terminal write to the agent. */
 export function isFocusOrMouseReport(data: string): boolean {
@@ -80,13 +95,15 @@ export function shouldNotify(prev: CellStatus, next: CellStatus, cause: StatusCa
 /** renotify = a Stop that continued after an earlier Stop (stop_hook_active): the real end of the turn alerts again. */
 export type HookResult = 'applied' | 'ignored' | 'renotify';
 /** What ended a "working" state on a tick: the plain / background / Esc silence net, or a plain heuristic quiet window. */
-export type StallKind = 'plain' | 'bg' | 'interrupt' | 'heuristic';
+export type StallKind = 'plain' | 'bg' | 'interrupt' | 'heuristic' | 'codex' | 'error';
 
 export class StatusTracker {
   status: CellStatus = 'idle';
   lastCause: StatusCause = 'heuristic';
   /** Why the cell last became "waiting" (stays at the last value while working). */
   lastReason: StatusReason = 'done';
+  /** Error code of the last waiting-with-error: a StopFailure code or 'usage-limit' (Codex output). */
+  lastError: string | undefined;
   /** Set by the last tick that moved the cell from working to waiting. */
   lastStallKind: StallKind | null = null;
   private lastInput = -Infinity;
@@ -100,6 +117,17 @@ export class StatusTracker {
   private turnObserved = false;
   private waitingFromNotify = false;
   private background = false;
+  /** Codex cell: its approval OSC 9 is a precise attention signal, its turn end comes from the notify hook once that works. */
+  private codexMode = false;
+  /** The notify hook delivered an event in this process, so it is trusted to report turn ends. */
+  private codexNotified = false;
+  private lastTurnId: string | undefined;
+  private codexTurn: string | undefined;
+  /** User turns started in this process (Enter); the dedupe key of heuristic alerts. */
+  private turnSeq = 0;
+  private lastEnv = -Infinity;
+  /** A failure line was seen in the output of the running turn; the next waiting becomes an error. */
+  private pendingFailure: string | null = null;
   /** A Stop / StopFailure ended the turn; only a prompt, a background-mode Stop or a permission notification reopens it. */
   private turnEnded = false;
   private endedAt = -Infinity;
@@ -107,8 +135,19 @@ export class StatusTracker {
 
   constructor(private readonly quietMs = 2000) {}
 
+  /** Precise signals drive this cell: Claude hooks, or Codex whose notify hook has reported. */
   get isHooked(): boolean {
-    return this.hooked;
+    return this.hooked || this.codexNotified;
+  }
+
+  /** Marks a Codex cell (profile); kept across `reset`. */
+  setCodex(on: boolean): void {
+    this.codexMode = on;
+  }
+
+  /** Key of the turn an alert belongs to, so a turn alerts once; undefined for hook-driven (Claude) cells. */
+  get turnKey(): string | undefined {
+    return this.hooked ? undefined : this.codexTurn ?? `s:${this.turnSeq}`;
   }
 
   /** Real user keystroke. `submitted` = it contained Enter. */
@@ -118,6 +157,9 @@ export class StatusTracker {
     if (submitted) {
       this.armed = true;
       this.turnObserved = true;
+      this.turnSeq++;
+      this.codexTurn = undefined;
+      this.pendingFailure = null;
     }
     if (submitted && this.status === 'working') this.answeredAt = now;
     if (this.status !== 'waiting') return;
@@ -146,7 +188,26 @@ export class StatusTracker {
 
   /** Esc / Ctrl-C while a hooked agent works: Claude sends no Stop for an interrupt, so check for silence soon. */
   interrupt(now: number): void {
-    if (this.status === 'working' && this.hooked && !this.background) this.interruptAt = now;
+    if (this.status === 'working' && this.isHooked && !this.background) this.interruptAt = now;
+  }
+
+  /**
+   * The window was minimized / restored / hidden / resized, a tab was switched or the machine woke up. The agent's redraw
+   * that follows (or a replay) is not work: it must not start a run, so a waiting cell cannot flip to working and alert again.
+   */
+  environment(now: number): void {
+    if (this.status === 'exited') return;
+    this.lastEnv = now;
+    if (this.status !== 'working') {
+      this.lastOutput = -Infinity;
+      this.activityStart = -Infinity;
+    }
+  }
+
+  /** A failure line appeared in the live output of a Codex turn (its usage limit): the next waiting is an error, not "done". */
+  failure(code: string): void {
+    if (this.status === 'exited' || !this.turnObserved) return;
+    if (this.status === 'working' || this.armed) this.pendingFailure = code;
   }
 
   output(now: number): void {
@@ -155,6 +216,10 @@ export class StatusTracker {
     // but a background-mode cell is idle at its prompt: everything it prints right after a key or a click is a redraw.
     const redraw = now - this.lastInput < ECHO_MS || now - this.lastFocus < FOCUS_ECHO_MS;
     if (redraw && (this.status !== 'working' || this.background)) return;
+    // Window / tab / wake redraws never start a run, unless the user just submitted (armed) or the agent is already working.
+    if (now - this.lastEnv < ENV_QUIET_MS && !this.armed && this.status !== 'working') return;
+    // A Codex turn end the hook (or the failure line) reported is final: only the user's next turn reopens it, never a redraw.
+    if (this.codexMode && this.status === 'waiting' && this.lastCause === 'hook' && this.lastReason !== 'attention' && !this.armed) return;
     if (now - this.lastOutput > GAP_MS) this.activityStart = now;
     this.lastOutput = now;
     // Hooks own the status, except to recover from a silence-based "waiting" that turned out premature.
@@ -174,6 +239,7 @@ export class StatusTracker {
   hook(event: HookEvent, now: number, info?: HookInfo): HookResult {
     if (this.status === 'exited') return 'ignored';
     if (event === 'session') return this.sessionStart(now, info?.source);
+    if (info?.codex) return this.codexNotice(now, info);
     this.hooked = true;
     this.turnObserved = true;
     this.armed = false;
@@ -199,7 +265,7 @@ export class StatusTracker {
       this.endedAt = now;
     }
     if (event === 'prompt' || event === 'busy' || event === 'stopbg') this.set('working', 'hook');
-    else this.set('waiting', 'hook', event === 'notify' ? 'attention' : event === 'fail' ? 'error' : 'done');
+    else this.set('waiting', 'hook', event === 'notify' ? 'attention' : event === 'fail' ? 'error' : 'done', event === 'fail' ? info?.error : undefined);
     return event === 'stop' && info?.continuation && alreadyEnded ? 'renotify' : 'applied';
   }
 
@@ -223,9 +289,39 @@ export class StatusTracker {
     return 'applied';
   }
 
-  /** Terminal notification (OSC 9 / bell). Ignored once precise hooks drive the status. */
+  /**
+   * Codex notify (agent-turn-complete): the turn ended successfully. One event per turn id; from now on this cell's silence
+   * is only a slow safety net (see `tick`), because the precise end of a turn is reported.
+   */
+  private codexNotice(now: number, info: HookInfo): HookResult {
+    this.codexNotified = true;
+    this.turnObserved = true;
+    this.armed = false;
+    if (info.turnId && info.turnId === this.lastTurnId) return 'ignored';
+    // The cell already waits on a precise signal (an approval prompt, or the previous turn's end) but the agent went on: a
+    // queued message, or the answer to the prompt. The new turn end must still alert, which a plain "waiting" would not.
+    const renotify = this.status === 'waiting' && this.lastCause === 'hook' && (this.lastReason === 'attention' || (this.lastReason === 'done' && this.lastTurnId !== undefined));
+    this.lastTurnId = info.turnId ?? this.lastTurnId;
+    this.codexTurn = info.turnId ? `n:${info.turnId}` : undefined;
+    this.pendingFailure = null;
+    this.interruptAt = -Infinity;
+    this.lastOutput = this.activityStart = now; // a new run (if any) starts after the turn end
+    this.set('waiting', 'hook', 'done');
+    return renotify ? 'renotify' : 'applied';
+  }
+
+  /**
+   * Terminal notification (OSC 9 / bell). Ignored once precise hooks drive the status. A Codex cell is launched so that OSC 9
+   * only ever means "approval / question for you" (turn ends come from notify), so it is a precise "attention".
+   */
   osc9(): void {
     if (this.status === 'exited' || this.hooked || !this.turnObserved) return;
+    if (this.codexMode) {
+      if (this.status !== 'working') return;
+      this.armed = false;
+      this.set('waiting', 'hook', 'attention');
+      return;
+    }
     this.armed = false;
     this.set('waiting', 'heuristic');
   }
@@ -245,7 +341,13 @@ export class StatusTracker {
     this.turnEnded = false;
     this.endedAt = this.answeredAt = -Infinity;
     this.lastReason = 'done';
+    this.lastError = undefined;
     this.lastStallKind = null;
+    this.codexNotified = false;
+    this.lastTurnId = this.codexTurn = undefined;
+    this.turnSeq = 0;
+    this.pendingFailure = null;
+    this.lastEnv = -Infinity;
     this.lastInput = this.lastFocus = this.lastOutput = this.activityStart = this.lastTick = this.interruptAt = -Infinity;
   }
 
@@ -254,29 +356,40 @@ export class StatusTracker {
     if (this.lastTick > -Infinity && now - this.lastTick > SUSPEND_MS) {
       if (this.lastOutput > -Infinity) this.lastOutput = now;
       if (this.interruptAt > -Infinity) this.interruptAt = now;
+      this.environment(now); // the redraws after a wake are not work
     }
     this.lastTick = now;
     if (this.status === 'working') {
       // Hooked agents get a long net (lost Stop, killed subagent) and a short one after Esc/Ctrl-C.
-      const kind: StallKind = !this.hooked ? 'heuristic' : this.background ? 'bg' : this.interruptAt > -Infinity ? 'interrupt' : 'plain';
-      const quiet = kind === 'heuristic' ? this.quietMs : kind === 'bg' ? BG_STALL_MS : kind === 'interrupt' ? INTERRUPT_QUIET_MS : STALL_MS;
-      const since = this.hooked ? Math.max(this.lastOutput, this.interruptAt) : this.lastOutput;
+      const kind: StallKind = this.pendingFailure ? 'error'
+        : this.hooked ? (this.background ? 'bg' : this.interruptAt > -Infinity ? 'interrupt' : 'plain')
+        : this.codexNotified ? (this.interruptAt > -Infinity ? 'interrupt' : 'codex') : 'heuristic';
+      const quiet = kind === 'heuristic' ? this.quietMs : kind === 'bg' ? BG_STALL_MS : kind === 'interrupt' ? INTERRUPT_QUIET_MS
+        : kind === 'error' ? FAILURE_QUIET_MS : kind === 'codex' ? CODEX_QUIET_MS : STALL_MS;
+      const since = this.isHooked ? Math.max(this.lastOutput, this.interruptAt) : this.lastOutput;
       if (now - since >= quiet) {
+        const failure = this.pendingFailure;
         this.armed = false;
         this.background = false;
         this.interruptAt = -Infinity;
+        this.pendingFailure = null;
         this.lastStallKind = kind;
-        // The background net ending is the cell's "done" that never arrived: alert once, late rather than never.
-        this.set('waiting', kind === 'bg' ? 'hook' : 'heuristic');
+        // The background net ending, a lost Codex notify and a failure line are real ends of the turn that no hook reported:
+        // alert once, late rather than never. Esc / plain silence of a hooked cell stays quiet.
+        if (failure) this.set('waiting', 'hook', 'error', failure);
+        else this.set('waiting', kind === 'bg' || kind === 'codex' ? 'hook' : 'heuristic');
       }
     }
     return this.status;
   }
 
-  private set(status: CellStatus, cause: StatusCause, reason: StatusReason = 'done'): void {
+  private set(status: CellStatus, cause: StatusCause, reason: StatusReason = 'done', error?: string): void {
     this.status = status;
     this.lastCause = cause;
-    if (status === 'waiting') this.lastReason = reason;
+    if (status === 'waiting') {
+      this.lastReason = reason;
+      this.lastError = reason === 'error' ? error ?? 'unknown' : undefined;
+    }
   }
 }
 

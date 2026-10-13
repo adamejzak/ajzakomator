@@ -1,7 +1,7 @@
 // Raises the alerts (OS notification and sound) for agent status changes. The decision itself is pure (shared/alerts).
-import { ALERT_EVENTS, createAlertSoundThrottle, decideAlert, errorPhrase, type AlertEventId } from '../../shared/alerts';
+import { ALERT_EVENTS, alertEventOf, createAlertSoundThrottle, createTurnDedupe, decideAlert, errorPhrase, type AlertEventId } from '../../shared/alerts';
 import { activeProject, activeTab, findCell, getProfile } from '../../shared/state';
-import type { CellStatus, HookInfo, StatusCause, StatusReason } from '../../shared/status';
+import { shouldNotify, type CellStatus, type HookInfo, type StatusCause, type StatusReason } from '../../shared/status';
 import { playAlertSound } from './alertSound';
 import { tr } from './i18n';
 import { getS, getUi } from './store';
@@ -22,6 +22,7 @@ export function alertBody(event: AlertEventId, name: string, errorCode?: string)
 }
 
 const allowSound = createAlertSoundThrottle();
+const firstOfTurn = createTurnDedupe();
 
 /** Called for every status change of a cell; raises whatever the alert settings and the status rules allow. */
 export function alertForStatus(
@@ -32,8 +33,11 @@ export function alertForStatus(
   const found = findCell(s, cellId);
   if (!found) return;
   const profile = getProfile(s, found.cell.profileId);
+  // One finished / error alert per turn, so a redraw after minimize / restore that revives the status cannot alert again.
+  const duplicate = shouldNotify(prev, status, cause, hooked) && !firstOfTurn(cellId, alertEventOf(cause, reason), info?.turn);
   const decision = decideAlert(s.settings.alerts, {
     prev, status, cause, hooked, reason, agent: profile.cli !== 'shell', now: new Date(), allowSound,
+    muted: found.cell.muted === true, duplicate,
     userLooking: document.hasFocus() && isVisible(cellId),
   });
   if (decision.suppressed) statusLog.markAlert(cellId, decision.suppressed);
