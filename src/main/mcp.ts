@@ -15,6 +15,8 @@ export interface McpServerOptions {
   /** Simultaneous requests: per token (a waiting agent holds one) and in total. */
   maxInFlightPerToken?: number;
   maxInFlight?: number;
+  /** Monotonic millisecond clock; replaceable in tests. Wall-clock changes must never refill or drain the budget. */
+  now?: () => number;
 }
 const MAX_BODY = 256 * 1024;
 /** Safety net for a single tool result; the tools already shape and truncate their output. */
@@ -26,12 +28,14 @@ export class AjzakomatorMcpServer {
   private tokenOf = new Map<string, string>();
   private buckets = new Map<string, { tokens: number; at: number }>();
   private inFlightByToken = new Map<string, number>();
+  /** Requests in progress per token; revoking the token aborts them (a waiting wait_for ends at once). */
+  private aborts = new Map<string, Set<AbortController>>();
   private connectedCells = new Set<string>();
   private connections = new Set<Server>();
   private info: McpInfo = { running: false };
   private readonly limits: Required<McpServerOptions>;
   constructor(private readonly service: AutomationService, options: McpServerOptions = {}) {
-    this.limits = { rateLimit: { burst: 120, perSecond: 60 }, maxInFlightPerToken: 8, maxInFlight: 256, ...options };
+    this.limits = { rateLimit: { burst: 120, perSecond: 60 }, maxInFlightPerToken: 8, maxInFlight: 256, now: () => performance.now(), ...options };
   }
   getInfo(): McpInfo { return { ...this.info, configuredCellIds: [...this.tokenOf.keys()], connectedCellIds: [...this.connectedCells] }; }
   issueToken(cellId: string): string {
@@ -49,6 +53,8 @@ export class AjzakomatorMcpServer {
     this.tokens.delete(token);
     this.buckets.delete(token);
     this.inFlightByToken.delete(token);
+    for (const controller of this.aborts.get(token) ?? []) controller.abort();
+    this.aborts.delete(token);
   }
   async start(): Promise<void> {
     this.http = createServer((req, res) => { void this.handle(req, res).catch(() => {
@@ -67,9 +73,10 @@ export class AjzakomatorMcpServer {
   private allow(token: string): boolean {
     const limit = this.limits.rateLimit;
     if (!limit) return true;
-    const now = Date.now();
+    const now = this.limits.now();
     const bucket = this.buckets.get(token) ?? { tokens: limit.burst, at: now };
-    bucket.tokens = Math.min(limit.burst, bucket.tokens + ((now - bucket.at) / 1000) * limit.perSecond);
+    // A clock that moved backwards refills nothing (never negative) and becomes the new reference point.
+    bucket.tokens = Math.min(limit.burst, bucket.tokens + (Math.max(0, now - bucket.at) / 1000) * limit.perSecond);
     bucket.at = now;
     this.buckets.set(token, bucket);
     if (bucket.tokens < 1) return false;
@@ -89,11 +96,15 @@ export class AjzakomatorMcpServer {
     this.connectedCells.add(actorId);
     if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
     const inFlight = this.inFlightByToken.get(token) ?? 0;
-    if (!this.allow(token) || inFlight >= this.limits.maxInFlightPerToken || this.connections.size >= this.limits.maxInFlight) {
+    // Cheap concurrency checks first, so a rejected request does not also spend rate budget.
+    if (inFlight >= this.limits.maxInFlightPerToken || this.connections.size >= this.limits.maxInFlight || !this.allow(token)) {
       res.writeHead(429, { 'Retry-After': '1' }).end(); return;
     }
     this.inFlightByToken.set(token, inFlight + 1);
     const abort = new AbortController();
+    const controllers = this.aborts.get(token) ?? new Set<AbortController>();
+    controllers.add(abort);
+    this.aborts.set(token, controllers);
     const found = findCell(this.service.state.get(), actorId);
     const role = this.service.roleOf(actorId);
     const server = new Server({ name: 'ajzakomator', version: '1.1.0' }, {
@@ -107,6 +118,8 @@ export class AjzakomatorMcpServer {
         // Recheck the token on every call, including calls racing with a cell restart.
         if (this.tokens.get(token) !== actorId) throw new Error('Agent connection has expired.');
         value = await callTool(params.name, params.arguments, { service: this.service, actorId, signal: abort.signal });
+        // Revoked while the call was running (a waiting wait_for is aborted by revokeCell): do not hand out the result.
+        if (this.tokens.get(token) !== actorId) throw new Error('Agent connection has expired.');
       } catch (error) {
         return { isError: true, content: [{ type: 'text' as const, text: describeError(error) }] };
       }
@@ -119,6 +132,7 @@ export class AjzakomatorMcpServer {
     this.connections.add(server);
     res.once('close', () => {
       abort.abort();
+      controllers.delete(abort);
       this.connections.delete(server);
       const left = (this.inFlightByToken.get(token) ?? 1) - 1;
       if (this.tokens.has(token)) this.inFlightByToken.set(token, Math.max(0, left));
@@ -138,6 +152,8 @@ export class AjzakomatorMcpServer {
     this.tokenOf.clear();
     this.buckets.clear();
     this.inFlightByToken.clear();
+    for (const set of this.aborts.values()) for (const controller of set) controller.abort();
+    this.aborts.clear();
     this.connectedCells.clear();
     this.info = { running: false };
     await Promise.all([...this.connections].map((server) => server.close().catch(() => undefined)));

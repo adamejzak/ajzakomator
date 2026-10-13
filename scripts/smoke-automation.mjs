@@ -137,7 +137,7 @@ try {
   const message = await call(coordinator, 'send_message', { toCellId: created.cellIds[0], text: 'Dziękuję, przekazuję do review.' });
   const combined = await call(backend, 'read_inbox', { acknowledge: true });
   assert.equal(combined.messages[0].id, message.id);
-  assert.equal(combined.acknowledged, 1);
+  assert.deepEqual(combined.acknowledgedMessageIds, [message.id]);
   assert.equal((await call(backend, 'read_inbox')).messages.length, 0);
   await call(coordinator, 'snippets', { action: 'save', name: 'Review checklist', text: 'Sprawdź testy i regresje' });
   await call(coordinator, 'save_preset', { name: 'Review team', cells: [{ profileId: 'codex', role: 'worker', prompt: 'Review changes' }] });

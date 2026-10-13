@@ -82,7 +82,7 @@ describe('tool definitions are portable across Claude Code and Codex', () => {
   });
   it('keeps the advertised properties in step with what the tools accept', () => {
     // Accepted but intentionally not advertised (kept for older prompts or because help documents them).
-    const hidden: Record<string, string[]> = { list_agents: ['projectId'], read_inbox: ['offset'], get_tasks: ['projectId'], create_grid: ['layout', 'projectId'], save_preset: ['id'] };
+    const hidden: Record<string, string[]> = { list_agents: ['projectId'], read_inbox: ['offset', 'openOnly'], get_tasks: ['projectId'], create_grid: ['layout', 'projectId'], save_preset: ['id'] };
     for (const tool of MCP_TOOLS) {
       const advertised = Object.keys(tool.inputSchema.properties).sort();
       const accepted = Object.keys(tool.schema.shape).filter((key) => !(hidden[tool.name] ?? []).includes(key)).sort();
@@ -90,6 +90,29 @@ describe('tool definitions are portable across Claude Code and Codex', () => {
       const required = [...(tool.inputSchema.required ?? [])].sort();
       expect(required.every((key) => advertised.includes(key)), tool.name).toBe(true);
     }
+    // Role-specific variants may only advertise things the tool accepts.
+    for (const role of ['coordinator', 'worker'] as const) {
+      for (const listed of toolsForRole(role)) {
+        const accepted = Object.keys(MCP_TOOLS.find((t) => t.name === listed.name)!.schema.shape);
+        expect(Object.keys(listed.inputSchema.properties).every((key) => accepted.includes(key)), `${role} ${listed.name}`).toBe(true);
+      }
+    }
+  });
+  it('declares hints so Codex asks before cross-agent, launch-setting and agent-spawning calls but not before own-task work', () => {
+    const hints = (role: 'coordinator' | 'worker') => Object.fromEntries(toolsForRole(role).map((t) => [t.name, t.annotations]));
+    const ask = { readOnlyHint: false, destructiveHint: false, openWorldHint: true };
+    const quiet = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
+    const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
+    expect(hints('worker')).toMatchObject({ get_context: read, list_agents: read, wait_for: read, help: read, read_inbox: quiet, update_task: quiet,
+      send_message: ask, snippets: ask, update_agent: ask });
+    expect(hints('coordinator')).toMatchObject({ get_tasks: read, create_task: ask, create_grid: ask, deliver: ask, update_agent: ask, snippets: ask,
+      update_task: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, close_grid: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      update_grid: quiet, save_preset: quiet, read_inbox: quiet });
+  });
+  it('shows workers only name and color in update_agent', () => {
+    const worker = toolsForRole('worker').find((t) => t.name === 'update_agent')!;
+    expect(Object.keys(worker.inputSchema.properties).sort()).toEqual(['color', 'name']);
+    expect(Object.keys(toolsForRole('coordinator').find((t) => t.name === 'update_agent')!.inputSchema.properties)).toContain('model');
   });
 });
 
@@ -137,7 +160,7 @@ describe('MCP protocol behaviour (official SDK client)', () => {
     expect((await call(worker, 'read_inbox', { closed: true })).tasks).toHaveLength(1);
     const sent = await call(lead, 'send_message', { toCellId: h.worker.id, text: 'thanks' });
     expect(sent.delivery).toBe('pending');
-    expect(await call(worker, 'read_inbox', { acknowledge: true })).toMatchObject({ messages: [{ id: sent.id, text: 'thanks' }], acknowledged: 1 });
+    expect(await call(worker, 'read_inbox', { acknowledge: true })).toMatchObject({ messages: [{ id: sent.id, text: 'thanks' }], acknowledgedMessageIds: [sent.id] });
     expect((await call(worker, 'read_inbox')).messages).toEqual([]);
     expect(await call(worker, 'wait_for', { timeoutSec: 1 })).toEqual({ event: 'timeout' });
     const snippet = await call(worker, 'snippets', { action: 'save', name: 'Checklist', text: 'Run tests' });
@@ -293,19 +316,134 @@ describe('wait_for', () => {
     expect(unknown.isError).toBe(true);
     expect((await lead.callTool({ name: 'wait_for', arguments: { timeoutSec: 600 } })).isError).toBe(true);
   });
-  it('stops waiting when the client disconnects', async () => {
-    const h = await setup();
+  it('stops waiting when the client disconnects and frees the request slot', async () => {
+    const h = await setup({ rateLimit: false, maxInFlightPerToken: 1 });
     const token = h.server.issueToken(h.worker.id);
+    const ping = (id: number) => post(h, token, { jsonrpc: '2.0', id, method: 'ping' });
     const controller = new AbortController();
     const pending = fetch(h.url, { method: 'POST', signal: controller.signal, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'wait_for', arguments: { timeoutSec: 30 } } }) }).catch(() => undefined);
     await new Promise((r) => setTimeout(r, 200));
+    // The waiting request occupies the only slot...
+    expect((await ping(2)).status).toBe(429);
     controller.abort();
     await pending;
-    // The slot is released: a fresh call on the same token is answered at once.
+    // ...and releases it as soon as the client is gone, long before the 30 s wait would end.
     const started = Date.now();
-    expect((await post(h, token, { jsonrpc: '2.0', id: 2, method: 'ping' })).status).toBe(200);
-    expect(Date.now() - started).toBeLessThan(1000);
+    let status = 429;
+    while (status === 429 && Date.now() - started < 3000) { status = (await ping(3)).status; if (status === 429) await new Promise((r) => setTimeout(r, 25)); }
+    expect(status).toBe(200);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+  it('ends an in-flight wait_for with an expiry error when its token is revoked', async () => {
+    const h = await setup();
+    const token = h.server.issueToken(h.worker.id);
+    const started = Date.now();
+    const waiting = post(h, token, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'wait_for', arguments: { timeoutSec: 30 } } });
+    await new Promise((r) => setTimeout(r, 200));
+    h.server.revokeCell(h.worker.id);
+    const body = await (await waiting).json();
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toBe('Agent connection has expired.');
+    // Re-issuing a token (cell restart) ends the old agent's wait the same way.
+    const first = h.server.issueToken(h.reviewer.id);
+    const second = post(h, first, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'wait_for', arguments: { timeoutSec: 30 } } });
+    await new Promise((r) => setTimeout(r, 200));
+    h.server.issueToken(h.reviewer.id);
+    expect((await (await second).json()).result.isError).toBe(true);
+  });
+  it('does not hot-loop: wait_for ignores items already shown by read_inbox and reports new ones', async () => {
+    const h = await setup();
+    const lead = await connect(h, h.coordinator.id);
+    const worker = await connect(h, h.worker.id);
+    await lead.callTool({ name: 'send_message', arguments: { toCellId: h.worker.id, text: 'first' } });
+    await lead.callTool({ name: 'create_task', arguments: { cellId: h.worker.id, title: 'T1', prompt: 'p' } });
+    // read without acknowledging, then wait: the old behaviour returned at once forever.
+    expect(data(await worker.callTool({ name: 'read_inbox' })).messages).toHaveLength(1);
+    const started = Date.now();
+    expect(data(await worker.callTool({ name: 'wait_for', arguments: { timeoutSec: 1 } }))).toEqual({ event: 'timeout' });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+    await lead.callTool({ name: 'send_message', arguments: { toCellId: h.worker.id, text: 'second' } });
+    expect(data(await worker.callTool({ name: 'wait_for', arguments: { timeoutSec: 5 } }))).toEqual({ event: 'inbox', unreadMessages: 1, queuedTasks: 0 });
+    // A wait_for result counts as shown too.
+    expect(data(await worker.callTool({ name: 'wait_for', arguments: { timeoutSec: 1 } }))).toEqual({ event: 'timeout' });
+    // A task that was blocked when read becomes news once its prerequisite completes.
+    const pre = data(await lead.callTool({ name: 'create_task', arguments: { cellId: h.reviewer.id, title: 'Pre', prompt: 'p' } }));
+    const dep = data(await lead.callTool({ name: 'create_task', arguments: { cellId: h.worker.id, title: 'Dep', prompt: 'p', dependsOn: [pre.id] } }));
+    expect(dep.blockedBy).toEqual([pre.id]);
+    await worker.callTool({ name: 'read_inbox' });
+    const reviewer = await connect(h, h.reviewer.id);
+    const waiting = worker.callTool({ name: 'wait_for', arguments: { timeoutSec: 10 } });
+    await new Promise((r) => setTimeout(r, 300));
+    await reviewer.callTool({ name: 'update_task', arguments: { taskId: pre.id, status: 'completed', result: { summary: 'ok' } } });
+    expect(data(await waiting)).toEqual({ event: 'inbox', unreadMessages: 0, queuedTasks: 1 });
+  });
+  it('lets workers wait only on their own tasks and denies cross-cell actions', async () => {
+    const h = await setup();
+    const lead = await connect(h, h.coordinator.id);
+    const worker = await connect(h, h.worker.id);
+    const other = data(await lead.callTool({ name: 'create_task', arguments: { cellId: h.reviewer.id, title: 'Secret', prompt: 'p' } }));
+    const mine = data(await lead.callTool({ name: 'create_task', arguments: { cellId: h.worker.id, title: 'Mine', prompt: 'p' } }));
+    const reviewer = await connect(h, h.reviewer.id);
+    await reviewer.callTool({ name: 'update_task', arguments: { taskId: other.id, status: 'blocked', blockedReason: 'private reason' } });
+    const peek = await worker.callTool({ name: 'wait_for', arguments: { taskIds: [other.id], timeoutSec: 1 } });
+    expect(peek.isError).toBe(true);
+    expect(text(peek)).toBe('Task not found.');
+    expect((await worker.callTool({ name: 'wait_for', arguments: { taskIds: [mine.id, other.id], timeoutSec: 1 } })).isError).toBe(true);
+    expect(data(await lead.callTool({ name: 'wait_for', arguments: { taskIds: [other.id], timeoutSec: 1 } }))).toMatchObject({ event: 'tasks', tasks: [{ id: other.id, blockedReason: 'private reason' }] });
+    const denied = [
+      await worker.callTool({ name: 'create_task', arguments: { cellId: h.reviewer.id, title: 'x', prompt: 'p' } }),
+      await worker.callTool({ name: 'update_agent', arguments: { cellId: h.coordinator.id, name: 'x' } }),
+      await worker.callTool({ name: 'update_agent', arguments: { name: 'x', profileId: 'codex' } }),
+      await worker.callTool({ name: 'update_agent', arguments: { restart: true } }),
+      await worker.callTool({ name: 'update_task', arguments: { taskId: other.id, status: 'cancelled' } }),
+    ];
+    expect(denied.map((r) => r.isError)).toEqual([true, true, true, true, true]);
+    // get_tasks is a coordinator tool: a worker calling it by name only ever sees its own tasks.
+    expect(JSON.stringify(data(await worker.callTool({ name: 'get_tasks', arguments: { cellId: h.reviewer.id } })))).not.toContain('Secret');
+    expect(h.controller.get().projects[0].tabs[0].cells[1].profileId).toBe('codex');
+    expect(h.controller.get().projects[0].tabs[0].cells[1].name).toBe('Backend');
+    expect(h.controller.get().automation.tasks.find((t) => t.id === other.id)!.status).toBe('blocked');
+  });
+  it('keeps a clipped message unread when acknowledging and returns it whole on request', async () => {
+    const h = await setup();
+    const lead = await connect(h, h.coordinator.id);
+    const worker = await connect(h, h.worker.id);
+    const long = 'm'.repeat(20000);
+    const longId = data(await lead.callTool({ name: 'send_message', arguments: { toCellId: h.worker.id, text: long } })).id;
+    const shortId = data(await lead.callTool({ name: 'send_message', arguments: { toCellId: h.worker.id, text: 'short' } })).id;
+    const first = data(await worker.callTool({ name: 'read_inbox', arguments: { acknowledge: true } }));
+    expect(first.messages.find((m: { id: string }) => m.id === longId).text).toContain('kept unread');
+    expect(first.messages.find((m: { id: string }) => m.id === longId).text.length).toBeLessThan(8200);
+    expect(first.acknowledgedMessageIds).toEqual([shortId]);
+    const stored = () => h.controller.get().automation.messages;
+    expect(stored().find((m) => m.id === longId)!.readAt).toBeUndefined();
+    expect(stored().find((m) => m.id === shortId)!.readAt).toBeDefined();
+    const second = data(await worker.callTool({ name: 'read_inbox', arguments: { acknowledge: true, full: true } }));
+    expect(second.messages).toHaveLength(1);
+    expect(second.messages[0].text).toBe(long);
+    expect(second.acknowledgedMessageIds).toEqual([longId]);
+    expect(stored().find((m) => m.id === longId)!.readAt).toBeDefined();
+  });
+  it('keeps old inputs working and old shapes for names that are not listed', async () => {
+    const h = await setup();
+    const lead = await connect(h, h.coordinator.id);
+    const worker = await connect(h, h.worker.id);
+    const task = data(await lead.callTool({ name: 'create_task', arguments: { cellId: h.worker.id, title: 'Legacy', prompt: 'Full prompt' } }));
+    // get_tasks is not listed for workers: the original call returns the original array of full records.
+    const records = data(await worker.callTool({ name: 'get_tasks', arguments: {} }));
+    expect(records).toMatchObject([{ id: task.id, prompt: 'Full prompt', projectId: h.project.id, cellId: h.worker.id, ready: true, blockedBy: [], delivery: 'pending' }]);
+    expect(data(await worker.callTool({ name: 'get_messages', arguments: {} }))).toEqual([]);
+    expect(data(await worker.callTool({ name: 'list_library', arguments: {} }))).toEqual({ snippets: [], presets: [] });
+    const added = data(await lead.callTool({ name: 'add_agents', arguments: { gridId: h.project.tabs[0].id, rows: [2, 2], cells: [{ profileId: 'codex', name: 'Late' }] } }));
+    expect(added.gridId).toBe(h.project.tabs[0].id);
+    expect(added.cellIds).toHaveLength(1);
+    // Listed tools keep accepting the old inputs.
+    expect((await lead.callTool({ name: 'get_tasks', arguments: { limit: 100 } })).isError).not.toBe(true);
+    expect((await worker.callTool({ name: 'read_inbox', arguments: { openOnly: false, offset: 0 } })).isError).not.toBe(true);
+    const sent = data(await lead.callTool({ name: 'send_message', arguments: { toCellId: h.worker.id, text: 'legacy ack' } }));
+    expect(data(await worker.callTool({ name: 'read_inbox', arguments: { acknowledge: true } })).acknowledgedMessageIds).toEqual([sent.id]);
   });
 });
 
@@ -327,19 +465,39 @@ describe('server hardening', () => {
     const internals = h.server as unknown as { tokens: Map<string, string>; tokenOf: Map<string, string>; buckets: Map<string, unknown>; inFlightByToken: Map<string, number> };
     expect([internals.tokens.size, internals.tokenOf.size, internals.buckets.size, internals.inFlightByToken.size]).toEqual([0, 0, 0, 0]);
   });
-  it('rate limits per token without affecting other cells, and refills over time', async () => {
-    const h = await setup({ rateLimit: { burst: 5, perSecond: 20 } });
+  it('rate limits per token with a monotonic clock: exact 429s, refill, no refill from a backwards step', async () => {
+    let clock = 1000;
+    const h = await setup({ rateLimit: { burst: 5, perSecond: 1 }, now: () => clock });
     const a = h.server.issueToken(h.worker.id);
     const b = h.server.issueToken(h.reviewer.id);
-    const statuses: number[] = [];
-    for (let i = 0; i < 12; i++) statuses.push((await post(h, a, { jsonrpc: '2.0', id: i, method: 'ping' })).status);
-    expect(statuses.filter((s) => s === 200).length).toBeGreaterThanOrEqual(5);
-    expect(statuses).toContain(429);
-    expect((await post(h, b, { jsonrpc: '2.0', id: 1, method: 'ping' })).status).toBe(200);
-    await new Promise((r) => setTimeout(r, 250));
-    expect((await post(h, a, { jsonrpc: '2.0', id: 1, method: 'ping' })).status).toBe(200);
-    const limited = await post(h, a, { jsonrpc: '2.0', id: 1, method: 'ping' }).then(() => post(h, a, { jsonrpc: '2.0', id: 1, method: 'ping' }));
-    expect([200, 429]).toContain(limited.status);
+    const ping = async (token: string) => (await post(h, token, { jsonrpc: '2.0', id: 1, method: 'ping' })).status;
+    const run = async (n: number) => { const out: number[] = []; for (let i = 0; i < n; i++) out.push(await ping(a)); return out; };
+    expect(await run(7)).toEqual([200, 200, 200, 200, 200, 429, 429]);
+    expect(await ping(b)).toBe(200);
+    const limited = await post(h, a, { jsonrpc: '2.0', id: 1, method: 'ping' });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBe('1');
+    clock += 2000;
+    expect(await run(3)).toEqual([200, 200, 429]);
+    // The clock jumps back an hour: nothing is refilled (and nothing breaks), the new time is the reference.
+    clock -= 3_600_000;
+    expect(await run(2)).toEqual([429, 429]);
+    clock += 1000;
+    expect(await run(2)).toEqual([200, 429]);
+    // A long idle period refills up to the burst only.
+    clock += 10_000_000;
+    expect(await run(7)).toEqual([200, 200, 200, 200, 200, 429, 429]);
+  });
+  it('does not spend rate budget on requests rejected by the in-flight cap', async () => {
+    const h = await setup({ rateLimit: { burst: 3, perSecond: 0.0001 }, maxInFlightPerToken: 1, now: () => 0 });
+    const token = h.server.issueToken(h.worker.id);
+    const call = (id: number, method: string, params?: unknown) => post(h, token, { jsonrpc: '2.0', id, method, params });
+    const waiting = call(1, 'tools/call', { name: 'wait_for', arguments: { timeoutSec: 1 } });
+    await new Promise((r) => setTimeout(r, 200));
+    for (let i = 0; i < 10; i++) expect((await call(10 + i, 'ping')).status).toBe(429);
+    await waiting;
+    // One token went to the wait_for, none to the ten rejected pings: two pings remain.
+    expect([(await call(2, 'ping')).status, (await call(3, 'ping')).status, (await call(4, 'ping')).status]).toEqual([200, 200, 429]);
   });
   it('caps simultaneous requests per token so a waiting agent cannot exhaust the server', async () => {
     const h = await setup({ rateLimit: false, maxInFlightPerToken: 2 });

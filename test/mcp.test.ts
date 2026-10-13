@@ -70,8 +70,10 @@ describe('local MCP over Streamable HTTP', () => {
       await client.connect(new StreamableHTTPClientTransport(new URL(f.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
       const peerEdit = await client.callTool({ name: 'update_agent', arguments: { cellId: f.coordinator.id, name: 'Denied' } });
       expect(peerEdit.isError).toBe(true);
-      const ownEdit = await client.callTool({ name: 'update_agent', arguments: { cellId: f.worker.id, name: 'Worker label', model: 'gpt-5.4' } });
-      expect(data(ownEdit)).toMatchObject({ needsRestart: true });
+      const ownEdit = await client.callTool({ name: 'update_agent', arguments: { cellId: f.worker.id, name: 'Worker label' } });
+      expect(data(ownEdit)).toEqual({ cellId: f.worker.id });
+      // Launch settings stay with coordinators, even for the agent's own cell.
+      expect((await client.callTool({ name: 'update_agent', arguments: { cellId: f.worker.id, model: 'gpt-5.4' } })).isError).toBe(true);
       const inbox = await client.callTool({ name: 'read_inbox', arguments: { acknowledge: true } });
       expect(data(inbox)).toEqual({ tasks: [], messages: [] });
       const forbidden = await client.callTool({ name: 'create_grid', arguments: { name: 'Denied', cells: [{ profileId: 'codex' }] } });

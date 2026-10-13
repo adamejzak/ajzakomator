@@ -20,7 +20,7 @@ Panel rozróżnia wymagany restart, skonfigurowane MCP oczekujące na agenta i f
 
 Przycisk **AI** otwiera panel agentów, zadań, wiadomości i aktywności. Zadania mają statusy kolejki, pracy, blokady, ukończenia i anulowania. Wynik może zawierać podsumowanie, pliki, gałąź, commit i informacje o testach. Wiadomości mają potwierdzenie przeczytania. Dane zapisują się razem ze stanem aplikacji.
 
-Zadania i wiadomości trafiają do trwałej skrzynki MCP. `read_inbox` odczytuje własne zadania i nieprzeczytane wiadomości razem; `acknowledge: true` zbiorczo potwierdza zwrócone wiadomości. Domyślnie zwraca tylko otwarte zadania (`closed: true` dodaje zamknięte). Agent sprawdza skrzynkę przy rozpoczęciu i zakończeniu zadania, a gdy nie ma pracy, używa `wait_for` zamiast odpytywać serwer: wywołanie czeka do `timeoutSec` (maks. 45 s) i wraca od razu, gdy pojawi się nieprzeczytana wiadomość albo zadanie gotowe do startu. Z `taskIds` koordynator czeka na ukończenie, zablokowanie lub anulowanie któregokolwiek (`all: true` - wszystkich) z podanych zadań, więc nie musi w pętli wywoływać `get_tasks`. Sam serwer nie gwarantuje obudzenia modelu. Potwierdzona, uruchomiona sesja Codexa może dodatkowo otrzymać treść przez `codex queue`. Potwierdzenie wymaga wybrania sesji z historii - dopasowanie pliku rozmowy na podstawie czasu nie wystarcza. Wersja Codexa musi obsługiwać tę komendę.
+Zadania i wiadomości trafiają do trwałej skrzynki MCP. `read_inbox` odczytuje własne zadania i nieprzeczytane wiadomości razem; `acknowledge: true` zbiorczo potwierdza zwrócone wiadomości. Domyślnie zwraca tylko otwarte zadania (`closed: true` dodaje zamknięte). Wiadomość dłuższa niż 8000 znaków wraca przycięta, ze znacznikiem, i pozostaje nieprzeczytana; całą pobiera się z `full: true` (to ją potwierdza). Gdy nie ma pracy, agent używa `wait_for` zamiast odpytywać serwer: wywołanie czeka do `timeoutSec` (maks. 45 s) i wraca od razu, gdy pojawi się nieprzeczytana wiadomość albo zadanie gotowe do startu, których agent jeszcze nie widział (elementy zwrócone przez `read_inbox` lub wcześniejsze `wait_for` nie budzą ponownie, więc `read_inbox` i `wait_for` nie tworzą pętli; zablokowane zadanie liczy się jako nowe, gdy jego zależności się ukończą; restart komórki zapomina, co pokazano). Z `taskIds` koordynator czeka na ukończenie, zablokowanie lub anulowanie któregokolwiek (`all: true` - wszystkich) z podanych zadań, więc nie musi w pętli wywoływać `get_tasks`; wykonawca może podać tylko własne zadania. Sam serwer nie gwarantuje obudzenia modelu. Potwierdzona, uruchomiona sesja Codexa może dodatkowo otrzymać treść przez `codex queue`. Potwierdzenie wymaga wybrania sesji z historii - dopasowanie pliku rozmowy na podstawie czasu nie wystarcza. Wersja Codexa musi obsługiwać tę komendę.
 
 Dla Claude oraz niepotwierdzonych sesji Codexa dostępne jest **Kopiuj prompt** i ręczne wklejenie do terminala. Błąd dostarczenia nie usuwa zadania. Można ponowić dostarczenie. Anulowanie zadania zmienia jego stan, ale nie przerywa pracy modelu.
 
@@ -44,25 +44,49 @@ Przykład polecenia: „Dodaj Backend i Reviewer do tego gridu, nadaj im różne
 | `read_inbox`, `wait_for` | Otwarte zadania i wiadomości razem; ograniczone w czasie oczekiwanie zamiast odpytywania | wszyscy |
 | `update_task`, `send_message` | Wynik zadania; wiadomość do agenta | wszyscy |
 | `snippets` | `action`: `list`, `get`, `save`, `apply` - biblioteka promptów i presetów | wszyscy |
-| `update_agent`, `help` | Nazwa, kolor, profil, model (własne; cudze tylko koordynator); dłuższe wyjaśnienia na żądanie | wszyscy |
+| `update_agent`, `help` | Nazwa i kolor (własne; wykonawca), profil, model, restart i cudzy agenci (tylko koordynator); dłuższe wyjaśnienia na żądanie | wszyscy |
 | `create_task`, `get_tasks`, `deliver` | Przydział zadań, widok zadań projektu (strony, `next`), ponowienie dostarczenia | koordynator |
 | `create_grid`, `update_grid`, `close_grid`, `save_preset` | Zespoły w tle (z `gridId` dopisuje komórki), nazwa i kolor gridu, archiwizacja, presety | koordynator |
 
-Lista narzędzi zależy od roli: wykonawca nie dostaje narzędzi ani schematów koordynatora. Dawne nazwy (`list_library`, `get_snippet`, `save_snippet`, `apply_snippet`, `add_agents`, `get_messages`, `acknowledge_message`, `deliver_task`, `deliver_message`, `get_tasks`, `create_task`) pozostają wywoływalne, ale nie są wypisywane, więc nie kosztują tokenów. Uprawnienia sprawdza usługa, a nie lista narzędzi.
+Lista narzędzi zależy od roli: wykonawca nie dostaje narzędzi koordynatora (`create_task`, `get_tasks`, `deliver`, `create_grid`, `update_grid`, `close_grid`, `save_preset`) ani ich schematów, a jego `update_agent` oferuje tylko nazwę i kolor. Koordynator widzi wszystkie. Dawne nazwy (`list_library`, `get_snippet`, `save_snippet`, `apply_snippet`, `add_agents`, `get_messages`, `acknowledge_message`, `deliver_task`, `deliver_message`) nigdy nie są wypisywane, ale pozostają wywoływalne z dawnymi parametrami i pełnymi rekordami w odpowiedzi - tak samo jak narzędzia koordynatora wywołane przez wykonawcę (wtedy rolę egzekwuje usługa). Niewypisane nazwy nie kosztują tokenów. Uprawnienia sprawdza usługa, a nie lista narzędzi; profil, model i restart agenta, także własnego, zmienia wyłącznie koordynator.
 
 Wyniki są zwięzłe: tworzenie zadania i wiadomości zwraca tylko `id` i stan dostarczenia, `update_task` - `id` i status, długie teksty kończą się znacznikiem `...[truncated N chars; full:true for all]`, a listy mają `next`. Odpowiedź to jeden blok tekstu JSON bez `structuredContent`, żeby klient nie liczył jej dwa razy.
 
 ## Koszt w tokenach
 
-Każdy agent z włączonym MCP płaci za definicje narzędzi i instrukcje w każdej rozmowie. Szacunek (znaki / 3,6): koordynator ok. 2200 tokenów (było 4425), wykonawca ok. 1260 (było 4425). Pomiar i opóźnienia: `node scripts/mcp-bench.mjs`.
+Każdy agent z włączonym MCP płaci za definicje narzędzi i instrukcje w każdej rozmowie. Szacunek (znaki / 3,6): koordynator ok. 2200 tokenów (było 4425), wykonawca ok. 1190 (było 4425). Pomiar i opóźnienia: `node scripts/mcp-bench.mjs`.
 
 Agent ma dostęp wyłącznie do swojego projektu. Wykonawca widzi własne zadania i wiadomości; koordynator widzi zadania projektu. Snippety globalne są do odczytu, a zapis przez agenta dotyczy projektu. Zmiany ról i pauza są dostępne wyłącznie użytkownikowi.
 
-Serwer Streamable HTTP nasłuchuje tylko na `127.0.0.1`, na losowym porcie. Każda komórka ma osobny token przekazywany przez środowisko, unieważniany po zakończeniu lub restarcie. Token nie trafia do argumentów procesu ani zapisanego stanu aplikacji. Żądania mają limit 256 KiB, a grid do 20 komórek. Serwer odrzuca obce nagłówki Host i Origin (ochrona przed DNS rebinding), ogranicza liczbę żądań na token (429) i liczbę jednoczesnych żądań na token, a token unieważnia przy zakończeniu, restarcie lub usunięciu roli komórki. Gridy tworzone przez agentów ograniczono do 100 komórek w projekcie; skrzynki do 500 zadań i 500 wiadomości, dziennik do 200 zdarzeń.
+Serwer Streamable HTTP nasłuchuje tylko na `127.0.0.1`, na losowym porcie. Każda komórka ma osobny token przekazywany przez środowisko, unieważniany po zakończeniu lub restarcie komórki albo utracie roli; unieważnienie przerywa też trwające żądania tego tokenu (oczekujące `wait_for` kończy się komunikatem "Agent connection has expired."). Token nie trafia do argumentów procesu ani zapisanego stanu aplikacji. Serwer odrzuca obce nagłówki Host i Origin (ochrona przed DNS rebinding). Liczbę żądań na token ogranicza koszyk żetonów na zegarze monotonicznym (serie do 120, 60 na sekundę, potem 429 z Retry-After) oraz liczba jednoczesnych żądań (8 na token, 256 łącznie, także 429; odrzucone żądania nie zużywają limitu). Żądania mają limit 256 KiB, a grid do 20 komórek. Gridy tworzone przez agentów ograniczono do 100 komórek w projekcie; skrzynki do 500 zadań i 500 wiadomości, dziennik do 200 zdarzeń.
 
 ## Claude Code i Codex
 
-Claude dostaje `--mcp-config` z plikiem komórki (`type: http`, nagłówek `Authorization: Bearer ${AJZ_MCP_TOKEN}`), Codex - `-c mcp_servers.ajzakomator.url=...` i `bearer_token_env_var="AJZ_MCP_TOKEN"`. Oba klienty łączą się z lokalnym serwerem i widzą te same narzędzia; schematy są płaskie (bez `$ref`, `anyOf` i typów `null`), bo Codex przekazuje je modelowi bez zmian. Narzędzia zmieniające tylko stan aplikacji mają `openWorldHint: false`, więc Codex nie pyta o zgodę przy każdym `update_task`; `create_grid` (uruchamia agentów) i `close_grid` (zatrzymuje je) zachowują pytanie o zgodę.
+Claude dostaje `--mcp-config` z plikiem komórki (`type: http`, nagłówek `Authorization: Bearer ${AJZ_MCP_TOKEN}`), Codex - `-c mcp_servers.ajzakomator.url=...` i `bearer_token_env_var="AJZ_MCP_TOKEN"`. Oba klienty łączą się z lokalnym serwerem i widzą te same narzędzia; schematy są płaskie (bez `$ref`, `anyOf` i typów `null`), bo Codex przekazuje je modelowi bez zmian.
+
+Wskazówki narzędzi uwzględnia tylko Codex: pyta użytkownika przed wywołaniem, chyba że narzędzie ma `readOnlyHint` albo `destructiveHint` i `openWorldHint` są fałszywe (Claude Code pyta według własnych reguł uprawnień). Ustawienia:
+
+| Wskazówki | Narzędzia |
+| --- | --- |
+| tylko odczyt, nie pyta | `get_context`, `list_agents`, `wait_for`, `get_tasks`, `help` |
+| zapis własnej pracy, nie pyta | `read_inbox` (z potwierdzeniem), `update_task` wykonawcy, `update_grid`, `save_preset` |
+| pyta (`openWorldHint: true`) | `send_message`, `create_task`, `deliver` (docierają do sesji innych agentów), `snippets` (zapisany snippet może być wysyłany automatycznie; `list` i `get` także pytają, bo wskazówka dotyczy całego narzędzia), `update_agent` (nazwa, kolor; koordynator także profil, model, restart), `create_grid` (uruchamia agentów i zużywa limity modeli) |
+| pyta (`destructiveHint: true`) | `close_grid` oraz `update_task` koordynatora (może anulować zadania innych komórek) |
+
+Użytkownik, który ufa zespołowi, może zatwierdzić narzędzia z góry w Codexie przez `default_tools_approval_mode` lub `tools.<nazwa>.approval_mode` w `[mcp_servers.ajzakomator]`.
+
+Połączenie można sprawdzić bez modelu: `node scripts/mcp-serve.mjs` uruchamia serwer z atrapami, a `claude mcp add --transport http ...` / `codex mcp add --url ... --bearer-token-env-var ...` z tymczasowym `CLAUDE_CONFIG_DIR` / `CODEX_HOME` oraz `claude mcp list` pokazują stan połączenia.
+
+## Migracja z 0.6.7
+
+Zamierzone zmiany dla klientów wywołujących dawne narzędzia po nazwie:
+
+- Odpowiedź to jeden blok tekstu JSON; `structuredContent` (`{ "result": ... }`) zniknęło.
+- Wypisane narzędzia zwracają zwięzłe kształty: `get_context` (`cellId`, `name`, `role`, `project`, liczniki `inbox`; profile tylko z `profiles: true`), `list_agents` (`{ agents, grids }` zamiast tablicy; szczegóły z `verbose`), `read_inbox` (tylko otwarte zadania bez `closed: true`, zamiast `hasMoreTasks`/`hasMoreMessages` jest `more`, brak `createdAt`/`projectId`; `acknowledgedMessageIds` zostaje), `get_tasks` (koordynator: `{ tasks, next }`, wiersze bez promptów bez `verbose`), `create_task`, `send_message`, `update_task`, `update_agent`, `create_grid`, `close_grid`, `update_grid`, `save_preset`, `snippets` (zwięzłe potwierdzenia zamiast zapisanego rekordu).
+- `read_inbox` przyjmuje dawne parametry (`limit` do 100, `offset`, `openOnly`); `get_tasks` przyjmuje `limit` do 100; domyślna strona to 20 i 25 zamiast 50.
+- `read_inbox` z `acknowledge: true` zostawia przycięte długie wiadomości jako nieprzeczytane.
+- Wykonawca nie zmienia już własnego profilu, modelu ani nie restartuje się; `wait_for` dotyczy tylko jego własnych zadań.
+- Niewypisane nazwy (`list_library`, `get_snippet`, `save_snippet`, `apply_snippet`, `add_agents`, `get_messages`, `acknowledge_message`, `deliver_task`, `deliver_message` oraz narzędzia koordynatora wywołane przez wykonawcę) zachowują dawne parametry i odpowiedzi.
 
 Połączenie można sprawdzić bez modelu: `node scripts/mcp-serve.mjs` uruchamia serwer z atrapami, a `claude mcp add --transport http ...` / `codex mcp add --url ... --bearer-token-env-var ...` z tymczasowym `CLAUDE_CONFIG_DIR` / `CODEX_HOME` oraz `claude mcp list` pokazują stan połączenia.
 

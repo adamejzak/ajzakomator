@@ -22,7 +22,7 @@ The Agents panel distinguishes **Restart required**, **MCP configured · waiting
 
 The **AI** button opens agents, tasks, messages and activity. Tasks move through queued, in-progress, blocked, completed and cancelled states. Completed results can include a summary, changed files, branch, commit and tests. Messages have read acknowledgements. The app persists these records with its local state.
 
-Tasks and messages always enter a durable MCP inbox. Agents use `read_inbox` to retrieve their open tasks and unread messages together (`closed: true` adds closed tasks); `acknowledge: true` also marks the returned messages as read. When idle, agents call `wait_for` instead of polling: it blocks up to `timeoutSec` (max 45 s) and returns at once when an unread message or a startable task arrives. With `taskIds`, a coordinator waits until any (`all: true`: every) listed task is completed, blocked or cancelled, so it does not loop on `get_tasks`. Inbox delivery does not guarantee that a running model will wake up or begin work. Verified running Codex sessions can also receive content through `codex queue`, if their CLI supports it. Verification requires explicitly selecting a session from history; transcript timestamp matching alone is insufficient.
+Tasks and messages always enter a durable MCP inbox. Agents use `read_inbox` to retrieve their open tasks and unread messages together (`closed: true` adds closed tasks); `acknowledge: true` also marks the returned messages as read. A message longer than 8000 characters is returned clipped with a marker and stays unread; fetch it whole with `full: true` (which acknowledges it). When idle, agents call `wait_for` instead of polling: it blocks up to `timeoutSec` (max 45 s) and returns at once when an unread message or a startable task arrives that the agent has not been shown yet (items already returned by `read_inbox` or an earlier `wait_for` do not wake it again, so `read_inbox` followed by `wait_for` cannot spin; a blocked task counts as new once its prerequisites complete; a restart of the cell forgets what was shown). With `taskIds`, a coordinator waits until any (`all: true`: every) listed task is completed, blocked or cancelled, so it does not loop on `get_tasks`; a worker may only list its own tasks. Inbox delivery does not guarantee that a running model will wake up or begin work. Verified running Codex sessions can also receive content through `codex queue`, if their CLI supports it. Verification requires explicitly selecting a session from history; transcript timestamp matching alone is insufficient.
 
 For Claude and unverified Codex sessions, use **Copy prompt** and paste into the terminal. A delivery failure does not delete the task; delivery can be retried. Cancelling a task changes its record but does not interrupt the model.
 
@@ -71,25 +71,49 @@ The worker should call `get_context` first, mark its assigned task `in_progress`
 | `read_inbox`, `wait_for` | Open tasks and unread messages together; bounded waiting instead of polling | all |
 | `update_task`, `send_message` | Report a task result; message an agent | all |
 | `snippets` | `action`: `list`, `get`, `save`, `apply` - prompt library and presets | all |
-| `update_agent`, `help` | Name, color, profile, model (own; others coordinator only); longer guidance on demand | all |
+| `update_agent`, `help` | Name and color (own; workers), profile, model, restart and other agents (coordinator only); longer guidance on demand | all |
 | `create_task`, `get_tasks`, `deliver` | Assign tasks, project task view (paged with `next`), retry delivery | coordinator |
 | `create_grid`, `update_grid`, `close_grid`, `save_preset` | Background teams (`gridId` appends cells), grid name/color, archive, presets | coordinator |
 
-The tool list depends on the role: a worker receives neither the coordinator tools nor their schemas. The previous names (`list_library`, `get_snippet`, `save_snippet`, `apply_snippet`, `add_agents`, `get_messages`, `acknowledge_message`, `deliver_task`, `deliver_message`, `get_tasks`, `create_task`) stay callable but are not listed, so they cost no tokens. Permissions are enforced by the service, not by the tool list.
+The tool list depends on the role: a worker receives neither the coordinator tools (`create_task`, `get_tasks`, `deliver`, `create_grid`, `update_grid`, `close_grid`, `save_preset`) nor their schemas, and its `update_agent` offers only name and color. Coordinators see all of them. The previous one-tool-per-operation names (`list_library`, `get_snippet`, `save_snippet`, `apply_snippet`, `add_agents`, `get_messages`, `acknowledge_message`, `deliver_task`, `deliver_message`) are never listed but stay callable with their original inputs and full output records, as do the coordinator tools for a worker (the service then enforces the role). Unlisted names cost no tokens. Permissions are enforced by the service, not by the tool list; only a coordinator may change profile, model or restart an agent, including its own.
 
 Results are compact: creating a task or message returns only `id` and delivery state, `update_task` returns `id` and status, long texts end with a `...[truncated N chars; full:true for all]` marker, and lists page with `next`. A reply is a single JSON text block without `structuredContent`, so a client never counts it twice.
 
 ## Token cost
 
-Every MCP-enabled agent pays for the tool definitions and instructions in every conversation. Estimate (characters / 3.6): coordinator about 2200 tokens (was 4425), worker about 1260 (was 4425). Measure it and the latencies with `node scripts/mcp-bench.mjs`.
+Every MCP-enabled agent pays for the tool definitions and instructions in every conversation. Estimate (characters / 3.6): coordinator about 2200 tokens (was 4425), worker about 1190 (was 4425). Measure it and the latencies with `node scripts/mcp-bench.mjs`.
 
 Agents are scoped to their own project. Workers see their own tasks and inbox; coordinators see project tasks. Agents can read global snippets, but write snippets in their project. Only the user changes roles or pauses automation.
 
-The Streamable HTTP server listens on `127.0.0.1` on a random port. Each cell receives its own environment token, invalidated when it ends, restarts or loses its role. Foreign Host and Origin headers are rejected (DNS-rebinding protection), requests are rate limited and capped per token (429), and bodies are limited to 256 KB. Tokens are not placed in process arguments or persisted app state.
+The Streamable HTTP server listens on `127.0.0.1` on a random port. Each cell receives its own environment token, invalidated when the cell ends, restarts or loses its role; revoking a token also aborts that token's requests in flight (a waiting `wait_for` ends with "Agent connection has expired."). Foreign Host and Origin headers are rejected (DNS-rebinding protection). Requests are limited per token by a monotonic-clock token bucket (burst 120, 60 per second, then 429 with Retry-After) and by simultaneous requests (8 per token, 256 in total, also 429; rejected requests do not spend rate budget). Bodies are limited to 256 KB. Tokens are not placed in process arguments or persisted app state.
 
 ## Claude Code and Codex
 
-Claude gets `--mcp-config` with a per-cell file (`type: http`, header `Authorization: Bearer ${AJZ_MCP_TOKEN}`); Codex gets `-c mcp_servers.ajzakomator.url=...` and `bearer_token_env_var="AJZ_MCP_TOKEN"`. Both connect to the local server and see the same tools. The schemas are flat (no `$ref`, `anyOf` or `null` types) because Codex passes them to the model unchanged. Tools that only change app state declare `openWorldHint: false`, so Codex does not ask for approval on every `update_task`; `create_grid` (starts agents) and `close_grid` (stops them) keep the approval prompt.
+Claude gets `--mcp-config` with a per-cell file (`type: http`, header `Authorization: Bearer ${AJZ_MCP_TOKEN}`); Codex gets `-c mcp_servers.ajzakomator.url=...` and `bearer_token_env_var="AJZ_MCP_TOKEN"`. Both connect to the local server and see the same tools. The schemas are flat (no `$ref`, `anyOf` or `null` types) because Codex passes them to the model unchanged.
+
+Only Codex honours the tool hints, and it asks the user before a call unless the tool is `readOnlyHint`, or both `destructiveHint` and `openWorldHint` are false (Claude Code asks according to its own permission rules). The hints are:
+
+| Hints | Tools |
+| --- | --- |
+| read-only, never asks | `get_context`, `list_agents`, `wait_for`, `get_tasks`, `help` |
+| quiet write (own work only) | `read_inbox` (acknowledging), `update_task` for workers, `update_grid`, `save_preset` |
+| asks (`openWorldHint: true`) | `send_message`, `create_task`, `deliver` (reach other agents' sessions), `snippets` (a saved snippet can be auto-sent; `list` and `get` ask too because a hint covers the whole tool), `update_agent` (name, color; for coordinators also profile, model, restart), `create_grid` (starts agents and spends model usage) |
+| asks (`destructiveHint: true`) | `close_grid`, and `update_task` for coordinators (it can cancel other cells' tasks) |
+
+A user who trusts the team can pre-approve tools in Codex with `default_tools_approval_mode` or `tools.<name>.approval_mode` under `[mcp_servers.ajzakomator]`.
+
+You can check the connection without a model: `node scripts/mcp-serve.mjs` starts the server with fake dependencies, then `claude mcp add --transport http ...` / `codex mcp add --url ... --bearer-token-env-var ...` with a temporary `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, and `claude mcp list`, show the connection state.
+
+## Migration from 0.6.7
+
+Intended changes for clients that called the old tools by name:
+
+- Replies are one JSON text block; `structuredContent` (`{ "result": ... }`) is gone.
+- Listed tools return compact shapes: `get_context` (`cellId`, `name`, `role`, `project`, `inbox` counts; profiles only with `profiles: true`), `list_agents` (`{ agents, grids }` instead of an array; details with `verbose`), `read_inbox` (open tasks only unless `closed: true`, no `hasMoreTasks`/`hasMoreMessages` but `more`, no `createdAt`/`projectId`; `acknowledgedMessageIds` is kept), `get_tasks` (coordinators: `{ tasks, next }` rows without prompts unless `verbose`), `create_task`, `send_message`, `update_task`, `update_agent`, `create_grid`, `close_grid`, `update_grid`, `save_preset`, `snippets` (compact acknowledgements instead of the stored record).
+- `read_inbox` accepts the old inputs (`limit` up to 100, `offset`, `openOnly`); `get_tasks` accepts `limit` up to 100; the default page is 20 and 25 instead of 50.
+- `read_inbox` with `acknowledge: true` leaves clipped long messages unread.
+- A worker can no longer change its own profile, model or restart; `wait_for` is limited to a worker's own tasks.
+- Unlisted names (`list_library`, `get_snippet`, `save_snippet`, `apply_snippet`, `add_agents`, `get_messages`, `acknowledge_message`, `deliver_task`, `deliver_message`, and coordinator tools called by workers) keep their previous inputs and outputs.
 
 You can check the connection without a model: `node scripts/mcp-serve.mjs` starts the server with fake dependencies, then `claude mcp add --transport http ...` / `codex mcp add --url ... --bearer-token-env-var ...` with a temporary `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, and `claude mcp list`, show the connection state.
 

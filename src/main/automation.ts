@@ -28,7 +28,14 @@ export class AutomationService {
   readonly statuses = new Map<string, AgentRuntimeStatus>();
   private pendingRestart = new Set<string>();
   /** Call on a confirmed runtime spawn so a user-initiated restart clears deferred launch settings. */
-  runtimeStarted(cellId: string): void { this.pendingRestart.delete(cellId); }
+  runtimeStarted(cellId: string): void { this.pendingRestart.delete(cellId); this.seenInbox.delete(cellId); }
+  /** Inbox items (unread message ids, startable task ids) an agent has already been shown; wait_for reports only new ones. */
+  private seenInbox = new Map<string, Set<string>>();
+  private seen(cellId: string): Set<string> {
+    let ids = this.seenInbox.get(cellId);
+    if (!ids) { ids = new Set(); this.seenInbox.set(cellId, ids); }
+    return ids;
+  }
   private delivering = new Set<string>();
   constructor(readonly state: StateController, private readonly deps: AutomationDependencies) {}
 
@@ -92,13 +99,17 @@ export class AutomationService {
         const tasks = own.map((t) => ({ ...t, blockedBy: this.blockedBy(t), ready: t.status === 'queued' && this.blockedBy(t).length === 0 })).slice(a.offset, a.offset + a.limit);
         const unread = snapshot.automation.messages.filter((m) => m.projectId === project.id && m.toCellId === actorId && !m.readAt);
         const messages = unread.slice(a.offset, a.offset + a.limit);
-        const acknowledgedMessageIds = a.acknowledge ? messages.map((m) => m.id) : [];
+        // A message longer than ackMaxChars was only shown clipped by the caller: it stays unread until fetched in full.
+        const acknowledgedMessageIds = a.acknowledge ? messages.filter((m) => a.ackMaxChars === undefined || m.text.length <= a.ackMaxChars).map((m) => m.id) : [];
         const readAt = Date.now();
         if (acknowledgedMessageIds.length) {
           const ids = new Set(acknowledgedMessageIds);
           this.state.change((s) => ({ ...s, automation: { ...s.automation, messages: s.automation.messages.map((m) => ids.has(m.id) && m.toCellId === actorId ? { ...m, readAt } : m) } }));
         }
-        return { tasks, messages: a.acknowledge ? messages.map((m) => ({ ...m, readAt })) : messages, acknowledgedMessageIds,
+        const seen = this.seen(actorId);
+        for (const m of messages) seen.add(m.id);
+        for (const t of tasks) if (t.ready) seen.add(t.id);
+        return { tasks, messages: messages.map((m) => acknowledgedMessageIds.includes(m.id) ? { ...m, readAt } : m), acknowledgedMessageIds,
           hasMoreTasks: own.length > a.offset + a.limit,
           hasMoreMessages: unread.length > a.offset + a.limit };
       }
@@ -282,6 +293,8 @@ export class AutomationService {
   }
   private async updateAgent(a: ReturnType<typeof automationSchemas.update_agent.parse>, actorId?: string) {
     if (actorId && actorId !== a.cellId) this.coordinator(actorId);
+    // Launch settings decide what an agent may run: a worker must not change its own profile or model, or restart itself.
+    if (actorId && (a.profileId !== undefined || a.model !== undefined || a.restart)) this.coordinator(actorId);
     const found = findCell(this.state.get(), a.cellId);
     if (!found || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent cell not found.');
     this.project(found.project.id, actorId);
@@ -427,6 +440,8 @@ export class AutomationService {
       const task = this.state.get().automation.tasks.find((t) => t.id === taskId);
       if (!task) throw new Error(`Task not found: ${taskId}`);
       this.project(task.projectId, actorId);
+      // Same visibility as get_tasks: workers only see their own tasks, coordinators the project's.
+      if (task.cellId !== actorId && this.role(actorId) !== 'coordinator') throw new Error('Task not found.');
     }
     const deadline = Date.now() + a.timeoutSec * 1000;
     let seen: AppState | undefined;
@@ -443,9 +458,13 @@ export class AutomationService {
             return { event: 'tasks', tasks: listed.map((t) => ({ id: t.id, status: t.status, summary: t.result?.summary, blockedReason: t.blockedReason })) };
           }
         } else {
-          const unread = snapshot.automation.messages.filter((m) => m.projectId === own.id && m.toCellId === actorId && !m.readAt).length;
-          const startable = tasks.filter((t) => t.projectId === own.id && t.cellId === actorId && t.status === 'queued' && this.blockedBy(t).length === 0).length;
-          if (unread || startable) return { event: 'inbox', unreadMessages: unread, queuedTasks: startable };
+          const seen = this.seen(actorId);
+          const unread = snapshot.automation.messages.filter((m) => m.projectId === own.id && m.toCellId === actorId && !m.readAt && !seen.has(m.id));
+          const startable = tasks.filter((t) => t.projectId === own.id && t.cellId === actorId && t.status === 'queued' && !seen.has(t.id) && this.blockedBy(t).length === 0);
+          if (unread.length || startable.length) {
+            for (const item of [...unread, ...startable]) seen.add(item.id);
+            return { event: 'inbox', unreadMessages: unread.length, queuedTasks: startable.length };
+          }
         }
       }
       const left = deadline - Date.now();

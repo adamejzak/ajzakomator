@@ -339,3 +339,26 @@ describe('closing grids through MCP', () => {
     expect(f.controller.get().automation.tasks.find((t) => t.cellId === created.cellIds[0])?.status).toBe('cancelled');
   });
 });
+
+describe('review fixes: ownership, launch settings, inbox acknowledgement', () => {
+  it('lets only coordinators change launch settings and wait on other cells\' tasks', async () => {
+    const f = automationFixture();
+    for (const patch of [{ model: 'gpt-5.4' }, { profileId: 'codex' }, { restart: true }]) {
+      await expect(f.service.execute('update_agent', { cellId: f.worker.id, ...patch }, f.worker.id)).rejects.toThrow('coordinator');
+    }
+    await f.service.execute('update_agent', { cellId: f.worker.id, name: 'Own name' }, f.worker.id);
+    const task = await f.service.execute('create_task', { cellId: f.coordinator.id, title: 'Lead only', prompt: 'p' }, f.coordinator.id) as AgentTask;
+    await expect(f.service.execute('wait_for', { taskIds: [task.id], timeoutSec: 1 }, f.worker.id)).rejects.toThrow('Task not found.');
+    await f.service.execute('update_task', { taskId: task.id, status: 'blocked', blockedReason: 'private' }, f.coordinator.id);
+    expect(await f.service.execute('wait_for', { taskIds: [task.id], timeoutSec: 1 }, f.coordinator.id)).toMatchObject({ event: 'tasks' });
+  });
+  it('acknowledges only messages up to ackMaxChars', async () => {
+    const f = automationFixture();
+    const long = await f.service.execute('send_message', { toCellId: f.worker.id, text: 'x'.repeat(50) }, f.coordinator.id) as { id: string };
+    const short = await f.service.execute('send_message', { toCellId: f.worker.id, text: 'ok' }, f.coordinator.id) as { id: string };
+    const inbox = await f.service.execute('read_inbox', { acknowledge: true, ackMaxChars: 10 }, f.worker.id) as { messages: Array<{ id: string; readAt?: number }>; acknowledgedMessageIds: string[] };
+    expect(inbox.acknowledgedMessageIds).toEqual([short.id]);
+    expect(inbox.messages.find((m) => m.id === long.id)!.readAt).toBeUndefined();
+    expect(f.controller.get().automation.messages.find((m) => m.id === long.id)!.readAt).toBeUndefined();
+  });
+});

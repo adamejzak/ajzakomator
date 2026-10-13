@@ -80,7 +80,7 @@ const gridLayout = z.object({
 }).strict();
 export const automationSchemas = {
   get_context: z.object({}).strict(),
-  read_inbox: z.object({ acknowledge: z.boolean().default(false), openOnly: z.boolean().default(false), limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).default(0) }).strict(),
+  read_inbox: z.object({ acknowledge: z.boolean().default(false), openOnly: z.boolean().default(false), ackMaxChars: z.number().int().min(1).max(32000).optional(), limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).default(0) }).strict(),
   list_agents: z.object({ projectId: id.optional() }).strict(),
   list_library: z.object({ projectId: id.optional() }).strict(),
   get_snippet: z.object({ snippetId: id }).strict(),
