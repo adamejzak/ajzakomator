@@ -8,6 +8,7 @@ import { StateSync } from '../../shared/stateSync';
 import type { McpInfo } from '../../shared/automation';
 import type { LoginTarget } from '../../shared/accounts';
 import type { CliId, CliStatusMap } from '../../shared/cliStatus';
+import type { GitDiffSource } from '../../shared/git';
 
 export type Modal =
   | { kind: 'grid'; projectId: string }
@@ -17,6 +18,7 @@ export type Modal =
   | { kind: 'snippet'; snippetId: string | null; projectId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'file'; projectId: string; relativePath: string }
+  | { kind: 'gitDiff'; projectId: string; worktree?: string; source: GitDiffSource; path: string; oldPath?: string; hash?: string }
   | { kind: 'auth'; provider: 'claude' | 'codex'; target: LoginTarget };
 
 export type Dialog =

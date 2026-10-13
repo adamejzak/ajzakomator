@@ -8,11 +8,13 @@
 //   unavailableReason optional: the tile is shown but disabled, with this reason as its tooltip
 import type { ComponentType, ReactNode } from 'react';
 import type { MessageKey } from '../../shared/i18n';
-import type { PanelContext, PanelDef } from '../../shared/sidebarPanels';
+import { gitPanelReason, type PanelContext, type PanelDef } from '../../shared/sidebarPanels';
 import { FilesPanel } from './components/FilesPanel';
-import { TFiles, TProjects } from './components/icons';
+import { GitPanel } from './components/GitPanel';
+import { TFiles, TGit, TProjects, TTerminal } from './components/icons';
 import type { PanelResizeProps } from './components/PanelResizeHandle';
 import { ProjectsPanel } from './components/ProjectsPanel';
+import { TerminalPanel } from './components/TerminalPanel';
 
 export interface PanelProps { resize: PanelResizeProps }
 
@@ -26,4 +28,7 @@ export interface SidebarPanel extends Omit<PanelDef, 'unavailableReason'> {
 export const SIDEBAR_PANELS: readonly SidebarPanel[] = [
   { id: 'projects', label: 'Projekty', icon: TProjects, component: ProjectsPanel },
   { id: 'files', label: 'Pliki', icon: TFiles, component: FilesPanel, unavailableReason: (ctx) => (ctx.hasProject ? null : 'Najpierw dodaj projekt') },
+  // Git needs a project that is a repository (the tile is disabled, with the reason as its tooltip, otherwise); Terminal is always there.
+  { id: 'git', label: 'Git', icon: TGit, component: GitPanel, unavailableReason: gitPanelReason },
+  { id: 'terminal', label: 'Terminal', icon: TTerminal, component: TerminalPanel },
 ];

@@ -1,0 +1,15 @@
+.terminal-panel { overflow-y: auto; }
+.terminal-actions { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px 12px; border-bottom: 1px solid var(--border); }
+.terminal-actions .btn { width: 100%; justify-content: flex-start; gap: 7px; white-space: nowrap; overflow: hidden; }
+.terminal-actions .btn svg { flex: none; }
+.terminal-sections { padding: 4px 0 12px; }
+.terminal-heading { margin: 10px 14px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+.terminal-source { display: flex; align-items: center; gap: 2px; padding: 0 6px 0 4px; }
+.terminal-source-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); text-align: left; cursor: pointer; }
+.terminal-source-main:hover { background: var(--bg-hover); color: var(--text); }
+.terminal-source-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.terminal-source-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.terminal-source-detail { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.terminal-source .btn { flex: none; opacity: 0; }
+.terminal-source:hover .btn, .terminal-source:focus-within .btn { opacity: 1; }
+.terminal-empty { margin: 4px 14px 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }

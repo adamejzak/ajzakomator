@@ -1,6 +1,7 @@
+import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_PANEL, panelOpenable, railClick, railFocusTarget, resolvePanelId, visiblePanels, type PanelContext, type PanelDef,
+  DEFAULT_PANEL, gitPanelReason, panelOpenable, railClick, railFocusTarget, resolvePanelId, visiblePanels, type PanelContext, type PanelDef,
 } from '../src/shared/sidebarPanels';
 import { defaultState, normalizeState } from '../src/shared/state';
 
@@ -59,5 +60,36 @@ describe('persisted layout of the left panel', () => {
     const repaired = normalizeState(JSON.parse(JSON.stringify({ ...defaultState(), sidebarCollapsed: 'yes', sidebarWidth: 5000 })))!;
     expect(typeof repaired.sidebarCollapsed).toBe('boolean');
     expect(repaired.sidebarWidth).toBe(480);
+  });
+});
+
+describe('git and terminal tiles', () => {
+  const git: PanelDef = { id: 'git', unavailableReason: gitPanelReason };
+  const base: PanelContext = { hasProject: true, platform: 'win32' };
+
+  it('opens Git only for a project that is a repository on a machine with git', () => {
+    expect(gitPanelReason({ ...base, git: 'repo' })).toBeNull();
+    expect(gitPanelReason({ ...base, git: null })).toBeNull(); // not probed yet: never blocks
+    expect(gitPanelReason(base)).toBeNull();
+    expect(gitPanelReason({ ...base, git: 'no-repo' })).toBe('To nie jest repozytorium git');
+    expect(gitPanelReason({ ...base, git: 'no-git' })).toBe('Nie znaleziono gita. Zainstaluj Git (git-scm.com).');
+    expect(gitPanelReason({ hasProject: false, platform: 'win32', git: 'repo' })).toBe('Najpierw dodaj projekt');
+  });
+
+  it('shows the Git tile disabled (not hidden) and falls back to the default panel', () => {
+    const ctx: PanelContext = { ...base, git: 'no-repo' };
+    expect(visiblePanels([git], ctx).map((d) => d.id)).toEqual(['git']);
+    expect(panelOpenable(git, ctx)).toBe(false);
+    expect(resolvePanelId([git], 'git', ctx)).toBe(DEFAULT_PANEL);
+    expect(resolvePanelId([git], 'git', { ...base, git: 'repo' })).toBe('git');
+  });
+
+  it('keeps the rail order Projects, Files, Git, Terminal and the Terminal tile always on', () => {
+    const source = readFileSync('src/renderer/src/panelRegistry.tsx', 'utf8');
+    const entries = source.split(/\r?\n/).filter((line) => /^\s*\{ id: '/.test(line));
+    expect(entries.map((line) => /id: '([a-z]+)'/.exec(line)![1])).toEqual(['projects', 'files', 'git', 'terminal']);
+    const terminal = entries.find((line) => line.includes("id: 'terminal'"))!;
+    expect(terminal).not.toMatch(/available|unavailableReason/);
+    expect(entries.find((line) => line.includes("id: 'git'"))).toContain('unavailableReason: gitPanelReason');
   });
 });

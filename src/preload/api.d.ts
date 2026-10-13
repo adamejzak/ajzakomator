@@ -12,6 +12,7 @@ import type { UsageState } from '../shared/usage';
 import type { LoginRequest, LoginState, SwapResult } from '../shared/accounts';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
 import type { CreateResult, DeleteResult, FileOpProgress, FileOpRequest, FileOpResult, RenameResult } from '../shared/fileOps';
+import type { GitApi } from '../shared/git';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
 export type { SessionInfo };
@@ -81,6 +82,8 @@ export interface McApi {
   isGitRepo(path: string): Promise<boolean>;
   createWorktree(projectPath: string, name: string): Promise<Worktree>;
   removeWorktree(projectPath: string, wt: Worktree, deleteBranch: boolean): Promise<void>;
+  /** The Git panel (see shared/git.ts): every call names a project; main resolves the folder and validates the request. */
+  git: GitApi;
   notify(n: { title: string; body: string; cellId: string }): void;
   openExternal(url: string): void;
   openPath(path: string): void;

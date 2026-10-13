@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { useI18n } from '../i18n';
 import { activeProject } from '../../../shared/state';
+import { useGitProbe, useGitProbeSync } from '../git/gitProbe';
 import { panelOpenable, railClick, railFocusTarget, resolvePanelId, visiblePanels } from '../../../shared/sidebarPanels';
 import { SIDEBAR_PANELS } from '../panelRegistry';
 import { setUi, update, useStore } from '../store';
@@ -16,8 +17,12 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
   const collapsed = useStore((st) => st.s.sidebarCollapsed);
   const wanted = useStore((st) => st.ui.sidebarView);
   const hasProject = useStore((st) => !!activeProject(st.s));
+  const projectId = useStore((st) => activeProject(st.s)?.id);
+  const projectPath = useStore((st) => activeProject(st.s)?.path);
+  useGitProbeSync(projectId, projectPath);
+  const git = useGitProbe(projectId);
   const rail = useRef<HTMLDivElement>(null);
-  const ctx = { hasProject, platform: window.mc.platform };
+  const ctx = { hasProject, platform: window.mc.platform, git };
   const panels = visiblePanels(SIDEBAR_PANELS, ctx);
   const view = resolvePanelId(panels, wanted, ctx);
   const active = panels.find((panel) => panel.id === view) ?? panels[0];

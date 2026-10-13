@@ -6,6 +6,7 @@ import { automationMessages } from './automationMessages';
 import { cliMessages } from './cliMessages';
 import { codexMessages } from './codexMessages';
 import { filesMessages } from './filesMessages';
+import { gitMessages } from './gitMessages';
 import { gridMessages } from './gridMessages';
 import { macUpdateMessages } from './macUpdateMessages';
 import { perfMessages } from './perfMessages';
@@ -14,6 +15,7 @@ import { shortcutMessages } from './shortcutMessages';
 import { statusMessages } from './statusMessages';
 import { swapMessages } from './swapMessages';
 import { termMessages } from './termMessages';
+import { terminalPanelMessages } from './terminalPanelMessages';
 import { updateMessages } from './updateMessages';
 import { usageMessages } from './usageMessages';
 import { uxMessages } from './uxMessages';
@@ -24,6 +26,7 @@ export const messages = {
   ...cliMessages,
   ...codexMessages,
   ...filesMessages,
+  ...gitMessages,
   ...gridMessages,
   ...macUpdateMessages,
   ...perfMessages,
@@ -32,6 +35,7 @@ export const messages = {
   ...statusMessages,
   ...swapMessages,
   ...termMessages,
+  ...terminalPanelMessages,
   ...updateMessages,
   ...usageMessages,
   ...uxMessages,

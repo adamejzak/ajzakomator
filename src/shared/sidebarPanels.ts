@@ -1,8 +1,11 @@
 // Logic of the left panel rail (the tiles that switch panels). The registry itself, with icons and components, lives in
 // the renderer (panelRegistry.ts); this file holds what can be tested without a DOM.
+import type { GitProbe } from './git';
+import type { MessageKey } from './i18n';
 import type { AppPlatform } from './platform';
 
-export interface PanelContext { hasProject: boolean; platform: AppPlatform }
+/** `git`: what a probe of the active project found (null: not known yet, which never blocks the tile). */
+export interface PanelContext { hasProject: boolean; platform: AppPlatform; git?: GitProbe | null }
 
 /** What the rail needs to know about a panel. */
 export interface PanelDef {
@@ -14,6 +17,14 @@ export interface PanelDef {
 }
 
 export const DEFAULT_PANEL = 'projects';
+
+/** The Git tile needs a project that is a git repository on a machine that has git. */
+export function gitPanelReason(ctx: PanelContext): MessageKey | null {
+  if (!ctx.hasProject) return 'Najpierw dodaj projekt';
+  if (ctx.git === 'no-repo') return 'To nie jest repozytorium git';
+  if (ctx.git === 'no-git') return 'Nie znaleziono gita. Zainstaluj Git (git-scm.com).';
+  return null;
+}
 
 export function visiblePanels<T extends PanelDef>(defs: readonly T[], ctx: PanelContext): T[] {
   return defs.filter((def) => def.available?.(ctx) !== false);
