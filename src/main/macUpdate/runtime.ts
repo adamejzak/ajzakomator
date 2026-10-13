@@ -4,6 +4,7 @@ import { app, net } from 'electron';
 import * as fsp from 'fs/promises';
 import { posix } from 'path';
 import { MAC_FEED_URL, macAssetBase, MacUpdater, type ExecResult } from './engine';
+import { createNetFetch, type NetRequestLike } from './netFetch';
 
 /** The environment of the update script: it must not depend on whatever the app was started with. */
 const SCRIPT_ENV = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: process.env.HOME ?? '', LANG: 'en_US.UTF-8' };
@@ -42,8 +43,8 @@ export function createMacUpdater(devFeed: string | undefined, log: (line: string
     updateDir: posix.join(app.getPath('userData'), 'updates', 'mac'),
     feedUrl: base ? `${base}latest-mac.yml` : MAC_FEED_URL,
     assetBase: (version) => base ?? macAssetBase(version),
-    // net.fetch follows the system proxy settings, like the rest of Chromium.
-    fetch: (url, init) => net.fetch(url, init as never) as unknown as Promise<Response>,
+    // net.request keeps Chromium's proxy and certificate handling; redirects are followed hop by hop after a host check.
+    fetch: createNetFetch({ request: (options) => net.request(options) as unknown as NetRequestLike, trustedOrigins: base ? [new URL(base).origin] : undefined }),
     fs: fsp,
     exec,
     spawnDetached,

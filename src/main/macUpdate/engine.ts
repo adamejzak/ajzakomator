@@ -156,7 +156,15 @@ export class MacUpdater {
         await this.note(`request refused: ${current} is not an https GitHub address`);
         throw fail(MAC_MESSAGES.server);
       }
-      const response = await this.d.fetch(current, { headers: { 'User-Agent': 'ajzakomator-updater', 'Cache-Control': 'no-cache', Pragma: 'no-cache' }, signal, redirect: 'manual' });
+      let response: Response;
+      try {
+        // The injected fetch may follow (checked) redirects itself; any 3xx that still arrives is checked below.
+        response = await this.d.fetch(current, { headers: { 'User-Agent': 'ajzakomator-updater', 'Cache-Control': 'no-cache', Pragma: 'no-cache' }, signal, redirect: 'manual' });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        await this.note(`request failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw fail(MAC_MESSAGES.server);
+      }
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get('location');
         await response.body?.cancel().catch(() => {});

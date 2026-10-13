@@ -603,3 +603,11 @@ describe('MacUpdater redirects', () => {
     expect((await dev.updater.check()).offer?.url).toBe(`http://localhost:8080/${ZIP_NAME}`);
   });
 });
+
+describe('MacUpdater with a fetch that rejects', () => {
+  it('reports a refused or failed request as a server error and logs the reason', async () => {
+    const h = harness({ fetch: async () => { throw new Error('redirect to an address that is not allowed: https://evil.example.com/a'); } });
+    await expect(h.updater.check()).rejects.toThrow(MAC_MESSAGES.server);
+    expect(h.mem.text(`${DIR}/update.log`)).toContain('not allowed');
+  });
+});
