@@ -438,6 +438,26 @@ class TerminalManager {
     }
   }
 
+  /**
+   * Fits a terminal that is not shown yet to the box its cell will get, so a background start spawns the pty at the right
+   * size (no resize and redraw when the grid is opened later). Nothing is sent to the pty; the spawn reads `size()`.
+   */
+  presize(cellId: string, width: number, height: number): void {
+    const e = this.entries.get(cellId);
+    if (!e || e.attachedTo || width < 100 || height < 60) return;
+    e.host.style.width = `${Math.floor(width)}px`;
+    e.host.style.height = `${Math.floor(height)}px`;
+    try {
+      e.fit.fit();
+      e.lastSize = { cols: e.term.cols, rows: e.term.rows };
+    } catch {
+      // keep the default size
+    } finally {
+      e.host.style.width = '';
+      e.host.style.height = '';
+    }
+  }
+
   /** Re-sends the current size (e.g. right after a spawn that raced with a resize). */
   syncSize(cellId: string): void {
     const e = this.entries.get(cellId);

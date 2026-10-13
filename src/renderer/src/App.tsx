@@ -4,6 +4,7 @@ import { fitPanelWidths, MIN_WORKSPACE_WIDTH, type Panel } from '../../shared/pa
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { isAuxPtyId } from '../../shared/cliInstall';
 import { alertForStatus } from './alerts';
+import { initBackgroundLoader } from './backgroundLoader';
 import { applyCliStatus, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
@@ -115,6 +116,7 @@ async function boot(): Promise<void> {
   for (const task of state.automation.tasks) {
     if (!['completed', 'cancelled'].includes(task.status)) ensureStarted(task.cellId);
   }
+  initBackgroundLoader();
 }
 
 /**

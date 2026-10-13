@@ -2,7 +2,7 @@ import { tr } from './i18n';
 // High-level user actions: they combine state transitions with pty/terminal side effects.
 import type { GridLayout } from '../../shared/layout';
 import { normalizeProjectPath } from '../../shared/platform';
-import { layoutForCount } from '../../shared/layout';
+import { areaRects, layoutForCount } from '../../shared/layout';
 import {
   activeProject, activeTab, addCell, addProject, addTab, closeTab as closeTabState, findCell, getProfile,
   removeCell as removeCellState, removeProject as removeProjectState, restoreTab, setActiveProject, setActiveTab,
@@ -35,6 +35,7 @@ export function setAliveAtStart(ids: string[]): void {
 
 export function resetStarted(): void {
   started.clear();
+  skippedInBackground.clear();
   aliveAtStart.clear();
   setUi((ui) => ({ epoch: ui.epoch + 1 }));
 }
@@ -57,16 +58,60 @@ export function ensureTerminal(cellId: string): void {
 
 /** Starts the cell's terminal once per session (resuming its conversation when it has one). */
 export function ensureStarted(cellId: string): void {
-  if (started.has(cellId)) return;
+  void startOnce(cellId);
+}
+
+/** The cell's start was requested in this renderer session. */
+export const isStarted = (cellId: string): boolean => started.has(cellId);
+
+function startOnce(cellId: string, beforeSpawn?: (cellId: string) => void): Promise<void> {
+  if (started.has(cellId)) return Promise.resolve();
   started.add(cellId);
   ensureTerminal(cellId);
   // pty survived a renderer reload; its output is replayed
   if (aliveAtStart.delete(cellId)) {
     terminals.beginCodex(cellId, findCell(getS(), cellId)?.cell.session);
+    return Promise.resolve();
+  }
+  beforeSpawn?.(cellId);
+  const cell = findCell(getS(), cellId)?.cell;
+  return spawnCell(cellId, cell?.session ? 'resume' : 'new');
+}
+
+/** Cells the background loader found it cannot start (missing worktree folder): they start, and report it, once opened. */
+const skippedInBackground = new Set<string>();
+export const needsBackgroundStart = (cellId: string): boolean => {
+  if (started.has(cellId) || skippedInBackground.has(cellId)) return false;
+  const found = findCell(getS(), cellId);
+  return !!found && !getUi().missingPaths[found.project.id];
+};
+
+/**
+ * Starts a cell that is not on screen, by the same rules as opening it (resume or new, held while its CLI is missing, MCP role,
+ * one-shot startup prompt, alive pty survivors). Its terminal is created off-screen and fitted to the box the cell will get.
+ */
+export async function startCellInBackground(cellId: string): Promise<void> {
+  if (!needsBackgroundStart(cellId)) return;
+  const found = findCell(getS(), cellId)!;
+  if (found.cell.worktree && !(await window.mc.pathExists(found.cell.worktree.path))) {
+    skippedInBackground.add(cellId);
     return;
   }
-  const cell = findCell(getS(), cellId)?.cell;
-  void spawnCell(cellId, cell?.session ? 'resume' : 'new');
+  if (!needsBackgroundStart(cellId)) return; // opened or closed meanwhile
+  await startOnce(cellId, presizeForLayout);
+}
+
+/** Pixel box of a cell body, from the workspace size and the grid layout (the same maths the real layout uses). */
+function presizeForLayout(cellId: string): void {
+  const found = findCell(getS(), cellId);
+  const area = document.querySelector('.terminal-workspace .grid') ?? document.querySelector('.workspace-content');
+  const rect = area?.getBoundingClientRect();
+  if (!found || !rect || rect.width < 200 || rect.height < 120) return;
+  const rects = areaRects(found.tab.layout);
+  const r = rects[found.tab.cells.findIndex((c) => c.id === cellId)];
+  if (!r) return;
+  const head = document.querySelector<HTMLElement>('.cell-head')?.offsetHeight ?? 30;
+  terminals.presize(cellId, (r.x1 - r.x0) * rect.width - 1 - 8, (r.y1 - r.y0) * rect.height - 1 - head - 4);
 }
 
 export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise<void> {
@@ -223,6 +268,7 @@ function killAndDispose(cellId: string): void {
 export function releaseCellTerminal(cellId: string): void {
   terminals.dispose(cellId);
   started.delete(cellId);
+  skippedInBackground.delete(cellId);
   unhold(cellId);
   forcedCells.delete(cellId);
   aliveAtStart.delete(cellId);

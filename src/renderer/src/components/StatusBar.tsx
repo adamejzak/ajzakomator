@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useI18n } from '../i18n';
 import { setUi } from '../store';
+import { BackgroundLoadHint } from './BackgroundLoadHint';
 import { IChangelog } from './icons';
 import { RefreshIcon, useHoldBusy } from './Spinner';
 import { formatUpdateBytes, requestUpdateCheck, useUpdateState } from './UpdateBadge';
@@ -64,6 +65,7 @@ export function StatusBar() {
     <footer className="statusbar">
       {currentVersion && <span className="sb-version" title={tr('Wersja {version}', { version: currentVersion })}>v{currentVersion}</span>}
       {shown}
+      <BackgroundLoadHint />
       <span className="sb-spacer" />
       <button className="sb-btn" onClick={() => setUi({ modal: { kind: 'changelog' } })} title={tr('Co nowego')} aria-label={tr('Co nowego')}><IChangelog />{tr('Co nowego')}</button>
     </footer>

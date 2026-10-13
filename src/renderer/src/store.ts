@@ -55,6 +55,8 @@ export interface Ui {
   install: { cli: CliId; locked: boolean } | null;
   /** Cells whose start was skipped because their CLI is not installed (they show the install card and start by themselves once it is found). */
   heldCells: Record<string, true>;
+  /** Progress of the background loader while it still has cells to start (null otherwise). */
+  backgroundLoad: { done: number; total: number } | null;
 }
 
 interface Store {
@@ -92,6 +94,7 @@ export const useStore = create<Store>((set, get) => ({
     cliStatus: {},
     install: null,
     heldCells: {},
+    backgroundLoad: null,
   },
   ready: false,
   update(fn) {

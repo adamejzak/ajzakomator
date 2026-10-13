@@ -8,8 +8,16 @@ import { AlertsSettings } from './AlertsSettings';
 import { isLanguage, LANGUAGES } from '../../../shared/languages';
 import { shellsForPlatform } from '../../../shared/platform';
 import { USAGE_INTERVALS_MINUTES } from '../../../shared/usage';
+import { BACKGROUND_LOAD_MODES, normalizeBackgroundLoad, type BackgroundLoadMode } from '../../../shared/backgroundLoad';
+import type { MessageKey } from '../../../shared/i18n';
 import { IX, TSettings } from './icons';
 
+const BACKGROUND_LABEL: Record<BackgroundLoadMode, MessageKey> = { visible: 'Tylko widoczne (jak dotąd)', project: 'Zakładki aktywnego projektu', all: 'Wszystkie projekty' };
+const BACKGROUND_HINT: Record<BackgroundLoadMode, MessageKey> = {
+  visible: 'Sesje startują dopiero po otwarciu zakładki. Zakładki bez uruchomionych sesji nie pokazują statusu ani alertów.',
+  project: 'Pozostałe zakładki aktywnego projektu startują w tle. Inne projekty startują po otwarciu.',
+  all: 'Zakładki wszystkich projektów startują w tle, po kolei. Zużywa więcej pamięci i procesora.',
+};
 const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia i dźwięki", "Aktualizacje", "Konta AI", "Profile agentów"] as const;
 export function SettingsPage() {
   const { tr, language } = useI18n();
@@ -71,6 +79,14 @@ export function SettingsPage() {
             </select>
           </div>
 
+        </div>
+        <div className="field">
+          <label htmlFor="settings-background-load">{tr('Wczytywanie sesji w tle po uruchomieniu')}</label>
+          <select id="settings-background-load" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.backgroundLoad}
+            onChange={(e) => setSetting({ backgroundLoad: normalizeBackgroundLoad(e.target.value) })}>
+            {BACKGROUND_LOAD_MODES.map((mode) => <option key={mode} value={mode}>{tr(BACKGROUND_LABEL[mode])}</option>)}
+          </select>
+          <span className="muted">{tr(BACKGROUND_HINT[s.settings.backgroundLoad])}</span>
         </div>
       </>}
       {section === 2 && <AlertsSettings />}

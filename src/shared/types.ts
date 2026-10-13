@@ -3,6 +3,7 @@ import type { Language } from './languages';
 import type { AlertSettings } from './alerts';
 import type { UpdateMode } from './updateMode';
 import type { AgentRole, AutomationState } from './automation';
+import type { BackgroundLoadMode } from './backgroundLoad';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
 
@@ -116,6 +117,8 @@ export interface Settings {
   usageCollapsed: boolean;
   /** Notifications and sounds for the agent events (finished, needs you, error); replaces the retired `notifications` and `waitingSound*` keys. */
   alerts: AlertSettings;
+  /** Which grids start in the background after launch (see shared/backgroundLoad.ts). */
+  backgroundLoad: BackgroundLoadMode;
 }
 
 export interface AppState {

@@ -92,6 +92,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 - Right-click projects, grids, snippets, files, or empty panel space for their actions; click the project editor's avatar to choose an image
 - Updates for the installed Windows app and for the macOS app (never without your click); portable Windows builds link to the download page
 - Polish, English, German, Spanish, French and Portuguese UI: choose on first launch, change anytime in Settings
+- Sessions of the active project's other tabs start in the background a moment after launch (one or two at a time, paused while you type or resize), so switching tabs shows live agents with status and alerts; **Settings → Terminal → Load sessions in the background** chooses visible only, the active project (default) or every project
 - Dark, minimal UI in the spirit of Cursor
 
 <table>

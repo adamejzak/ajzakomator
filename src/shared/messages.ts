@@ -7,6 +7,7 @@ import { codexMessages } from './codexMessages';
 import { filesMessages } from './filesMessages';
 import { gridMessages } from './gridMessages';
 import { macUpdateMessages } from './macUpdateMessages';
+import { perfMessages } from './perfMessages';
 import { statusMessages } from './statusMessages';
 import { swapMessages } from './swapMessages';
 import { termMessages } from './termMessages';
@@ -21,6 +22,7 @@ export const messages = {
   ...filesMessages,
   ...gridMessages,
   ...macUpdateMessages,
+  ...perfMessages,
   ...statusMessages,
   ...swapMessages,
   ...termMessages,
