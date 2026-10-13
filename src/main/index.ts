@@ -22,7 +22,7 @@ import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from 
 import { createSaver, loadState } from './store';
 import { blockUpdateVersion, canInstallNow, checkForUpdates, getUpdateState, handOver, initUpdater, isPortableBuild, isUpdateDownloaded, onUpdateTargetChange, previousMacUpdate, recheckUpdate, signalMacUpdateReady, updateHandoffStarted, updateTarget, RELEASES_URL, startupCheck, startupDownload, updatesEnabled } from './updater';
 import { createUpdateUiGuard } from './updateUiGuard';
-import { compareVersions, isRecentFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
+import { compareVersions, isActiveFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
 import { createGateWindow, type GateTexts } from './gateWindow';
 import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
 import { createUpdaterLogger } from './updaterLog';
@@ -734,8 +734,8 @@ async function runUpdateGate(): Promise<boolean> {
   let window: ReturnType<typeof createGateWindow> | undefined;
   try {
     const failure = readGateFailure();
-    const recent = isRecentFailure(failure, Date.now());
-    if (failure && recent && state.settings.updateMode !== 'manual' && compareVersions(failure.version, app.getVersion()) > 0) blockUpdateVersion(failure.version);
+    const recent = isActiveFailure(failure, app.getVersion(), Date.now());
+    if (failure && recent && state.settings.updateMode !== 'manual') blockUpdateVersion(failure.version);
     if (!shouldGateOnStartup({
       platform: process.platform, packaged: updatesEnabled(), portable: isPortableBuild(),
       mode: state.settings.updateMode, recentFailure: recent,

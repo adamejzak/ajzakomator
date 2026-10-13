@@ -54,6 +54,13 @@ export function parseFailure(raw: unknown): FailureRecord | undefined {
 
 export { compareVersions };
 
+/**
+ * A record of an attempt only counts while the version it targeted is not running yet: after a successful update the record
+ * names the running version, and the next start (which may offer a still newer release) must not be held back by it.
+ */
+export const isActiveFailure = (failure: FailureRecord | undefined, currentVersion: string, now: number): boolean =>
+  !!failure && compareVersions(failure.version, currentVersion) > 0 && isRecentFailure(failure, now);
+
 export const isRecentFailure = (failure: FailureRecord | undefined, now: number): boolean =>
   !!failure && now - failure.at >= 0 && now - failure.at < FAILURE_COOLDOWN_MS;
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  FAILURE_COOLDOWN_MS, compareVersions, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup,
+  FAILURE_COOLDOWN_MS, compareVersions, isActiveFailure, isRecentFailure, parseFailure, runStartupGate, shouldGateOnStartup,
   type GateDeps, type GateEnv, type GateView,
 } from '../src/main/startupGate';
 
@@ -24,6 +24,15 @@ describe('shouldGateOnStartup', () => {
     expect(compareVersions('1.0.0', '0.9.9')).toBeGreaterThan(0);
     expect(compareVersions('0.6', '0.6.0')).toBe(0);
     expect(compareVersions('0.6.0-beta.1', '0.6.0')).toBe(0);
+  });
+
+  it('a record of the version that is now running is no failure (the next start may offer a newer release)', () => {
+    const record = { version: '0.5.98', at: 1000 };
+    expect(isActiveFailure(record, '0.5.97', 2000)).toBe(true);
+    expect(isActiveFailure(record, '0.5.98', 2000)).toBe(false);
+    expect(isActiveFailure(record, '0.5.99', 2000)).toBe(false);
+    expect(isActiveFailure(record, '0.5.97', 1000 + FAILURE_COOLDOWN_MS)).toBe(false);
+    expect(isActiveFailure(undefined, '0.5.97', 2000)).toBe(false);
   });
 
   it('keeps a failure for the cooldown only and ignores malformed records', () => {
