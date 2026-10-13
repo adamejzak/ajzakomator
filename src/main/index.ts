@@ -27,6 +27,8 @@ import { createUpdaterLogger } from './updaterLog';
 import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling } from './updateSplash';
 import { createChangelog } from './changelog';
 import { refreshClaudeProfile, type RefreshOutcome } from './accounts/refresh';
+import { createRefreshLimits } from './accounts/refreshLimits';
+import { createTokenFetch } from './accounts/tokenTransport';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
 import { gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
@@ -93,6 +95,10 @@ const usageDeps: FetcherDeps = {
   claudeUrl: (!app.isPackaged && process.env.MC_USAGE_CLAUDE_URL) || 'https://api.anthropic.com/api/oauth/usage',
   codexUrl: (!app.isPackaged && process.env.MC_USAGE_CODEX_URL) || 'https://chatgpt.com/backend-api/wham/usage',
 };
+/** Token renewals: our own headers (no Chromium fingerprint, no Claude Code User-Agent), a persisted backoff after HTTP 429, system proxy only as a fallback. */
+const refreshLimits = createRefreshLimits(join(DATA_DIR, 'refresh-limits.json'));
+const tokenFetch = createTokenFetch(usageDeps.fetch);
+const renewProfile = (dir: string) => refreshClaudeProfile(dir, { fetch: tokenFetch, now: usageDeps.now, limits: refreshLimits, userAgent: `ajzakomator/${app.getVersion()}`, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL });
 const accounts = new AccountsStore(join(DATA_DIR, 'accounts'));
 const usage = new UsageService({
   accounts: () => [
@@ -173,7 +179,7 @@ const swapDeps = (): SwapDeps => ({
   store: accounts,
   backupDir: join(DATA_DIR, 'accounts', 'swap-backup'),
   now: () => Date.now(),
-  refresh: (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }),
+  refresh: (dir) => renewProfile(dir),
   delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: isSwapUnresolved };
@@ -182,7 +188,7 @@ async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
 }
 // Background refreshes never write into a managed profile while a swap runs or is unresolved.
-usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }), { kind: 'transient', detail: { reason: 'blocked' } });
+usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, (dir) => renewProfile(dir), { kind: 'transient', detail: { reason: 'blocked' } });
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();

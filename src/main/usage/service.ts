@@ -11,6 +11,9 @@ const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
 const FETCH_TIMEOUT_MS = 30_000;
 
+/** A running backoff; its reason and attempt time let a restarted app show the same calm card instead of a fresh retry. */
+interface Backoff { until: number; failures: number; error?: string; attemptAt?: number }
+
 export interface UsageServiceOptions {
   /** The accounts to poll right now; read on every run and every state read, so changes apply without a restart. */
   accounts(): AccountRef[];
@@ -31,7 +34,7 @@ export interface UsageServiceOptions {
 export class UsageService {
   private readonly providers = new Map<string, ProviderUsage>();
   private readonly listeners = new Set<(state: UsageState) => void>();
-  private readonly backoff = new Map<string, { until: number; failures: number }>();
+  private readonly backoff = new Map<string, Backoff>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   /** Credential-file markers taken before the read that found an account dormant. */
   private readonly stamps = new Map<string, string | null>();
@@ -175,7 +178,7 @@ export class UsageService {
   private async update(ref: AccountRef, now: number, manual: boolean): Promise<void> {
     const { id, provider } = ref;
     const hold = this.backoff.get(id);
-    if (!manual && hold && hold.until > now) return;
+    if (!manual && hold && hold.until > now) { this.restoreHeld(ref, hold); return; }
     let result: FetchResult;
     let stamp: string | null = null;
     try { if (this.options.credentialsStamp) stamp = await this.options.credentialsStamp(ref); } catch { /* no marker, no watching */ }
@@ -193,7 +196,7 @@ export class UsageService {
     const { retryAfterMs } = result;
     const failed = read.status === 'error' || result.failed === true;
     // The fetcher never knows when it will be tried again: the backoff set below decides, and the card shows it.
-    const retryAt = failed ? this.startBackoff(id, now, hold?.failures, retryAfterMs) : undefined;
+    const retryAt = failed ? this.startBackoff(id, now, hold?.failures, retryAfterMs, read.error) : undefined;
     if (!failed) this.backoff.delete(id);
     const usage: ProviderUsage = { ...read, attemptAt: now, ...(retryAt !== undefined ? { retryAt } : {}) };
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
@@ -209,16 +212,25 @@ export class UsageService {
   }
 
   /** Returns when the next automatic attempt may happen. */
-  private startBackoff(id: string, now: number, previousFailures = 0, retryAfterMs?: number): number {
+  private startBackoff(id: string, now: number, previousFailures = 0, retryAfterMs?: number, error?: string): number {
     const failures = previousFailures + 1;
     const wait = retryAfterMs ?? Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
-    this.backoff.set(id, { until: now + wait, failures });
+    this.backoff.set(id, { until: now + wait, failures, ...(error ? { error } : {}), attemptAt: now });
     return now + wait;
+  }
+
+  /** After a restart the account is still held: the card shows why and when it is tried next (the attempt itself stays skipped). */
+  private restoreHeld(ref: AccountRef, hold: Backoff): void {
+    if (!hold.error) return;
+    const current = this.providers.get(ref.id);
+    if (current?.error === hold.error) return;
+    const base: ProviderUsage = current ?? { accountId: ref.id, provider: ref.provider, status: 'error', windows: [], fetchedAt: hold.attemptAt ?? this.now(), source: 'cache', ...(ref.configDir ? { managed: true } : {}) };
+    this.providers.set(ref.id, { ...base, status: 'error', error: hold.error, ...(hold.attemptAt !== undefined ? { attemptAt: hold.attemptAt } : {}), retryAt: hold.until });
   }
 
   private loadCache(): void {
     try {
-      const raw = JSON.parse(readFileSync(this.options.cacheFile, 'utf8')) as { providers?: unknown };
+      const raw = JSON.parse(readFileSync(this.options.cacheFile, 'utf8')) as { providers?: unknown; backoff?: unknown };
       for (const entry of Array.isArray(raw?.providers) ? raw.providers : []) {
         const usage = sanitizeUsage(entry);
         if (usage?.windows.length) {
@@ -227,13 +239,26 @@ export class UsageService {
           this.providers.set(usage.accountId, { ...numbers, status: 'ok', source: 'cache' });
         }
       }
+      // A running backoff survives a restart, so quitting and starting again never means an immediate retry against a limiter.
+      const held = typeof raw?.backoff === 'object' && raw.backoff !== null && !Array.isArray(raw.backoff) ? Object.entries(raw.backoff) : [];
+      for (const [id, value] of held) {
+        const entry = value as Partial<Backoff> | null;
+        if (!entry || !Number.isFinite(entry.until) || !Number.isInteger(entry.failures) || (entry.failures as number) < 1 || (entry.until as number) <= this.now()) continue;
+        this.backoff.set(id, {
+          until: entry.until as number, failures: entry.failures as number,
+          ...(typeof entry.error === 'string' && /^[a-z0-9-]{1,40}$/.test(entry.error) ? { error: entry.error } : {}),
+          ...(Number.isFinite(entry.attemptAt) ? { attemptAt: entry.attemptAt as number } : {}),
+        });
+      }
     } catch { /* no usable cache yet */ }
   }
 
   private saveCache(): void {
     try {
       mkdirSync(dirname(this.options.cacheFile), { recursive: true });
-      writeFileSync(this.options.cacheFile, JSON.stringify({ providers: this.options.accounts().flatMap((ref) => { const usage = this.providers.get(ref.id); return usage?.windows.length ? [usage] : []; }) }));
+      const listed = this.options.accounts();
+      const backoff = Object.fromEntries(listed.flatMap((ref) => { const hold = this.backoff.get(ref.id); return hold && hold.until > this.now() ? [[ref.id, hold]] : []; }));
+      writeFileSync(this.options.cacheFile, JSON.stringify({ providers: listed.flatMap((ref) => { const usage = this.providers.get(ref.id); return usage?.windows.length ? [usage] : []; }), backoff }));
     } catch { /* the cache is optional */ }
   }
 }

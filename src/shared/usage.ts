@@ -127,12 +127,13 @@ export function claudeLoginActions(platform: string, hasMainClaude: boolean): {
   };
 }
 
-export type UsageErrorKind = 'rate' | 'server' | 'network' | 'parse' | 'empty' | 'refresh' | 'blocked' | 'other';
+export type UsageErrorKind = 'rate' | 'server' | 'network' | 'parse' | 'empty' | 'refresh' | 'refreshLimited' | 'blocked' | 'other';
 
 /** Groups the machine-readable reason of a failed read into what the card tells the user. */
 export function usageErrorKind(code?: string): UsageErrorKind {
   if (!code) return 'other';
-  if (code === 'http-429' || code === 'refresh-http-429') return 'rate';
+  if (code === 'refresh-http-429') return 'refreshLimited';
+  if (code === 'http-429') return 'rate';
   if (/^http-5\d\d$/.test(code)) return 'server';
   if (code === 'network' || code === 'timeout') return 'network';
   if (code === 'bad-response') return 'parse';

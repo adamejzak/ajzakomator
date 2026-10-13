@@ -91,6 +91,8 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
   // Temporary trouble (limits server, network, renewal) is told calmly; only an unknown or unreadable answer is shown as a warning.
   const calm = kind !== 'other' && kind !== 'parse';
   const retry = usage.retryAt !== undefined && usage.retryAt > now ? tr('za {time}', { time: formatDuration((usage.retryAt - now) / 1000) }) : tr('wkrótce');
+  // A saved Claude account whose sign-in cannot be renewed (server limits, rejected renewal) must never leave the user stuck: signing in again is always offered.
+  const canRelogin = usage.managed && !usage.shared && usage.provider === 'claude' && !expired && (kind === 'refreshLimited' || kind === 'refresh') && claudeLoginActions(window.mc.platform, true).managedAccounts;
   const failureText = tr(usageErrorKey(kind, usage.provider), { name: providerName, retry });
   const sharedNote = usage.shared ? <p className="usage-note">{tr('To konto jest teraz głównym logowaniem - limity czytam z głównego logowania.')}</p> : null;
 
@@ -156,6 +158,7 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
             title={tr('Menu konta')}
             onClick={(e) => openMenuAt(e.currentTarget, [
               ...(canMakeMain ? [{ label: tr('Ustaw jako główne'), disabled: busy, onClick: () => onMakeMain(usage) }] : []),
+              ...(canRelogin ? [{ label: tr('Zaloguj ponownie to konto'), disabled: busy, onClick: () => openAuth(usage.provider, reloginTarget(usage)) }] : []),
               { label: tr('Skopiuj diagnostykę'), onClick: copyDiagnostics },
               ...(usage.managed ? [{ label: tr('Usuń konto'), danger: true, disabled: busy, onClick: () => void removeAccount() }] : []),
             ])}

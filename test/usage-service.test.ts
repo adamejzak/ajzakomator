@@ -448,3 +448,44 @@ describe('UsageService', () => {
     });
   });
 });
+
+describe('a held account across a restart', () => {
+  const SAVED: AccountRef = { id: 'claude:abc', provider: 'claude', configDir: '/tmp/ajza-profile' };
+  const limited = (): FetchResult => ({ usage: { accountId: SAVED.id, provider: 'claude', status: 'error', fetchedAt: Date.now(), source: 'live', windows: [], managed: true, error: 'refresh-http-429' }, retryAfterMs: 900_000 });
+  const build = (fetchAccount: () => Promise<FetchResult>) => new UsageService({ accounts: () => [SAVED], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 60_000 });
+
+  it('does not try again right after a restart and shows the same calm card until the window passes', async () => {
+    const first = vi.fn(async () => limited());
+    const before = build(first);
+    await before.refresh();
+    expect(first).toHaveBeenCalledOnce();
+    expect(before.getState().providers[0]).toMatchObject({ status: 'error', error: 'refresh-http-429', retryAt: NOW + 900_000 });
+    const stored = JSON.parse(readFileSync(cacheFile, 'utf8')) as { backoff: Record<string, unknown> };
+    expect(stored.backoff[SAVED.id]).toMatchObject({ until: NOW + 900_000, failures: 1, error: 'refresh-http-429', attemptAt: NOW });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    const second = vi.fn(async () => ok('claude', 10, SAVED.id));
+    const after = build(second);
+    after.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(second).not.toHaveBeenCalled();
+    expect(after.getState().providers[0]).toMatchObject({ accountId: SAVED.id, status: 'error', error: 'refresh-http-429', managed: true, retryAt: NOW + 900_000, attemptAt: NOW });
+
+    await vi.advanceTimersByTimeAsync(900_000);
+    expect(second).toHaveBeenCalled();
+    expect(after.getState().providers[0]).toMatchObject({ status: 'ok' });
+    after.stop();
+  });
+
+  it('keeps the last numbers on the restored card and ignores damaged or finished backoff entries', async () => {
+    writeFileSync(cacheFile, JSON.stringify({
+      providers: [{ accountId: SAVED.id, provider: 'claude', status: 'ok', windows: [{ id: '7d', usedPercent: 100, resetsAt: 1 }], fetchedAt: NOW - 600_000, source: 'live' }],
+      backoff: { [SAVED.id]: { until: NOW + 60_000, failures: 2, error: 'refresh-http-429', attemptAt: NOW - 1000 }, old: { until: NOW - 1, failures: 1 }, bad: { until: 'x', failures: 1 }, evil: { until: NOW + 5, failures: 1, error: '<script>' } },
+    }));
+    const fetchAccount = vi.fn(async () => ok('claude', 1, SAVED.id));
+    const service = build(fetchAccount);
+    await service.refresh();
+    expect(fetchAccount).not.toHaveBeenCalled();
+    expect(service.getState().providers[0]).toMatchObject({ status: 'error', error: 'refresh-http-429', source: 'cache', windows: [{ id: '7d', usedPercent: 100 }] });
+  });
+});

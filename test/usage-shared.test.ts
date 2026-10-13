@@ -105,7 +105,7 @@ describe('claudeLoginActions', () => {
 describe('failure reasons', () => {
   it('groups reason codes into what the card says', () => {
     expect(usageErrorKind('http-429')).toBe('rate');
-    expect(usageErrorKind('refresh-http-429')).toBe('rate');
+    expect(usageErrorKind('refresh-http-429')).toBe('refreshLimited');
     expect(usageErrorKind('http-503')).toBe('server');
     expect(usageErrorKind('network')).toBe('network');
     expect(usageErrorKind('timeout')).toBe('network');
@@ -119,7 +119,7 @@ describe('failure reasons', () => {
   });
 
   it('has a translated card text for every kind and extracts the HTTP status', () => {
-    for (const kind of ['rate', 'server', 'network', 'parse', 'empty', 'refresh', 'blocked', 'other'] as const) {
+    for (const kind of ['rate', 'server', 'network', 'parse', 'empty', 'refresh', 'refreshLimited', 'blocked', 'other'] as const) {
       expect(usageMessages[usageErrorKey(kind)]).toHaveLength(5);
     }
     expect(usageHttpStatus('http-429')).toBe(429);
