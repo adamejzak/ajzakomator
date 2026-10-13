@@ -28,6 +28,9 @@ export function sanitizeUsage(raw: unknown): ProviderUsage | null {
   const email = text(raw.email, 120);
   const org = text(raw.org, 120);
   const error = text(raw.error, 64);
+  const stamp = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined);
+  const attemptAt = stamp(raw.attemptAt);
+  const retryAt = stamp(raw.retryAt);
   return {
     accountId,
     provider,
@@ -40,5 +43,8 @@ export function sanitizeUsage(raw: unknown): ProviderUsage | null {
     fetchedAt,
     source: source as (typeof SOURCES)[number],
     ...(error ? { error } : {}),
+    ...(attemptAt !== undefined ? { attemptAt } : {}),
+    ...(retryAt !== undefined ? { retryAt } : {}),
+    ...(typeof raw.shared === 'boolean' ? { shared: raw.shared } : {}),
   };
 }

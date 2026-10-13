@@ -189,14 +189,16 @@ export class UsageService {
     // A result for an account removed while it was in flight is dropped.
     if (!this.options.accounts().some((listed) => listed.id === id)) return;
     const parsed = sanitizeUsage(result.usage);
-    const usage = parsed && parsed.accountId === id ? parsed : failure('bad-response').usage;
+    const read = parsed && parsed.accountId === id ? parsed : failure('bad-response').usage;
     const { retryAfterMs } = result;
-    const failed = usage.status === 'error' || result.failed === true;
+    const failed = read.status === 'error' || result.failed === true;
+    // The fetcher never knows when it will be tried again: the backoff set below decides, and the card shows it.
+    const retryAt = failed ? this.startBackoff(id, now, hold?.failures, retryAfterMs) : undefined;
+    if (!failed) this.backoff.delete(id);
+    const usage: ProviderUsage = { ...read, attemptAt: now, ...(retryAt !== undefined ? { retryAt } : {}) };
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
       this.stamps.delete(id);
       this.providers.set(id, usage);
-      if (failed) this.startBackoff(id, now, hold?.failures, retryAfterMs);
-      else this.backoff.delete(id);
       return;
     }
     // Expired or failed: keep the last numbers, marked as remembered, so the panel is never blank after a hiccup.
@@ -204,14 +206,14 @@ export class UsageService {
     const previous = this.providers.get(id);
     const own = usage.windows.length > 0;
     this.providers.set(id, !own && previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);
-    if (failed) this.startBackoff(id, now, hold?.failures, retryAfterMs);
-    else this.backoff.delete(id);
   }
 
-  private startBackoff(id: string, now: number, previousFailures = 0, retryAfterMs?: number): void {
+  /** Returns when the next automatic attempt may happen. */
+  private startBackoff(id: string, now: number, previousFailures = 0, retryAfterMs?: number): number {
     const failures = previousFailures + 1;
     const wait = retryAfterMs ?? Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
     this.backoff.set(id, { until: now + wait, failures });
+    return now + wait;
   }
 
   private loadCache(): void {
@@ -219,7 +221,11 @@ export class UsageService {
       const raw = JSON.parse(readFileSync(this.options.cacheFile, 'utf8')) as { providers?: unknown };
       for (const entry of Array.isArray(raw?.providers) ? raw.providers : []) {
         const usage = sanitizeUsage(entry);
-        if (usage?.windows.length) this.providers.set(usage.accountId, { ...usage, status: 'ok', source: 'cache' });
+        if (usage?.windows.length) {
+          // Only the numbers survive a restart; the failure that may have been stored with them is history.
+          const { error: _error, retryAt: _retryAt, attemptAt: _attemptAt, ...numbers } = usage;
+          this.providers.set(usage.accountId, { ...numbers, status: 'ok', source: 'cache' });
+        }
       }
     } catch { /* no usable cache yet */ }
   }

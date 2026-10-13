@@ -25,13 +25,30 @@ describe('Claude usage body', () => {
     expect(parseClaudeUsage({ five_hour: { utilization: -4, resets_at: null } })?.[0].usedPercent).toBe(0);
   });
 
+  it('reads an exhausted account: 100 percent, null resets, null windows and unrelated extra fields', () => {
+    const body = {
+      five_hour: { utilization: 0.0, resets_at: null },
+      seven_day: { utilization: 100.0, resets_at: '2026-10-15T21:59:59.943648+00:00' },
+      seven_day_oauth_apps: null,
+      seven_day_opus: null,
+      seven_day_sonnet: { utilization: 12, resets_at: null },
+      iguana_necktie: null,
+      extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null, utilization: null },
+    };
+    expect(parseClaudeUsage(body)).toEqual([{ id: '5h', usedPercent: 0, resetsAt: 0 }, { id: '7d', usedPercent: 100, resetsAt: Date.parse('2026-10-15T21:59:59Z') / 1000 }]);
+    expect(parseClaudeUsage({ five_hour: null, seven_day: { utilization: 137, resets_at: null } })).toEqual([{ id: '7d', usedPercent: 100, resetsAt: 0 }]);
+    expect(parseClaudeUsage({ five_hour: null, seven_day: null })).toEqual([]);
+  });
+
   it('reports no reset time when no window is active', () => {
     expect(parseClaudeUsage({ five_hour: { utilization: 0, resets_at: null }, seven_day: { utilization: 3, resets_at: 'garbage' } })?.map((w) => w.resetsAt)).toEqual([0, 0]);
   });
 
   it('uses the windows that are present and rejects bodies without any', () => {
     expect(parseClaudeUsage({ seven_day: { utilization: 3, resets_at: null } })).toHaveLength(1);
-    expect(parseClaudeUsage({ five_hour: {}, seven_day: { utilization: 'n/a' } })).toBeNull();
+    expect(parseClaudeUsage({ five_hour: {}, seven_day: { utilization: 'n/a' } })).toEqual([]);
+    expect(parseClaudeUsage({ unrelated: 1 })).toBeNull();
+    expect(parseClaudeUsage({})).toBeNull();
     expect(parseClaudeUsage(null)).toBeNull();
     expect(parseClaudeUsage([])).toBeNull();
     expect(parseClaudeUsage('error')).toBeNull();

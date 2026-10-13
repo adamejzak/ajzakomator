@@ -1,5 +1,6 @@
 // src/main/usage/credentials.ts
 import { execFile } from 'child_process';
+import { createHash } from 'crypto';
 import { readFile, stat } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -81,6 +82,8 @@ export interface ClaudeCredentials {
   plan?: string;
   /** A refresh token is stored, so Claude Code can renew an expired access token by itself. The token itself is never exposed. */
   hasRefresh?: boolean;
+  /** SHA-256 of the refresh token, to tell whether two logins share one token without ever holding it elsewhere. */
+  refreshHash?: string;
 }
 
 /** Cheap change marker (mtime and size) of the Claude credentials file, or null when it cannot be statted (missing, Keychain). */
@@ -115,6 +118,7 @@ export async function readClaudeCredentials(source: CredentialSource): Promise<C
       accessToken: token,
       expiresAt: typeof oauth.expiresAt === 'number' ? oauth.expiresAt : undefined,
       hasRefresh: typeof oauth.refreshToken === 'string' && oauth.refreshToken.length > 0,
+      ...(typeof oauth.refreshToken === 'string' && oauth.refreshToken ? { refreshHash: createHash('sha256').update(oauth.refreshToken).digest('hex') } : {}),
       plan: claudePlanLabel(oauth.subscriptionType, oauth.rateLimitTier),
     };
   } catch { return null; }

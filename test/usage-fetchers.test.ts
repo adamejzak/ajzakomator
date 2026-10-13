@@ -272,8 +272,8 @@ describe('managed token renewal', () => {
     profileLogin('old-tok', NOW - 1000);
     const fetchSpy = vi.fn();
     expect((await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'dead' })), ref())).usage.status).toBe('expired');
-    const transient = await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'transient' })), ref());
-    expect(transient.usage).toMatchObject({ status: 'error', error: 'network' });
+    const transient = await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'transient', detail: { reason: 'network' } })), ref());
+    expect(transient.usage).toMatchObject({ status: 'error', error: 'refresh-network' });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -315,5 +315,86 @@ describe('managed token renewal', () => {
     claudeLogin();
     expect((await fetchClaude(withRefresh((async () => reply(401, {})) as never, refresh))).usage.status).toBe('expired');
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('why a saved account fails to read', () => {
+  const ref = () => ({ id: 'claude:abc', provider: 'claude' as const, configDir: join(home, 'profiles', 'abc') });
+  const profileLogin = (extra: Record<string, unknown> = {}) => put('profiles/abc/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'prof-tok', refreshToken: 'prof-refresh', expiresAt: NOW + 3_600_000, ...extra } }));
+  const withRefresh = (fetchImpl: FetcherDeps['fetch'], refreshClaude: FetcherDeps['refreshClaude']): FetcherDeps => ({ ...deps(fetchImpl), refreshClaude });
+
+  it('reads an account whose weekly limit is exhausted (100 percent, null resets, extra fields) as ok', async () => {
+    profileLogin();
+    const body = { five_hour: { utilization: 0, resets_at: null }, seven_day: { utilization: 100, resets_at: '2026-10-15T21:59:59+00:00' }, seven_day_opus: null, extra_usage: { is_enabled: false, utilization: null } };
+    const { usage } = await fetchClaude(withRefresh((async () => reply(200, body)) as never, undefined), ref());
+    expect(usage).toMatchObject({ status: 'ok', managed: true });
+    expect(usage.windows.map((w) => [w.id, w.usedPercent])).toEqual([['5h', 0], ['7d', 100]]);
+    expect(usage.error).toBeUndefined();
+  });
+
+  it('keeps the HTTP status, honours Retry-After (also as a date) and tells an empty answer apart from a broken one', async () => {
+    profileLogin();
+    const limited = await fetchClaude(withRefresh((async () => reply(429, {}, { 'retry-after': '300' })) as never, undefined), ref());
+    expect(limited.usage).toMatchObject({ status: 'error', error: 'http-429' });
+    expect(limited.retryAfterMs).toBe(300_000);
+    const dated = await fetchClaude(withRefresh((async () => reply(429, {}, { 'retry-after': new Date(NOW + 45_000).toUTCString() })) as never, undefined), ref());
+    expect(dated.retryAfterMs).toBe(45_000);
+    expect((await fetchClaude(withRefresh((async () => reply(503, {})) as never, undefined), ref())).usage.error).toBe('http-503');
+    expect((await fetchClaude(withRefresh((async () => reply(200, { five_hour: null, seven_day: null })) as never, undefined), ref())).usage).toMatchObject({ status: 'error', error: 'no-windows' });
+    expect((await fetchClaude(withRefresh((async () => reply(200, { nothing: 1 })) as never, undefined), ref())).usage.error).toBe('bad-response');
+  });
+
+  it('names the refresh failure and passes on the token endpoint Retry-After', async () => {
+    profileLogin({ expiresAt: NOW - 1000 });
+    const fetchSpy = vi.fn();
+    const limited = await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'transient', detail: { reason: 'http-429', retryAfterMs: 600_000 } })), ref());
+    expect(limited.usage).toMatchObject({ status: 'error', error: 'refresh-http-429' });
+    expect(limited.retryAfterMs).toBe(600_000);
+    expect((await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'transient', detail: { reason: 'blocked' } })), ref())).usage.error).toBe('refresh-blocked');
+    expect((await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'dead' })), ref())).usage).toMatchObject({ status: 'expired', error: 'refresh-dead' });
+    expect((await fetchClaude(withRefresh(fetchSpy, async () => ({ kind: 'unusable' })), ref())).usage).toMatchObject({ status: 'expired', error: 'refresh-unusable' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('reports a rejected token after the renewal as expired with the status', async () => {
+    profileLogin();
+    const refresh = vi.fn(async () => ({ kind: 'ok' as const }));
+    expect((await fetchClaude(withRefresh((async () => reply(403, {})) as never, refresh), ref())).usage).toMatchObject({ status: 'expired', error: 'http-403' });
+  });
+
+  describe('a saved account holding the main login', () => {
+    const mainLogin = (refreshToken: string, extra: Record<string, unknown> = {}) => claudeLogin({ refreshToken, ...extra });
+
+    it('is read through the main login and is never renewed', async () => {
+      mainLogin('same-refresh', { accessToken: 'main-tok' });
+      profileLogin({ refreshToken: 'same-refresh', accessToken: 'copy-tok', expiresAt: NOW - 1000 });
+      const refresh = vi.fn();
+      const fetchSpy = vi.fn(async () => reply(200, claudeBody));
+      const { usage } = await fetchClaude(withRefresh(fetchSpy as never, refresh), ref());
+      expect(usage).toMatchObject({ accountId: 'claude:abc', status: 'ok', managed: true, shared: true });
+      expect(refresh).not.toHaveBeenCalled();
+      expect((fetchSpy.mock.calls[0] as unknown as [string, RequestInit])[1].headers).toMatchObject({ Authorization: 'Bearer main-tok' });
+      expect(JSON.stringify(usage)).not.toContain('same-refresh');
+    });
+
+    it('treats an expired shared token like the main one: dormant, no renewal, no request', async () => {
+      mainLogin('same-refresh', { expiresAt: NOW - 1000 });
+      profileLogin({ refreshToken: 'same-refresh', expiresAt: NOW - 1000 });
+      const refresh = vi.fn();
+      const fetchSpy = vi.fn();
+      expect((await fetchClaude(withRefresh(fetchSpy, refresh), ref())).usage).toMatchObject({ status: 'dormant', shared: true });
+      expect(refresh).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps renewing a saved account whose refresh token differs from the main one, even for the same person', async () => {
+      mainLogin('main-refresh');
+      profileLogin({ refreshToken: 'other-refresh', expiresAt: NOW - 1000 });
+      const refresh = vi.fn(async () => { put('profiles/abc/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'new-tok', refreshToken: 'other-refresh-2', expiresAt: NOW + 3_600_000 } })); return { kind: 'ok' as const }; });
+      const { usage } = await fetchClaude(withRefresh((async () => reply(200, claudeBody)) as never, refresh), ref());
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(usage.status).toBe('ok');
+      expect(usage.shared).toBeUndefined();
+    });
   });
 });

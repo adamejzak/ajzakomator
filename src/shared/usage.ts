@@ -37,8 +37,14 @@ export interface ProviderUsage {
   /** Epoch milliseconds of the read this data comes from. */
   fetchedAt: number;
   source: UsageSource;
-  /** Short machine-readable reason (for example `http-429`); never a token. */
+  /** Short machine-readable reason (for example `http-429`, `refresh-http-429`, `bad-response`); never a token. */
   error?: string;
+  /** Epoch milliseconds of the last attempt to read this account (fetchedAt stays the time of the last good data). */
+  attemptAt?: number;
+  /** Epoch milliseconds before which the service will not try again after a failure. */
+  retryAt?: number;
+  /** A saved account that holds the very same login as the main one: its limits are read through the main login and its tokens are never renewed here. */
+  shared?: boolean;
 }
 
 export interface UsageState { providers: ProviderUsage[] }
@@ -119,4 +125,43 @@ export function claudeLoginActions(platform: string, hasMainClaude: boolean): {
     emptyTarget: mac ? 'main' : 'new',
     managedAccounts: !mac,
   };
+}
+
+export type UsageErrorKind = 'rate' | 'server' | 'network' | 'parse' | 'empty' | 'refresh' | 'blocked' | 'other';
+
+/** Groups the machine-readable reason of a failed read into what the card tells the user. */
+export function usageErrorKind(code?: string): UsageErrorKind {
+  if (!code) return 'other';
+  if (code === 'http-429' || code === 'refresh-http-429') return 'rate';
+  if (/^http-5\d\d$/.test(code)) return 'server';
+  if (code === 'network' || code === 'timeout') return 'network';
+  if (code === 'bad-response') return 'parse';
+  if (code === 'no-windows') return 'empty';
+  if (code === 'refresh-blocked') return 'blocked';
+  if (code.startsWith('refresh-')) return 'refresh';
+  return 'other';
+}
+
+/** HTTP status contained in a reason code (`http-429`, `refresh-http-503`), if any. */
+export function usageHttpStatus(code?: string): number | undefined {
+  const match = code ? /(?:^|-)http-(\d{3})$/.exec(code) : null;
+  return match ? Number(match[1]) : undefined;
+}
+
+/** Short text for bug reports: reason, status and ages only. Never contains tokens; the account is named by its label. */
+export function usageDiagnostics(usage: ProviderUsage, nowMs: number, label: string): string {
+  const age = (at?: number) => (at === undefined ? 'n/a' : `${formatDuration((nowMs - at) / 1000)} ago`);
+  const status = usageHttpStatus(usage.error);
+  return [
+    `account: ${label}`,
+    `provider: ${usage.provider}${usage.managed ? ' (saved account)' : ''}${usage.plan ? `, plan ${usage.plan}` : ''}`,
+    `state: ${usage.status}`,
+    `reason: ${usage.error ?? 'none'}`,
+    `http status: ${status ?? 'n/a'}`,
+    `shared with main login: ${usage.shared ? 'yes' : 'no'}`,
+    `data source: ${usage.source}, last good data ${age(usage.fetchedAt)}`,
+    `last attempt: ${age(usage.attemptAt)}`,
+    `next attempt: ${usage.retryAt === undefined ? 'n/a' : usage.retryAt <= nowMs ? 'due' : `in ${formatDuration((usage.retryAt - nowMs) / 1000)}`}`,
+    `windows: ${usage.windows.length ? usage.windows.map((w) => `${w.id} ${Math.round(w.usedPercent)}%`).join(', ') : 'none'}`,
+  ].join('\n');
 }

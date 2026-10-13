@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { LoginTarget } from '../../../shared/accounts';
-import { claudeLoginActions, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { claudeLoginActions, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
 import { swapErrorKey } from '../../../shared/swapMessages';
 import { askChoice, setUi, toast, update, useStore } from '../store';
@@ -59,7 +60,8 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
   const { tr } = useI18n();
   const busy = swapping !== null;
   // On macOS Claude keeps its tokens in the Keychain, so the main login cannot be exchanged there.
-  const canMakeMain = usage.managed && usage.provider === 'claude' && claudeLoginActions(window.mc.platform, true).managedAccounts;
+  // A saved copy that already is the main login cannot become it again.
+  const canMakeMain = usage.managed && !usage.shared && usage.provider === 'claude' && claudeLoginActions(window.mc.platform, true).managedAccounts;
   const providerName = NAMES[usage.provider];
   const name = usage.email || providerName;
   const age = formatDuration((now - usage.fetchedAt) / 1000);
@@ -78,10 +80,22 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
     } catch { /* the next usage refresh shows the real state */ }
   };
 
+  const copyDiagnostics = () => {
+    window.mc.clipboardWrite(usageDiagnostics(usage, Date.now(), name));
+    toast(tr('Skopiowano diagnostykę.'));
+  };
+  const reasonTitle = usage.error ? tr('Przyczyna techniczna: {code}', { code: usage.error }) : undefined;
+  const kind = usageErrorKind(usage.error);
+  // Temporary trouble (limits server, network, renewal) is told calmly; only an unknown or unreadable answer is shown as a warning.
+  const calm = kind !== 'other' && kind !== 'parse';
+  const retry = usage.retryAt !== undefined && usage.retryAt > now ? tr('za {time}', { time: formatDuration((usage.retryAt - now) / 1000) }) : tr('wkrótce');
+  const failureText = tr(usageErrorKey(kind), { name: providerName, retry });
+  const sharedNote = usage.shared ? <p className="usage-note">{tr('To konto jest teraz głównym logowaniem - limity czytam z głównego logowania.')}</p> : null;
+
   let body;
   if (expired) {
     body = (
-      <div className="usage-expired">
+      <div className="usage-expired" title={reasonTitle}>
         <span className="usage-note">{tr('Logowanie wygasło')}</span>
         <button className="btn small primary" onClick={() => openAuth(usage.provider, reloginTarget(usage))}>{tr('Zaloguj ponownie')}</button>
       </div>
@@ -93,27 +107,34 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
         {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
         {usage.windows.length > 0 && <p className="usage-note">{tr('dane sprzed {age}', { age })}</p>}
         <p className="usage-note">{tr(DORMANT_NOTE)}</p>
+        {sharedNote}
       </>
     );
   } else if (usage.status === 'apiKey') {
     body = <p className="usage-note">{tr('Codex: logowanie kluczem API, brak limitów.')}</p>;
   } else if (!usage.windows.length) {
-    body = <p className="usage-note warn">{tr('{name}: nie udało się odczytać limitów.', { name: providerName })}</p>;
+    body = (
+      <>
+        <p className={`usage-note ${calm ? '' : 'warn'}`} title={reasonTitle}>{failureText}</p>
+        {sharedNote}
+      </>
+    );
   } else {
     const failed = usage.status === 'error';
     const ageNote = usage.source === 'log' ? tr('stan z ostatniej sesji, sprzed {age}', { age })
       : usage.source === 'cache' ? tr('dane sprzed {age}', { age }) : '';
-    const hint = failed ? tr('{name}: nie udało się odczytać limitów.', { name: providerName }) : ageNote;
+    const hint = failed ? failureText : ageNote;
     body = (
       <>
         {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
-        {hint && <p className={`usage-note ${failed ? 'warn' : ''}`}>{failed && ageNote ? `${hint} (${ageNote})` : hint}</p>}
+        {hint && <p className={`usage-note ${failed && !calm ? 'warn' : ''}`} title={failed ? reasonTitle : undefined}>{failed && ageNote ? `${hint} (${ageNote})` : hint}</p>}
+        {sharedNote}
       </>
     );
   }
 
   return (
-    <div className={`usage-card ${expired ? 'expired' : ''} ${dormant ? 'dormant' : ''} ${swapping === usage.accountId ? 'busy' : ''}`} title={usage.org || undefined} aria-busy={swapping === usage.accountId || undefined}>
+    <div className={`usage-card ${expired ? 'expired' : ''} ${dormant ? 'dormant' : ''} ${usage.status === 'error' && usage.windows.length ? 'stale' : ''} ${swapping === usage.accountId ? 'busy' : ''}`} title={usage.org || undefined} aria-busy={swapping === usage.accountId || undefined}>
       <div className="usage-card-head">
         <ProviderIcon provider={usage.provider} />
         <span className="usage-account" title={name}>{name}</span>
@@ -125,15 +146,16 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
             {tr('Przełączam konto…')}
           </span>
         )}
-        {usage.managed && swapping !== usage.accountId && (
+        {swapping !== usage.accountId && (
           <button
             className="usage-kebab"
             aria-haspopup="menu"
-            aria-label={tr('Usuń konto')}
-            title={tr('Usuń konto')}
+            aria-label={tr('Menu konta')}
+            title={tr('Menu konta')}
             onClick={(e) => openMenuAt(e.currentTarget, [
               ...(canMakeMain ? [{ label: tr('Ustaw jako główne'), disabled: busy, onClick: () => onMakeMain(usage) }] : []),
-              { label: tr('Usuń konto'), danger: true, disabled: busy, onClick: () => void removeAccount() },
+              { label: tr('Skopiuj diagnostykę'), onClick: copyDiagnostics },
+              ...(usage.managed ? [{ label: tr('Usuń konto'), danger: true, disabled: busy, onClick: () => void removeAccount() }] : []),
             ])}
           ><KebabIcon /></button>
         )}

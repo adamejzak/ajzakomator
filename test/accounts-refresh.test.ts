@@ -22,7 +22,7 @@ describe('refreshClaudeProfile', () => {
       mkdirSync(join(dir, '.credentials.json'));
       return reply(200, { access_token: 'n', expires_in: 60 });
     });
-    expect(await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    expect(await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW })).toEqual({ kind: 'transient', detail: { reason: 'write' } });
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
@@ -68,21 +68,42 @@ describe('refreshClaudeProfile', () => {
     expect(await dead(400, 'invalid_grant')).toEqual({ kind: 'dead' });
     expect(await dead(401, 'invalid_client')).toEqual({ kind: 'dead' });
     expect(await dead(403, 'unauthorized_client')).toEqual({ kind: 'dead' });
-    expect(await dead(400, 'something_else')).toEqual({ kind: 'transient' });
-    expect(await dead(500, 'invalid_grant')).toEqual({ kind: 'transient' });
+    expect(await dead(400, 'something_else')).toEqual({ kind: 'transient', detail: { reason: 'http-400' } });
+    expect(await dead(500, 'invalid_grant')).toEqual({ kind: 'transient', detail: { reason: 'http-500' } });
     expect(read().claudeAiOauth.accessToken).toBe('old-access');
   });
 
   it('treats network errors, garbage bodies and missing files as transient and a missing refresh token as dead', async () => {
     write(profile());
-    expect(await refreshClaudeProfile(dir, { fetch: (async () => { throw new Error('offline Bearer old-refresh'); }) as never, now: () => NOW })).toEqual({ kind: 'transient' });
-    expect(await refreshClaudeProfile(dir, { fetch: (async () => new Response('<html>', { status: 200 })) as never, now: () => NOW })).toEqual({ kind: 'transient' });
-    expect(await refreshClaudeProfile(dir, { fetch: (async () => reply(200, { access_token: '', expires_in: 5 })) as never, now: () => NOW })).toEqual({ kind: 'transient' });
-    expect(await refreshClaudeProfile(join(dir, 'missing'), { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    expect(await refreshClaudeProfile(dir, { fetch: (async () => { throw new Error('offline Bearer old-refresh'); }) as never, now: () => NOW })).toEqual({ kind: 'transient', detail: { reason: 'network' } });
+    expect(await refreshClaudeProfile(dir, { fetch: (async () => new Response('<html>', { status: 200 })) as never, now: () => NOW })).toEqual({ kind: 'transient', detail: { reason: 'bad-response' } });
+    expect(await refreshClaudeProfile(dir, { fetch: (async () => reply(200, { access_token: '', expires_in: 5 })) as never, now: () => NOW })).toEqual({ kind: 'transient', detail: { reason: 'bad-response' } });
+    expect(await refreshClaudeProfile(join(dir, 'missing'), { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'transient', detail: { reason: 'read' } });
     write({ claudeAiOauth: { accessToken: 'x' } });
     expect(await refreshClaudeProfile(dir, { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'dead' });
     writeFileSync(join(dir, '.credentials.json'), '{broken');
-    expect(await refreshClaudeProfile(dir, { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'transient' });
+    expect(await refreshClaudeProfile(dir, { fetch: vi.fn() as never, now: () => NOW })).toEqual({ kind: 'transient', detail: { reason: 'read' } });
+  });
+
+  it('reports a rate-limited token endpoint with its Retry-After (seconds or date, capped), without touching the login', async () => {
+    write(profile());
+    const limited = (headers: Record<string, string>) => refreshClaudeProfile(dir, { fetch: (async () => new Response('{"error":"rate_limit_error"}', { status: 429, headers })) as never, now: () => NOW });
+    expect(await limited({ 'retry-after': '120' })).toEqual({ kind: 'transient', detail: { reason: 'http-429', retryAfterMs: 120_000 } });
+    expect(await limited({ 'retry-after': new Date(NOW + 90_000).toUTCString() })).toEqual({ kind: 'transient', detail: { reason: 'http-429', retryAfterMs: 90_000 } });
+    expect(await limited({ 'retry-after': '999999' })).toEqual({ kind: 'transient', detail: { reason: 'http-429', retryAfterMs: 3_600_000 } });
+    expect(await limited({})).toEqual({ kind: 'transient', detail: { reason: 'http-429' } });
+    expect(read().claudeAiOauth.refreshToken).toBe('old-refresh');
+  });
+
+  it('does not call a login dead when another process renewed this very profile meanwhile', async () => {
+    write(profile());
+    const fetchSpy = vi.fn(async () => {
+      // A Claude session using the same profile wins the race: the server rejects our (now used) token, the file holds the newer pair.
+      write({ claudeAiOauth: { accessToken: 'session-access', refreshToken: 'session-refresh', expiresAt: NOW + 3_600_000 } });
+      return reply(400, { error: 'invalid_grant' });
+    });
+    expect(await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW, delay: async () => undefined })).toEqual({ kind: 'ok' });
+    expect(read().claudeAiOauth).toMatchObject({ accessToken: 'session-access', refreshToken: 'session-refresh' });
   });
 
   it('shares one request between concurrent calls for the same profile', async () => {

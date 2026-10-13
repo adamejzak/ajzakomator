@@ -3,6 +3,7 @@ import type { RefreshOutcome } from '../accounts/refresh';
 import { readCodexLog } from './codexLog';
 import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, type ClaudeCredentials, type CredentialSource } from './credentials';
 import { parseClaudeUsage, parseCodexPlan, parseCodexRateLimits } from './parse';
+import { parseRetryAfter } from './retryAfter';
 
 const REQUEST_TIMEOUT_MS = 5000;
 /** A token that expires within this margin is treated as expired rather than risking a rejected request. */
@@ -39,14 +40,12 @@ function errorKind(error: unknown): string {
   return 'network';
 }
 
-const retryAfterMs = (response: Response): number | undefined => {
-  const seconds = Number(response.headers.get('retry-after'));
-  return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : undefined;
-};
+const retryAfterMs = (response: Response, nowMs: number): number | undefined => parseRetryAfter(response.headers.get('retry-after'), nowMs);
 
 export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCOUNTS[0]): Promise<FetchResult> {
   const now = deps.now();
-  const source = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
+  const managedSource = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
+  let source = managedSource;
   const base: ProviderUsage = { accountId: ref.id, provider: 'claude', status: 'signedOut', windows: [], fetchedAt: now, source: 'live', ...(ref.configDir ? { managed: true } : {}) };
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   // The main login belongs to Claude Code, which rewrites the file while renewing; one re-read avoids reporting that moment.
@@ -54,18 +53,29 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
   let credentials: ClaudeCredentials | null = await readClaudeCredentials(source);
   if (!credentials && !ref.configDir) credentials = await reread();
   if (!credentials) return { usage: base };
-  const identity = await readClaudeIdentity(source);
-  const known: ProviderUsage = { ...base, plan: credentials.plan, email: identity.email, org: identity.org };
+  // A saved account holding the very refresh token of the main login (a swap by another tool wrote the same login to
+  // both places) is read through the main login: renewing the saved copy would rotate the token under Claude Code.
+  let shared = false;
+  if (ref.configDir && credentials.refreshHash && deps.credentials.platform !== 'darwin') {
+    const main = await readClaudeCredentials(deps.credentials);
+    if (main?.refreshHash === credentials.refreshHash) { shared = true; credentials = main; source = deps.credentials; }
+  }
+  const isMain = !ref.configDir || shared;
+  const identity = await readClaudeIdentity(managedSource);
+  const known: ProviderUsage = { ...base, plan: credentials.plan, email: identity.email, org: identity.org, ...(shared ? { shared: true } : {}) };
   // Only profiles owned by the app are renewed; the main login belongs to Claude Code.
-  const refresh = ref.configDir ? deps.refreshClaude : undefined;
+  const refresh = isMain ? undefined : deps.refreshClaude;
   const configDir = ref.configDir ?? '';
   /** Renews the profile and re-reads its credentials; returns the failure result instead when that did not work. */
   const renew = async (): Promise<FetchResult | undefined> => {
     const outcome = await refresh!(configDir);
-    if (outcome.kind === 'dead' || outcome.kind === 'unusable') return { usage: { ...known, status: 'expired' } };
-    if (outcome.kind === 'transient') return { usage: { ...known, status: 'error', error: 'network' } };
+    if (outcome.kind === 'dead' || outcome.kind === 'unusable') return { usage: { ...known, status: 'expired', error: `refresh-${outcome.kind}` } };
+    if (outcome.kind === 'transient') {
+      const retry = outcome.detail?.retryAfterMs;
+      return { usage: { ...known, status: 'error', error: `refresh-${outcome.detail?.reason ?? 'failed'}` }, ...(retry !== undefined ? { retryAfterMs: retry } : {}) };
+    }
     const renewed = await readClaudeCredentials(source);
-    if (!renewed) return { usage: { ...known, status: 'expired' } };
+    if (!renewed) return { usage: { ...known, status: 'expired', error: 'refresh-reread' } };
     credentials = renewed;
     return undefined;
   };
@@ -81,7 +91,7 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
     } else {
       const failure = await renew();
       if (failure) return failure;
-      if (expired()) return { usage: { ...known, status: 'expired' } };
+      if (expired()) return { usage: { ...known, status: 'expired', error: 'token-expired' } };
     }
   }
   const request = () => deps.fetch(deps.claudeUrl, {
@@ -100,7 +110,7 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
       if (failure) return failure;
       response = await request();
     }
-    if (!ref.configDir && (response.status === 401 || response.status === 403)) {
+    if (isMain && (response.status === 401 || response.status === 403)) {
       // Claude Code may have just renewed the token: look at the file once more before calling the login dead.
       const again = await reread();
       if (again) {
@@ -109,10 +119,11 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
         response = await request();
       }
     }
-    if (response.status === 401 || response.status === 403) return { usage: { ...known, status: 'expired' } };
-    if (!response.ok) return { usage: { ...known, status: 'error', error: `http-${response.status}` }, retryAfterMs: retryAfterMs(response) };
+    if (response.status === 401 || response.status === 403) return { usage: { ...known, status: 'expired', error: `http-${response.status}` } };
+    if (!response.ok) return { usage: { ...known, status: 'error', error: `http-${response.status}` }, retryAfterMs: retryAfterMs(response, now) };
     const windows = parseClaudeUsage(await response.json());
     if (!windows) return { usage: { ...known, status: 'error', error: 'bad-response' } };
+    if (!windows.length) return { usage: { ...known, status: 'error', error: 'no-windows' } };
     return { usage: { ...known, status: 'ok', windows } };
   } catch (error) {
     return { usage: { ...known, status: 'error', error: errorKind(error) } };
@@ -144,7 +155,7 @@ export async function fetchCodex(deps: FetcherDeps): Promise<FetchResult> {
     if (credentials.accountId) headers['ChatGPT-Account-Id'] = credentials.accountId;
     const response = await deps.fetch(deps.codexUrl, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (response.status === 401 || response.status === 403) return fromLog('expired');
-    if (!response.ok) return fromLog('error', `http-${response.status}`, retryAfterMs(response));
+    if (!response.ok) return fromLog('error', `http-${response.status}`, retryAfterMs(response, now));
     const body: unknown = await response.json();
     const windows = parseCodexRateLimits(body, now);
     if (!windows) return fromLog('error', 'bad-response');

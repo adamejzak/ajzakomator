@@ -181,7 +181,7 @@ async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
 }
 // Background refreshes never write into a managed profile while a swap runs or is unresolved.
-usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }), { kind: 'transient' });
+usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, (dir) => refreshClaudeProfile(dir, { fetch: usageDeps.fetch, now: usageDeps.now, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL }), { kind: 'transient', detail: { reason: 'blocked' } });
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();

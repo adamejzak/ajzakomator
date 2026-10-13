@@ -10,9 +10,14 @@ const num = (value: unknown): number | undefined => {
 };
 const toSeconds = (value: number) => Math.floor(value > 1e12 ? value / 1000 : value);
 
-/** Claude: `{ five_hour: { utilization, resets_at }, seven_day: { ... } }`; null when neither window is usable. */
+/**
+ * Claude: `{ five_hour: { utilization, resets_at }, seven_day: { ... } }` (extra keys such as `extra_usage` or
+ * `seven_day_opus` are ignored; an exhausted window may report 100 or more and a null `resets_at`).
+ * Null when the body is not a usage object at all; an empty list when it is one but carries no usable window.
+ */
 export function parseClaudeUsage(body: unknown): UsageWindow[] | null {
   if (!isObject(body)) return null;
+  if (!('five_hour' in body) && !('seven_day' in body)) return null;
   const windows: UsageWindow[] = [];
   for (const [key, id] of [['five_hour', '5h'], ['seven_day', '7d']] as const) {
     const raw = body[key];
@@ -22,7 +27,7 @@ export function parseClaudeUsage(body: unknown): UsageWindow[] | null {
     const resets = typeof raw.resets_at === 'string' ? Date.parse(raw.resets_at) : Number.NaN;
     windows.push({ id, usedPercent: clampPercent(used), resetsAt: Number.isFinite(resets) ? Math.floor(resets / 1000) : 0 });
   }
-  return windows.length ? windows : null;
+  return windows;
 }
 
 function codexWindow(raw: unknown, fallback: '5h' | '7d', nowMs: number): UsageWindow | null {

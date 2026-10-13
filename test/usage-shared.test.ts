@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { sanitizeUsage } from '../src/main/usage/sanitize';
-import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, usageBand, worstPercent, type ProviderUsage } from '../src/shared/usage';
+import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, usageBand, usageDiagnostics, usageErrorKind, usageHttpStatus, worstPercent, type ProviderUsage } from '../src/shared/usage';
+import { usageErrorKey, usageMessages } from '../src/shared/usageMessages';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 
@@ -98,5 +99,58 @@ describe('claudeLoginActions', () => {
     for (const platform of ['win32', 'linux']) {
       for (const has of [false, true]) expect(claudeLoginActions(platform, has)).toEqual({ menu: 'new', emptyTarget: 'new', managedAccounts: true });
     }
+  });
+});
+
+describe('failure reasons', () => {
+  it('groups reason codes into what the card says', () => {
+    expect(usageErrorKind('http-429')).toBe('rate');
+    expect(usageErrorKind('refresh-http-429')).toBe('rate');
+    expect(usageErrorKind('http-503')).toBe('server');
+    expect(usageErrorKind('network')).toBe('network');
+    expect(usageErrorKind('timeout')).toBe('network');
+    expect(usageErrorKind('bad-response')).toBe('parse');
+    expect(usageErrorKind('no-windows')).toBe('empty');
+    expect(usageErrorKind('refresh-network')).toBe('refresh');
+    expect(usageErrorKind('refresh-http-500')).toBe('refresh');
+    expect(usageErrorKind('refresh-blocked')).toBe('blocked');
+    expect(usageErrorKind('http-418')).toBe('other');
+    expect(usageErrorKind(undefined)).toBe('other');
+  });
+
+  it('has a translated card text for every kind and extracts the HTTP status', () => {
+    for (const kind of ['rate', 'server', 'network', 'parse', 'empty', 'refresh', 'blocked', 'other'] as const) {
+      expect(usageMessages[usageErrorKey(kind)]).toHaveLength(5);
+    }
+    expect(usageHttpStatus('http-429')).toBe(429);
+    expect(usageHttpStatus('refresh-http-503')).toBe(503);
+    expect(usageHttpStatus('network')).toBeUndefined();
+  });
+
+  it('builds a diagnostics text with reason, status and ages but no secrets', () => {
+    const usage: ProviderUsage = {
+      accountId: 'claude:abc', provider: 'claude', status: 'error', plan: 'Team 5x', managed: true, shared: false, error: 'http-429',
+      windows: [{ id: '5h', usedPercent: 0, resetsAt: 0 }, { id: '7d', usedPercent: 100, resetsAt: 1 }],
+      fetchedAt: NOW - 15 * 60_000, source: 'cache', attemptAt: NOW - 60_000, retryAt: NOW + 9 * 60_000, email: 'x@example.com',
+    };
+    const text = usageDiagnostics(usage, NOW, 'APP_label');
+    expect(text).toContain('account: APP_label');
+    expect(text).toContain('reason: http-429');
+    expect(text).toContain('http status: 429');
+    expect(text).toContain('last good data 15 min ago');
+    expect(text).toContain('last attempt: 1 min ago');
+    expect(text).toContain('next attempt: in 9 min');
+    expect(text).toContain('7d 100%');
+    expect(text).not.toContain('example.com');
+    expect(usageDiagnostics({ ...usage, error: undefined, retryAt: undefined, attemptAt: undefined, shared: true }, NOW, 'a')).toContain('shared with main login: yes');
+  });
+
+  it('keeps the new fields through sanitizing and drops bad ones', () => {
+    const base = { accountId: 'claude:abc', provider: 'claude', status: 'error', windows: [], fetchedAt: NOW, source: 'live' };
+    expect(sanitizeUsage({ ...base, attemptAt: NOW, retryAt: NOW + 5, shared: true })).toMatchObject({ attemptAt: NOW, retryAt: NOW + 5, shared: true });
+    const bad = sanitizeUsage({ ...base, attemptAt: 'x', retryAt: -1, shared: 'yes' });
+    expect(bad).not.toHaveProperty('attemptAt');
+    expect(bad).not.toHaveProperty('retryAt');
+    expect(bad).not.toHaveProperty('shared');
   });
 });

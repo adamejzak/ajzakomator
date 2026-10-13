@@ -1,3 +1,4 @@
+import type { UsageErrorKind } from './usage';
 export const usageMessages = {
   'Limity kont AI': ['AI account limits', 'Limits der KI-Konten', 'Límites de cuentas de IA', 'Limites des comptes IA', 'Limites das contas de IA'],
   'Konta AI': ['AI accounts', 'KI-Konten', 'Cuentas de IA', 'Comptes IA', 'Contas de IA'],
@@ -39,4 +40,31 @@ export const usageMessages = {
   'Pokazuj limity kont AI': ['Show AI account limits', 'Limits der KI-Konten anzeigen', 'Mostrar límites de cuentas de IA', 'Afficher les limites des comptes IA', 'Mostrar limites das contas de IA'],
   'Odświeżanie limitów': ['Refresh limits', 'Limits aktualisieren', 'Actualización de límites', 'Actualisation des limites', 'Atualização dos limites'],
   'co {count} min': ['every {count} min', 'alle {count} Min.', 'cada {count} min', 'toutes les {count} min', 'a cada {count} min'],
+  '{name}: serwer Anthropic odmówił odpowiedzi (429). Ponowna próba {retry}.': ['{name}: the Anthropic server declined to answer (429). Trying again {retry}.', '{name}: Der Anthropic-Server hat die Antwort verweigert (429). Neuer Versuch {retry}.', '{name}: el servidor de Anthropic se negó a responder (429). Se reintentará {retry}.', '{name} : le serveur d’Anthropic a refusé de répondre (429). Nouvel essai {retry}.', '{name}: o servidor da Anthropic recusou responder (429). Nova tentativa {retry}.'],
+  '{name}: serwer Anthropic jest chwilowo niedostępny. Ponowna próba {retry}.': ['{name}: the Anthropic server is temporarily unavailable. Trying again {retry}.', '{name}: Der Anthropic-Server ist vorübergehend nicht erreichbar. Neuer Versuch {retry}.', '{name}: el servidor de Anthropic no está disponible por ahora. Se reintentará {retry}.', '{name} : le serveur d’Anthropic est momentanément indisponible. Nouvel essai {retry}.', '{name}: o servidor da Anthropic está temporariamente indisponível. Nova tentativa {retry}.'],
+  '{name}: brak połączenia z serwerem Anthropic. Ponowna próba {retry}.': ['{name}: cannot reach the Anthropic server. Trying again {retry}.', '{name}: Keine Verbindung zum Anthropic-Server. Neuer Versuch {retry}.', '{name}: no se puede conectar con el servidor de Anthropic. Se reintentará {retry}.', '{name} : connexion au serveur d’Anthropic impossible. Nouvel essai {retry}.', '{name}: sem ligação ao servidor da Anthropic. Nova tentativa {retry}.'],
+  '{name}: serwer Anthropic zwrócił nieoczekiwaną odpowiedź. Ponowna próba {retry}.': ['{name}: the Anthropic server sent an unexpected answer. Trying again {retry}.', '{name}: Der Anthropic-Server hat eine unerwartete Antwort gesendet. Neuer Versuch {retry}.', '{name}: el servidor de Anthropic envió una respuesta inesperada. Se reintentará {retry}.', '{name} : le serveur d’Anthropic a renvoyé une réponse inattendue. Nouvel essai {retry}.', '{name}: o servidor da Anthropic enviou uma resposta inesperada. Nova tentativa {retry}.'],
+  '{name}: serwer nie podał limitów tego konta. Ponowna próba {retry}.': ['{name}: the server returned no limits for this account. Trying again {retry}.', '{name}: Der Server hat für dieses Konto keine Limits geliefert. Neuer Versuch {retry}.', '{name}: el servidor no devolvió límites para esta cuenta. Se reintentará {retry}.', '{name} : le serveur n’a renvoyé aucune limite pour ce compte. Nouvel essai {retry}.', '{name}: o servidor não devolveu limites para esta conta. Nova tentativa {retry}.'],
+  '{name}: nie udało się odnowić zapisanego logowania. Ponowna próba {retry}.': ['{name}: the saved sign-in could not be renewed. Trying again {retry}.', '{name}: Die gespeicherte Anmeldung konnte nicht erneuert werden. Neuer Versuch {retry}.', '{name}: no se pudo renovar el inicio de sesión guardado. Se reintentará {retry}.', '{name} : la connexion enregistrée n’a pas pu être renouvelée. Nouvel essai {retry}.', '{name}: não foi possível renovar o início de sessão guardado. Nova tentativa {retry}.'],
+  '{name}: odnawianie logowania wstrzymane do końca zamiany kont.': ['{name}: sign-in renewal is paused until the account swap is finished.', '{name}: Die Erneuerung der Anmeldung ist bis zum Ende des Kontotauschs pausiert.', '{name}: la renovación del inicio de sesión está en pausa hasta que termine el cambio de cuenta.', '{name} : le renouvellement de la connexion est suspendu jusqu’à la fin de l’échange de comptes.', '{name}: a renovação do início de sessão está em pausa até terminar a troca de contas.'],
+  'wkrótce': ['soon', 'in Kürze', 'en breve', 'bientôt', 'em breve'],
+  'To konto jest teraz głównym logowaniem - limity czytam z głównego logowania.': ['This account is now the main sign-in - its limits are read through the main sign-in.', 'Dieses Konto ist jetzt die Haupt-Anmeldung - die Limits werden über die Haupt-Anmeldung gelesen.', 'Esta cuenta es ahora el inicio de sesión principal: sus límites se leen a través del principal.', 'Ce compte est maintenant la connexion principale - ses limites sont lues via la connexion principale.', 'Esta conta é agora o início de sessão principal - os limites são lidos através do principal.'],
+  'Przyczyna techniczna: {code}': ['Technical reason: {code}', 'Technische Ursache: {code}', 'Motivo técnico: {code}', 'Cause technique : {code}', 'Motivo técnico: {code}'],
+  'Skopiuj diagnostykę': ['Copy diagnostics', 'Diagnose kopieren', 'Copiar diagnóstico', 'Copier le diagnostic', 'Copiar diagnóstico'],
+  'Skopiowano diagnostykę.': ['Diagnostics copied.', 'Diagnose kopiert.', 'Diagnóstico copiado.', 'Diagnostic copié.', 'Diagnóstico copiado.'],
+  'Menu konta': ['Account menu', 'Kontomenü', 'Menú de la cuenta', 'Menu du compte', 'Menu da conta'],
 } as const;
+
+/** Card text for a failed read, by kind (see `usageErrorKind`); the generic text stays for unknown reasons. */
+export function usageErrorKey(kind: UsageErrorKind): keyof typeof usageMessages {
+  switch (kind) {
+    case 'rate': return '{name}: serwer Anthropic odmówił odpowiedzi (429). Ponowna próba {retry}.';
+    case 'server': return '{name}: serwer Anthropic jest chwilowo niedostępny. Ponowna próba {retry}.';
+    case 'network': return '{name}: brak połączenia z serwerem Anthropic. Ponowna próba {retry}.';
+    case 'parse': return '{name}: serwer Anthropic zwrócił nieoczekiwaną odpowiedź. Ponowna próba {retry}.';
+    case 'empty': return '{name}: serwer nie podał limitów tego konta. Ponowna próba {retry}.';
+    case 'refresh': return '{name}: nie udało się odnowić zapisanego logowania. Ponowna próba {retry}.';
+    case 'blocked': return '{name}: odnawianie logowania wstrzymane do końca zamiany kont.';
+    default: return '{name}: nie udało się odczytać limitów.';
+  }
+}

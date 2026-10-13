@@ -138,6 +138,31 @@ describe('UsageService', () => {
     expect(claude).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps the last good numbers on a 429 and tells the card when it tries again', async () => {
+    let mode: 'fine' | 'limited' = 'fine';
+    const { service } = make({ claude: async () => (mode === 'fine' ? ok('claude', 100) : { ...failing('claude', 'error', 600_000), usage: { ...failing('claude', 'error').usage, error: 'http-429' } }) });
+    await service.refresh();
+    const good = service.getState().providers[0];
+    mode = 'limited';
+    await vi.advanceTimersByTimeAsync(MIN_GAP_MS + 1);
+    await service.refresh(true);
+    const held = service.getState().providers[0];
+    expect(held).toMatchObject({ status: 'error', error: 'http-429', source: 'cache', fetchedAt: good.fetchedAt, windows: good.windows });
+    expect(held.attemptAt).toBe(Date.now());
+    expect(held.retryAt).toBe(Date.now() + 600_000);
+  });
+
+  it('does not keep an old failure when the numbers come back from the cache file after a restart', async () => {
+    const failed = { ...ok('claude', 100).usage, status: 'error' as const, error: 'http-429', attemptAt: NOW, retryAt: NOW + 1000 };
+    writeFileSync(cacheFile, JSON.stringify({ providers: [failed] }));
+    const { service } = make();
+    const [loaded] = service.getState().providers;
+    expect(loaded).toMatchObject({ status: 'ok', source: 'cache' });
+    expect(loaded.error).toBeUndefined();
+    expect(loaded.retryAt).toBeUndefined();
+    expect(loaded.attemptAt).toBeUndefined();
+  });
+
   it('keeps the numbers of an expired login and does not hammer the provider', async () => {
     let step = 0;
     const { service } = make({ codex: async () => (step++ === 0 ? ok('codex', 33) : failing('codex', 'expired')) });
