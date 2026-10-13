@@ -14,5 +14,6 @@ export function parseRetryAfter(value: string | null | undefined, nowMs: number)
     if (!Number.isFinite(at)) return undefined;
     ms = at - nowMs;
   }
-  return Number.isFinite(ms) && ms > 0 ? Math.min(MAX_RETRY_AFTER_MS, Math.round(ms)) : undefined;
+  // A positive wait shorter than a second is rounded up to one second: a 0 would mean "retry at once" in a loop.
+  return Number.isFinite(ms) && ms > 0 ? Math.min(MAX_RETRY_AFTER_MS, Math.max(1000, Math.round(ms))) : undefined;
 }

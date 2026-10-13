@@ -377,6 +377,26 @@ describe('why a saved account fails to read', () => {
       expect(JSON.stringify(usage)).not.toContain('same-refresh');
     });
 
+    it('reuses the main card read of the same poll instead of asking a second time', async () => {
+      mainLogin('same-refresh', { accessToken: 'main-tok' });
+      profileLogin({ refreshToken: 'same-refresh', accessToken: 'copy-tok' });
+      const fetchSpy = vi.fn(async () => reply(200, claudeBody));
+      const d = withRefresh(fetchSpy as never, vi.fn());
+      const [main, saved] = await Promise.all([fetchClaude(d), fetchClaude(d, ref())]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(main.usage).toMatchObject({ accountId: 'claude:main', status: 'ok' });
+      expect(saved.usage).toMatchObject({ accountId: 'claude:abc', status: 'ok', managed: true, shared: true });
+      expect(saved.usage.windows).toEqual(main.usage.windows);
+    });
+
+    it('asks for itself when no main read happened in this poll', async () => {
+      mainLogin('same-refresh', { accessToken: 'main-tok' });
+      profileLogin({ refreshToken: 'same-refresh', accessToken: 'copy-tok' });
+      const fetchSpy = vi.fn(async () => reply(200, claudeBody));
+      await fetchClaude(withRefresh(fetchSpy as never, vi.fn()), ref());
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('treats an expired shared token like the main one: dormant, no renewal, no request', async () => {
       mainLogin('same-refresh', { expiresAt: NOW - 1000 });
       profileLogin({ refreshToken: 'same-refresh', expiresAt: NOW - 1000 });

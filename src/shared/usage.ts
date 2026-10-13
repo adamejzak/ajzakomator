@@ -148,7 +148,13 @@ export function usageHttpStatus(code?: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
-/** Short text for bug reports: reason, status and ages only. Never contains tokens; the account is named by its label. */
+/** How a bug report names an account: its role, never its e-mail ("claude main", "claude saved #2", "codex"). */
+export function diagnosticLabel(usage: Pick<ProviderUsage, 'provider' | 'managed'>, savedIndex = 1): string {
+  if (usage.provider === 'codex') return 'codex';
+  return usage.managed ? `claude saved #${Math.max(1, savedIndex)}` : 'claude main';
+}
+
+/** Short text for bug reports: reason, status and ages only. Never contains tokens or e-mails; `label` names the account (see `diagnosticLabel`). */
 export function usageDiagnostics(usage: ProviderUsage, nowMs: number, label: string): string {
   const age = (at?: number) => (at === undefined ? 'n/a' : `${formatDuration((nowMs - at) / 1000)} ago`);
   const status = usageHttpStatus(usage.error);

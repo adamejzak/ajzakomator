@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { LoginTarget } from '../../../shared/accounts';
-import { claudeLoginActions, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
 import { swapErrorKey } from '../../../shared/swapMessages';
@@ -52,8 +52,10 @@ function KebabIcon() {
   return <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden><circle cx="8" cy="3.5" r="1.2" /><circle cx="8" cy="8" r="1.2" /><circle cx="8" cy="12.5" r="1.2" /></svg>;
 }
 
-function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
+function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onMakeMain }: {
   usage: ProviderUsage; now: number; language: string; showMain: boolean;
+  /** Position among the saved Claude accounts (1-based); names the account in diagnostics instead of its e-mail. */
+  savedIndex: number;
   /** Account id whose swap is running (any card is locked meanwhile), or null. */
   swapping: string | null; onMakeMain: (usage: ProviderUsage) => void;
 }) {
@@ -81,7 +83,7 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
   };
 
   const copyDiagnostics = () => {
-    window.mc.clipboardWrite(usageDiagnostics(usage, Date.now(), name));
+    window.mc.clipboardWrite(usageDiagnostics(usage, Date.now(), diagnosticLabel(usage, savedIndex)));
     toast(tr('Skopiowano diagnostykę.'));
   };
   const reasonTitle = usage.error ? tr('Przyczyna techniczna: {code}', { code: usage.error }) : undefined;
@@ -89,7 +91,7 @@ function AccountCard({ usage, now, language, showMain, swapping, onMakeMain }: {
   // Temporary trouble (limits server, network, renewal) is told calmly; only an unknown or unreadable answer is shown as a warning.
   const calm = kind !== 'other' && kind !== 'parse';
   const retry = usage.retryAt !== undefined && usage.retryAt > now ? tr('za {time}', { time: formatDuration((usage.retryAt - now) / 1000) }) : tr('wkrótce');
-  const failureText = tr(usageErrorKey(kind), { name: providerName, retry });
+  const failureText = tr(usageErrorKey(kind, usage.provider), { name: providerName, retry });
   const sharedNote = usage.shared ? <p className="usage-note">{tr('To konto jest teraz głównym logowaniem - limity czytam z głównego logowania.')}</p> : null;
 
   let body;
@@ -318,7 +320,7 @@ export function UsagePanel() {
           )}
           {visible.length ? (
             <>
-              {visible.map((usage) => <AccountCard key={usage.accountId} usage={usage} now={now} language={language} showMain={claudeCount > 1} swapping={swapping} onMakeMain={(target) => void makeMain(target)} />)}
+              {visible.map((usage) => <AccountCard key={usage.accountId} usage={usage} savedIndex={visible.filter((u) => u.managed && u.provider === 'claude').indexOf(usage) + 1} now={now} language={language} showMain={claudeCount > 1} swapping={swapping} onMakeMain={(target) => void makeMain(target)} />)}
               {updated && <p className="usage-note">{tr('Zaktualizowano {time}', { time: updated })}</p>}
             </>
           ) : (

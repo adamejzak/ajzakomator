@@ -42,7 +42,18 @@ function errorKind(error: unknown): string {
 
 const retryAfterMs = (response: Response, nowMs: number): number | undefined => parseRetryAfter(response.headers.get('retry-after'), nowMs);
 
-export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCOUNTS[0]): Promise<FetchResult> {
+/** The main login's read of the current poll, so a saved account holding the same login reuses it instead of asking again. */
+const mainReads = new WeakMap<FetcherDeps, { at: number; read: Promise<FetchResult> }>();
+const MAIN_READ_REUSE_MS = 20_000;
+
+export function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCOUNTS[0]): Promise<FetchResult> {
+  if (ref.configDir) return readClaude(deps, ref);
+  const read = readClaude(deps, ref);
+  mainReads.set(deps, { at: deps.now(), read });
+  return read;
+}
+
+async function readClaude(deps: FetcherDeps, ref: AccountRef): Promise<FetchResult> {
   const now = deps.now();
   const managedSource = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
   let source = managedSource;
@@ -59,6 +70,17 @@ export async function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCO
   if (ref.configDir && credentials.refreshHash && deps.credentials.platform !== 'darwin') {
     const main = await readClaudeCredentials(deps.credentials);
     if (main?.refreshHash === credentials.refreshHash) { shared = true; credentials = main; source = deps.credentials; }
+  }
+  if (shared) {
+    // The same login was just read for the main card in this poll: its answer is this account's answer too (one request, not two).
+    const recent = mainReads.get(deps);
+    if (recent && Math.abs(now - recent.at) <= MAIN_READ_REUSE_MS) {
+      const main = await recent.read.catch(() => undefined);
+      if (main) {
+        const identity = await readClaudeIdentity(managedSource);
+        return { ...main, usage: { ...main.usage, accountId: ref.id, managed: true, shared: true, email: identity.email, org: identity.org } };
+      }
+    }
   }
   const isMain = !ref.configDir || shared;
   const identity = await readClaudeIdentity(managedSource);
