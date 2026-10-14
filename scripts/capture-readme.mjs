@@ -6,7 +6,6 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import electron from 'electron';
 import { verifyWorkspaceUI } from './verify-workspace-ui.mjs';
 
@@ -221,11 +220,6 @@ try {
     await verifyWorkspaceUI({ cdp, evaluate, click, key, until, project, cells, screenshot });
   }
   if (exceptions.length) throw new Error(`Renderer exceptions: ${exceptions.join('; ')}`);
-  if (process.argv.includes('--verify') && existsSync(join(checkout, 'docs/design/project-add-concepts.html'))) {
-    await cdp('Page.navigate', { url: pathToFileURL(join(checkout, 'docs/design/project-add-concepts.html')).href });
-    await until(() => evaluate('document.querySelectorAll(".concepts article").length === 3'), 'project add concepts');
-    await screenshot('project-add-concepts');
-  }
   console.log(`Screenshots: ${output}\nIsolated demo data: ${root}`);
 } catch (error) {
   console.error(error); process.exitCode = 1;
