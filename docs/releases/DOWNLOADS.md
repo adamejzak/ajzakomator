@@ -13,7 +13,7 @@ Older releases use `ajzakomator` instead of `unimux` in package names; the platf
 | **Mac with an Intel processor** | `unimux-<version>-mac-x64.dmg` | **Recommended for Intel Macs.** Open the DMG and drag unimux into Applications. |
 | **Mac, ZIP alternative** | `unimux-<version>-mac-arm64.zip` or `…-mac-x64.zip` | Extract the ZIP and move the app into Applications. Choose the same architecture as above. |
 
-On a Mac, open **Apple menu → About This Mac**: **Chip: Apple M…** means Apple Silicon (`arm64`); **Processor: Intel…** means Intel (`x64`). macOS updates are installed manually by replacing the app with a newer download.
+On a Mac, open **Apple menu → About This Mac**: **Chip: Apple M…** means Apple Silicon (`arm64`); **Processor: Intel…** means Intel (`x64`). Installed Mac builds can apply updates in place when the app folder is writable and macOS permits replacing the app. Otherwise, download the matching DMG or ZIP and replace the app manually.
 
 Portable means **no installer**, not that all data stays beside the executable: projects, settings and history still use the app's local data directory.
 
