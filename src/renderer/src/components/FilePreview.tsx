@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import type { ProjectFilePreview } from '../../../shared/types';
 import { closeModal, useStore } from '../store';
 import { fullProjectPath } from './ProjectExplorer';
-import { IFile, IX } from './icons';
+import { IX } from './icons';
+import { FileActionIcon, FileBreadcrumb, FileIcon } from './FileIcon';
 
 export function FilePreview({ projectId, relativePath }: { projectId: string; relativePath: string }) {
   const { tr, language, errorText } = useI18n();
@@ -21,16 +22,16 @@ export function FilePreview({ projectId, relativePath }: { projectId: string; re
   if (!project) return null;
   const path = fullProjectPath(project.path, relativePath);
   return (
-    <div className="modal wide file-preview">
+    <div className="modal wide file-preview file-workspace-preview">
       <div className="modal-head">
-        <IFile />
+        <FileIcon name={relativePath} />
         <h3 title={relativePath}>{relativePath.split('/').pop()}</h3>
         <button className="btn ghost icon" aria-label={tr("Zamknij podgląd pliku")} onClick={closeModal}><IX /></button>
       </div>
-      <div className="file-preview-toolbar">
-        <span className="file-preview-path muted" title={path}>{project.name} / {relativePath}</span>
+      <div className="file-editor-toolbar">
+        <FileBreadcrumb projectName={project.name} relativePath={relativePath} fullPath={path} />
         {preview && preview.kind !== 'error' && <span className="muted">{new Intl.NumberFormat(language, { maximumFractionDigits: 1 }).format(preview.size / 1024)} KB</span>}
-        {preview?.kind === 'text' && <button className={`btn small ${wrap ? 'primary' : ''}`} aria-pressed={wrap} onClick={() => setWrap((v) => !v)}>{tr("Zawijaj wiersze")}</button>}
+        {preview?.kind === 'text' && <button className={`btn ghost icon ${wrap ? 'active' : ''}`} title={tr('Zawijaj wiersze')} aria-label={tr('Zawijaj wiersze')} aria-pressed={wrap} onClick={() => setWrap((v) => !v)}><FileActionIcon kind="wrap" /></button>}
       </div>
       {!preview && <div className="file-preview-message muted">{tr("Wczytywanie pliku…")}</div>}
       {preview?.kind === 'text' && (

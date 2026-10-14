@@ -20,6 +20,7 @@ import { rust } from '@codemirror/legacy-modes/mode/rust';
 import { c, cpp, java, csharp } from '@codemirror/legacy-modes/mode/clike';
 import { standardSQL } from '@codemirror/legacy-modes/mode/sql';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
+import './file-workspace.css';
 
 function languageForFile(path: string): Extension {
   const extension = path.split('.').pop()?.toLowerCase();
@@ -66,9 +67,9 @@ const theme = EditorView.theme({
   '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, Menlo, monospace', lineHeight: '1.7' },
   '.cm-content': { padding: '12px 0', caretColor: '#eeeeee' },
   '.cm-line': { padding: '0 16px' },
-  '.cm-gutters': { backgroundColor: '#121212', color: '#606060', border: 'none', borderRight: '1px solid #232323' },
+  '.cm-gutters': { backgroundColor: 'var(--bg)', color: '#777d88', border: 'none' },
   '.cm-lineNumbers .cm-gutterElement': { minWidth: '42px', padding: '0 10px 0 8px' },
-  '.cm-activeLineGutter': { backgroundColor: '#202020', color: '#bcbcbc' },
+  '.cm-activeLineGutter': { backgroundColor: '#ffffff04', color: '#bcbcbc' },
   '.cm-activeLine': { backgroundColor: '#ffffff04' },
   '.cm-cursor': { borderLeftColor: '#e6e6e6' },
   '&.cm-focused': { outline: 'none' },
@@ -103,5 +104,5 @@ export function CodeEditor({ path, text, wrap, onChange }: { path: string; text:
     if (editor && editor.state.doc.toString() !== text) editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: text } });
   }, [text]);
   useEffect(() => { view.current?.dispatch({ effects: wrapping.current.reconfigure(wrap ? EditorView.lineWrapping : []) }); }, [wrap]);
-  return <div ref={host} className="code-editor" />;
+  return <div ref={host} className="code-editor file-workspace-code" />;
 }

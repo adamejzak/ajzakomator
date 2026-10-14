@@ -18,6 +18,7 @@ import { setUi, toast, update, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { openMenu, openMenuAt, type MenuItem } from './ContextMenu';
 import { IBranch, IMax, IRestart, IRestore, IX } from './icons';
+import './terminalCell.css';
 
 export const SNIPPET_MIME = 'application/x-mc-snippet';
 
@@ -127,7 +128,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   return (
     <div
       data-cell-id={cell.id}
-      className={`cell ${focused ? 'focused' : ''} ${drop ? 'drop' : ''} ${cell.color ? 'colored' : ''} ${dragSource ? 'drag-source' : ''}`}
+      className={`cell terminal-cell ${focused ? 'focused' : ''} ${drop ? 'drop' : ''} ${cell.color ? 'colored' : ''} ${dragSource ? 'drag-source' : ''}`}
       style={cell.color ? { ...style, ['--cc' as string]: cell.color } : style}
       onMouseDownCapture={markFocused}
       onFocusCapture={markFocused}
@@ -174,71 +175,73 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         onContextMenu={headerMenu}
         onDoubleClick={(e) => (e.target as HTMLElement).closest('button,.cell-name,input') || toggleMaximize(cell.id)}
       >
-        <span className="idx">{index + 1}</span>
-        <span className={`dot ${status}${status === 'waiting' && failure !== undefined ? ' error' : ''}`} />
-        <span className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title={tr("Zmień profil")}>
-          <span className="pchip" style={{ background: profile.color }} />
-          {profile.name}
-        </span>
-        {editing ? (
-          <input
-            className="cell-name-input"
-            autoFocus
-            defaultValue={cell.name ?? sessionTitle ?? ''}
-            placeholder={tr("Nazwa komórki")}
-            onFocus={(e) => e.target.select()}
-            onBlur={(e) => {
-              renameCell(cell.id, e.target.value);
-              setEditing(false);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-              if (e.key === 'Escape') setEditing(false);
-              e.stopPropagation();
-            }}
-          />
-        ) : (
-          label && (
-            <span className={`cell-name ${cell.name ? 'custom' : ''}`} title={`${label}\n${tr('Dwuklik: zmień nazwę')}`} onDoubleClick={() => setEditing(true)}>
-              {label}
-            </span>
-          )
-        )}
-        {!label && !editing && (
-          <span className="cell-name placeholder" onDoubleClick={() => setEditing(true)} title={tr("Dwuklik: nadaj nazwę")}>{tr("bez nazwy")}</span>
-        )}
-        {cell.worktree && (
-          <span className="branch" title={cell.worktree.path}><IBranch /> {cell.worktree.branch}</span>
-        )}
-        {status === 'waiting' && failure !== undefined
-          ? <span className="status-text error" title={tr(errorPhrase(failure))}>{tr(failureLabel(failure))}</span>
-          : status !== 'idle' && <span className={`status-text ${status}`}>{status === 'working' ? tr('pracuje') : status === 'waiting' ? tr('czeka na Ciebie') : tr('zakończony')}{status === 'working' ? '…' : ''}</span>}
-        {cell.muted && <span className="muted-mark" title={tr("Alerty tej komórki są wyciszone")} aria-label={tr("Alerty tej komórki są wyciszone")}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0M3 3l18 18" /></svg>
-        </span>}
-        <span className="grow" />
-        {profile.cli !== 'shell' && <button className={`mcp-control ${cell.role ?? 'disabled'} ${mcpInfo.connectedCellIds?.includes(cell.id) ? 'connected' : ''}`}
-          aria-label={`${tr('Rola / MCP')}: ${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')}`}
-          title={`${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')} · ${tr(cell.role ? mcpInfo.connectedCellIds?.includes(cell.id) ? 'MCP działa' : mcpInfo.configuredCellIds?.includes(cell.id) ? 'MCP skonfigurowane · oczekiwanie na agenta' : 'Wymaga restartu' : 'Rola / MCP')}`}
-          onClick={(e) => openMenuAt(e.currentTarget, [
-            { header: tr('Rola / MCP') },
-            { label: tr('Koordynator'), hint: cell.role === 'coordinator' ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, 'coordinator') },
-            { label: tr('Wykonawca'), hint: cell.role === 'worker' ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, 'worker') },
-            { label: tr('Bez MCP'), hint: !cell.role ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, null) },
-          ])}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            {cell.role === 'coordinator' ? <><circle cx="12" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="19" r="2" /><path d="M12 7v6M5 17v-4h14v4" /></> : <><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4" />{!cell.role && <path d="m3 3 18 18" />}</>}
-          </svg><span className="mcp-indicator" />
-        </button>}
+        <div className="cell-heading">
+          <span className="idx">{index + 1}</span>
+          <span className={`dot ${status}${status === 'waiting' && failure !== undefined ? ' error' : ''}`} />
+          <button type="button" className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title={tr("Zmień profil")} aria-label={`${tr("Zmień profil")}: ${profile.name}`}>
+            <span className="pchip" style={{ background: profile.color }} />
+            <span className="profile-name">{profile.name}</span>
+          </button>
+          {editing ? (
+            <input
+              className="cell-name-input"
+              autoFocus
+              defaultValue={cell.name ?? sessionTitle ?? ''}
+              placeholder={tr("Nazwa komórki")}
+              onFocus={(e) => e.target.select()}
+              onBlur={(e) => {
+                renameCell(cell.id, e.target.value);
+                setEditing(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                if (e.key === 'Escape') setEditing(false);
+                e.stopPropagation();
+              }}
+            />
+          ) : (
+            label && (
+              <span className={`cell-name ${cell.name ? 'custom' : ''}`} title={`${label}\n${tr('Dwuklik: zmień nazwę')}`} onDoubleClick={() => setEditing(true)}>
+                {label}
+              </span>
+            )
+          )}
+          {!label && !editing && (
+            <span className="cell-name placeholder" onDoubleClick={() => setEditing(true)} title={tr("Dwuklik: nadaj nazwę")}>{tr("bez nazwy")}</span>
+          )}
+          {cell.worktree && (
+            <span className="branch" title={cell.worktree.path}><IBranch /><span>{cell.worktree.branch}</span></span>
+          )}
+          {status === 'waiting' && failure !== undefined
+            ? <span className="status-text error" title={tr(errorPhrase(failure))}>{tr(failureLabel(failure))}</span>
+            : status !== 'idle' && <span className={`status-text ${status}`}>{status === 'working' ? tr('pracuje') : status === 'waiting' ? tr('czeka na Ciebie') : tr('zakończony')}{status === 'working' ? '…' : ''}</span>}
+          {cell.muted && <span className="muted-mark" title={tr("Alerty tej komórki są wyciszone")} aria-label={tr("Alerty tej komórki są wyciszone")}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0M3 3l18 18" /></svg>
+          </span>}
+        </div>
         <span className="actions">
-          <button title={tr("Uruchom ponownie")} onClick={(e) => openMenuAt(e.currentTarget, restartItems())}><IRestart /></button>
-          <button title={titleWithShortcut(maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), 'cell.maximize')} onClick={() => toggleMaximize(cell.id)}>
+          {profile.cli !== 'shell' && <button className={`mcp-control ${cell.role ?? 'disabled'} ${mcpInfo.connectedCellIds?.includes(cell.id) ? 'connected' : ''}`}
+            aria-label={`${tr('Rola / MCP')}: ${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')}`}
+            title={`${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')} · ${tr(cell.role ? mcpInfo.connectedCellIds?.includes(cell.id) ? 'MCP działa' : mcpInfo.configuredCellIds?.includes(cell.id) ? 'MCP skonfigurowane · oczekiwanie na agenta' : 'Wymaga restartu' : 'Rola / MCP')}`}
+            onClick={(e) => openMenuAt(e.currentTarget, [
+              { header: tr('Rola / MCP') },
+              { label: tr('Koordynator'), hint: cell.role === 'coordinator' ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, 'coordinator') },
+              { label: tr('Wykonawca'), hint: cell.role === 'worker' ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, 'worker') },
+              { label: tr('Bez MCP'), hint: !cell.role ? '✓' : undefined, onClick: () => void changeAgentRole(cell.id, null) },
+            ])}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {cell.role === 'coordinator' ? <><circle cx="12" cy="5" r="2" /><circle cx="5" cy="19" r="2" /><circle cx="19" cy="19" r="2" /><path d="M12 7v6M5 17v-4h14v4" /></> : <><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4" />{!cell.role && <path d="m3 3 18 18" />}</>}
+            </svg><span className="mcp-indicator" />
+          </button>}
+          <button aria-label={tr("Uruchom ponownie")} title={tr("Uruchom ponownie")} onClick={(e) => openMenuAt(e.currentTarget, restartItems())}><IRestart /></button>
+          <button aria-label={maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj")} title={titleWithShortcut(maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), 'cell.maximize')} onClick={() => toggleMaximize(cell.id)}>
             {maximized ? <IRestore /> : <IMax />}
           </button>
-          <button title={tr("Zamknij komórkę")} onClick={() => void removeCell(cell.id)}><IX /></button>
+          <button aria-label={tr("Zamknij komórkę")} title={tr("Zamknij komórkę")} onClick={() => void removeCell(cell.id)}><IX /></button>
         </span>
       </div>
       <div className="cell-body" ref={bodyRef} style={lackingCli ? { visibility: 'hidden' } : undefined} />
+      <span className="cell-frame" aria-hidden="true" />
       {pathDrop && <div className={`cell-path-drop ${pathDrop.blocked ? 'blocked' : ''}`} role="status">{pathDrop.blocked ? tr('Komórka nie jest uruchomiona') : dropLabel(pathDrop.target)}</div>}
       {lackingCli && <CliMissingCard cli={lackingCli} cellId={cell.id} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
       {floodHint && !error && (

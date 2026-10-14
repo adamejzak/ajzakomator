@@ -1,3 +1,4 @@
+import { Select } from './Select';
 import { useEffect, useState } from 'react';
 import { translate } from '../../../shared/i18n';
 import { detectLanguage, isLanguage, LANGUAGES } from '../../../shared/languages';
@@ -22,11 +23,11 @@ export function LanguageSetup() {
           <p>{tr('Wybierz język aplikacji. Możesz go później zmienić w ustawieniach.')}</p>
           <div className="field">
             <label htmlFor="setup-language">{tr('Wybierz język')}</label>
-            <select id="setup-language" className="select" autoFocus value={language} onChange={(event) => {
+            <Select id="setup-language" className="select" autoFocus value={language} onChange={(event) => {
               if (isLanguage(event.target.value)) setLanguage(event.target.value);
             }}>
               {LANGUAGES.map((option) => <option key={option.code} value={option.code} lang={option.code}>{option.name}</option>)}
-            </select>
+            </Select>
           </div>
           <button className="btn white lg" type="submit">{tr('Kontynuuj')}</button>
         </form>

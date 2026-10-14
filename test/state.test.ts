@@ -34,6 +34,19 @@ describe('state', () => {
     expect(new Set(proj.tabs[0].cells.map((c) => c.id)).size).toBe(4);
   });
 
+  it('colors new grids, preserves explicit colors and retains them when restored', () => {
+    const { s: s0, p } = withProject();
+    const input = { layout: layoutForCount(1), cells: [{ profileId: 'shell' }] };
+    let s = addTab(s0, p.id, input);
+    s = addTab(s, p.id, input);
+    expect(s.projects[0].tabs.map((tab) => tab.color)).toEqual(CELL_COLORS.slice(0, 2));
+    s = addTab(s, p.id, { ...input, color: '#123456' });
+    const tab = s.projects[0].tabs.at(-1)!;
+    expect(tab.color).toBe('#123456');
+    s = restoreTab(closeTab(s, p.id, tab.id), p.id, tab.id);
+    expect(s.projects[0].tabs.at(-1)!.color).toBe('#123456');
+  });
+
   it('closeTab archives it with sessions and restoreTab brings it back', () => {
     const { s: s0, p } = withProject();
     let s = addTab(s0, p.id, { layout: layoutForCount(1), cells: [{ profileId: 'claude' }] });

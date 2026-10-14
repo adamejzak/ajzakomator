@@ -6,6 +6,8 @@ import { useI18n } from '../i18n';
 import { getUi, useStore } from '../store';
 import { matchesShortcut } from '../shortcuts';
 import { fullProjectPath } from '../../../shared/platform';
+import { FileActionIcon, FileBreadcrumb } from './FileIcon';
+import { IX } from './icons';
 
 export function FileEditor() {
   const { tr, language, errorText } = useI18n();
@@ -32,17 +34,19 @@ export function FileEditor() {
   }[language];
   const path = project ? fullProjectPath(project.path, doc.relativePath, window.mc.platform) : doc.relativePath;
   return (
-    <section className="file-editor" aria-label={doc.relativePath} style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, height: '100%', overflow: 'hidden' }}>
-      <div className="file-preview-toolbar" style={{ flexShrink: 0 }}>
-        <span className="file-preview-path muted" title={path}>{project?.name} / {doc.relativePath}</span>
-        <span role="status" className="muted">{doc.saving ? fileLabel('saving', language) : dirty ? `● ${fileLabel('dirty', language)}` : doc.status === 'ready' ? fileLabel('saved', language) : ''}</span>
-        {markdown && <div className="markdown-view-toggle" role="group" aria-label="Markdown">
-          <button className={`btn small ${preview ? 'primary' : ''}`} aria-pressed={preview} onClick={() => setFileMarkdownView(doc.id, 'preview')}>{viewLabels[0]}</button>
-          <button className={`btn small ${!preview ? 'primary' : ''}`} aria-pressed={!preview} onClick={() => setFileMarkdownView(doc.id, 'source')}>{viewLabels[1]}</button>
-        </div>}
-        {!preview && <button className={`btn small ${doc.wrap ? 'primary' : ''}`} aria-pressed={doc.wrap} onClick={() => toggleFileWrap(doc.id)}>{tr('Zawijaj wiersze')}</button>}
-        <button className="btn small primary" disabled={!dirty || doc.saving || doc.status !== 'ready'} onClick={() => void saveFile(doc.id)}>{tr('Zapisz')}</button>
-        <button className="btn small" aria-label={tr('Zamknij podgląd pliku')} onClick={() => void closeFile(doc.id)}>×</button>
+    <section className="file-editor file-workspace-editor" aria-label={doc.relativePath}>
+      <div className="file-editor-toolbar">
+        <FileBreadcrumb projectName={project?.name} relativePath={doc.relativePath} fullPath={path} />
+        <span role="status" className={`editor-save-status ${dirty ? 'dirty' : ''}`}>{doc.saving ? fileLabel('saving', language) : dirty ? `● ${fileLabel('dirty', language)}` : doc.status === 'ready' ? fileLabel('saved', language) : ''}</span>
+        <div className="file-editor-actions">
+          {markdown && <div className="markdown-view-toggle" role="group" aria-label="Markdown">
+            <button className={`btn ghost small ${preview ? 'active' : ''}`} aria-pressed={preview} onClick={() => setFileMarkdownView(doc.id, 'preview')}>{viewLabels[0]}</button>
+            <button className={`btn ghost small ${!preview ? 'active' : ''}`} aria-pressed={!preview} onClick={() => setFileMarkdownView(doc.id, 'source')}>{viewLabels[1]}</button>
+          </div>}
+          {!preview && <button className={`btn ghost icon ${doc.wrap ? 'active' : ''}`} title={tr('Zawijaj wiersze')} aria-label={tr('Zawijaj wiersze')} aria-pressed={doc.wrap} onClick={() => toggleFileWrap(doc.id)}><FileActionIcon kind="wrap" /></button>}
+          <button className={`btn ghost icon ${dirty ? 'save-dirty' : ''}`} title={tr('Zapisz')} aria-label={tr('Zapisz')} disabled={!dirty || doc.saving || doc.status !== 'ready'} onClick={() => void saveFile(doc.id)}><FileActionIcon kind="save" /></button>
+          <button className="btn ghost icon" title={tr('Zamknij podgląd pliku')} aria-label={tr('Zamknij podgląd pliku')} onClick={() => void closeFile(doc.id)}><IX /></button>
+        </div>
       </div>
       {doc.error && <div className="preview-notice error" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{errorText(fileErrorLabel(doc.error, language))}</div>}
       {doc.status === 'loading' && <div className="file-preview-message muted">{tr('Wczytywanie pliku…')}</div>}

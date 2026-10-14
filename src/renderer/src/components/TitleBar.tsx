@@ -9,7 +9,8 @@ import { addAgent, closeTab, selectTab } from '../actions';
 import { setUi, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
 import { openMenu, openMenuAt } from './ContextMenu';
-import { IChevron, IPlusBold, ISearch, IX, IFile, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
+import { IChevron, IPlusBold, ISearch, IX, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
+import { FileIcon } from './FileIcon';
 import { StatusBadges } from './StatusBadges';
 import { Brand } from './Brand';
 import { activateFile, closeFile, closeFiles, useFileStore, type FileDocument } from '../files';
@@ -255,7 +256,7 @@ export function WorkspaceTabs() {
               onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); void closeFile(doc.id); } }}
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               onContextMenu={(e) => { e.preventDefault(); fileTabMenu(e.clientX, e.clientY, doc); }}>
-              <span className="tab-type-icon" aria-hidden="true"><IFile /></span><span className="label">{doc.name}</span>
+              <span className="tab-type-icon" aria-hidden="true"><FileIcon name={doc.name} /></span><span className="label">{doc.name}</span>
               {doc.text !== doc.savedText && <span className="file-dirty" aria-label={tr('Niezapisane zmiany')}>●</span>}
               <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); void closeFile(doc.id); }}><IX /></button>
             </div>

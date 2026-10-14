@@ -4,7 +4,8 @@ import type { Project, ProjectDirectory, ProjectFileEntry } from '../../../share
 import { setUi, toast } from '../store';
 import { openFile, treeOpen } from '../files';
 import { openMenu } from './ContextMenu';
-import { IChevron, ICollapseAll, IExpandAll, IFile, IFolder, ISearch } from './icons';
+import { IChevron, IFolder } from './icons';
+import { FileIcon } from './FileIcon';
 import { RefreshIcon, useHoldBusy } from './Spinner';
 import { ProjectIconView } from './ProjectIcon';
 import { fullProjectPath as projectPath } from '../../../shared/platform';
@@ -72,8 +73,8 @@ function RenameRow({ entry, depth }: { entry: ProjectFileEntry; depth: number })
   };
   return (
     <div className="file-entry editing" style={{ paddingLeft: 10 + depth * 16 }} role="treeitem" aria-selected>
-      <span className="tree-chevron">{folder && <IChevron />}</span>
-      {folder ? <IFolder /> : <IFile />}
+      {folder && <span className="tree-chevron"><IChevron /></span>}
+      {folder ? <span className="explorer-folder-icon"><IFolder /></span> : <FileIcon name={entry.name} />}
       <input
         ref={input} className="file-rename" defaultValue={entry.name} aria-label={tr('Nowa nazwa')} aria-invalid={error ? true : undefined} title={error ?? undefined} spellCheck={false}
         onChange={() => setError(null)}
@@ -153,8 +154,8 @@ function Directory({ path, depth }: DirectoryProps) {
                   }
                 }}
               >
-                <span className={`tree-chevron ${open ? 'open' : ''}`}>{folder && <IChevron />}</span>
-                {folder ? <IFolder /> : <IFile />}
+                {folder && <span className={`tree-chevron ${open ? 'open' : ''}`}><IChevron /></span>}
+                {folder ? <span className={`explorer-folder-icon ${open ? 'open' : ''}`}><IFolder /></span> : <FileIcon name={entry.name} />}
                 <span className="file-name">{entry.name}</span>
                 {entry.kind === 'symlink' && <span className="muted">↗</span>}
               </button>
@@ -169,7 +170,11 @@ function Directory({ path, depth }: DirectoryProps) {
 }
 
 export function ProjectExplorer({ project }: { project: Project }) {
-  const { tr } = useI18n();
+  const { tr, language } = useI18n();
+  const actionsLabel = {
+    en: 'Project actions', pl: 'Akcje projektu', de: 'Projektaktionen',
+    es: 'Acciones del proyecto', fr: 'Actions du projet', pt: 'Ações do projeto',
+  }[language];
   const expandedPaths = useExplorer((s) => s.expanded[project.id]);
   const selection = useExplorer((s) => s.selection[project.id]);
   const clipboard = useExplorer((s) => s.clipboard);
@@ -268,7 +273,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
           folder
             ? { label: expanded.has(entry.path) ? tr("Zwiń folder") : tr("Rozwiń folder"), onClick: () => toggleFolder(project.id, entry.path) }
             : { label: tr("Podgląd pliku"), onClick: () => void openFile(project.id, entry.path) },
-          { label: tr("Otwórz w edytorze"), onClick: () => window.mc.openInEditor(fullPath) },
+          ...(!folder ? [{ label: tr("Otwórz w edytorze"), onClick: () => window.mc.openInEditor(fullPath) }] : []),
           { label: tr("Pokaż w menedżerze plików"), onClick: () => window.mc.revealPath(fullPath) },
           { sep: true as const },
           { label: tr("Nowy plik") + '…', onClick: () => void createEntry(project.id, dir, 'file') },
@@ -379,16 +384,29 @@ export function ProjectExplorer({ project }: { project: Project }) {
       { label: tr("Wróć do projektów"), onClick: () => setUi({ sidebarView: 'projects' }) },
     ]);
   };
+  const moreActions = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    openMenu(rect.right, rect.bottom, [
+      { header: project.name },
+      { label: tr('Znajdź i zamień w plikach…'), onClick: findInFiles },
+      { label: toggleAllLabel, onClick: toggleAll },
+      { sep: true },
+      { label: tr('Otwórz folder w menedżerze plików'), onClick: () => window.mc.openPath(project.path) },
+      { label: tr('Otwórz projekt w edytorze'), onClick: () => window.mc.openInEditor(project.path) },
+      { label: tr('Wróć do projektów'), onClick: () => setUi({ sidebarView: 'projects' }) },
+    ]);
+  };
   return (
-    <div className="project-explorer" onContextMenu={menu} onKeyDown={onTreeKey}>
+    <div className="project-explorer file-workspace-explorer" onContextMenu={menu} onKeyDown={onTreeKey}>
       <div className="explorer-heading">
         <ProjectIconView project={project} />
         <span className="explorer-project" title={project.path}>{project.name}</span>
-        <button className="btn ghost icon" title={tr("Nowy plik")} aria-label={tr("Nowy plik")} onClick={() => void createEntry(project.id, targetDirectory(project.id), 'file')}><IFile /></button>
-        <button className="btn ghost icon" title={tr("Nowy folder")} aria-label={tr("Nowy folder")} onClick={() => void createEntry(project.id, targetDirectory(project.id), 'directory')}><IFolder /></button>
-        <button className="btn ghost icon" title={tr("Znajdź i zamień w plikach…")} aria-label={tr("Znajdź i zamień w plikach…")} onClick={findInFiles}><ISearch /></button>
-        <button className="btn ghost icon" title={toggleAllLabel} aria-label={toggleAllLabel} onClick={toggleAll}>{anyOpen ? <ICollapseAll /> : <IExpandAll />}</button>
-        <button className="btn ghost icon" title={tr("Odśwież pliki")} aria-label={tr("Odśwież pliki")} onClick={reload}><RefreshIcon spinning={spinning} /></button>
+        <div className="explorer-heading-actions">
+          <button className="btn ghost icon" title={tr('Nowy plik')} aria-label={tr('Nowy plik')} onClick={() => void createEntry(project.id, targetDirectory(project.id), 'file')}><NewEntryIcon /></button>
+          <button className="btn ghost icon" title={tr('Nowy folder')} aria-label={tr('Nowy folder')} onClick={() => void createEntry(project.id, targetDirectory(project.id), 'directory')}><NewEntryIcon folder /></button>
+          <button className="btn ghost icon" title={tr('Odśwież pliki')} aria-label={tr('Odśwież pliki')} onClick={reload}><RefreshIcon spinning={spinning} /></button>
+          <button className="btn ghost icon" title={actionsLabel} aria-label={actionsLabel} aria-haspopup="menu" onClick={moreActions}><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="8" r="1" /><circle cx="8" cy="8" r="1" /><circle cx="13" cy="8" r="1" /></svg></button>
+        </div>
       </div>
       <Tree.Provider value={context}>
         <div
@@ -417,4 +435,11 @@ export function ProjectExplorer({ project }: { project: Project }) {
       )}
     </div>
   );
+}
+
+function NewEntryIcon({ folder = false }: { folder?: boolean }) {
+  return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {folder ? <path d="M8 13H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h3l2 2h5a1 1 0 0 1 1 1v2" /> : <path d="M8 14H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h5l4 4v2M9 2v4h4" />}
+    <path d="M12 10v5M9.5 12.5h5" />
+  </svg>;
 }

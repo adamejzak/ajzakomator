@@ -2,11 +2,14 @@ import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } fro
 import { dividerBox, dividers, resetDivider, resizeDivider, type Divider, type GridLayout, type Rect } from '../../../shared/layout';
 import { useI18n } from '../i18n';
 
-/** Absolute placement of an area; the 1px grid line comes from half a pixel of inset on every side. */
+/** Snap shared edges to CSS pixels, then reserve a 1px grid line. Fractional
+ * origins blur a thin frame, especially on the bottom/right after a resize. */
 export function areaStyle(rect: Rect): CSSProperties {
+  const edge = (share: number) => `round(nearest, ${share * 100}%, 1px)`;
   return {
-    left: `calc(${rect.x0 * 100}% + 0.5px)`, top: `calc(${rect.y0 * 100}% + 0.5px)`,
-    width: `calc(${(rect.x1 - rect.x0) * 100}% - 1px)`, height: `calc(${(rect.y1 - rect.y0) * 100}% - 1px)`,
+    left: edge(rect.x0), top: edge(rect.y0),
+    width: `calc(${edge(rect.x1)} - ${edge(rect.x0)} - 1px)`,
+    height: `calc(${edge(rect.y1)} - ${edge(rect.y0)} - 1px)`,
   };
 }
 

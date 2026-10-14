@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="resources/logo.svg" width="96" alt="unimux logo" />
+<img src="resources/branding/banner.png" width="100%" alt="unimux — terminal workspace for coding agents" />
 
-# unimux
+<br />
 
 **A terminal grid for running many Claude Code and Codex agents side by side on Windows and macOS.**
 

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="resources/logo.svg" width="96" alt="logo unimux" />
+<img src="resources/branding/banner.png" width="100%" alt="unimux — terminalowy workspace dla agentów programistycznych" />
 
-# unimux
+<br />
 
 **Siatka terminali do pracy z wieloma agentami Claude Code i Codex naraz, na Windowsie i macOS (Apple Silicon oraz Intel).**
 

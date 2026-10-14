@@ -1,3 +1,4 @@
+import { Select } from './Select';
 import { useId, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import { update, useStore, toast } from '../store';
@@ -58,11 +59,11 @@ export function SettingsPage() {
       {section === 0 && <>
         <div className="field language-setting">
           <label htmlFor="settings-language">{tr('Język aplikacji')}</label>
-          <select id="settings-language" className="select" value={language} onChange={(event) => {
+          <Select id="settings-language" className="select" value={language} onChange={(event) => {
             if (isLanguage(event.target.value)) setSetting({ language: event.target.value });
           }}>
             {LANGUAGES.map((option) => <option key={option.code} value={option.code} lang={option.code}>{option.name}</option>)}
-          </select>
+          </Select>
           <span className="muted">{tr('Zmiana języka działa od razu.')}</span>
         </div>
       </>}
@@ -75,18 +76,18 @@ export function SettingsPage() {
           </div>
           <div className="field">
             <label htmlFor="settings-shell">{tr("Shell")}</label>
-            <select id="settings-shell" className="select" value={s.settings.shell} onChange={(e) => setSetting({ shell: e.target.value as ShellKind })}>
+            <Select id="settings-shell" className="select" value={s.settings.shell} onChange={(e) => setSetting({ shell: e.target.value as ShellKind })}>
               {shellsForPlatform(window.mc.platform).map((shell) => <option key={shell.code} value={shell.code}>{shell.name}</option>)}
-            </select>
+            </Select>
           </div>
 
         </div>
         <div className="field">
           <label htmlFor="settings-background-load">{tr('Wczytywanie sesji w tle po uruchomieniu')}</label>
-          <select id="settings-background-load" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.backgroundLoad}
+          <Select id="settings-background-load" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.backgroundLoad}
             onChange={(e) => setSetting({ backgroundLoad: normalizeBackgroundLoad(e.target.value) })}>
             {BACKGROUND_LOAD_MODES.map((mode) => <option key={mode} value={mode}>{tr(BACKGROUND_LABEL[mode])}</option>)}
-          </select>
+          </Select>
           <span className="muted">{tr(BACKGROUND_HINT[s.settings.backgroundLoad], { max: BACKGROUND_MAX_CELLS })}</span>
         </div>
       </>}
@@ -94,11 +95,11 @@ export function SettingsPage() {
       {section === 3 && <>
         <div className="field">
           <label htmlFor="settings-updates">{tr('Sposób instalowania aktualizacji')}</label>
-          <select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.updateMode}
+          <Select id="settings-updates" className="select" style={{ width: 380, maxWidth: '100%' }} value={s.settings.updateMode}
             onChange={(e) => setSetting({ updateMode: normalizeUpdateMode(e.target.value) })}>
             <option value="ask">{tr('Automatycznie (sprawdzaj przy starcie, pytaj przed instalacją)')}</option>
             <option value="manual">{tr('Ręcznie (przycisk w stopce)')}</option>
-          </select>
+          </Select>
           <span className="muted">{{
             manual: tr('Aplikacja startuje od razu. Aktualizacje pobierają się w tle, a przycisk w stopce zainstaluje je, gdy zechcesz.'),
             ask: tr('Przy starcie aplikacja sprawdza aktualizacje i pyta, czy zainstalować od razu. Pobieranie rusza w tle już podczas pytania. „Później” uruchamia obecną wersję, a przycisk w stopce zainstaluje aktualizację.'),
@@ -112,10 +113,10 @@ export function SettingsPage() {
         </label>
         <div className="field">
           <label htmlFor="settings-usage-interval">{tr('Odświeżanie limitów')}</label>
-          <select id="settings-usage-interval" className="select" style={{ width: 200 }} value={s.settings.usageIntervalMinutes}
+          <Select id="settings-usage-interval" className="select" style={{ width: 200 }} value={s.settings.usageIntervalMinutes}
             onChange={(e) => setSetting({ usageIntervalMinutes: Number(e.target.value) })}>
             {USAGE_INTERVALS_MINUTES.map((minutes) => <option key={minutes} value={minutes}>{tr('co {count} min', { count: minutes })}</option>)}
-          </select>
+          </Select>
         </div>
       </>}
       {section === 5 && <>
@@ -128,11 +129,11 @@ export function SettingsPage() {
             <input type="color" aria-label={tr('Kolor')} title={tr('Kolor')} value={p.color} onChange={(e) => update((st) => upsertProfile(st, { ...p, color: e.target.value }))}
               style={{ width: 28, height: 28, padding: 0, border: 0, background: 'none' }} />
             <input className="input" aria-label={tr('Nazwa')} style={{ width: 150 }} value={p.name} onChange={(e) => update((st) => upsertProfile(st, { ...p, name: e.target.value }))} />
-            <select className="select" aria-label="CLI" value={p.cli} onChange={(e) => update((st) => upsertProfile(st, { ...p, cli: e.target.value as CliKind }))}>
+            <Select className="select" aria-label="CLI" value={p.cli} onChange={(e) => update((st) => upsertProfile(st, { ...p, cli: e.target.value as CliKind }))}>
               <option value="claude">claude</option>
               <option value="codex">codex</option>
               <option value="shell">shell</option>
-            </select>
+            </Select>
             <input className="input" aria-label={tr('argumenty CLI')} style={{ flex: '1 1 220px', minWidth: 0, fontFamily: 'Cascadia Mono, Consolas, monospace' }} placeholder={tr("argumenty CLI")} value={p.args}
               disabled={p.cli === 'shell'} onChange={(e) => update((st) => upsertProfile(st, { ...p, args: e.target.value }))} />
             <button className="btn ghost icon" aria-label={tr('Usuń profil')} title={tr("Usuń profil")} onClick={() => update((st) => removeProfile(st, p.id))}><IX /></button>

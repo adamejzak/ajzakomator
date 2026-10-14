@@ -1,3 +1,4 @@
+import { Select } from './Select';
 import { useEffect, useRef, useState } from 'react';
 import { ALERT_EVENTS, isTime, normalizeVolume, type AlertEventId, type AlertSettings, type SoundChoice } from '../../../shared/alerts';
 import { SOUND_PRESETS, getPreset } from '../../../shared/soundPresets';
@@ -84,13 +85,13 @@ export function AlertsSettings() {
               onChange={(e) => setEvent(event, { notify: e.target.checked })} />
             {tr('Powiadomienie systemowe')}
           </label>
-          <select className="select alert-sound" aria-label={tr('Dźwięk: {event}', { event: label })}
+          <Select className="select alert-sound" aria-label={tr('Dźwięk: {event}', { event: label })}
             value={selectValue(config.sound)} onChange={(e) => chooseSound(event, e.target.value)}>
             <option value="off">{tr('Wyłączony')}</option>
             {SOUND_PRESETS.map((preset) => <option key={preset.id} value={`preset:${preset.id}`}>{tr(preset.label)}</option>)}
             <option value="system">{tr('Dźwięk systemowy')}</option>
             <option value="file">{tr('Własny plik...')}</option>
-          </select>
+          </Select>
           <button type="button" className="btn alert-test" disabled={testing === event} aria-label={tr('Test: {event}', { event: label })}
             onClick={() => void test(event)}>{tr('Test')}</button>
           {config.sound.kind === 'file' && <div className="alert-file">

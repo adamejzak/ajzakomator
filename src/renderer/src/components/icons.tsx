@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import brandIcon from '../../../../resources/icon.png';
 
 const Svg = ({ children, size = 14 }: { children: ReactNode; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -29,14 +30,10 @@ export const IChangelog = () => <Svg><path d="M3 3.5h10M3 8h10M3 12.5h6" /><path
 export const ITerminalTab = () => <Svg><path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5z" /><path d="M5 6.5l2 1.5-2 1.5M8.5 10h2.5" /></Svg>;
 export const IChevron = () => <Svg size={10}><path d="M4 6l4 4 4-4" /></Svg>;
 
-/** Unimux mark: a terminal prompt inside a U-shaped workspace. */
+/** Supplied brand artwork, shared with the installer and update splash. */
 export function Logo({ size = 18 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" style={{ flex: 'none', display: 'block' }}>
-      <rect x="1" y="1" width="30" height="30" rx="8" fill="#f4f4f5" />
-      <path d="M8.5 9v9a7.5 7.5 0 0 0 15 0V9" fill="none" stroke="#0b0b0c" strokeWidth="2.6" strokeLinecap="round" />
-      <path d="m12.5 10.5 3 3-3 3M17.5 17h2.5" fill="none" stroke="#0b0b0c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <img src={brandIcon} width={size} height={size} alt="" aria-hidden="true" style={{ flex: 'none', display: 'block', borderRadius: size * .2 }} />
   );
 }
 

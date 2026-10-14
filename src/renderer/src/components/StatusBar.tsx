@@ -22,7 +22,7 @@ export function StatusBar() {
       case 'current': {
         const when = u.checkedAt ? new Date(u.checkedAt).toLocaleTimeString(language) : '';
         const title = when && u.version ? tr('Ostatnie sprawdzenie: {time} · najnowsza wersja: {version}', { time: when, version: u.version }) : tr('Sprawdź aktualizacje');
-        return <button className="sb-btn" onClick={check} title={title}><span className="sb-dot ok" aria-hidden />{tr('Masz najnowszą wersję')}</button>;
+        return <button className="sb-btn sb-current" onClick={check} title={`${tr('Masz najnowszą wersję')} · ${title}`} aria-label={tr('Masz najnowszą wersję')}><span className="sb-dot ok" aria-hidden /></button>;
       }
       case 'downloading': {
         const percent = Math.round(Math.min(100, Math.max(0, Number.isFinite(u.percent) ? u.percent! : 0)));

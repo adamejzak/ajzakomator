@@ -1,3 +1,4 @@
+import { Select } from './Select';
 import { RoleSelect } from './RoleSelect';
 import { changeAgentRole } from '../agentRoles';
 import { useEffect, useState } from 'react';
@@ -82,10 +83,10 @@ export function AutomationPanel() {
           ? { cellId: targetId, title: title.trim(), prompt: prompt.trim() }
           : { toCellId: targetId, text: prompt.trim() }).then((ok) => { if (ok) { setTitle(''); setPrompt(''); setComposing(false); } });
       }}>
-        <label>{tr('Odbiorca')}<select className="select" value={targetId} disabled={busy || !recipients.length} onChange={(e) => setTarget(e.target.value)}>
+        <label>{tr('Odbiorca')}<Select className="select" value={targetId} disabled={busy || !recipients.length} onChange={(e) => setTarget(e.target.value)}>
           {!recipients.length && <option value="">{tr('Brak agentów')}</option>}
           {recipients.map(({ cell, grid }) => <option key={cell.id} value={cell.id}>{grid.name} · {cell.name ?? getProfile(state, cell.profileId).name}</option>)}
-        </select></label>
+        </Select></label>
         {tab === 'tasks' && <label>{tr('Tytuł zadania')}<input className="input" disabled={busy} required maxLength={140} value={title} onChange={(e) => setTitle(e.target.value)} /></label>}
         <label>{tr(tab === 'tasks' ? 'Treść zadania' : 'Wiadomość')}<textarea className="textarea" disabled={busy} required maxLength={32000} value={prompt} onChange={(e) => setPrompt(e.target.value)} /></label>
         <button className="btn white" disabled={busy || !targetId || state.automation.paused}>{tr(tab === 'tasks' ? 'Przydziel zadanie' : 'Wyślij wiadomość')}</button>

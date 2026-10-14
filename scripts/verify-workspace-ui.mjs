@@ -15,18 +15,19 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
     const status = document.createElement('span');
     status.className = 'status-text working';
     status.textContent = 'working…';
-    head.insertBefore(status, head.querySelector('.grow'));
+    head.querySelector('.cell-heading').append(status);
     try {
       const elements = [head.querySelector('.cell-name'), head.querySelector('.profile'), status];
       const styles = elements.map(el => getComputedStyle(el));
       const centers = elements.map(el => {
-        const text = [...el.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+        const target = el.querySelector('.profile-name') ?? el;
+        const text = [...target.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
         const range = document.createRange();
         range.selectNodeContents(text);
         const rect = range.getBoundingClientRect();
         return rect.y + rect.height / 2;
       });
-      return styles.every(style => style.fontSize === styles[0].fontSize && style.lineHeight === styles[0].lineHeight)
+      return styles.every(style => style.fontSize === styles[0].fontSize)
         && Math.max(...centers) - Math.min(...centers) < 1;
     } finally { status.remove(); }
   })()`), 'cell title, profile and working status use aligned text');
@@ -64,6 +65,14 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   assert.equal(await evaluate('getComputedStyle(document.querySelector(".panel-resize"), "::after").backgroundColor'), 'rgb(168, 162, 158)');
   await openFilesPanel();
   await until(() => evaluate('!!document.querySelector(".file-entry[title=src]")'), 'file tree');
+  assert.equal(await evaluate('!!document.querySelector(".files-panel .project-add-inline")'), false, 'Files panel omits Add project');
+  assert.ok(await evaluate('[...document.querySelectorAll(".file-entry:not(.folder)")].every(row => !row.querySelector(".tree-chevron") && row.querySelector(".file-type-icon"))'), 'files have type icons without an empty chevron');
+  await evaluate('document.querySelector(".file-entry[title=src]").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 130, clientY: 140 }))');
+  await until(() => evaluate('!!document.querySelector(".menu")'), 'folder context menu');
+  assert.equal(await evaluate('[...document.querySelectorAll(".menu-item")].some(item => item.textContent.includes("Open in editor") || item.textContent.includes("Preview file"))'), false, 'folders cannot open as editor files');
+  assert.ok(await evaluate('[...document.querySelectorAll(".menu-item .kbd")].every(hint => getComputedStyle(hint).borderTopWidth === "0px")'), 'context shortcuts use plain text');
+  await screenshot('folder-menu');
+  await key('Escape', 'Escape');
   // Children load asynchronously; their absence does not mean an open folder is collapsed.
   if (await evaluate('document.querySelector(".file-entry[title=src]")?.getAttribute("aria-expanded") !== "true"')) await click('.file-entry[title=src]');
   await until(() => evaluate('!!document.querySelector(".file-entry[title=" + JSON.stringify("src/catalog.mjs") + "]")'), 'expanded source tree');
@@ -72,7 +81,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   assert.equal(await evaluate('!!document.querySelector(".grid-tab .tab-type-icon svg") && !!document.querySelector(".file-tab .tab-type-icon svg")'), true);
   assert.ok(await evaluate('[...document.querySelectorAll(".cm-lineNumbers .cm-gutterElement")].some(el => el.textContent === "1")'), 'line numbers');
   assert.ok(await evaluate('new Set([...document.querySelectorAll(".cm-line span")].map(el => getComputedStyle(el).color)).size >= 3'), 'syntax colors');
-  assert.ok(await evaluate('(() => { const toolbar = document.querySelector(".file-preview-toolbar"); const centers = [...toolbar.children].map(el => { const r = el.getBoundingClientRect(); return r.y+r.height/2; }); return Math.max(...centers)-Math.min(...centers) < 1; })()'), 'aligned editor toolbar');
+  assert.ok(await evaluate('(() => { const toolbar = document.querySelector(".file-editor-toolbar"); const centers = [...toolbar.children].map(el => { const r = el.getBoundingClientRect(); return r.y+r.height/2; }); return Math.max(...centers)-Math.min(...centers) < 1; })()'), 'aligned editor toolbar');
   const openSettings = async () => {
     await click('.titlebar button[title="Settings"]');
     await until(() => evaluate('!!document.querySelector(".settings-tab.active") && !!document.querySelector(".settings-page")'), 'settings workspace tab');
@@ -111,7 +120,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
     await click('.settings-nav button', label);
     await until(() => evaluate(`document.querySelector('.settings-content h2')?.textContent === ${JSON.stringify(label)}`), `settings section ${label}`);
     assert.equal(await evaluate('document.querySelectorAll(".settings-nav button[role=tab][aria-selected=true]").length'), 1);
-    assert.ok(await evaluate('!!document.querySelector(".settings-content input, .settings-content select")'), 'settings section provides controls');
+    assert.ok(await evaluate('!!document.querySelector(".settings-content input, .settings-content .styled-select")'), 'settings section provides controls');
     if (label === 'Agent profiles') await screenshot('settings-profiles');
   }
   await click('.file-tab');

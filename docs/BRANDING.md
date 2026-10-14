@@ -1,12 +1,14 @@
 # Unimux branding and compatibility
 
 The product, package, terminal identifier and MCP server are named `unimux`.
-The repository and update feed are `daven-team/unimux`. The SVG mark in
-`resources/logo.svg`, the renderer mark and the update window use the same
-terminal prompt inside a U-shaped workspace.
+The repository and update feed are `daven-team/unimux`. Original supplied artwork
+lives in `resources/branding/logo.png` and `resources/branding/banner.png`.
+Both README languages use the banner. The renderer and update window use
+`resources/icon.png`, the same artwork exported for Electron Builder.
 
-After changing the vector mark, run `npm run icons` to regenerate the 1024×1024
-PNG used by Electron Builder. Then run `npm run build` and
+After updating the source logo, run `npm run icons` to regenerate the centered
+1024×1024 PNG used by Electron Builder. The export trims the outer black margin
+without changing the supplied source artwork. Then run `npm run build` and
 `node scripts/capture-readme.mjs` to refresh the screenshots from the actual app.
 
 Two internal identities intentionally retain the previous name:

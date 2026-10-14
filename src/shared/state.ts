@@ -139,7 +139,8 @@ export function addTab(s: AppState, projectId: string, input: NewTabInput): AppS
     const spec = input.cells[i] ?? input.cells[0] ?? { profileId: 'shell' };
     cells.push(newCell(spec, spec.color ? undefined : nextCellColor(cells.map((cell) => cell.color))));
   }
-  const tab: Tab = { id: uid(), ...(input.color ? { color: input.color } : {}), name: input.name ?? nextTabName(project), layout: input.layout, cells };
+  const color = input.color || nextCellColor(project.tabs.map((tab) => tab.color));
+  const tab: Tab = { id: uid(), color, name: input.name ?? nextTabName(project), layout: input.layout, cells };
   return mapProject(s, projectId, (p) => ({ ...p, tabs: [...p.tabs, tab], activeTabId: tab.id }));
 }
 

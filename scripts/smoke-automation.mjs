@@ -190,6 +190,28 @@ try {
   assert.equal((await snapshot()).state.projects[0].tabs.find(t => t.id === created.gridId).color, '#a78bfa');
   await call(coordinator, 'close_grid', { gridId: created.gridId, cancelTasks: true });
   assert.ok((await snapshot()).state.projects[0].archive.some(t => t.id === created.gridId));
+  // The common dropdown opens as a styled listbox, supports keyboard selection and restores focus.
+  await evaluate('window.__mc.useStore.setState(st => ({ ui: { ...st.ui, automationOpen: false, settingsTabOpen: true, settingsActive: true } }))');
+  await until(() => evaluate('!!document.querySelector("#settings-language.styled-select")'), 'settings dropdown');
+  await evaluate('document.querySelector("#settings-language").click()');
+  await until(() => evaluate('!!document.querySelector(".select-popup")'), 'custom language list');
+  assert.equal(await evaluate('document.querySelectorAll(".select-popup [role=option]").length'), 6);
+  await screenshot('language-dropdown');
+  await evaluate('document.querySelector(".select-popup").dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }))');
+  await until(() => evaluate('document.querySelector(".select-popup .focused")?.textContent.includes("English")'), 'Home selects first language');
+  await evaluate('document.querySelector(".select-popup").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))');
+  await until(async () => (await snapshot()).state.settings.language === 'en', 'keyboard language selection');
+  assert.equal(await evaluate('document.activeElement.id'), 'settings-language');
+  await evaluate('document.querySelector("#settings-language").click()');
+  await until(() => evaluate('!!document.querySelector(".select-popup")'), 'language reopen');
+  await evaluate('document.querySelector(".select-popup").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))');
+  await evaluate('document.querySelector(".select-popup").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))');
+  await until(async () => (await snapshot()).state.settings.language === 'pl', 'return to Polish');
+  await evaluate('document.querySelector("#settings-language").click()');
+  await until(() => evaluate('!!document.querySelector(".select-popup")'), 'escape dropdown');
+  await evaluate('document.querySelector(".select-popup").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
+  assert.equal(await evaluate('!!document.querySelector(".select-popup")'), false);
+  assert.equal(await evaluate('document.activeElement.id'), 'settings-language');
   assert.deepEqual(exceptions, []);
   console.log(`Automation Electron smoke passed. Screenshots: ${root}`);
 } catch (error) {

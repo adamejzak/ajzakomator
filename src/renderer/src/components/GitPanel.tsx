@@ -1,3 +1,4 @@
+import { Select } from './Select';
 // The Git panel of the left rail: the state of the active project's repository (branch, changes) and its history, with the
 // everyday actions (fetch, pull --ff-only, push with confirmation, stage, commit, switch branch). Nothing destructive lives here.
 // A repository whose own configuration can start programs stays read-only (history only) until the user trusts it.
@@ -226,13 +227,13 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
   const folderName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
   const worktreeSelect = worktrees.length > 1 && (
     // every option shows its full path, so the user sees which folder a choice means; the ones the project may not use are disabled
-    <select className="git-worktree" aria-label={tr('Worktree')} value={selectValue} onChange={(e) => setPicked(e.target.value)}>
+    <Select className="git-worktree" aria-label={tr('Worktree')} value={selectValue} onChange={(e) => setPicked(e.target.value)}>
       {worktrees.map((w) => (
         <option key={w.path} value={w.path} disabled={!w.allowed} title={w.path}>
           {`${w.branch ?? tr('Odłączony HEAD ({head})', { head: w.head })} - ${folderName(w.path)} (${w.path})`}
         </option>
       ))}
-    </select>
+    </Select>
   );
 
   if (trustError && !trust) {

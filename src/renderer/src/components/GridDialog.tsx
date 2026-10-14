@@ -1,3 +1,4 @@
+import { Select } from './Select';
 import { RoleSelect } from './RoleSelect';
 import { useI18n } from '../i18n';
 import { useEffect, useState } from 'react';
@@ -202,10 +203,10 @@ export function GridDialog({ projectId }: { projectId: string }) {
 
         <div className="row" style={{ gap: 8 }}>
           <span className="section-title" style={{ margin: 0, flex: 1 }}>{tr("Komórki")}</span>
-          <select className="select" value="" onChange={(e) => e.target.value && setAll({ profileId: e.target.value })}>
+          <Select className="select" value="" onChange={(e) => e.target.value && setAll({ profileId: e.target.value })}>
             <option value="">{tr("profil dla wszystkich…")}</option>
             {s.profiles.map((p) => <option key={p.id} value={p.id}>{profileOptionLabel(p, cliStatus, tr)}</option>)}
-          </select>
+          </Select>
           {snippets.length > 0 && (
             <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, [
               { header: tr("Prompt startowy dla wszystkich") },
@@ -282,9 +283,9 @@ function CellRow({ index, cell, profiles, cliStatus, snippets, isRepo, onChange 
     <>
       <span className="num">{index + 1}</span>
       <input className="input" placeholder={tr("np. backend")} value={cell.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} />
-      <select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
+      <Select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
         {profiles.map((p) => <option key={p.id} value={p.id}>{profileOptionLabel(p, cliStatus, tr)}</option>)}
-      </select>
+      </Select>
       <RoleSelect value={cell.role} disabled={isShell} onChange={(role) => onChange({ role })} />
       <span className="prompt-wrap">
         <input
