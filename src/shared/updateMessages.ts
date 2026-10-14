@@ -1,4 +1,6 @@
 export const updateMessages = {
+  'Automatycznie': ['Automatic', 'Automatisch', 'Automático', 'Automatique', 'Automático'],
+  'Ręcznie': ['Manual', 'Manuell', 'Manual', 'Manuel', 'Manual'],
   'Sprawdź aktualizacje': ['Check for updates', 'Nach Updates suchen', 'Buscar actualizaciones', 'Rechercher des mises à jour', 'Procurar atualizações'],
   'Sprawdzanie aktualizacji…': ['Checking for updates…', 'Updates werden gesucht…', 'Buscando actualizaciones…', 'Recherche de mises à jour…', 'A procurar atualizações…'],
   'Masz najnowszą wersję': ['You’re up to date', 'Du bist auf dem neuesten Stand', 'Tienes la última versión', 'Vous êtes à jour', 'Está atualizado'],

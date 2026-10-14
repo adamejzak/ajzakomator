@@ -113,7 +113,16 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   assert.ok(Object.values(savedOrders).some(order => JSON.stringify(order) === JSON.stringify(movedCards)), 'mixed order saved for project');
   await screenshot('workspace-card-reorder');
   await screenshot('settings-general');
-  assert.ok(await evaluate('(() => { const nav = document.querySelector(".settings-nav"); const content = document.querySelector(".settings-content"); return parseFloat(getComputedStyle(nav).borderRightWidth) >= 1 && nav.getBoundingClientRect().right <= content.getBoundingClientRect().left; })()'), 'settings navigation is divided from options');
+  await click('.settings-nav button', 'Terminal');
+  await until(() => evaluate('!!document.querySelector("#settings-shell")'), 'terminal settings layout');
+  assert.ok(await evaluate('(() => { const rows = [...document.querySelectorAll(".settings-card > .setting-row")]; return rows.length === 3 && rows.every((row, index) => index === 0 || row.getBoundingClientRect().top >= rows[index - 1].getBoundingClientRect().bottom); })()'), 'terminal settings are separate rows');
+  await screenshot('settings-terminal');
+  await click('#settings-shell');
+  await until(() => evaluate('!!document.querySelector(".select-popup")'), 'shell menu');
+  assert.ok(await evaluate('[...document.querySelectorAll(".select-option-label")].every(label => label.scrollWidth <= label.clientWidth)'), 'shell options fit without wrapping');
+  await screenshot('settings-shell-menu');
+  await key('Escape', 'Escape');
+  assert.ok(await evaluate('(() => { const page = document.querySelector(".settings-page").getBoundingClientRect(); const nav = document.querySelector(".settings-nav").getBoundingClientRect(); const content = document.querySelector(".settings-content").getBoundingClientRect(); return nav.left - page.left >= 24 && nav.top - page.top >= 36 && content.left - nav.right >= 24 && page.right - content.right >= 24 && getComputedStyle(document.querySelector(".settings-card")).borderTopWidth === "0px"; })()'), 'settings have outer margins, top space and a borderless card');
   const sectionLabels = await evaluate('[...document.querySelectorAll(".settings-nav button")].map(button => button.textContent.trim())');
   assert.equal(sectionLabels.length, 7);
   for (const label of sectionLabels) {
@@ -121,6 +130,17 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
     await until(() => evaluate(`document.querySelector('.settings-content h2')?.textContent === ${JSON.stringify(label)}`), `settings section ${label}`);
     assert.equal(await evaluate('document.querySelectorAll(".settings-nav button[role=tab][aria-selected=true]").length'), 1);
     assert.ok(await evaluate('!!document.querySelector(".settings-content input, .settings-content .styled-select")'), 'settings section provides controls');
+    if (label === 'Notifications and sounds') {
+      assert.ok(await evaluate('document.querySelectorAll(".alert-event-settings input[role=switch]").length === 3 && [...document.querySelectorAll(".alert-event-settings .setting-row")].every(row => row.querySelector(".setting-copy") && row.querySelector(".setting-control"))'), 'event settings keep separate notification and sound rows');
+      assert.ok(await evaluate('[...document.querySelectorAll(".settings-card input[role=switch]")].every(input => { const r = input.getBoundingClientRect(); return r.width === 28 && r.height === 16; })'), 'switch tracks retain their dimensions');
+      await screenshot('settings-notifications');
+    }
+    if (label === 'AI accounts') {
+      const before = await evaluate('document.querySelector("#settings-ai-usage").checked');
+      await click('#settings-ai-usage');
+      await until(() => evaluate(`document.querySelector('#settings-ai-usage').checked === ${!before}`), 'AI usage toggle');
+      await click('#settings-ai-usage');
+    }
     if (label === 'Agent profiles') await screenshot('settings-profiles');
   }
   await click('.file-tab');

@@ -82,7 +82,24 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
   };
 
   return (
-    <section className="git-changes" aria-label={tr('Zmiany')}>
+    <section className={`git-changes ${open ? '' : 'collapsed'}`} aria-label={tr('Zmiany')}>
+      {writable && (
+        <div className="git-commit-box">
+          <textarea
+            className="input"
+            rows={1}
+            value={message}
+            placeholder={tr('Opis commita')}
+            aria-label={tr('Opis commita')}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => { if (matchesShortcut('git.commit', e)) { e.preventDefault(); void commit(); } }}
+          />
+          <button className="btn small primary" disabled={busy || !staged || !message.trim()} onClick={() => void commit()} title={titleWithShortcut(tr('Zatwierdź dodane pliki'), 'git.commit')}>
+            {tr('Commit')}{staged > 0 && ` (${staged})`}
+          </button>
+          {programsNote && <span className="git-note muted">{programsNote}</span>}
+        </div>
+      )}
       <button className="git-section-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <span className={`tree-chevron ${open ? 'open' : ''}`}><IChevron /></span>
         <span>{tr('Zmiany')}</span>
@@ -96,23 +113,6 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
           {group('unstaged', tr('Niedodane'), groups.unstaged)}
           {group('untracked', tr('Nieśledzone'), groups.untracked)}
           {status.truncated && <p className="git-note muted">{tr('Pokazano pierwsze {count} zmian.', { count: status.files.length })}</p>}
-        </div>
-      )}
-      {open && writable && staged > 0 && (
-        <div className="git-commit-box">
-          <textarea
-            className="input"
-            rows={2}
-            value={message}
-            placeholder={tr('Opis commita')}
-            aria-label={tr('Opis commita')}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => { if (matchesShortcut('git.commit', e)) { e.preventDefault(); void commit(); } }}
-          />
-          <button className="btn small primary" disabled={busy || !message.trim()} onClick={() => void commit()} title={titleWithShortcut(tr('Zatwierdź dodane pliki'), 'git.commit')}>
-            {tr('Commit')} ({staged})
-          </button>
-          {programsNote && <span className="git-note muted">{programsNote}</span>}
         </div>
       )}
     </section>

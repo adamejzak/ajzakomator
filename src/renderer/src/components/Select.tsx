@@ -20,7 +20,7 @@ export function Select({ children, value, onChange, className = '', disabled, au
   const selected = options.findIndex((option) => option.value === String(value));
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const [position, setPosition] = useState({ left: 0, top: 0, width: 0, maxHeight: 260 });
+  const [position, setPosition] = useState({ left: 0, top: 0, width: 200, maxHeight: 260 });
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const search = useRef({ text: '', time: 0 });
@@ -33,12 +33,13 @@ export function Select({ children, value, onChange, className = '', disabled, au
   useLayoutEffect(() => {
     if (!open) return;
     const bounds = trigger.current!.getBoundingClientRect();
-    const height = Math.min(260, popup.current?.scrollHeight ?? 260);
+    const longest = Math.max(0, ...Array.from(popup.current?.querySelectorAll<HTMLElement>('.select-option-label') ?? []).map((label) => label.scrollWidth));
+    const width = Math.min(Math.max(bounds.width, 200, longest + 60), window.innerWidth - 16);
+    const height = Math.min(260, options.length * 30 + 12);
     const below = window.innerHeight - bounds.bottom - 12;
     const above = below < height && bounds.top > below;
     const maxHeight = Math.min(260, above ? bounds.top - 12 : below);
-    const width = Math.min(Math.max(bounds.width, 160), window.innerWidth - 16);
-    setPosition({ left: Math.max(8, Math.min(bounds.left, window.innerWidth - width - 8)), top: above ? Math.max(8, bounds.top - Math.min(height, maxHeight) - 4) : bounds.bottom + 4, width, maxHeight });
+    setPosition({ left: Math.max(8, Math.min(bounds.right - width, window.innerWidth - width - 8)), top: above ? Math.max(8, bounds.top - Math.min(height, maxHeight) - 4) : bounds.bottom + 4, width, maxHeight });
     popup.current?.focus({ preventScroll: true });
   }, [open]);
   useEffect(() => { if (open) popup.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' }); }, [open, active]);
@@ -54,7 +55,7 @@ export function Select({ children, value, onChange, className = '', disabled, au
     return () => { window.removeEventListener('pointerdown', outside, true); window.removeEventListener('resize', dismiss); window.removeEventListener('blur', dismiss); document.removeEventListener('scroll', scroll, true); };
   }, [open]);
   return <>
-    <button ref={trigger} id={id} type="button" className={`${className} styled-select`} style={style} disabled={disabled} title={title}
+    <button ref={trigger} id={id} type="button" className={`${className} styled-select`} style={style} disabled={disabled} title={title ?? (typeof options[selected]?.label === 'string' ? String(options[selected].label) : undefined)}
       aria-label={props['aria-label']} aria-labelledby={props['aria-labelledby']} aria-describedby={props['aria-describedby']}
       aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined}
       onClick={() => open ? close() : show()}
@@ -87,8 +88,8 @@ export function Select({ children, value, onChange, className = '', disabled, au
       }}>
       {options.map((option, index) => <div key={option.value} id={`${listId}-${index}`} role="option" data-index={index} aria-selected={index === selected} aria-disabled={option.disabled || undefined}
         className={`select-option ${index === active ? 'focused' : ''}`} title={option.title} lang={option.lang}
-        onPointerMove={() => { if (!option.disabled) setActive(index); }} onClick={() => choose(index)}>
-        <span>{option.label}</span><span className="select-check" aria-hidden="true">{index === selected ? '✓' : ''}</span>
+      onPointerMove={() => { if (!option.disabled) setActive(index); }} onClick={() => choose(index)}>
+        <span className="select-option-label">{option.label}</span><span className="select-check" aria-hidden="true">{index === selected ? '✓' : ''}</span>
       </div>)}
     </div>, document.body)}
   </>;

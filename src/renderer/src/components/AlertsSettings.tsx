@@ -1,4 +1,5 @@
 import { Select } from './Select';
+import { SettingRow } from './SettingRow';
 import { useEffect, useRef, useState } from 'react';
 import { ALERT_EVENTS, isTime, normalizeVolume, type AlertEventId, type AlertSettings, type SoundChoice } from '../../../shared/alerts';
 import { SOUND_PRESETS, getPreset } from '../../../shared/soundPresets';
@@ -78,14 +79,13 @@ export function AlertsSettings() {
       {ALERT_EVENTS.map((event) => {
         const config = alerts.events[event];
         const label = tr(EVENT_LABELS[event]);
-        return <div key={event} className="alert-row" role="group" aria-label={label} data-event={event}>
-          <div className="alert-name">{label}</div>
-          <label className="check alert-notify">
-            <input type="checkbox" checked={config.notify} aria-label={tr('Powiadomienie systemowe: {event}', { event: label })}
+        return <div key={event} className="alert-event-settings" role="group" aria-label={label} data-event={event}>
+          <SettingRow title={tr('Powiadomienie systemowe: {event}', { event: label })} htmlFor={`settings-alert-notify-${event}`}>
+            <input id={`settings-alert-notify-${event}`} className="setting-switch" type="checkbox" role="switch" checked={config.notify}
               onChange={(e) => setEvent(event, { notify: e.target.checked })} />
-            {tr('Powiadomienie systemowe')}
-          </label>
-          <Select className="select alert-sound" aria-label={tr('Dźwięk: {event}', { event: label })}
+          </SettingRow>
+          <SettingRow title={tr('Dźwięk: {event}', { event: label })} htmlFor={`settings-alert-sound-${event}`}>
+          <Select id={`settings-alert-sound-${event}`} className="select alert-sound" aria-label={tr('Dźwięk: {event}', { event: label })}
             value={selectValue(config.sound)} onChange={(e) => chooseSound(event, e.target.value)}>
             <option value="off">{tr('Wyłączony')}</option>
             {SOUND_PRESETS.map((preset) => <option key={preset.id} value={`preset:${preset.id}`}>{tr(preset.label)}</option>)}
@@ -94,6 +94,7 @@ export function AlertsSettings() {
           </Select>
           <button type="button" className="btn alert-test" disabled={testing === event} aria-label={tr('Test: {event}', { event: label })}
             onClick={() => void test(event)}>{tr('Test')}</button>
+          </SettingRow>
           {config.sound.kind === 'file' && <div className="alert-file">
             <span className="muted" title={config.sound.path}>{fileName(config.sound.path)}</span>
             <button type="button" className="btn small" aria-label={tr('Wybierz plik dla zdarzenia: {event}', { event: label })} onClick={() => void pickFile(event)}>{tr('Wybierz plik...')}</button>
@@ -101,9 +102,7 @@ export function AlertsSettings() {
         </div>;
       })}
     </div>
-    <div className="field">
-      <div className="row alert-volume">
-        <label htmlFor="settings-alert-volume">{tr('Głośność')}</label>
+    <SettingRow title={tr('Głośność')} htmlFor="settings-alert-volume">
         <input id="settings-alert-volume" type="range" min={0} max={100} value={volumePercent} aria-valuetext={`${volumePercent}%`}
           onPointerDown={() => { dragging.current = true; }}
           onPointerUp={(e) => commitVolume(Number(e.currentTarget.value))}
@@ -119,20 +118,14 @@ export function AlertsSettings() {
           }} />
         <span className="muted" aria-hidden="true">{volumePercent}%</span>
         <span className="sr-only" role="status">{announce}</span>
-      </div>
-    </div>
-    <div className="field">
-      <label className="check">
-        <input type="checkbox" checked={alerts.notifyWhenFocused} onChange={(e) => setAlerts((a) => ({ ...a, notifyWhenFocused: e.target.checked }))} />
-        {tr('Powiadamiaj i graj dźwięk także w aktywnym oknie')}
-      </label>
-      <span className="muted">{tr('Domyślnie, gdy patrzysz na komórkę w aktywnym oknie aplikacji, nie dostajesz ani powiadomienia, ani dźwięku. Po włączeniu dostaniesz je zawsze, gdy agent skończy pracę, potrzebuje Ciebie albo zgłosi błąd.')}</span>
-    </div>
-    <div className="field">
-      <label className="check">
-        <input type="checkbox" checked={quiet.enabled} onChange={(e) => setQuiet({ enabled: e.target.checked })} />
-        {tr('Godziny ciszy')}
-      </label>
+    </SettingRow>
+    <SettingRow title={tr('Powiadamiaj i graj dźwięk także w aktywnym oknie')} htmlFor="settings-alert-focused" hint={tr('Domyślnie, gdy patrzysz na komórkę w aktywnym oknie aplikacji, nie dostajesz ani powiadomienia, ani dźwięku. Po włączeniu dostaniesz je zawsze, gdy agent skończy pracę, potrzebuje Ciebie albo zgłosi błąd.')}>
+        <input id="settings-alert-focused" className="setting-switch" type="checkbox" role="switch" checked={alerts.notifyWhenFocused} onChange={(e) => setAlerts((a) => ({ ...a, notifyWhenFocused: e.target.checked }))} />
+    </SettingRow>
+    <SettingRow title={tr('Godziny ciszy')} htmlFor="settings-quiet-enabled" hint={tr('Nie powiadamiaj i nie graj dźwięku w godzinach ciszy')}>
+        <input id="settings-quiet-enabled" className="setting-switch" type="checkbox" role="switch" checked={quiet.enabled} onChange={(e) => setQuiet({ enabled: e.target.checked })} />
+    </SettingRow>
+    <SettingRow title={`${tr('Od')} / ${tr('Do')}`} hint={tr('Ciche godziny mogą przechodzić przez północ, np. od 22:00 do 07:00.')}>
       <div className="row alert-quiet">
         <label htmlFor="settings-quiet-start">{tr('Od')}</label>
         <input id="settings-quiet-start" className="input" type="time" value={quiet.start} disabled={!quiet.enabled}
@@ -141,8 +134,7 @@ export function AlertsSettings() {
         <input id="settings-quiet-end" className="input" type="time" value={quiet.end} disabled={!quiet.enabled}
           onChange={(e) => { if (isTime(e.target.value)) setQuiet({ end: e.target.value }); }} />
       </div>
-      <span className="muted">{tr('Nie powiadamiaj i nie graj dźwięku w godzinach ciszy')}. {tr('Ciche godziny mogą przechodzić przez północ, np. od 22:00 do 07:00.')}</span>
-    </div>
+    </SettingRow>
     <div className="muted">{tr('Dotyczy agentów Claude i Codex: gdy skończą pracę, potrzebują Twojej odpowiedzi albo tura kończy się błędem. Przycisk testu odtwarza dokładnie wybrany dźwięk i wysyła przykładowe powiadomienie, jeśli jest włączone. Dźwięk systemowy ignoruje głośność.')}</div>
   </>;
 }

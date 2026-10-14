@@ -31,6 +31,15 @@ export function GitPanel() {
 }
 
 const MAX_KEYS_SHOWN = 8;
+/** Small, distinct transfer marks for the repository toolbar; labels and confirmations live on the buttons. */
+function GitTransferIcon({ kind }: { kind: 'fetch' | 'pull' | 'push' }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {kind === 'push' ? <path d="M8 11V2M5 5l3-3 3 3" /> : <path d="M8 2v9M5 8l3 3 3-3" />}
+      {kind === 'fetch' ? <path d="M3 14h2m2 0h2m2 0h2" /> : <path d="M3 11v3h10v-3" />}
+    </svg>
+  );
+}
 
 /** Why the repository is read-only, what in its configuration can start programs, and the way out: an explicit "trust". */
 function TrustBanner({ keys, folded, onFold, onTrust }: { keys: string[]; folded: boolean; onFold(): void; onTrust(): void }) {
@@ -227,7 +236,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
   const folderName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
   const worktreeSelect = worktrees.length > 1 && (
     // every option shows its full path, so the user sees which folder a choice means; the ones the project may not use are disabled
-    <Select className="git-worktree" aria-label={tr('Worktree')} value={selectValue} onChange={(e) => setPicked(e.target.value)}>
+    <Select className="select git-worktree" aria-label={tr('Worktree')} value={selectValue} onChange={(e) => setPicked(e.target.value)}>
       {worktrees.map((w) => (
         <option key={w.path} value={w.path} disabled={!w.allowed} title={w.path}>
           {`${w.branch ?? tr('Odłączony HEAD ({head})', { head: w.head })} - ${folderName(w.path)} (${w.path})`}
@@ -289,16 +298,16 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
         {status.behind > 0 && <span className="git-badge down" title={tr('Commitów do pobrania: {count}', { count: status.behind })}>↓{status.behind}</span>}
         {conflicts > 0 && <span className="git-badge conflict" title={tr('Konflikt scalania')}>!{conflicts}</span>}
         <span className="git-spacer" />
+        <div className="git-actions" role="group" aria-label="Git">
+          <button className="btn ghost icon small" disabled={!!busy || !canWrite} onClick={fetchNow} aria-label="Fetch" title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : <GitTransferIcon kind="fetch" />}</button>
+          <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} aria-label="Pull" title={status.upstream ? tr('Pobierz i dołącz zmiany (pull, tylko fast-forward)') : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>{busy === 'Pull' ? '…' : <GitTransferIcon kind="pull" />}</button>
+          <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.push || (!status.ahead && !status.push.setUpstream)} onClick={() => void pushNow()} aria-label="Push" title={tr('Wyślij commity do zdalnego repozytorium (push)')}>{busy === 'Push' ? '…' : <GitTransferIcon kind="push" />}</button>
+        </div>
         <button className="btn ghost icon small" onClick={() => { setNonce((n) => n + 1); repo.refresh(0); void loadTrust(); }} title={tr('Odśwież')} aria-label={tr('Odśwież')}><IRestart /></button>
       </div>
       {repo.error && <p className="git-note error" role="alert">{errorText(repo.error.message)}</p>}
       {status.parent && <p className="git-note error" role="note">{tr('Repozytorium nadrzędne: ten projekt jest podfolderem większego repozytorium ({root}). Zmiany w nim są wyłączone.', { root: status.root })}</p>}
       {status.upstream && <div className="git-upstream muted" title={status.upstream}>{tr('Śledzi: {upstream}', { upstream: status.upstream })}</div>}
-      <div className="git-actions">
-        <button className="btn small" disabled={!!busy || !canWrite} onClick={fetchNow} title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : 'Fetch'}</button>
-        <button className="btn small" disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} title={status.upstream ? tr('Pobierz i dołącz zmiany (pull, tylko fast-forward)') : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>{busy === 'Pull' ? '…' : 'Pull'}</button>
-        <button className="btn small" disabled={!!busy || !canWrite || !status.push || (!status.ahead && !status.push.setUpstream)} onClick={() => void pushNow()} title={tr('Wyślij commity do zdalnego repozytorium (push)')}>{busy === 'Push' ? '…' : 'Push'}</button>
-      </div>
       {trustedWithPrograms && (
         <div className="git-trust folded" role="note">
           <span>{tr('Zaufane repozytorium: hooki i filtry z jego konfiguracji mogą się uruchamiać przy tych operacjach.')}</span>

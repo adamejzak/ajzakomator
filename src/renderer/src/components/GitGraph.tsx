@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import type { GraphRow } from '../../../shared/git';
 import { LANE_COLORS } from '../../../shared/gitUi';
 
-export const GRAPH_ROW = 40;
+export const GRAPH_ROW = 32;
 const LANE = 11;
 const MAX_LANES = 6;
 
