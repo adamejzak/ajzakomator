@@ -7,14 +7,15 @@ import { cleanReleaseNotes, compareVersions, parseInline, parseNotes, parseRelea
 
 const GUIDE = '\n\n## Which download should I choose?\n\nChoose from the assets attached to this release.\n';
 const release = (tag: string, body: string, extra: Record<string, unknown> = {}) => ({
-  tag_name: tag, name: `ajzakomator ${tag.slice(1)}`, published_at: '2026-10-10T12:00:00Z', html_url: `https://example.test/${tag}`, body, draft: false, prerelease: false, ...extra,
+  tag_name: tag, name: `unimux ${tag.slice(1)}`, published_at: '2026-10-10T12:00:00Z', html_url: `https://example.test/${tag}`, body, draft: false, prerelease: false, ...extra,
 });
 
 describe('release notes', () => {
   it('removes the title, the download guide and housekeeping lines', () => {
-    const body = `# ajzakomator 0.5.4\n\n- Added a window.\n- Fixed a bug.\n\nValidated with unit tests.${GUIDE}`;
+    const body = `# unimux 0.5.4\n\n- Added a window.\n- Fixed a bug.\n\nValidated with unit tests.${GUIDE}`;
     expect(cleanReleaseNotes(body)).toBe('- Added a window.\n- Fixed a bug.');
-    expect(cleanReleaseNotes(`New status bar.\n\nWindows packages for ajzakomator 0.5.5.${GUIDE}`)).toBe('New status bar.');
+    expect(cleanReleaseNotes(`New status bar.\n\nWindows packages for unimux 0.5.5.${GUIDE}`)).toBe('New status bar.');
+    expect(cleanReleaseNotes(`# ajzakomator 0.5.4\n\n- Legacy release.\n\nWindows packages for ajzakomator 0.5.4.${GUIDE}`)).toBe('- Legacy release.');
     expect(cleanReleaseNotes('')).toBe('');
   });
 
@@ -23,7 +24,7 @@ describe('release notes', () => {
       release('v0.5.3', '- a'), release('v0.10.0', '- b'), release('v0.5.10', '- c'), release('nightly', '- x'), release('v9.9.9', '- d', { draft: true }),
     ]);
     expect(entries.map((e) => e.version)).toEqual(['0.10.0', '0.5.10', '0.5.3']);
-    expect(entries[0]).toMatchObject({ name: 'ajzakomator 0.10.0', date: '2026-10-10T12:00:00Z', url: 'https://example.test/v0.10.0', notes: '- b' });
+    expect(entries[0]).toMatchObject({ name: 'unimux 0.10.0', date: '2026-10-10T12:00:00Z', url: 'https://example.test/v0.10.0', notes: '- b' });
     expect(parseReleases({ message: 'rate limited' })).toEqual([]);
   });
 

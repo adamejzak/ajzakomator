@@ -47,7 +47,7 @@ import type { UpdateStrings } from '../shared/updateProgress';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 import { StateController } from './stateController';
 import { AutomationService } from './automation';
-import { AjzakomatorMcpServer } from './mcp';
+import { UnimuxMcpServer } from './mcp';
 import { queueCodexMessage } from './agentDelivery';
 import { CliDetector } from './cliDetect';
 import { createCliHandlers, createInstallHandlers } from './cliIpc';
@@ -66,6 +66,7 @@ import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadEventSound } from './alertSound';
 import { notificationOptions } from './notifyOptions';
 
+// Keep the storage identity across rebranding: projects, sessions and saved accounts stay available.
 const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
 // Carry over state from the app's previous name.
 const LEGACY_STATE = join(app.getPath('appData'), 'MultiCoding', 'state.json');
@@ -77,6 +78,7 @@ const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
 app.setPath('userData', DATA_DIR);
+// Must match the original installer identity so updates replace the existing installation.
 if (process.platform === 'win32') app.setAppUserModelId('com.ajzakomator.app');
 
 if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
@@ -102,7 +104,7 @@ const usageDeps: FetcherDeps = {
 /** Token renewals: our own headers (no Chromium fingerprint, no Claude Code User-Agent), a persisted backoff after HTTP 429, system proxy only as a fallback. */
 const refreshLimits = createRefreshLimits(join(DATA_DIR, 'refresh-limits.json'));
 const tokenFetch = createTokenFetch(usageDeps.fetch);
-const renewProfile = (dir: string) => refreshClaudeProfile(dir, { fetch: tokenFetch, now: usageDeps.now, limits: refreshLimits, userAgent: `ajzakomator/${app.getVersion()}`, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL });
+const renewProfile = (dir: string) => refreshClaudeProfile(dir, { fetch: tokenFetch, now: usageDeps.now, limits: refreshLimits, userAgent: `unimux/${app.getVersion()}`, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL });
 const accounts = new AccountsStore(join(DATA_DIR, 'accounts'));
 const usage = new UsageService({
   accounts: () => [
@@ -207,19 +209,19 @@ let mcpError: string | undefined;
 /** Localized texts for the detached update window (it cannot load the app's catalog). */
 const updateStrings = (): UpdateStrings => ({
   title: tr('Aktualizacja do wersji {version}', { version: getUpdateState().version ?? '' }),
-  hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
+  hint: tr('Nie wyłączaj komputera. unimux uruchomi się automatycznie.'),
   stages: {
     preparing: tr('Przygotowanie aktualizacji…'),
-    closing: tr('Zamykanie ajzakomatora…'),
+    closing: tr('Zamykanie unimux…'),
     installing: tr('Instalowanie nowej wersji…'),
-    launching: tr('Uruchamianie ajzakomatora…'),
+    launching: tr('Uruchamianie unimux…'),
   },
   done: tr('Gotowe - uruchamiam nową wersję'),
   slow: tr('Aktualizacja trwa dłużej niż zwykle'),
-  slowHint: tr('Możesz uruchomić ajzakomator ręcznie.'),
-  open: tr('Uruchom ajzakomator'),
+  slowHint: tr('Możesz uruchomić unimux ręcznie.'),
+  open: tr('Uruchom unimux'),
   close: tr('Zamknij'),
-  waitingClose: tr('Czekam na zamknięcie ajzakomatora…'),
+  waitingClose: tr('Czekam na zamknięcie unimux…'),
   waitingInstaller: tr('Czekam na instalator. Jeśli Windows poprosi o zgodę, potwierdź ją.'),
   installingLong: tr('Instalacja trwa dłużej niż zwykle - to może jeszcze chwilę potrwać…'),
   background: tr('Aktualizacja trwa dalej w tle'),
@@ -296,7 +298,7 @@ const automation = new AutomationService(controller, {
     });
   },
 });
-const mcp = new AjzakomatorMcpServer(automation);
+const mcp = new UnimuxMcpServer(automation);
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -305,7 +307,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 500,
     backgroundColor: '#0d0d0d',
-    title: 'ajzakomator',
+    title: 'unimux',
     icon: join(app.getAppPath(), 'resources', 'icon.png'),
     titleBarStyle: 'hidden',
     ...(process.platform === 'darwin'
@@ -370,7 +372,7 @@ ptyHost.on('crashed', () => {
 });
 ptyHost.on('fatal', () => {
   alive.clear();
-  dialog.showErrorBox('ajzakomator', tr('Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.'));
+  dialog.showErrorBox('unimux', tr('Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.'));
 });
 
 hooks.on('hook', (cellId: string, event: string, info?: unknown) => {
@@ -489,14 +491,14 @@ async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
   const env: Record<string, string> = baseEnv;
   let mcpConfig: { url: string; tokenEnv: string; claudeConfigPath: string } | undefined;
   if (req.profile.cli !== 'shell' && findCell(state, req.cellId)?.cell.role && mcp.getInfo().running) {
-    env.AJZ_MCP_TOKEN = mcp.issueToken(req.cellId);
+    env.UNIMUX_MCP_TOKEN = mcp.issueToken(req.cellId);
     const url = mcp.getInfo().url!;
     mkdirSync(MCP_DIR, { recursive: true });
     const claudeConfigPath = join(MCP_DIR, `${req.cellId}.json`);
-    writeFileSync(claudeConfigPath, JSON.stringify({ mcpServers: { ajzakomator: {
-      type: 'http', url, headers: { Authorization: 'Bearer ${AJZ_MCP_TOKEN}' },
+    writeFileSync(claudeConfigPath, JSON.stringify({ mcpServers: { unimux: {
+      type: 'http', url, headers: { Authorization: 'Bearer ${UNIMUX_MCP_TOKEN}' },
     } } }), 'utf8');
-    mcpConfig = { url, tokenEnv: 'AJZ_MCP_TOKEN', claudeConfigPath };
+    mcpConfig = { url, tokenEnv: 'UNIMUX_MCP_TOKEN', claudeConfigPath };
   } else mcp.revokeCell(req.cellId);
   // Codex reports every finished turn (and its conversation id) to the local hook server through a per-process `notify`.
   let codexNotifyUrl: string | undefined;
@@ -630,7 +632,7 @@ ipcMain.on('shell:revealPath', (_e, p: string) => shell.showItemInFolder(p));
 const changelog = createChangelog({
   cacheFile: join(DATA_DIR, 'changelog.json'),
   fetchJson: async (url) => {
-    const response = await net.fetch(url, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ajzakomator' }, signal: AbortSignal.timeout(10000) });
+    const response = await net.fetch(url, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'unimux' }, signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error(`GitHub ${response.status}`);
     return response.json();
   },
@@ -724,7 +726,7 @@ const gateTexts = (failed: string): GateTexts => ({
   checking: tr('Sprawdzanie aktualizacji…'),
   downloading: tr('Pobieranie aktualizacji…'),
   updating: (next) => tr('Aktualizacja do wersji {version}', { version: next }),
-  hint: tr('Nie wyłączaj komputera. ajzakomator uruchomi się automatycznie.'),
+  hint: tr('Nie wyłączaj komputera. unimux uruchomi się automatycznie.'),
   preparing: tr('Przygotowanie aktualizacji…'),
   failed,
   close: tr('Zamknij'),
@@ -867,7 +869,7 @@ process.on('uncaughtException', (error) => {
   const decision = decideUncaught(error, quitting || gating ? 'quiet' : 'running');
   crashLog.error(`uncaught exception (${decision}): ${detail}`);
   if (decision !== 'show' || !allowErrorDialog(Date.now())) return;
-  void dialog.showMessageBox({ type: 'error', title: 'ajzakomator', message: tr('Wystąpił nieoczekiwany błąd w głównym procesie'), detail }).catch(() => {});
+  void dialog.showMessageBox({ type: 'error', title: 'unimux', message: tr('Wystąpił nieoczekiwany błąd w głównym procesie'), detail }).catch(() => {});
 });
 
 /** Ends the process; a launch that was swallowed during the wind-down is repeated, unless an update took over. */

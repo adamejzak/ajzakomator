@@ -9,7 +9,7 @@ import { MAC_MESSAGES, REFUSAL_MESSAGES, type MacOffer, type MacPreviousOutcome,
 import { createMacUpdater } from './macUpdate/runtime';
 import { UpdateCoordinator, type UpdateBackend } from './updateCoordinator';
 
-export const RELEASES_URL = 'https://github.com/adamejzak/ajzakomator/releases/latest';
+export const RELEASES_URL = 'https://github.com/daven-team/unimux/releases/latest';
 const CHECK_EVERY_MS = 30 * 60 * 1000;
 /** After the macOS update script was started the app must be gone within this time (its own wind-down is limited to 20 s). */
 const MAC_QUIT_WATCHDOG_MS = 30 * 1000;

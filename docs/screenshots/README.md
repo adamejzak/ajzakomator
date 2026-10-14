@@ -17,6 +17,7 @@ An Electron desktop environment is required. The script uses `MC_DATA_DIR` for i
 | `editor.png` | File tree and integrated source editor |
 | `grid-dialog.png` | Review-team preset with profiles, roles and startup prompts |
 | `palette.png` | Command palette with projects, snippets and actions |
+| `project.png` | Project name, color and icon editor |
 
 To review a capture before replacing the tracked images, pass an output directory:
 
@@ -29,6 +30,6 @@ The script logs its temporary demo directory and closes its own Electron instanc
 The app may display the project folder path. If your system temp path includes your personal name, set `MC_CAPTURE_ROOT` to a generic, writable directory before capturing. For example, in PowerShell:
 
 ```powershell
-$env:MC_CAPTURE_ROOT = 'D:\Temp\ajzakomator-demo'
+$env:MC_CAPTURE_ROOT = 'D:\Temp\unimux-demo'
 node scripts/capture-readme.mjs
 ```

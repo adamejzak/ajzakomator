@@ -5,10 +5,10 @@ import { cleanEnv } from '../shared/env';
 export function queueCodexMessage(sessionId: string, message: string, launch: { command?: string; env?: Record<string, string> } = {}): Promise<void> {
   const windows = process.platform === 'win32';
   // `launch` carries the detected binary and a PATH that contains it (a GUI-launched app may not have codex on its own PATH).
-  const env = { ...(launch.env ?? cleanEnv(process.env)), AJZ_TARGET_SESSION: sessionId, AJZ_TASK_MESSAGE: message };
+  const env = { ...(launch.env ?? cleanEnv(process.env)), UNIMUX_TARGET_SESSION: sessionId, UNIMUX_TASK_MESSAGE: message };
   const file = windows ? 'powershell.exe' : launch.command ?? 'codex';
   const args = windows
-    ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; try { & codex queue --thread $env:AJZ_TARGET_SESSION --message $env:AJZ_TASK_MESSAGE; exit $LASTEXITCODE } catch { exit 1 }"]
+    ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference = 'Stop'; try { & codex queue --thread $env:UNIMUX_TARGET_SESSION --message $env:UNIMUX_TASK_MESSAGE; exit $LASTEXITCODE } catch { exit 1 }"]
     : ['queue', '--thread', sessionId, '--message', message];
   return new Promise((resolve, reject) => {
     execFile(file, args, { env, windowsHide: true, timeout: 15000, maxBuffer: 256 * 1024 }, (error) => {

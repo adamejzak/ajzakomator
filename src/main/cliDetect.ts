@@ -312,7 +312,7 @@ export class CliDetector {
     const shell = await this.probeShellFile(env);
     const script = shell.startsWith('/') ? shellProbeScript(shell) : null;
     if (!script) return { ok: false, reason: 'probeFailed', path: [], found: {}, aliased: {} };
-    const result = await this.deps.exec(shell, ['-ilc', script], { timeout: EXEC_TIMEOUT_MS, env: { ...cleanEnv(env), AJZAKOMATOR_PROBE: '1' } });
+    const result = await this.deps.exec(shell, ['-ilc', script], { timeout: EXEC_TIMEOUT_MS, env: { ...cleanEnv(env), Unimux_PROBE: '1' } });
     const parsed = parseShellProbe(result.stdout);
     if (!parsed.path.length) return { ok: false, reason: result.timedOut ? 'timeout' : 'probeFailed', path: [], found: {}, aliased: {} };
     return { ok: true, ...parsed };

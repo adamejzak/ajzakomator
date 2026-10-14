@@ -36,14 +36,14 @@ afterEach(async () => {
 describe('directFetch', () => {
   it('puts exactly the given headers on the wire: no browser fingerprint, no Claude Code User-Agent', async () => {
     const response = await directFetch(`${base}/v1/oauth/token`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'ajzakomator/0.6.8' }, body: JSON.stringify({ grant_type: 'refresh_token' }),
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'unimux/0.6.8' }, body: JSON.stringify({ grant_type: 'refresh_token' }),
     });
     expect(response.status).toBe(200);
     expect(seen).toHaveLength(1);
     expect(seen[0].method).toBe('POST');
     expect(seen[0].url).toBe('/v1/oauth/token');
     expect(Object.keys(seen[0].headers).sort()).toEqual(['connection', 'content-length', 'content-type', 'host', 'user-agent']);
-    expect(seen[0].headers['user-agent']).toBe('ajzakomator/0.6.8');
+    expect(seen[0].headers['user-agent']).toBe('unimux/0.6.8');
     expect(seen[0].headers['content-type']).toBe('application/json');
     expect(seen[0].body).toBe('{"grant_type":"refresh_token"}');
   });
@@ -104,7 +104,7 @@ describe('token refresh against a mock token server', () => {
   const NOW = Date.parse('2026-10-13T12:00:00Z');
   const write = () => writeFileSync(join(dir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: 1, scopes: ['user:inference'] } }));
   const refresh = (limits = createRefreshLimits(undefined, () => NOW)) => refreshClaudeProfile(dir, {
-    fetch: directFetch as never, now: () => NOW, tokenUrl: `${base}/v1/oauth/token`, userAgent: 'ajzakomator/0.6.8', limits, random: () => 0,
+    fetch: directFetch as never, now: () => NOW, tokenUrl: `${base}/v1/oauth/token`, userAgent: 'unimux/0.6.8', limits, random: () => 0,
   });
 
   it('sends one JSON POST with the three fields and the product User-Agent, and stores the rotated tokens', async () => {
@@ -115,7 +115,7 @@ describe('token refresh against a mock token server', () => {
     expect(seen[0]).toMatchObject({ method: 'POST', url: '/v1/oauth/token' });
     expect(Object.keys(seen[0].headers).sort()).toEqual(['connection', 'content-length', 'content-type', 'host', 'user-agent']);
     expect(seen[0].headers['content-type']).toBe('application/json');
-    expect(seen[0].headers['user-agent']).toBe('ajzakomator/0.6.8');
+    expect(seen[0].headers['user-agent']).toBe('unimux/0.6.8');
     expect(JSON.parse(seen[0].body)).toEqual({ grant_type: 'refresh_token', refresh_token: 'old-refresh', client_id: OAUTH_CLIENT_ID });
     expect(JSON.parse(readFileSync(join(dir, '.credentials.json'), 'utf8')).claudeAiOauth).toMatchObject({ accessToken: 'new-access', refreshToken: 'new-refresh', expiresAt: NOW + 28_800_000 });
   });
@@ -139,6 +139,6 @@ describe('token refresh against a mock token server', () => {
     write();
     answer = (res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ access_token: 'n', expires_in: 60 })); };
     expect(await refreshClaudeProfile(dir, { fetch: directFetch as never, now: () => NOW, tokenUrl: `${base}/t` })).toEqual({ kind: 'ok' });
-    expect(seen[0].headers['user-agent']).toBe('ajzakomator');
+    expect(seen[0].headers['user-agent']).toBe('unimux');
   });
 });

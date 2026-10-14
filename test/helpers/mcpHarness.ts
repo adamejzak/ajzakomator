@@ -1,4 +1,4 @@
-import { AjzakomatorMcpServer, type McpServerOptions } from '../../src/main/mcp';
+import { UnimuxMcpServer, type McpServerOptions } from '../../src/main/mcp';
 import { AutomationService } from '../../src/main/automation';
 import { StateController } from '../../src/main/stateController';
 import { addProject, addTab, defaultState } from '../../src/shared/state';
@@ -14,7 +14,7 @@ export async function startMcpHarness(deliver: (cellId: string, text: string) =>
   const service = new AutomationService(controller, {
     createWorktree: async () => { throw new Error('no worktrees in the harness'); }, removeWorktree: async () => undefined, startCells: () => undefined, stopCells: async () => undefined, deliver,
   });
-  const server = new AjzakomatorMcpServer(service, options);
+  const server = new UnimuxMcpServer(service, options);
   await server.start();
   const [coordinator, worker, reviewer] = controller.get().projects[0].tabs[0].cells;
   return { server, service, controller, coordinator, worker, reviewer, url: server.getInfo().url!, project: controller.get().projects[0] };

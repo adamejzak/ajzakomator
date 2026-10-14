@@ -148,7 +148,7 @@ export function AutomationPanel() {
             <p className="automation-text">{message.text}</p>
             <div className="row wrap">
               <button className="btn small" disabled={!agents.some(({ cell }) => cell.id === message.toCellId)} onClick={() => focusCell(message.toCellId)}>{tr('Otwórz agenta')}</button>
-              <button className="btn small" onClick={() => copy(`[Ajzakomator message ${message.id}]\n${message.text}\nUse read_inbox with acknowledge:true to mark it read.`)}>{tr('Kopiuj prompt')}</button>
+              <button className="btn small" onClick={() => copy(`[Unimux message ${message.id}]\n${message.text}\nUse read_inbox with acknowledge:true to mark it read.`)}>{tr('Kopiuj prompt')}</button>
               {message.delivery === 'pending' && !message.readAt && <button className="btn small" disabled={busy || state.automation.paused} onClick={() => void run('deliver_message', { messageId: message.id })}>{tr('Ponów dostarczenie')}</button>}
               {!message.readAt && <button className="btn small" disabled={busy} onClick={() => void run('acknowledge_message', { messageId: message.id })}>{tr('Oznacz jako przeczytane')}</button>}
             </div>

@@ -13,9 +13,9 @@ vi.mock('../src/main/macUpdate/runtime', () => ({ createMacUpdater: () => mock.e
 
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
 const offer = (over: Partial<MacOffer> = {}): MacOffer => ({
-  version: '0.7.0', asset: { name: 'ajzakomator-0.7.0-mac-arm64.zip', sha512: 'x', size: 100 }, url: 'https://example.test/a.zip', ...over,
+  version: '0.7.0', asset: { name: 'unimux-0.7.0-mac-arm64.zip', sha512: 'x', size: 100 }, url: 'https://example.test/a.zip', ...over,
 });
-const staged: MacStaged = { version: '0.7.0', bundle: '/s/extracted-0.7.0/ajzakomator.app', executable: 'ajzakomator', zip: '/s/a.zip', extractDir: '/s/extracted-0.7.0' };
+const staged: MacStaged = { version: '0.7.0', bundle: '/s/extracted-0.7.0/unimux.app', executable: 'unimux', zip: '/s/a.zip', extractDir: '/s/extracted-0.7.0' };
 
 beforeEach(() => {
   vi.resetModules(); vi.useFakeTimers(); vi.clearAllMocks();
@@ -229,7 +229,7 @@ describe('macOS updater state machine', () => {
   });
 
   describe('newer release (same supersede rule as Windows)', () => {
-    const offerFor = (version: string) => offer({ version, asset: { name: `ajzakomator-${version}-mac-arm64.zip`, sha512: 'x', size: 100 } });
+    const offerFor = (version: string) => offer({ version, asset: { name: `unimux-${version}-mac-arm64.zip`, sha512: 'x', size: 100 } });
     const stagedFor = (version: string): MacStaged => ({ ...staged, version });
     it('cancels the running download of the old version and downloads the newer one', async () => {
       const api = await setup();

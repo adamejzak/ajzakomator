@@ -43,7 +43,7 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.build_run_id }}
-          pattern: ajzakomator-*
+          pattern: unimux-*
           path: release-assets
       - name: Verify installers and prepare update manifests
         run: node scripts/prepare-release-assets.mjs release-assets "${RELEASE_TAG#v}"
@@ -54,7 +54,7 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" release-assets/publish/* \
             --repo "$RELEASE_REPOSITORY" --verify-tag --draft \
-            --title "ajzakomator ${RELEASE_TAG#v}" \
+            --title "unimux ${RELEASE_TAG#v}" \
             --notes-file release-notes.md
       - name: Publish release
         run: gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --draft=false --latest

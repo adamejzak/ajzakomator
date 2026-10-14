@@ -32,11 +32,11 @@ export const MAC_MESSAGES = {
 /** Polish message keys describing why the app is not replaced in place (translated in the renderer). */
 export const REFUSAL_MESSAGES: Record<MacRefusal, string> = {
   'not-bundle': 'Automatyczna instalacja jest niedostępna: aplikacja nie działa z pakietu .app. Pobierz nową wersję ręcznie.',
-  translocated: 'Automatyczna instalacja jest niedostępna: macOS uruchomił aplikację z tymczasowej lokalizacji. Przenieś ajzakomator do folderu Programy, uruchom go stamtąd lub pobierz nową wersję ręcznie.',
+  translocated: 'Automatyczna instalacja jest niedostępna: macOS uruchomił aplikację z tymczasowej lokalizacji. Przenieś unimux do folderu Programy, uruchom go stamtąd lub pobierz nową wersję ręcznie.',
   'read-only': 'Automatyczna instalacja jest niedostępna: aplikacja działa z dysku tylko do odczytu (np. z obrazu DMG). Przenieś ją do folderu Programy lub pobierz nową wersję ręcznie.',
   'not-writable': 'Automatyczna instalacja jest niedostępna: brak zapisu w folderze z aplikacją. Pobierz nową wersję ręcznie.',
   'not-owner': 'Automatyczna instalacja jest niedostępna: aplikacja należy do innego użytkownika. Pobierz nową wersję ręcznie.',
-  'app-management': 'macOS nie pozwolił zmienić aplikacji. Zezwól ajzakomatorowi w Ustawieniach systemowych (Prywatność i ochrona, Zarządzanie aplikacjami) albo pobierz nową wersję ręcznie.',
+  'app-management': 'macOS nie pozwolił zmienić aplikacji. Zezwól unimuxowi w Ustawieniach systemowych (Prywatność i ochrona, Zarządzanie aplikacjami) albo pobierz nową wersję ręcznie.',
 };
 
 /** Message of the error a cancelled download ends with (the caller knows it cancelled and does not report it). */
@@ -162,7 +162,7 @@ export class MacUpdater {
       let response: Response;
       try {
         // The injected fetch may follow (checked) redirects itself; any 3xx that still arrives is checked below.
-        response = await this.d.fetch(current, { headers: { 'User-Agent': 'ajzakomator-updater', 'Cache-Control': 'no-cache', Pragma: 'no-cache' }, signal, redirect: 'manual' });
+        response = await this.d.fetch(current, { headers: { 'User-Agent': 'unimux-updater', 'Cache-Control': 'no-cache', Pragma: 'no-cache' }, signal, redirect: 'manual' });
       } catch (error) {
         if (signal.aborted) throw error;
         await this.note(`request failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -32,7 +32,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   })()`), 'cell title, profile and working status use aligned text');
   assert.equal(await evaluate('document.querySelectorAll(".brand .brand-version").length'), 0);
   await until(() => evaluate(`document.querySelector('.statusbar .sb-version')?.textContent === ${JSON.stringify(`v${version}`)}`), 'running version in footer');
-  assert.ok(await evaluate('!document.querySelector(".statusbar").textContent.toLowerCase().includes("ajzakomator")'), 'footer omits brand name');
+  assert.ok(await evaluate('!document.querySelector(".statusbar").textContent.toLowerCase().includes("unimux")'), 'footer omits brand name');
   assert.ok(await evaluate('[...document.querySelectorAll(".project")].every(row => !/[\\\\/]/.test(row.textContent))'), 'projects show names without path rows');
   assert.ok(await evaluate('(() => { const add = document.querySelector(".project-add-inline"); const rows = [...document.querySelectorAll(".project")]; return !!add && rows.every(row => row.getBoundingClientRect().bottom <= add.getBoundingClientRect().top); })()'), 'add project follows the project list');
   await evaluate('document.querySelector(".rpanel .search").focus()');
@@ -64,7 +64,8 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   assert.equal(await evaluate('getComputedStyle(document.querySelector(".panel-resize"), "::after").backgroundColor'), 'rgb(168, 162, 158)');
   await openFilesPanel();
   await until(() => evaluate('!!document.querySelector(".file-entry[title=src]")'), 'file tree');
-  if (!await evaluate('!!document.querySelector(".file-entry[title=" + JSON.stringify("src/catalog.mjs") + "]")')) await click('.file-entry[title=src]');
+  // Children load asynchronously; their absence does not mean an open folder is collapsed.
+  if (await evaluate('document.querySelector(".file-entry[title=src]")?.getAttribute("aria-expanded") !== "true"')) await click('.file-entry[title=src]');
   await until(() => evaluate('!!document.querySelector(".file-entry[title=" + JSON.stringify("src/catalog.mjs") + "]")'), 'expanded source tree');
   await click('.file-entry[title="src/catalog.mjs"]');
   await until(() => evaluate('!!document.querySelector(".file-editor .cm-content")'), 'editor');
@@ -105,14 +106,14 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await screenshot('settings-general');
   assert.ok(await evaluate('(() => { const nav = document.querySelector(".settings-nav"); const content = document.querySelector(".settings-content"); return parseFloat(getComputedStyle(nav).borderRightWidth) >= 1 && nav.getBoundingClientRect().right <= content.getBoundingClientRect().left; })()'), 'settings navigation is divided from options');
   const sectionLabels = await evaluate('[...document.querySelectorAll(".settings-nav button")].map(button => button.textContent.trim())');
-  assert.equal(sectionLabels.length, 6);
+  assert.equal(sectionLabels.length, 7);
   for (const label of sectionLabels) {
     await click('.settings-nav button', label);
     await until(() => evaluate(`document.querySelector('.settings-content h2')?.textContent === ${JSON.stringify(label)}`), `settings section ${label}`);
     assert.equal(await evaluate('document.querySelectorAll(".settings-nav button[role=tab][aria-selected=true]").length'), 1);
-    assert.ok(await evaluate('!!document.querySelector(".settings-card input, .settings-card select")'), 'settings section provides controls');
+    assert.ok(await evaluate('!!document.querySelector(".settings-content input, .settings-content select")'), 'settings section provides controls');
+    if (label === 'Agent profiles') await screenshot('settings-profiles');
   }
-  await screenshot('settings-profiles');
   await click('.file-tab');
   await until(() => evaluate('!!document.querySelector(".file-tab.active") && !!document.querySelector(".file-editor .cm-content") && !document.querySelector(".settings-page")?.getClientRects().length'), 'return from settings to file');
   await openSettings();
@@ -158,8 +159,12 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await key('s', 'KeyS', { ctrlKey: process.platform !== 'darwin', metaKey: process.platform === 'darwin' });
   await until(() => evaluate('document.querySelector(".file-editor").textContent.includes("changed")'), 'external write conflict');
   assert.equal(readFileSync(path, 'utf8'), original + '\n// External disk change\n');
+  await evaluate('window.__workspaceReloadProbe = true');
   await cdp('Page.reload');
-  await until(() => evaluate('!!document.querySelector(".file-tab .file-dirty")'), 'restored draft after reload');
+  await until(async () => {
+    try { return await evaluate('!window.__workspaceReloadProbe && !!window.mc && !!document.querySelector(".file-tab .file-dirty")'); }
+    catch { return false; } // The old JavaScript context disappears during reload.
+  }, 'restored draft after reload');
   assert.deepEqual(await visualCards(), movedCards.filter(id => id !== 'settings'), 'mixed card order survives reload');
   await click('.file-tab');
   await until(() => evaluate('document.querySelector(".cm-content")?.textContent.includes("Unsaved protected draft")'), 'draft text restored');

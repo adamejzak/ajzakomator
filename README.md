@@ -1,25 +1,25 @@
 <div align="center">
 
-<img src="resources/logo.svg" width="96" alt="ajzakomator logo" />
+<img src="resources/logo.svg" width="96" alt="unimux logo" />
 
-# ajzakomator
+# unimux
 
 **A terminal grid for running many Claude Code and Codex agents side by side on Windows and macOS.**
 
 Keep projects, agent conversations, source files and reusable prompts in one workspace.
 Switch projects while your terminals keep running in the background.
 
-[![Release](https://img.shields.io/github/v/release/adamejzak/ajzakomator?style=flat-square&color=f4f4f5&labelColor=18181b)](https://github.com/adamejzak/ajzakomator/releases/latest)
-[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fadamejzak%2Fajzakomator%2Fbadges%2Fdownloads.json&style=flat-square)](https://github.com/adamejzak/ajzakomator/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/adamejzak/ajzakomator/ci.yml?branch=main&style=flat-square&label=tests&labelColor=18181b)](https://github.com/adamejzak/ajzakomator/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/daven-team/unimux?style=flat-square&color=f4f4f5&labelColor=18181b)](https://github.com/daven-team/unimux/releases/latest)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdaven-team%2Funimux%2Fbadges%2Fdownloads.json&style=flat-square)](https://github.com/daven-team/unimux/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/daven-team/unimux/ci.yml?branch=main&style=flat-square&label=tests&labelColor=18181b)](https://github.com/daven-team/unimux/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-f4f4f5?style=flat-square&labelColor=18181b)](#install)
-[![License](https://img.shields.io/github/license/adamejzak/ajzakomator?style=flat-square&color=f4f4f5&labelColor=18181b)](LICENSE)
+[![License](https://img.shields.io/github/license/daven-team/unimux?style=flat-square&color=f4f4f5&labelColor=18181b)](LICENSE)
 
-[**Download**](https://github.com/adamejzak/ajzakomator/releases/latest) · [Features](#features) · [Shortcuts](#keyboard-shortcuts) · [MCP guide](docs/MCP.en.md) · [Po polsku](README.pl.md)
+[**Download**](https://github.com/daven-team/unimux/releases/latest) · [Features](#features) · [Shortcuts](#keyboard-shortcuts) · [MCP guide](docs/MCP.en.md) · [Po polsku](README.pl.md)
 
 <br />
 
-<img src="docs/screenshots/main.png" alt="English ajzakomator workspace with projects, four real demo terminals and reusable prompts" width="100%" />
+<img src="docs/screenshots/main.png" alt="English unimux workspace with projects, four real demo terminals and reusable prompts" width="100%" />
 
 </div>
 
@@ -30,7 +30,7 @@ Switch projects while your terminals keep running in the background.
 Running one AI coding agent is easy. Running six of them across three repos is not: terminals pile up,
 you lose track of which one is waiting for you, and closing a window means losing the conversation.
 
-ajzakomator gives every project its own set of terminal grids, keeps every agent running in the
+unimux gives every project its own set of terminal grids, keeps every agent running in the
 background, tells you which one needs you, and brings any grid or conversation back with one click.
 
 ## Features
@@ -128,19 +128,21 @@ The panel needs git 2.26 or newer on your `PATH`.
 
 ## Install
 
+Releases published before the Unimux rebranding use `ajzakomator` in package names. Choose the matching installer or Mac architecture from those releases.
+
 **Windows**
 
-1. Download **`ajzakomator-Setup-x.y.z.exe`** from the [latest release](https://github.com/adamejzak/ajzakomator/releases/latest)
+1. Download **`unimux-Setup-x.y.z.exe`** from the [latest release](https://github.com/daven-team/unimux/releases/latest)
 2. Run it. Windows SmartScreen may warn about an unsigned app: choose *More info* and *Run anyway*
 3. Choose the app language on first launch
 4. Add a project (any folder) and open a grid
 
-`ajzakomator-Portable-x.y.z.exe` runs without installing. See [Updating](#updating) for the differences between builds.
+`unimux-Portable-x.y.z.exe` runs without installing. See [Updating](#updating) for the differences between builds.
 
 **macOS (Apple Silicon and Intel)**
 
-1. Download **`ajzakomator-x.y.z-mac-arm64.dmg`** for Apple Silicon or **`ajzakomator-x.y.z-mac-x64.dmg`** for Intel from the [latest release](https://github.com/adamejzak/ajzakomator/releases/latest).
-2. Open the DMG and drag **ajzakomator** to **Applications**. ZIP packages are also available.
+1. Download **`unimux-x.y.z-mac-arm64.dmg`** for Apple Silicon or **`unimux-x.y.z-mac-x64.dmg`** for Intel from the [latest release](https://github.com/daven-team/unimux/releases/latest).
+2. Open the DMG and drag **unimux** to **Applications**. ZIP packages are also available.
 3. Open the app, choose a language, then add a project and open a grid.
 
 Mac builds use an ad-hoc signature without an Apple Developer certificate and are not notarized; macOS may require **Open Anyway** in **System Settings → Privacy & Security**. The app updates itself in place without a certificate (see [Updating](#updating); the first update that has this feature is still manual). See [Electron's signing requirements](https://www.electronjs.org/docs/latest/tutorial/code-signing#macos-apis-that-require-code-signing).
@@ -160,11 +162,11 @@ Mac builds use an ad-hoc signature without an Apple Developer certificate and ar
 
 The installed Windows app checks GitHub Releases. **Settings → Updates** has two modes, and an update is never installed without your click. **Automatic**: at start the app shows a short "Checking for updates" window only if the check is slow; when a new version exists it asks "Install now" or "Later" and starts downloading in the background while you decide, so "Install now" goes straight to the installer ("Later", the close button and Escape start the current version, and the status bar button installs the update afterwards). **Manual** (the default): nothing happens at start; the app downloads updates in the background the status bar shows **Version … available - Update** and, once it is downloaded, **Version … ready - Install**. Clicking either opens the one update window, which finishes the download if needed, installs and starts the new version. If a newer release appears before the installer starts, the window follows the newest one; once the installer has started, that version finishes and the newer one is offered after the relaunch. With no update, no network or any error the app simply starts. Save your editor changes before an update; agent conversations are restored through their CLI resume support.
 
-To check manually, right-click the **ajzakomator** name/version and choose **Check for updates**. If checking or downloading fails, the header offers a retry and shows the error.
+To check manually, right-click the **unimux** name/version and choose **Check for updates**. If checking or downloading fails, the header offers a retry and shows the error.
 
 Portable Windows builds open the release download page instead of installing updates automatically. Replace the app with the new download; your local app data is kept separately. Development builds do not install updates.
 
-**macOS.** Squirrel.Mac (electron-updater) refuses updates that are only ad-hoc signed, so the macOS app has its own updater with the same two modes and the same rule that nothing installs without your click. It reads `latest-mac.yml` from the latest GitHub release, downloads the `.zip` for your processor (Apple Silicon or Intel) into `~/Library/Application Support/ajzakomator/updates/mac`, checks its size and SHA-512, unpacks it with `ditto` and verifies the bundle (version, bundle identifier, executable and `codesign --verify`). After you click install, a small script waits until the app has quit, moves the old app aside, puts the new one in its place (restoring the old one if anything fails), removes the quarantine flag and starts the new version. The log is `updates/mac/update.log`. In **Automatic** mode the prompt at start works like on Windows; the download starts while you decide. The app only replaces itself when it runs from a normal, writable `.app` that belongs to you (for example in **Applications**). From the mounted DMG, a translocated (quarantined) copy, a read-only or administrator-owned location, or when macOS denies the **App Management** permission, the status bar offers the download page instead and the tooltip says why.
+**macOS.** Squirrel.Mac (electron-updater) refuses updates that are only ad-hoc signed, so the macOS app has its own updater with the same two modes and the same rule that nothing installs without your click. It reads `latest-mac.yml` from the latest GitHub release, downloads the `.zip` for your processor (Apple Silicon or Intel) into `~/Library/Application Support/unimux/updates/mac`, checks its size and SHA-512, unpacks it with `ditto` and verifies the bundle (version, bundle identifier, executable and `codesign --verify`). After you click install, a small script waits until the app has quit, moves the old app aside, puts the new one in its place (restoring the old one if anything fails), removes the quarantine flag and starts the new version. The log is `updates/mac/update.log`. In **Automatic** mode the prompt at start works like on Windows; the download starts while you decide. The app only replaces itself when it runs from a normal, writable `.app` that belongs to you (for example in **Applications**). From the mounted DMG, a translocated (quarantined) copy, a read-only or administrator-owned location, or when macOS denies the **App Management** permission, the status bar offers the download page instead and the tooltip says why.
 
 The first update to a macOS version that contains this updater is still manual (older versions cannot do it), and the updater has not yet been validated on a real Mac; see the checklist in `docs/RELEASING.md`.
 
@@ -217,16 +219,16 @@ flowchart LR
 ```
 
 - **Pty Host.** All terminals live in a separate process and stream straight to the window, so a dozen chatty agents never freeze the UI. Reloading the window keeps every agent alive and replays its output.
-- **Terminal fidelity.** On Windows, node-pty runs with the bundled, newer ConPTY, and ajzakomator implements Windows Terminal's `win32-input-mode`. That delivers real key release events, which is what makes hold Space to talk work. macOS uses native POSIX PTYs.
+- **Terminal fidelity.** On Windows, node-pty runs with the bundled, newer ConPTY, and unimux implements Windows Terminal's `win32-input-mode`. That delivers real key release events, which is what makes hold Space to talk work. macOS uses native POSIX PTYs.
 - **Status.** Claude Code reports through per-cell hooks passed with `--settings` (your own `settings.json` is never touched). Codex calls a per-process `notify` hook (`-c notify=[...]`, a `curl` call to the local hook server) when a turn completes, which also reports the conversation id; its approval prompts arrive as terminal notifications (OSC 9), a usage-limit error is recognized from its output, and an activity heuristic is the fallback (see Codex notes above).
 - **Resume.** Claude cells start with a known `--session-id` and resume with `--resume`. Codex sessions are matched to their cell from `~/.codex/sessions` and resumed with `codex resume`.
-- **Local app state.** Projects, layouts, snippets and MCP inboxes live in `%APPDATA%\ajzakomator\state.json` on Windows and `~/Library/Application Support/ajzakomator/state.json` on macOS. Update checks contact GitHub Releases. Agents run their own CLIs and use the services configured for those CLIs.
+- **Local app state.** Projects, layouts, snippets and MCP inboxes live in `%APPDATA%\ajzakomator\state.json` on Windows and `~/Library/Application Support/ajzakomator/state.json` on macOS. Unimux keeps the original data directory so existing projects, sessions and saved accounts remain available after updating. Update checks contact GitHub Releases. Agents run their own CLIs and use the services configured for those CLIs.
 
 ## Development
 
 ```powershell
-git clone https://github.com/adamejzak/ajzakomator
-cd ajzakomator
+git clone https://github.com/daven-team/unimux
+cd unimux
 npm install          # .npmrc sets legacy-peer-deps
 npm run dev          # app with hot reload
 npm test             # unit tests + integration tests against a real native PTY
@@ -261,7 +263,7 @@ To publish all platforms together, push a version tag, wait for CI to pass, and 
 - Split view across projects
 - Per-grid environment variables
 
-Ideas and bug reports are welcome in [Issues](https://github.com/adamejzak/ajzakomator/issues).
+Ideas and bug reports are welcome in [Issues](https://github.com/daven-team/unimux/issues).
 
 ## License
 

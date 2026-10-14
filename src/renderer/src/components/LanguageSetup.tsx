@@ -11,14 +11,14 @@ export function LanguageSetup() {
   useEffect(() => { document.documentElement.lang = language; }, [language]);
   return (
     <div className="app">
-      <div className="titlebar first-run-titlebar"><Logo size={18} /><span>ajzakomator</span></div>
+      <div className="titlebar first-run-titlebar"><Logo size={18} /><span>unimux</span></div>
       <main className="language-setup">
         <form className="language-card" onSubmit={(event) => {
           event.preventDefault();
           update((state) => updateSettings(state, { language }));
         }}>
           <Logo size={52} />
-          <h1>{tr('Witaj w ajzakomatorze')}</h1>
+          <h1>{tr('Witaj w unimux')}</h1>
           <p>{tr('Wybierz język aplikacji. Możesz go później zmienić w ustawieniach.')}</p>
           <div className="field">
             <label htmlFor="setup-language">{tr('Wybierz język')}</label>

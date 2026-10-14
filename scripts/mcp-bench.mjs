@@ -1,4 +1,4 @@
-// Measures what an MCP client pays for the ajzakomator server: the tools/list payload per role (bytes and an estimated
+// Measures what an MCP client pays for the unimux server: the tools/list payload per role (bytes and an estimated
 // token count) and per-call latency of the in-process server. No model or network calls; run `node scripts/mcp-bench.mjs`.
 import { build } from 'esbuild';
 import { mkdtempSync, rmSync } from 'fs';

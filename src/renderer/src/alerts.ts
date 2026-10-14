@@ -76,6 +76,6 @@ export async function testAlert(event: AlertEventId): Promise<boolean> {
   const { alerts } = s.settings;
   const config = alerts.events[event];
   const agent = s.profiles.find((p) => p.cli === 'claude')?.name ?? 'Claude';
-  if (config.notify) window.mc.notify({ title: 'ajzakomator', body: alertBody(event, agent, 'rate_limit'), cellId: '' });
+  if (config.notify) window.mc.notify({ title: 'unimux', body: alertBody(event, agent, 'rate_limit'), cellId: '' });
   return playAlertSound(event, config.sound, alerts.volume);
 }

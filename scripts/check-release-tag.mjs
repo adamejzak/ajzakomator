@@ -14,6 +14,7 @@ assert.equal(lock.packages?.['']?.version, version, 'package-lock.json root pack
 const notesFile = `docs/releases/${version}.md`;
 assert.ok(existsSync(notesFile), `Release notes are missing: ${notesFile}`);
 const notes = readFileSync(notesFile, 'utf8').replace(/\r\n/g, '\n');
-assert.ok(notes.startsWith(`# ajzakomator ${version}\n`), `${notesFile} must start with "# ajzakomator ${version}"`);
+// Existing release notes retain the name and filenames used when they were published.
+assert.ok(notes.startsWith(`# unimux ${version}\n`) || notes.startsWith(`# ajzakomator ${version}\n`), `${notesFile} must start with "# unimux ${version}"`);
 assert.ok(/^- \S/m.test(notes), `${notesFile} needs at least one bullet point`);
 console.log(`Release metadata for ${tag} is consistent.`);

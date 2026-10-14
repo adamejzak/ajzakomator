@@ -70,7 +70,7 @@ export function createGateWindow(texts: GateTexts, currentVersion: string): { sh
     }));
     win = new BrowserWindow({
       width: 440, height: 200, resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
-      frame: false, show: false, center: true, alwaysOnTop: true, backgroundColor: '#0d0d0d', title: 'ajzakomator',
+      frame: false, show: false, center: true, alwaysOnTop: true, backgroundColor: '#0d0d0d', title: 'unimux',
       icon: join(app.getAppPath(), 'resources', 'icon.png'),
       ...(!app.isPackaged && process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
       webPreferences: { preload: join(__dirname, '../preload/updatesplash.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },

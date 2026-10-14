@@ -33,7 +33,7 @@ export function cleanReleaseNotes(body: string): string {
   return text
     .split(/\n{2,}/)
     .map((part) => part.trim())
-    .filter((part) => part && !/^#\s+ajzakomator\s+\d/i.test(part) && !/^Windows packages for ajzakomator/i.test(part) && !/^Validated with\b/i.test(part))
+    .filter((part) => part && !/^#\s+(?:unimux|ajzakomator)\s+\d/i.test(part) && !/^Windows packages for (?:unimux|ajzakomator)/i.test(part) && !/^Validated with\b/i.test(part))
     .join('\n\n')
     .trim();
 }
@@ -47,7 +47,7 @@ export function parseReleases(json: unknown): ChangelogEntry[] {
     if (item?.draft || !SEMVER.test(tag)) continue;
     entries.push({
       version: tag.replace(/^v/, ''),
-      name: typeof item.name === 'string' && item.name ? item.name : `ajzakomator ${tag.replace(/^v/, '')}`,
+      name: typeof item.name === 'string' && item.name ? item.name : `unimux ${tag.replace(/^v/, '')}`,
       date: typeof item.published_at === 'string' ? item.published_at : typeof item.created_at === 'string' ? item.created_at : '',
       url: typeof item.html_url === 'string' ? item.html_url : '',
       notes: cleanReleaseNotes(typeof item.body === 'string' ? item.body : ''),

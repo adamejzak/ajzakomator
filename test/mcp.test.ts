@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request } from 'http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { AjzakomatorMcpServer } from '../src/main/mcp';
+import { UnimuxMcpServer } from '../src/main/mcp';
 import { AutomationService } from '../src/main/automation';
 import { StateController } from '../src/main/stateController';
 import { addProject, addTab, defaultState } from '../src/shared/state';
 import { layoutForCount } from '../src/shared/layout';
 
-const running: AjzakomatorMcpServer[] = [];
+const running: UnimuxMcpServer[] = [];
 const data = (result: unknown) => JSON.parse(((result as { content: Array<{ text: string }> }).content[0]).text);
 afterEach(async () => { await Promise.all(running.splice(0).map((s) => s.stop())); });
 async function setup() {
@@ -18,7 +18,7 @@ async function setup() {
   const service = new AutomationService(controller, {
     createWorktree: vi.fn(), removeWorktree: vi.fn(), startCells: vi.fn(), deliver: vi.fn(async () => { throw new Error('Not running'); }),
   });
-  const server = new AjzakomatorMcpServer(service);
+  const server = new UnimuxMcpServer(service);
   running.push(server);
   await server.start();
   const [coordinator, worker] = state.projects[0].tabs[0].cells;

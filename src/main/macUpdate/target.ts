@@ -18,7 +18,7 @@ export interface TargetFs {
 
 const BUNDLE = /^(\/.+?\.app)\/Contents\/MacOS\/[^/]+$/;
 
-/** `/Applications/ajzakomator.app/Contents/MacOS/ajzakomator` -> `/Applications/ajzakomator.app`; undefined outside a .app. */
+/** `/Applications/unimux.app/Contents/MacOS/unimux` -> `/Applications/unimux.app`; undefined outside a .app. */
 export function bundlePathFromExecPath(execPath: string): string | undefined {
   return BUNDLE.exec(execPath)?.[1];
 }
@@ -51,7 +51,7 @@ export async function evaluateInstallTarget(execPath: string, packaged: boolean,
  * to install (it can show the system prompt), by creating and removing a file at the top of the bundle.
  */
 export async function probeBundleWrite(bundle: string, write: (path: string) => Promise<void>, remove: (path: string) => Promise<void>): Promise<boolean> {
-  const probe = posix.join(bundle, 'Contents', '.ajzakomator-write-probe');
+  const probe = posix.join(bundle, 'Contents', '.unimux-write-probe');
   try { await write(probe); await remove(probe); return true; }
   catch { await remove(probe).catch(() => {}); return false; }
 }

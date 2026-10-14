@@ -22,7 +22,7 @@ const MAX_BODY = 256 * 1024;
 /** Safety net for a single tool result; the tools already shape and truncate their output. */
 const MAX_RESULT_CHARS = 60000;
 
-export class AjzakomatorMcpServer {
+export class UnimuxMcpServer {
   private http: HttpServer | null = null;
   private tokens = new Map<string, string>();
   private tokenOf = new Map<string, string>();
@@ -107,7 +107,7 @@ export class AjzakomatorMcpServer {
     this.aborts.set(token, controllers);
     const found = findCell(this.service.state.get(), actorId);
     const role = this.service.roleOf(actorId);
-    const server = new Server({ name: 'ajzakomator', version: '1.1.0' }, {
+    const server = new Server({ name: 'unimux', version: '1.1.0' }, {
       capabilities: { tools: {} },
       instructions: mcpInstructions(role, { cellId: actorId, name: found?.cell.name, project: found?.project.name }),
     });

@@ -1,6 +1,7 @@
 ; Included automatically by electron-builder (buildResources/installer.nsh).
 ; During an in-app update the new files are in place after installApplicationFiles; the update window
 ; polls for this marker to move on from "Installing" to "Starting".
+; Keep the original data path: existing installations and update windows use it too.
 !macro customInstall
   ${if} ${isUpdated}
     CreateDirectory "$APPDATA\ajzakomator\update"

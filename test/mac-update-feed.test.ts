@@ -5,23 +5,23 @@ import { compareVersions } from '../src/main/startupGate';
 /** The real latest-mac.yml of release 0.6.5: base64 hashes are folded onto their own line by electron-builder. */
 const FEED = `version: 0.6.5
 files:
-  - url: ajzakomator-0.6.5-mac-x64.zip
+  - url: unimux-0.6.5-mac-x64.zip
     sha512: >-
       EEAVct4YfgdfjvREA5LoRlH7ugkyfLeYG31Ac62bW1J7XdtujcaKqYuvbKnLyeAclow6VHvrSOn8vMfkpVo4bg==
     size: 139957940
-  - url: ajzakomator-0.6.5-mac-x64.dmg
+  - url: unimux-0.6.5-mac-x64.dmg
     sha512: >-
       caxxp8h1eaahlr51EIGCt8kimQS/kiCWGlMdahRc4+ssdgjtcr0xZPHOtGpzWy2SFwp9llpomUSW1YdAY/HQpA==
     size: 138337654
-  - url: ajzakomator-0.6.5-mac-arm64.zip
+  - url: unimux-0.6.5-mac-arm64.zip
     sha512: >-
       iiAalEqRVdFvRqRtfE9YKI20pqKhZb/QDtIVTJFX28RQMDnWNlJx4HPiWQG0KQsZHT1TznvJjHWGE+ZLiaTDBQ==
     size: 134273891
-  - url: ajzakomator-0.6.5-mac-arm64.dmg
+  - url: unimux-0.6.5-mac-arm64.dmg
     sha512: >-
       NozzCYb/0Iol4IcGjfZZoE/jMJxYzyPg23Z0ilX+F/3duFPNQsJSijrey+//YmhN8Wp8A0uCJw43UHt7sus3LA==
     size: 132700616
-path: ajzakomator-0.6.5-mac-x64.zip
+path: unimux-0.6.5-mac-x64.zip
 sha512: >-
   EEAVct4YfgdfjvREA5LoRlH7ugkyfLeYG31Ac62bW1J7XdtujcaKqYuvbKnLyeAclow6VHvrSOn8vMfkpVo4bg==
 releaseDate: '2026-10-12T18:08:47.228Z'
@@ -33,7 +33,7 @@ describe('latest-mac.yml parsing', () => {
     expect(feed.version).toBe('0.6.5');
     expect(feed.files).toHaveLength(4);
     expect(feed.files[2]).toEqual({
-      name: 'ajzakomator-0.6.5-mac-arm64.zip',
+      name: 'unimux-0.6.5-mac-arm64.zip',
       sha512: 'iiAalEqRVdFvRqRtfE9YKI20pqKhZb/QDtIVTJFX28RQMDnWNlJx4HPiWQG0KQsZHT1TznvJjHWGE+ZLiaTDBQ==',
       size: 134273891,
     });
@@ -54,8 +54,8 @@ describe('latest-mac.yml parsing', () => {
 describe('asset selection', () => {
   const feed = parseLatestMacYml(FEED);
   it('picks the zip of the running architecture, never the dmg or the other architecture', () => {
-    expect(selectMacAsset(feed, 'arm64')?.name).toBe('ajzakomator-0.6.5-mac-arm64.zip');
-    expect(selectMacAsset(feed, 'x64')?.name).toBe('ajzakomator-0.6.5-mac-x64.zip');
+    expect(selectMacAsset(feed, 'arm64')?.name).toBe('unimux-0.6.5-mac-arm64.zip');
+    expect(selectMacAsset(feed, 'x64')?.name).toBe('unimux-0.6.5-mac-x64.zip');
     expect(selectMacAsset(feed, 'x64')?.size).toBe(139957940);
   });
   it('has nothing for other architectures or a feed without that zip', () => {
@@ -72,9 +72,9 @@ describe('asset selection', () => {
     expect(hostile('a-0.9.0-mac-arm64.zip')).toBeUndefined();
   });
   it('points at the GitHub release of the announced version', () => {
-    expect(MAC_FEED_URL).toBe('https://github.com/adamejzak/ajzakomator/releases/latest/download/latest-mac.yml');
-    expect(new URL('ajzakomator-0.6.5-mac-arm64.zip', macAssetBase('0.6.5')).href)
-      .toBe('https://github.com/adamejzak/ajzakomator/releases/download/v0.6.5/ajzakomator-0.6.5-mac-arm64.zip');
+    expect(MAC_FEED_URL).toBe('https://github.com/daven-team/unimux/releases/latest/download/latest-mac.yml');
+    expect(new URL('unimux-0.6.5-mac-arm64.zip', macAssetBase('0.6.5')).href)
+      .toBe('https://github.com/daven-team/unimux/releases/download/v0.6.5/unimux-0.6.5-mac-arm64.zip');
   });
 });
 

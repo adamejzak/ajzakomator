@@ -9,14 +9,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import electron from 'electron';
 
-const root = mkdtempSync(join(tmpdir(), 'ajzakomator-automation-'));
+const root = mkdtempSync(join(tmpdir(), 'unimux-automation-'));
 const data = join(root, 'data'), agents = join(root, 'fake-agents'), tokens = join(root, 'tokens');
 for (const dir of [data, agents, tokens]) mkdirSync(dir);
 for (const name of ['claude', 'codex']) {
   const path = join(agents, process.platform === 'win32' ? `${name}.cmd` : name);
   writeFileSync(path, process.platform === 'win32'
-    ? `@echo off\r\n> "${tokens}\\%MC_CELL_ID%.token" echo %AJZ_MCP_TOKEN%\r\necho ajzakomator-smoke-agent-ready\r\n`
-    : '#!/bin/sh\nprintf "%s" "$AJZ_MCP_TOKEN" > "$AJZ_SMOKE_TOKENS/$MC_CELL_ID.token"\nprintf "ajzakomator-smoke-agent-ready\\n"\n');
+    ? `@echo off\r\n> "${tokens}\\%MC_CELL_ID%.token" echo %UNIMUX_MCP_TOKEN%\r\necho unimux-smoke-agent-ready\r\n`
+    : '#!/bin/sh\nprintf "%s" "$UNIMUX_MCP_TOKEN" > "$UNIMUX_SMOKE_TOKENS/$MC_CELL_ID.token"\nprintf "unimux-smoke-agent-ready\\n"\n');
   if (process.platform !== 'win32') chmodSync(path, 0o755);
 }
 writeFileSync(join(data, 'state.json'), JSON.stringify({
@@ -34,7 +34,7 @@ const port = await new Promise((resolvePort, reject) => {
   const probe = createServer(); probe.on('error', reject);
   probe.listen(0, '127.0.0.1', () => { const p = probe.address().port; probe.close(() => resolvePort(p)); });
 });
-const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), AJZ_SMOKE_TOKENS: tokens,
+const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), UNIMUX_SMOKE_TOKENS: tokens,
   PATH: agents + delimiter + (process.env.PATH ?? process.env.Path ?? '') };
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.ELECTRON_RENDERER_URL;

@@ -1,17 +1,17 @@
 <div align="center">
 
-<img src="resources/logo.svg" width="96" alt="logo ajzakomator" />
+<img src="resources/logo.svg" width="96" alt="logo unimux" />
 
-# ajzakomator
+# unimux
 
 **Siatka terminali do pracy z wieloma agentami Claude Code i Codex naraz, na Windowsie i macOS (Apple Silicon oraz Intel).**
 
 Projekty, rozmowy z agentami, pliki i gotowe prompty w jednym miejscu.
 Przełączaj projekty, gdy terminale nadal pracują w tle.
 
-[**Pobierz**](https://github.com/adamejzak/ajzakomator/releases/latest) · [Funkcje](#co-potrafi) · [Skróty](#skróty) · [MCP](docs/MCP.md) · [English](README.md)
+[**Pobierz**](https://github.com/daven-team/unimux/releases/latest) · [Funkcje](#co-potrafi) · [Skróty](#skróty) · [MCP](docs/MCP.md) · [English](README.md)
 
-<img src="docs/screenshots/main.png" alt="Angielski interfejs ajzakomatora: projekty, cztery terminale demonstracyjne i snippety" width="100%" />
+<img src="docs/screenshots/main.png" alt="Angielski interfejs unimux: projekty, cztery terminale demonstracyjne i snippety" width="100%" />
 
 </div>
 
@@ -64,17 +64,19 @@ Panel wymaga gita 2.26 lub nowszego w `PATH`.
 
 ## Instalacja
 
+Wydania sprzed zmiany nazwy na Unimux mają `ajzakomator` w nazwach paczek. W tych wydaniach wybierz odpowiadający instalator lub architekturę Maca.
+
 **Windows**
 
-1. Pobierz **`ajzakomator-Setup-x.y.z.exe`** z [najnowszego wydania](https://github.com/adamejzak/ajzakomator/releases/latest)
+1. Pobierz **`unimux-Setup-x.y.z.exe`** z [najnowszego wydania](https://github.com/daven-team/unimux/releases/latest)
 2. Uruchom. Jeśli Windows SmartScreen ostrzeże przed niepodpisaną aplikacją, wybierz *Więcej informacji* i *Uruchom mimo to*
 3. Wybierz język przy pierwszym uruchomieniu
 4. Dodaj projekt (dowolny folder) i otwórz grid
 
 **macOS**
 
-1. Pobierz **`ajzakomator-x.y.z-mac-arm64.dmg`** dla Apple Silicon albo **`ajzakomator-x.y.z-mac-x64.dmg`** dla Intela z [najnowszego wydania](https://github.com/adamejzak/ajzakomator/releases/latest).
-2. Otwórz DMG i przeciągnij **ajzakomator** do **Aplikacji**. Dostępne są też archiwa ZIP.
+1. Pobierz **`unimux-x.y.z-mac-arm64.dmg`** dla Apple Silicon albo **`unimux-x.y.z-mac-x64.dmg`** dla Intela z [najnowszego wydania](https://github.com/daven-team/unimux/releases/latest).
+2. Otwórz DMG i przeciągnij **unimux** do **Aplikacji**. Dostępne są też archiwa ZIP.
 3. Uruchom aplikację, wybierz język, dodaj projekt i otwórz grid.
 
 Buildy Maca mają podpis ad hoc bez certyfikatu Apple Developer i nie są notaryzowane. macOS może wymagać opcji **Otwórz mimo to** w **Ustawienia systemowe → Prywatność i ochrona**. Aplikacja aktualizuje się sama bez certyfikatu (zobacz [Aktualizacje](#aktualizacje); pierwsza aktualizacja do wersji z tą funkcją jest nadal ręczna). Zobacz [wymagania podpisywania Electrona](https://www.electronjs.org/docs/latest/tutorial/code-signing#macos-apis-that-require-code-signing).
@@ -94,11 +96,11 @@ Język zmienisz w **Ustawienia → Język aplikacji**. Przy pierwszym uruchomien
 
 Zainstalowana wersja Windows sprawdza GitHub Releases. **Ustawienia → Aktualizacje** mają dwa tryby, a aktualizacja nigdy nie instaluje się bez Twojego kliknięcia. **Automatycznie**: przy starcie aplikacja sprawdza aktualizacje (okno pojawia się tylko, gdy sprawdzanie trwa dłużej) i gdy jest nowa wersja, pyta „Zainstaluj teraz” albo „Później”; pobieranie rusza w tle już podczas pytania, więc „Zainstaluj teraz” przechodzi od razu do instalatora („Później”, przycisk zamknięcia i Escape uruchamiają obecną wersję, a przycisk w stopce zainstaluje aktualizację później). **Ręcznie** (domyślnie): przy starcie nic się nie dzieje; aplikacja pobiera aktualizacje w tle, a nagłówek pokazuje postęp, rozmiar i prędkość pobierania. Stopka pokazuje **Dostępna wersja … - Aktualizuj**, a po pobraniu **Wersja … gotowa - Zainstaluj**; kliknięcie któregokolwiek otwiera jedno okno aktualizacji, które w razie potrzeby dokończy pobieranie, zainstaluje i uruchomi nową wersję. Jeśli przed startem instalatora pojawi się nowsze wydanie, okno przechodzi na najnowsze; gdy instalator już ruszył, ta wersja się kończy, a nowsza zostanie zaproponowana po ponownym uruchomieniu. Przed aktualizacją zapisz zmiany w edytorze. Rozmowy agentów są przywracane przez mechanizm wznowienia ich CLI.
 
-Ręczne sprawdzenie: kliknij prawym przyciskiem nazwę i wersję **ajzakomator**, a następnie wybierz **Sprawdź aktualizacje**. Po błędzie nagłówek pokazuje jego treść i pozwala ponowić próbę.
+Ręczne sprawdzenie: kliknij prawym przyciskiem nazwę i wersję **unimux**, a następnie wybierz **Sprawdź aktualizacje**. Po błędzie nagłówek pokazuje jego treść i pozwala ponowić próbę.
 
 Wersja portable Windows otwiera stronę pobierania. Zastąp aplikację nowym wydaniem; dane są przechowywane osobno. Wersja deweloperska nie instaluje aktualizacji.
 
-**macOS.** Squirrel.Mac (electron-updater) odrzuca aktualizacje podpisane tylko ad hoc, dlatego aplikacja na Macu ma własny mechanizm z tymi samymi dwoma trybami i tą samą zasadą: nic nie instaluje się bez Twojego kliknięcia. Czyta `latest-mac.yml` z najnowszego wydania na GitHubie, pobiera `.zip` dla Twojego procesora (Apple Silicon lub Intel) do `~/Library/Application Support/ajzakomator/updates/mac`, sprawdza rozmiar i SHA-512, rozpakowuje przez `ditto` i weryfikuje pakiet (wersja, identyfikator, plik wykonywalny i `codesign --verify`). Po kliknięciu instalacji mały skrypt czeka, aż aplikacja się zamknie, odkłada starą aplikację, wstawia nową (przy jakimkolwiek błędzie przywraca starą), usuwa znacznik kwarantanny i uruchamia nową wersję. Dziennik to `updates/mac/update.log`. W trybie **Automatycznie** pytanie przy starcie działa jak w Windows, a pobieranie rusza w trakcie namysłu. Aplikacja podmienia się sama tylko wtedy, gdy działa ze zwykłego, zapisywalnego pakietu `.app` należącego do Ciebie (np. w **Programach**). Z zamontowanego obrazu DMG, z kopii uruchomionej z tymczasowej lokalizacji (kwarantanna), z miejsca tylko do odczytu lub należącego do administratora, a także gdy macOS odmówi uprawnienia **Zarządzanie aplikacjami**, stopka pokazuje stronę pobierania, a podpowiedź mówi dlaczego.
+**macOS.** Squirrel.Mac (electron-updater) odrzuca aktualizacje podpisane tylko ad hoc, dlatego aplikacja na Macu ma własny mechanizm z tymi samymi dwoma trybami i tą samą zasadą: nic nie instaluje się bez Twojego kliknięcia. Czyta `latest-mac.yml` z najnowszego wydania na GitHubie, pobiera `.zip` dla Twojego procesora (Apple Silicon lub Intel) do `~/Library/Application Support/unimux/updates/mac`, sprawdza rozmiar i SHA-512, rozpakowuje przez `ditto` i weryfikuje pakiet (wersja, identyfikator, plik wykonywalny i `codesign --verify`). Po kliknięciu instalacji mały skrypt czeka, aż aplikacja się zamknie, odkłada starą aplikację, wstawia nową (przy jakimkolwiek błędzie przywraca starą), usuwa znacznik kwarantanny i uruchamia nową wersję. Dziennik to `updates/mac/update.log`. W trybie **Automatycznie** pytanie przy starcie działa jak w Windows, a pobieranie rusza w trakcie namysłu. Aplikacja podmienia się sama tylko wtedy, gdy działa ze zwykłego, zapisywalnego pakietu `.app` należącego do Ciebie (np. w **Programach**). Z zamontowanego obrazu DMG, z kopii uruchomionej z tymczasowej lokalizacji (kwarantanna), z miejsca tylko do odczytu lub należącego do administratora, a także gdy macOS odmówi uprawnienia **Zarządzanie aplikacjami**, stopka pokazuje stronę pobierania, a podpowiedź mówi dlaczego.
 
 Pierwsza aktualizacja do wersji macOS zawierającej ten mechanizm jest nadal ręczna (starsze wersje tego nie potrafią), a sam mechanizm nie został jeszcze sprawdzony na prawdziwym Macu; lista kontrolna jest w `docs/RELEASING.md`.
 
@@ -152,7 +154,7 @@ Workflow [CI](.github/workflows/ci.yml) testuje i buduje Windows x64 oraz macOS 
 
 Wydanie wszystkich platform opublikujesz przez **Actions → Publish release**, podając istniejący tag wersji i ID udanego CI dla tego samego commita. Wcześniej dodaj opis w `docs/releases/x.y.z.md`. Workflow sprawdza sumy paczek i dodaje instalatory Windows oraz DMG/ZIP obu architektur Maca do jednego wydania.
 
-Dane aplikacji są lokalne: `%APPDATA%\ajzakomator\state.json` na Windowsie i `~/Library/Application Support/ajzakomator/state.json` na Macu.
+Dane aplikacji są lokalne: `%APPDATA%\ajzakomator\state.json` na Windowsie i `~/Library/Application Support/ajzakomator/state.json` na Macu. Unimux zachowuje dotychczasowy katalog danych, dzięki czemu po aktualizacji nadal masz swoje projekty, rozmowy i zapisane konta.
 
 Sprawdzanie aktualizacji łączy się z GitHub Releases. Agenci używają usług skonfigurowanych w ich własnych CLI. Lokalny MCP służy do zarządzania zespołem w aplikacji - [instrukcja po polsku](docs/MCP.md), [English guide](docs/MCP.en.md).
 

@@ -4,7 +4,8 @@
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const PACKAGE_PATTERN = /^ajzakomator-(Setup-.+\.exe|Portable-.+\.exe|.+-mac-(arm64|x64)\.(dmg|zip))$/;
+// Renaming the repository does not rename assets attached to historical releases.
+const PACKAGE_PATTERN = /^(?:unimux|ajzakomator)-(Setup-.+\.exe|Portable-.+\.exe|.+-mac-(arm64|x64)\.(dmg|zip))$/;
 
 /** Sums download_count of the installer and portable packages over all releases. */
 export function countPackageDownloads(releases) {
@@ -23,7 +24,7 @@ export function badgeJson(total) {
 
 async function fetchReleases(repository) {
   const releases = [];
-  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'ajzakomator-badge' };
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'unimux-badge' };
   if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
   for (let page = 1; page < 20; page++) {
     const response = await fetch(`https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`, { headers });

@@ -29,13 +29,13 @@ export const IChangelog = () => <Svg><path d="M3 3.5h10M3 8h10M3 12.5h6" /><path
 export const ITerminalTab = () => <Svg><path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5z" /><path d="M5 6.5l2 1.5-2 1.5M8.5 10h2.5" /></Svg>;
 export const IChevron = () => <Svg size={10}><path d="M4 6l4 4 4-4" /></Svg>;
 
-/** App mark: flat white tile with a terminal prompt. */
+/** Unimux mark: a terminal prompt inside a U-shaped workspace. */
 export function Logo({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" style={{ flex: 'none', display: 'block' }}>
       <rect x="1" y="1" width="30" height="30" rx="8" fill="#f4f4f5" />
-      <path d="M9.5 11.5l4.5 4.5-4.5 4.5" fill="none" stroke="#0b0b0c" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M16.5 21h6.5" stroke="#0b0b0c" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M8.5 9v9a7.5 7.5 0 0 0 15 0V9" fill="none" stroke="#0b0b0c" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="m12.5 10.5 3 3-3 3M17.5 17h2.5" fill="none" stroke="#0b0b0c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

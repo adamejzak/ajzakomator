@@ -12,7 +12,7 @@ mkdirSync(output, { recursive: true });
 const macFiles = [];
 let preferredMac;
 for (const platform of ['windows-x64', 'macos-x64', 'macos-arm64']) {
-  const directory = join(root, `ajzakomator-${platform}`);
+  const directory = join(root, `unimux-${platform}`);
   const manifestName = platform.startsWith('macos') ? 'latest-mac.yml' : 'latest.yml';
   const manifest = yaml.load(readFileSync(join(directory, manifestName), 'utf8'));
   assert.equal(manifest.version, version);
@@ -35,13 +35,13 @@ for (const platform of ['windows-x64', 'macos-x64', 'macos-arm64']) {
 assert.equal(new Set(macFiles.map(file => file.url)).size, macFiles.length);
 writeFileSync(join(output, 'latest-mac.yml'), yaml.dump({ ...preferredMac, files: macFiles }));
 const expected = [
-  `ajzakomator-Setup-${version}.exe`,
-  `ajzakomator-Setup-${version}.exe.blockmap`,
-  `ajzakomator-Portable-${version}.exe`,
-  `ajzakomator-${version}-mac-arm64.dmg`,
-  `ajzakomator-${version}-mac-arm64.zip`,
-  `ajzakomator-${version}-mac-x64.dmg`,
-  `ajzakomator-${version}-mac-x64.zip`,
+  `unimux-Setup-${version}.exe`,
+  `unimux-Setup-${version}.exe.blockmap`,
+  `unimux-Portable-${version}.exe`,
+  `unimux-${version}-mac-arm64.dmg`,
+  `unimux-${version}-mac-arm64.zip`,
+  `unimux-${version}-mac-x64.dmg`,
+  `unimux-${version}-mac-x64.zip`,
   'latest.yml',
   'latest-mac.yml',
 ].sort();

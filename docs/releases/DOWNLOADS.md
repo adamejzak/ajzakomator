@@ -3,13 +3,15 @@
 
 Choose from the assets attached to this release. The version number in the file name changes with each release; a Windows-only release may not include Mac packages.
 
+Older releases use `ajzakomator` instead of `unimux` in package names; the platform and architecture suffixes are the same.
+
 | Your computer | Download | How to use it |
 | --- | --- | --- |
-| **Windows 10 / 11 (x64)** | `ajzakomator-Setup-<version>.exe` | **Recommended installer.** Installs the app and creates shortcuts. Installed builds support automatic updates. |
-| **Windows, without installation** | `ajzakomator-Portable-<version>.exe` | **Portable:** run the executable directly, without a setup wizard. Update it manually by downloading a new executable. |
-| **Mac with Apple Silicon** - M1, M2, M3, M4 or newer | `ajzakomator-<version>-mac-arm64.dmg` | **Recommended for Apple Silicon.** Open the DMG and drag ajzakomator into Applications. |
-| **Mac with an Intel processor** | `ajzakomator-<version>-mac-x64.dmg` | **Recommended for Intel Macs.** Open the DMG and drag ajzakomator into Applications. |
-| **Mac, ZIP alternative** | `ajzakomator-<version>-mac-arm64.zip` or `…-mac-x64.zip` | Extract the ZIP and move the app into Applications. Choose the same architecture as above. |
+| **Windows 10 / 11 (x64)** | `unimux-Setup-<version>.exe` | **Recommended installer.** Installs the app and creates shortcuts. Installed builds support automatic updates. |
+| **Windows, without installation** | `unimux-Portable-<version>.exe` | **Portable:** run the executable directly, without a setup wizard. Update it manually by downloading a new executable. |
+| **Mac with Apple Silicon** - M1, M2, M3, M4 or newer | `unimux-<version>-mac-arm64.dmg` | **Recommended for Apple Silicon.** Open the DMG and drag unimux into Applications. |
+| **Mac with an Intel processor** | `unimux-<version>-mac-x64.dmg` | **Recommended for Intel Macs.** Open the DMG and drag unimux into Applications. |
+| **Mac, ZIP alternative** | `unimux-<version>-mac-arm64.zip` or `…-mac-x64.zip` | Extract the ZIP and move the app into Applications. Choose the same architecture as above. |
 
 On a Mac, open **Apple menu → About This Mac**: **Chip: Apple M…** means Apple Silicon (`arm64`); **Processor: Intel…** means Intel (`x64`). macOS updates are installed manually by replacing the app with a newer download.
 

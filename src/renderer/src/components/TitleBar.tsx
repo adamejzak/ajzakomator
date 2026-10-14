@@ -77,7 +77,7 @@ export function WorkspaceTabs() {
     'data-drop': drop?.id === id ? (drop.after ? 'after' : 'before') : undefined,
     onDragStart: (e: DragEvent<HTMLDivElement>) => {
       if ((e.target as HTMLElement).closest('input, .x')) { e.preventDefault(); return; }
-      e.dataTransfer.setData('application/x-ajzakomator-workspace-tab', id);
+      e.dataTransfer.setData('application/x-unimux-workspace-tab', id);
       e.dataTransfer.effectAllowed = 'move';
       setDrag({ id, projectId: projectKey });
     },

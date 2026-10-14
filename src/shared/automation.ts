@@ -122,6 +122,6 @@ export type AutomationInput<K extends AutomationOperation> = z.input<(typeof aut
 
 export const defaultAutomation = (): AutomationState => ({ paused: false, tasks: [], messages: [], events: [] });
 export const taskPrompt = (task: AgentTask): string =>
-  `[Ajzakomator task ${task.id}] ${task.title}\n\n${task.prompt}\n\n` +
-  'Ajzakomator MCP: update_task in_progress before working; finish with completed (result: summary, files, tests, branch/commit) or blocked (blockedReason). ' +
+  `[Unimux task ${task.id}] ${task.title}\n\n${task.prompt}\n\n` +
+  'Unimux MCP: update_task in_progress before working; finish with completed (result: summary, files, tests, branch/commit) or blocked (blockedReason). ' +
   'read_inbox for new tasks and messages; wait_for instead of polling. Claim a task only after its dependsOn tasks completed. Do not create agents unless explicitly asked.';

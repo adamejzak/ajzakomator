@@ -87,7 +87,7 @@ export class PtyManager {
       cols: Math.max(2, size.cols),
       rows: Math.max(1, size.rows),
       cwd: req.cwd,
-      env: { ...req.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'ajzakomator' },
+      env: { ...req.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'unimux' },
       ...(process.platform === 'win32' ? { useConpty: true, useConptyDll: true } : {}),
     });
     let resolveExit!: () => void;

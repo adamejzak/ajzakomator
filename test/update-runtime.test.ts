@@ -12,8 +12,8 @@ const put = (file: string, body = 'x') => { mkdirSync(join(file, '..'), { recurs
 
 function fakeInstall(): { installDir: string; appDir: string } {
   const installDir = join(root, 'install');
-  for (const f of ['ajzakomator.exe', 'ffmpeg.dll', 'icudtl.dat', 'resources.pak', 'dxcompiler.dll', 'dxil.dll', 'LICENSES.chromium.html',
-    'Uninstall ajzakomator.exe', 'locales/en-US.pak', 'locales/pl.pak', 'locales/de.pak', 'resources/elevate.exe', 'resources/app/package.json',
+  for (const f of ['unimux.exe', 'ffmpeg.dll', 'icudtl.dat', 'resources.pak', 'dxcompiler.dll', 'dxil.dll', 'LICENSES.chromium.html',
+    'Uninstall unimux.exe', 'locales/en-US.pak', 'locales/pl.pak', 'locales/de.pak', 'resources/elevate.exe', 'resources/app/package.json',
     'resources/app/node_modules/big/index.js']) put(join(installDir, f));
   const appDir = join(installDir, 'resources', 'app');
   put(join(appDir, 'out/main/updatesplash.js')); put(join(appDir, 'out/main/chunks/shared.js'), 'chunk'); put(join(appDir, 'out/preload/updatesplash.js'));
@@ -24,14 +24,14 @@ function fakeInstall(): { installDir: string; appDir: string } {
 describe('update window runtime', () => {
   it('copies only what a small window needs', () => {
     const dir = join(root, 'app');
-    const keep = (path: string) => shouldCopy(dir, join(dir, path), 'ajzakomator.exe');
+    const keep = (path: string) => shouldCopy(dir, join(dir, path), 'unimux.exe');
     expect(keep('ffmpeg.dll')).toBe(true);
     expect(keep('locales')).toBe(true);
     expect(keep('locales/en-US.pak')).toBe(true);
     expect(keep('locales/pl.pak')).toBe(false);
-    expect(keep('ajzakomator.exe')).toBe(false);
+    expect(keep('unimux.exe')).toBe(false);
     expect(keep('dxcompiler.dll')).toBe(false);
-    expect(keep('Uninstall ajzakomator.exe')).toBe(false);
+    expect(keep('Uninstall unimux.exe')).toBe(false);
     expect(keep('resources/app/package.json')).toBe(false);
     expect(keep('resources/elevate.exe')).toBe(false);
   });
@@ -39,10 +39,10 @@ describe('update window runtime', () => {
   it('stages a runtime under a name the installer will not terminate and writes the window app', async () => {
     const { installDir, appDir } = fakeInstall();
     const runtimeDir = join(root, 'update', 'runtime');
-    const exe = await stageRuntime({ installDir, exeName: 'ajzakomator.exe', appDir, runtimeDir, fingerprint: 'e1' });
+    const exe = await stageRuntime({ installDir, exeName: 'unimux.exe', appDir, runtimeDir, fingerprint: 'e1' });
     expect(exe).toBe(join(runtimeDir, SPLASH_EXE));
     expect(existsSync(join(runtimeDir, 'ffmpeg.dll'))).toBe(true);
-    expect(existsSync(join(runtimeDir, 'ajzakomator.exe'))).toBe(false);
+    expect(existsSync(join(runtimeDir, 'unimux.exe'))).toBe(false);
     expect(existsSync(join(runtimeDir, 'dxil.dll'))).toBe(false);
     expect(existsSync(join(runtimeDir, 'locales', 'pl.pak'))).toBe(false);
     expect(existsSync(join(runtimeDir, 'resources', 'app', 'node_modules'))).toBe(false);
@@ -55,7 +55,7 @@ describe('update window runtime', () => {
   it('reuses a complete runtime for the same fingerprint and rebuilds it otherwise', async () => {
     const { installDir, appDir } = fakeInstall();
     const runtimeDir = join(root, 'update', 'runtime');
-    const options = { installDir, exeName: 'ajzakomator.exe', appDir, runtimeDir, fingerprint: 'e1' };
+    const options = { installDir, exeName: 'unimux.exe', appDir, runtimeDir, fingerprint: 'e1' };
     await stageRuntime(options);
     put(join(runtimeDir, 'sentinel.txt'));
     await stageRuntime(options);

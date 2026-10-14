@@ -30,7 +30,7 @@ const setup = (play: (request: FakeRequest) => void, extra: { trustedOrigins?: s
   const fetch = createNetFetch({ request: (options) => { const request = new FakeRequest(options, play); requests.push(request); return request; }, ...extra });
   return { fetch, requests };
 };
-const GH = 'https://github.com/adamejzak/ajzakomator/releases/download/v1/a.zip';
+const GH = 'https://github.com/daven-team/unimux/releases/download/v1/a.zip';
 
 describe('createNetFetch', () => {
   it('returns the response with status, headers and the streamed body, and sends the request headers', async () => {

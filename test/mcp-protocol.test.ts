@@ -73,8 +73,8 @@ describe('tool definitions are portable across Claude Code and Codex', () => {
         walk(tool.inputSchema, tool.name, problems);
         expect(problems, tool.name).toEqual([]);
         expect(tool.name).toMatch(/^[a-zA-Z0-9_-]{1,40}$/);
-        // Claude Code and Codex prefix the server name: mcp__ajzakomator__<tool> must stay within 64 characters.
-        expect(`mcp__ajzakomator__${tool.name}`.length).toBeLessThanOrEqual(64);
+        // Claude Code and Codex prefix the server name: mcp__unimux__<tool> must stay within 64 characters.
+        expect(`mcp__unimux__${tool.name}`.length).toBeLessThanOrEqual(64);
         expect(tool.description.length).toBeLessThanOrEqual(420);
         expect(tool.inputSchema.type).toBe('object');
       }
@@ -120,7 +120,7 @@ describe('MCP protocol behaviour (official SDK client)', () => {
   it('initializes statelessly with a role-aware instruction and returns text-only JSON results', async () => {
     const h = await setup();
     const client = await connect(h, h.worker.id);
-    expect(client.getServerVersion()).toMatchObject({ name: 'ajzakomator' });
+    expect(client.getServerVersion()).toMatchObject({ name: 'unimux' });
     expect(client.getServerCapabilities()).toEqual({ tools: {} });
     expect(client.getInstructions()).toContain(h.worker.id);
     expect(client.getInstructions()).toContain('worker');

@@ -90,7 +90,7 @@ describe('Codex delivery uses the detected binary', () => {
     const { queueCodexMessage: queue } = await import('../src/main/agentDelivery');
     await queue('s1', 'hello', { command: '/opt/x/codex', env: { PATH: '/opt/x:/usr/bin' } });
     expect(seen[0].env.PATH).toBe('/opt/x:/usr/bin');
-    expect(seen[0].env.AJZ_TASK_MESSAGE).toBe('hello');
+    expect(seen[0].env.UNIMUX_TASK_MESSAGE).toBe('hello');
     if (process.platform !== 'win32') expect(seen[0].file).toBe('/opt/x/codex');
   });
 });

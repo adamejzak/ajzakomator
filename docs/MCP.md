@@ -6,7 +6,7 @@ Integracja jest opcjonalna. Nowy grid domyślnie ma **Bez MCP**: uruchamia zwyk�
 
 W oknie „Nowy grid” wybierz rolę dla wybranych komórek:
 
-- **Bez MCP** - zwykły agent, bez połączenia z serwerem Ajzakomatora.
+- **Bez MCP** - zwykły agent, bez połączenia z serwerem Unimux.
 - **Wykonawca** - własne zadania, raportowanie wyników, wiadomości do agentów projektu i snippety.
 - **Koordynator** - dodatkowo tworzenie gridów, presetów i przydzielanie zadań innym agentom.
 
@@ -62,7 +62,7 @@ Serwer Streamable HTTP nasłuchuje tylko na `127.0.0.1`, na losowym porcie. Każ
 
 ## Claude Code i Codex
 
-Claude dostaje `--mcp-config` z plikiem komórki (`type: http`, nagłówek `Authorization: Bearer ${AJZ_MCP_TOKEN}`), Codex - `-c mcp_servers.ajzakomator.url=...` i `bearer_token_env_var="AJZ_MCP_TOKEN"`. Oba klienty łączą się z lokalnym serwerem i widzą te same narzędzia; schematy są płaskie (bez `$ref`, `anyOf` i typów `null`), bo Codex przekazuje je modelowi bez zmian.
+Claude dostaje `--mcp-config` z plikiem komórki (`type: http`, nagłówek `Authorization: Bearer ${UNIMUX_MCP_TOKEN}`), Codex - `-c mcp_servers.unimux.url=...` i `bearer_token_env_var="UNIMUX_MCP_TOKEN"`. Oba klienty łączą się z lokalnym serwerem i widzą te same narzędzia; schematy są płaskie (bez `$ref`, `anyOf` i typów `null`), bo Codex przekazuje je modelowi bez zmian.
 
 Wskazówki narzędzi uwzględnia tylko Codex: pyta użytkownika przed wywołaniem, chyba że narzędzie ma `readOnlyHint` albo `destructiveHint` i `openWorldHint` są fałszywe (Claude Code pyta według własnych reguł uprawnień). Ustawienia:
 
@@ -73,7 +73,7 @@ Wskazówki narzędzi uwzględnia tylko Codex: pyta użytkownika przed wywołanie
 | pyta (`openWorldHint: true`) | `send_message`, `create_task`, `deliver` (docierają do sesji innych agentów), `snippets` (zapisany snippet może być wysyłany automatycznie; `list` i `get` także pytają, bo wskazówka dotyczy całego narzędzia), `update_agent` (nazwa, kolor; koordynator także profil, model, restart), `create_grid` (uruchamia agentów i zużywa limity modeli) |
 | pyta (`destructiveHint: true`) | `close_grid` oraz `update_task` koordynatora (może anulować zadania innych komórek) |
 
-Użytkownik, który ufa zespołowi, może zatwierdzić narzędzia z góry w Codexie przez `default_tools_approval_mode` lub `tools.<nazwa>.approval_mode` w `[mcp_servers.ajzakomator]`.
+Użytkownik, który ufa zespołowi, może zatwierdzić narzędzia z góry w Codexie przez `default_tools_approval_mode` lub `tools.<nazwa>.approval_mode` w `[mcp_servers.unimux]`.
 
 Połączenie można sprawdzić bez modelu: `node scripts/mcp-serve.mjs` uruchamia serwer z atrapami, a `claude mcp add --transport http ...` / `codex mcp add --url ... --bearer-token-env-var ...` z tymczasowym `CLAUDE_CONFIG_DIR` / `CODEX_HOME` oraz `claude mcp list` pokazują stan połączenia.
 

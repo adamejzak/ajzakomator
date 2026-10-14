@@ -107,8 +107,8 @@ describe('refreshClaudeProfile', () => {
     expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'User-Agent': REFRESH_USER_AGENT });
     expect(REFRESH_USER_AGENT).not.toMatch(/^(claude-code|claude-cli|Mozilla)/i);
     expect(Object.keys(JSON.parse(String(init.body))).sort()).toEqual(['client_id', 'grant_type', 'refresh_token']);
-    await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW, userAgent: 'ajzakomator/9.9.9' });
-    expect((fetchSpy.mock.calls[1] as unknown as [string, RequestInit])[1].headers).toMatchObject({ 'User-Agent': 'ajzakomator/9.9.9' });
+    await refreshClaudeProfile(dir, { fetch: fetchSpy as never, now: () => NOW, userAgent: 'unimux/9.9.9' });
+    expect((fetchSpy.mock.calls[1] as unknown as [string, RequestInit])[1].headers).toMatchObject({ 'User-Agent': 'unimux/9.9.9' });
   });
 
   describe('after a 429 of the token endpoint', () => {

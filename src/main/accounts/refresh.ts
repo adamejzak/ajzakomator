@@ -14,7 +14,7 @@ const DEAD_ERRORS = /^(invalid_grant|invalid_client|unauthorized_client)$/;
  * value, which is also what Electron sends by default) before it even reads the token. claude-swap, which works for the
  * same accounts, sends its own product name, so this app does the same and never imitates Claude Code here.
  */
-export const REFRESH_USER_AGENT = 'ajzakomator';
+export const REFRESH_USER_AGENT = 'unimux';
 /** Backoff after a 429 of the token endpoint: 5 min, doubling up to an hour (a longer Retry-After wins), plus up to 20 % jitter. */
 export const LIMIT_BASE_MS = 5 * 60_000;
 export const LIMIT_MAX_MS = 60 * 60_000;
@@ -33,7 +33,7 @@ export interface RefreshLimit { until: number; failures: number }
 export interface RefreshLimits { get(key: string): RefreshLimit | undefined; set(key: string, limit: RefreshLimit): void; delete(key: string): void }
 export interface RefreshDeps {
   fetch: typeof fetch; now(): number; tokenUrl?: string; delay?(ms: number): Promise<void>;
-  /** Product name sent as User-Agent (for example `ajzakomator/0.6.8`). */
+  /** Product name sent as User-Agent (for example `unimux/0.6.8`). */
   userAgent?: string;
   /** Without it nothing is remembered and every call goes to the server. */
   limits?: RefreshLimits;

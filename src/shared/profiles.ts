@@ -63,9 +63,9 @@ export function buildCliCommand(profile: Profile, opts: LaunchOptions): string |
     } else parts.push('-c', 'tui.notifications=true');
     if (opts.mcp) {
       for (const [key, value] of [['url', opts.mcp.url], ['bearer_token_env_var', opts.mcp.tokenEnv]]) {
-        const setting = `mcp_servers.ajzakomator.${key}=${JSON.stringify(value)}`;
+        const setting = `mcp_servers.unimux.${key}=${JSON.stringify(value)}`;
         // cmd does not interpret TOML single quotes; these generated values contain no spaces/apostrophes.
-        parts.push('-c', opts.shell === 'cmd' ? `mcp_servers.ajzakomator.${key}='${value}'` : shellQuote(setting, opts.shell));
+        parts.push('-c', opts.shell === 'cmd' ? `mcp_servers.unimux.${key}='${value}'` : shellQuote(setting, opts.shell));
       }
     }
   } else {

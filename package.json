@@ -1,16 +1,16 @@
 {
-  "name": "ajzakomator",
-  "productName": "ajzakomator",
+  "name": "unimux",
+  "productName": "unimux",
   "version": "0.6.9",
   "description": "A terminal grid for running many Claude Code and Codex agents side by side on Windows and macOS",
   "author": "ajzak",
   "license": "MIT",
-  "homepage": "https://github.com/adamejzak/ajzakomator",
+  "homepage": "https://github.com/daven-team/unimux",
   "repository": {
     "type": "git",
-    "url": "https://github.com/adamejzak/ajzakomator.git"
+    "url": "https://github.com/daven-team/unimux.git"
   },
-  "bugs": "https://github.com/adamejzak/ajzakomator/issues",
+  "bugs": "https://github.com/daven-team/unimux/issues",
   "keywords": [
     "claude-code",
     "codex",
@@ -25,6 +25,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "postinstall": "node scripts/fix-pty-permissions.cjs",
+    "icons": "node scripts/render-icon.cjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
@@ -80,7 +81,7 @@
   },
   "build": {
     "appId": "com.ajzakomator.app",
-    "productName": "ajzakomator",
+    "productName": "unimux",
     "asar": false,
     "npmRebuild": false,
     "afterPack": "scripts/fix-pty-permissions.cjs",
@@ -141,7 +142,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "ajzakomator",
+      "shortcutName": "unimux",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "portable": {
@@ -163,8 +164,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "adamejzak",
-        "repo": "ajzakomator"
+        "owner": "daven-team",
+        "repo": "unimux"
       }
     ]
   },

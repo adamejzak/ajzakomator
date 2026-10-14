@@ -266,7 +266,7 @@ export class InstallManager {
     // macOS always ships curl; without a usable probe only the native installer is offered.
     const fallback: InstallTools = { ...NO_TOOLS, curl: this.deps.platform === 'darwin' };
     if (!script) return fallback;
-    const result = await this.deps.exec(shell, ['-ilc', script], { timeout: TOOL_TIMEOUT_MS, env: { ...env, AJZAKOMATOR_PROBE: '1' } });
+    const result = await this.deps.exec(shell, ['-ilc', script], { timeout: TOOL_TIMEOUT_MS, env: { ...env, Unimux_PROBE: '1' } });
     return parseToolProbe(result.stdout) ?? fallback;
   }
 }

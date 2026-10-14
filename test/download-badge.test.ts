@@ -8,17 +8,17 @@ describe('countPackageDownloads', () => {
   it('counts installers, portable builds and mac packages but not update metadata', () => {
     const releases = [
       { assets: [
-        asset('ajzakomator-Setup-0.5.8.exe', 3),
-        asset('ajzakomator-Setup-0.5.8.exe.blockmap', 50),
-        asset('ajzakomator-Portable-0.5.8.exe', 2),
-        asset('ajzakomator-0.5.8-mac-arm64.dmg', 4),
-        asset('ajzakomator-0.5.8-mac-arm64.zip', 1),
-        asset('ajzakomator-0.5.8-mac-x64.dmg', 5),
+        asset('unimux-Setup-0.5.8.exe', 3),
+        asset('unimux-Setup-0.5.8.exe.blockmap', 50),
+        asset('unimux-Portable-0.5.8.exe', 2),
+        asset('unimux-0.5.8-mac-arm64.dmg', 4),
+        asset('unimux-0.5.8-mac-arm64.zip', 1),
+        asset('unimux-0.5.8-mac-x64.dmg', 5),
         asset('latest.yml', 90),
         asset('latest-mac.yml', 7),
         asset('SHA256SUMS.txt', 9),
       ] },
-      { assets: [asset('ajzakomator-Setup-0.5.7.exe', 1)] },
+      { assets: [asset('ajzakomator-Setup-0.5.7.exe', 1), asset('ajzakomator-Setup-0.5.7.exe.blockmap', 50)] },
       { assets: undefined },
     ];
     expect(countPackageDownloads(releases)).toBe(3 + 2 + 4 + 1 + 5 + 1);
@@ -26,7 +26,7 @@ describe('countPackageDownloads', () => {
 
   it('returns 0 for no releases and ignores broken counts', () => {
     expect(countPackageDownloads([])).toBe(0);
-    expect(countPackageDownloads([{ assets: [{ name: 'ajzakomator-Setup-1.exe', download_count: null }] }])).toBe(0);
+    expect(countPackageDownloads([{ assets: [{ name: 'unimux-Setup-1.exe', download_count: null }] }])).toBe(0);
   });
 });
 

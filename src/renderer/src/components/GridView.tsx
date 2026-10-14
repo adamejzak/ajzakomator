@@ -47,7 +47,7 @@ export function GridView() {
       <div className="empty">
         <div className="welcome">
           <Logo size={56} />
-          <h2>ajzakomator</h2>
+          <h2>unimux</h2>
           <div className="sub">{tr("Dodaj projekt, otwórz w nim grid terminali i odpal tyle Claude i Codexów, ile potrzebujesz.")}</div>
           <button className="btn white lg" onClick={() => void createProject()}><IPlus />  {tr("Nowy projekt")}</button>
           <div className="keys">

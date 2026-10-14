@@ -13,8 +13,8 @@ describe('native agent delivery', () => {
     if (process.platform === 'win32') {
       expect(file).toBe('powershell.exe');
       expect(args.join(' ')).not.toContain(text);
-      expect(options.env.AJZ_TASK_MESSAGE).toBe(text);
-      expect(options.env.AJZ_TARGET_SESSION).toBe('known-session');
+      expect(options.env.UNIMUX_TASK_MESSAGE).toBe(text);
+      expect(options.env.UNIMUX_TARGET_SESSION).toBe('known-session');
       expect(args.at(-1)).toContain('catch { exit 1 }');
     } else expect(args).toEqual(['queue', '--thread', 'known-session', '--message', text]);
   });

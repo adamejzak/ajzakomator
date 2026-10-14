@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises';
 import { dirname } from 'path';
 import { parseReleases, type ChangelogEntry, type ChangelogResult } from '../shared/changelog';
 
-export const RELEASES_API = 'https://api.github.com/repos/adamejzak/ajzakomator/releases?per_page=30';
+export const RELEASES_API = 'https://api.github.com/repos/daven-team/unimux/releases?per_page=30';
 const FRESH_MS = 10 * 60 * 1000;
 
 export interface ChangelogOptions {

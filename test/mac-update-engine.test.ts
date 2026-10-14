@@ -5,31 +5,31 @@ import { MAC_MESSAGES, MacUpdater, plistString, REFUSAL_MESSAGES, stagedFileVers
 
 // ── fixtures ───────────────────────────────────────────────────────────────────────────────────
 
-const APP = '/Applications/ajzakomator.app';
-const EXEC = `${APP}/Contents/MacOS/ajzakomator`;
-const DIR = '/Users/me/Library/Application Support/ajzakomator/updates/mac';
-const ZIP_NAME = 'ajzakomator-0.7.0-mac-arm64.zip';
+const APP = '/Applications/unimux.app';
+const EXEC = `${APP}/Contents/MacOS/unimux`;
+const DIR = '/Users/me/Library/Application Support/unimux/updates/mac';
+const ZIP_NAME = 'unimux-0.7.0-mac-arm64.zip';
 const STAGED = `${APP}.new-0.7.0`;
-const FEED_URL = 'https://github.com/adamejzak/ajzakomator/releases/latest/download/latest-mac.yml';
-const assetUrl = (version: string, name: string) => `https://github.com/adamejzak/ajzakomator/releases/download/v${version}/${name}`;
+const FEED_URL = 'https://github.com/daven-team/unimux/releases/latest/download/latest-mac.yml';
+const assetUrl = (version: string, name: string) => `https://github.com/daven-team/unimux/releases/download/v${version}/${name}`;
 const PAYLOAD = Buffer.from('pretend this is a 140 MB zip archive');
 const sha512 = (data: Uint8Array) => createHash('sha512').update(data).digest('base64');
 
 const feedYml = (version = '0.7.0', zipBytes: Uint8Array = PAYLOAD, arch = 'arm64') => `version: ${version}
 files:
-  - url: ajzakomator-${version}-mac-${arch}.zip
+  - url: unimux-${version}-mac-${arch}.zip
     sha512: >-
       ${sha512(zipBytes)}
     size: ${zipBytes.length}
-  - url: ajzakomator-${version}-mac-${arch}.dmg
+  - url: unimux-${version}-mac-${arch}.dmg
     sha512: >-
       AAAA
     size: 99
-path: ajzakomator-${version}-mac-x64.zip
+path: unimux-${version}-mac-x64.zip
 `;
 
 const plist = (values: Record<string, string>) => `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>${Object.entries(values).map(([k, v]) => `<key>${k}</key>\n<string>${v}</string>`).join('\n')}</dict></plist>`;
-const INFO = { CFBundleIdentifier: 'com.ajzakomator.app', CFBundleShortVersionString: '0.7.0', CFBundleExecutable: 'ajzakomator' };
+const INFO = { CFBundleIdentifier: 'com.unimux.app', CFBundleShortVersionString: '0.7.0', CFBundleExecutable: 'unimux' };
 
 type Entry = { data: Buffer; mode: number };
 /** A tiny in-memory file system with just what the updater uses; paths are plain strings. */
@@ -58,7 +58,7 @@ function memFs(uid = 501) {
       throw err('ENOENT');
     },
     writeFile: async (p: string, data: string | Uint8Array, options?: { mode?: number }) => {
-      if (denied.get('write') && p.endsWith('.ajzakomator-write-probe')) throw err(denied.get('write')!);
+      if (denied.get('write') && p.endsWith('.unimux-write-probe')) throw err(denied.get('write')!);
       put(p, data, options?.mode ?? 0o644);
     },
     appendFile: async (p: string, data: string) => { put(p, Buffer.concat([files.get(p)?.data ?? Buffer.alloc(0), Buffer.from(data)])); },
@@ -116,8 +116,8 @@ function harness(over: Partial<MacUpdaterDeps> & { zip?: Buffer; feed?: string; 
       if (over.ditto) return { code: 1, stdout: '', stderr: 'ditto: bad archive', ...over.ditto };
       const target = args[args.length - 1];
       const info = { ...INFO, ...over.unpacked };
-      mem.put(`${target}/ajzakomator.app/Contents/Info.plist`, plist(info));
-      mem.put(`${target}/ajzakomator.app/Contents/MacOS/${info.CFBundleExecutable}`, 'binary', 0o755);
+      mem.put(`${target}/unimux.app/Contents/Info.plist`, plist(info));
+      mem.put(`${target}/unimux.app/Contents/MacOS/${info.CFBundleExecutable}`, 'binary', 0o755);
       return { code: 0, stdout: '', stderr: '' };
     }
     if (command === '/usr/bin/codesign') {
@@ -128,7 +128,7 @@ function harness(over: Partial<MacUpdaterDeps> & { zip?: Buffer; feed?: string; 
   });
   const deps: MacUpdaterDeps = {
     arch: 'arm64', currentVersion: '0.6.5', execPath: EXEC, pid: 4242, packaged: true, updateDir: DIR,
-    feedUrl: FEED_URL, assetBase: (version) => `https://github.com/adamejzak/ajzakomator/releases/download/v${version}/`,
+    feedUrl: FEED_URL, assetBase: (version) => `https://github.com/daven-team/unimux/releases/download/v${version}/`,
     fetch: async (url, init) => {
       urls.push(url);
       if (url.endsWith('latest-mac.yml')) return new Response(over.feed ?? feedYml('0.7.0', zip), { status: 200 });
@@ -162,7 +162,7 @@ describe('MacUpdater.check', () => {
   });
   it('picks the x64 archive on Intel', async () => {
     const h = harness({ arch: 'x64', feed: feedYml('0.7.0', PAYLOAD, 'x64') });
-    expect((await offerOf(h)).asset.name).toBe('ajzakomator-0.7.0-mac-x64.zip');
+    expect((await offerOf(h)).asset.name).toBe('unimux-0.7.0-mac-x64.zip');
   });
   it('reports "current" for the same or an older version', async () => {
     expect(await harness({ feed: feedYml('0.6.5') }).updater.check()).toEqual({ latest: '0.6.5' });
@@ -174,8 +174,8 @@ describe('MacUpdater.check', () => {
     await expect(broken.updater.check()).rejects.toThrow(MAC_MESSAGES.server);
   });
   it('flags an offer the app cannot install itself and says why (no download is needed for that)', async () => {
-    const h = harness({ execPath: '/Volumes/ajzakomator 0.6.5/ajzakomator.app/Contents/MacOS/ajzakomator' });
-    h.mem.denied.set('/Volumes/ajzakomator 0.6.5', 'EROFS');
+    const h = harness({ execPath: '/Volumes/unimux 0.6.5/unimux.app/Contents/MacOS/unimux' });
+    h.mem.denied.set('/Volumes/unimux 0.6.5', 'EROFS');
     expect((await offerOf(h)).refusal).toBe('read-only');
     expect(h.mem.text(`${DIR}/update.log`)).toContain('read-only');
     expect((await offerOf(harness({ packaged: false }))).refusal).toBe('not-bundle');
@@ -187,11 +187,11 @@ describe('MacUpdater.download', () => {
     const h = harness();
     const progress = vi.fn();
     const staged = await h.updater.download(await offerOf(h), progress);
-    expect(staged).toMatchObject({ version: '0.7.0', bundle: STAGED, executable: 'ajzakomator', zip: `${DIR}/${ZIP_NAME}` });
+    expect(staged).toMatchObject({ version: '0.7.0', bundle: STAGED, executable: 'unimux', zip: `${DIR}/${ZIP_NAME}` });
     expect(h.mem.files.get(`${DIR}/${ZIP_NAME}`)?.data.equals(PAYLOAD)).toBe(true);
     expect(h.mem.files.has(`${DIR}/${ZIP_NAME}.part`)).toBe(false);
     expect(h.exec).toHaveBeenCalledWith('/usr/bin/ditto', ['-x', '-k', `${DIR}/${ZIP_NAME}`, `${DIR}/extracted-0.7.0`], expect.any(Number));
-    expect(h.exec).toHaveBeenCalledWith('/usr/bin/xattr', ['-cr', `${DIR}/extracted-0.7.0/ajzakomator.app`], expect.any(Number));
+    expect(h.exec).toHaveBeenCalledWith('/usr/bin/xattr', ['-cr', `${DIR}/extracted-0.7.0/unimux.app`], expect.any(Number));
     expect(h.exec).toHaveBeenCalledWith('/usr/bin/codesign', ['--verify', '--deep', '--strict', staged.bundle], expect.any(Number));
     expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ percent: 100, transferred: PAYLOAD.length, total: PAYLOAD.length }));
   });
@@ -247,11 +247,11 @@ describe('MacUpdater.download', () => {
     const h = harness();
     const offer = await offerOf(h);
     h.mem.put(`${DIR}/${ZIP_NAME}`, 'damaged');
-    h.mem.put(`${DIR}/ajzakomator-0.6.9-mac-arm64.zip`, 'old');
+    h.mem.put(`${DIR}/unimux-0.6.9-mac-arm64.zip`, 'old');
     h.mem.put(`${DIR}/install-0.6.9.sh`, '#!/bin/sh');
     await h.updater.download(offer, vi.fn());
     expect(h.urls).toContain(offer.url);
-    expect(h.mem.files.has(`${DIR}/ajzakomator-0.6.9-mac-arm64.zip`)).toBe(false);
+    expect(h.mem.files.has(`${DIR}/unimux-0.6.9-mac-arm64.zip`)).toBe(false);
     expect(h.mem.files.has(`${DIR}/install-0.6.9.sh`)).toBe(false);
   });
   it('treats a failing ditto as a failed update', async () => {
@@ -265,9 +265,9 @@ describe('MacUpdater.download', () => {
       const h = harness();
       const staged = await h.updater.download(await offerOf(h), vi.fn());
       expect(staged.bundle).toBe(STAGED);
-      expect(h.exec).toHaveBeenCalledWith('/usr/bin/ditto', [`${DIR}/extracted-0.7.0/ajzakomator.app`, STAGED], expect.any(Number));
+      expect(h.exec).toHaveBeenCalledWith('/usr/bin/ditto', [`${DIR}/extracted-0.7.0/unimux.app`, STAGED], expect.any(Number));
       expect(h.exec).toHaveBeenCalledWith('/usr/bin/codesign', ['--verify', '--deep', '--strict', STAGED], expect.any(Number));
-      expect(h.mem.files.has(`${STAGED}/Contents/MacOS/ajzakomator`)).toBe(true);
+      expect(h.mem.files.has(`${STAGED}/Contents/MacOS/unimux`)).toBe(true);
       expect([...h.mem.files.keys()].some((key) => key.startsWith(`${DIR}/extracted-0.7.0/`))).toBe(false);
       expect(h.mem.text(`${DIR}/update.log`)).toContain(`staged at ${STAGED}`);
     });
@@ -278,7 +278,7 @@ describe('MacUpdater.download', () => {
       await h.updater.download(await offerOf(h), vi.fn());
       expect(h.mem.files.has(`${APP}.new-0.6.9/Contents/Info.plist`)).toBe(false);
       expect(h.mem.files.has(`${STAGED}/Contents/stale`)).toBe(false);
-      expect(h.mem.files.has(`${STAGED}/Contents/MacOS/ajzakomator`)).toBe(true);
+      expect(h.mem.files.has(`${STAGED}/Contents/MacOS/unimux`)).toBe(true);
     });
     it('keeps the refusal when the folder of the app is not writable, copying nothing', async () => {
       const h = harness();
@@ -302,7 +302,7 @@ describe('MacUpdater.download', () => {
       await expect(h.updater.install(staged)).rejects.toThrow(MAC_MESSAGES.verify);
       expect(h.spawned).toEqual([]);
       h.mem.put(`${STAGED}/Contents/Info.plist`, plist(INFO));
-      await expect(h.updater.install({ ...staged, bundle: `${DIR}/extracted-0.7.0/ajzakomator.app` })).rejects.toThrow(MAC_MESSAGES.verify);
+      await expect(h.updater.install({ ...staged, bundle: `${DIR}/extracted-0.7.0/unimux.app` })).rejects.toThrow(MAC_MESSAGES.verify);
       expect(h.spawned).toEqual([]);
       expect(await h.updater.install(staged)).toEqual({ ok: true });
     });
@@ -324,16 +324,16 @@ describe('MacUpdater.download', () => {
       await failing({ unpacked: { CFBundleExecutable: '../../escape' } });
       const h = harness();
       const offer = await offerOf(h);
-      h.exec.mockImplementationOnce(async (_c: string, args: string[]) => { h.mem.put(`${args[3]}/ajzakomator.app/Contents/Info.plist`, plist(INFO)); return { code: 0, stdout: '', stderr: '' }; });
+      h.exec.mockImplementationOnce(async (_c: string, args: string[]) => { h.mem.put(`${args[3]}/unimux.app/Contents/Info.plist`, plist(INFO)); return { code: 0, stdout: '', stderr: '' }; });
       await expect(h.updater.download(offer, vi.fn())).rejects.toThrow(MAC_MESSAGES.verify);
-      expect(h.mem.text(`${DIR}/update.log`)).toContain('executable ajzakomator is missing');
+      expect(h.mem.text(`${DIR}/update.log`)).toContain('executable unimux is missing');
     });
     it('rejects an executable without the execute permission', async () => {
       const h = harness();
       const offer = await offerOf(h);
       h.exec.mockImplementationOnce(async (_c: string, args: string[]) => {
-        h.mem.put(`${args[3]}/ajzakomator.app/Contents/Info.plist`, plist(INFO));
-        h.mem.put(`${args[3]}/ajzakomator.app/Contents/MacOS/ajzakomator`, 'x', 0o644);
+        h.mem.put(`${args[3]}/unimux.app/Contents/Info.plist`, plist(INFO));
+        h.mem.put(`${args[3]}/unimux.app/Contents/MacOS/unimux`, 'x', 0o644);
         return { code: 0, stdout: '', stderr: '' };
       });
       await expect(h.updater.download(offer, vi.fn())).rejects.toThrow(MAC_MESSAGES.verify);
@@ -358,8 +358,8 @@ describe('MacUpdater.download', () => {
       const offer = await offerOf(h);
       h.exec.mockImplementation(async (command: string, args: string[]) => {
         if (command === '/usr/bin/ditto' && args[0] === '-x') {
-          h.mem.put(`${args[3]}/ajzakomator.app/Contents/Info.plist`, 'bplist00binary');
-          h.mem.put(`${args[3]}/ajzakomator.app/Contents/MacOS/ajzakomator`, 'x', 0o755);
+          h.mem.put(`${args[3]}/unimux.app/Contents/Info.plist`, 'bplist00binary');
+          h.mem.put(`${args[3]}/unimux.app/Contents/MacOS/unimux`, 'x', 0o755);
         } else if (command === '/usr/bin/ditto') h.copyTree(args[0], args[1]);
         if (command === '/usr/bin/plutil') return { code: 0, stdout: plist(INFO), stderr: '' };
         return { code: 0, stdout: '', stderr: '' };
@@ -388,7 +388,7 @@ describe('MacUpdater.install', () => {
     expect(h.spawned).toEqual([['/bin/sh', [scriptPath]]]);
     expect(JSON.parse(h.mem.text(`${DIR}/pending.json`)!)).toMatchObject({ from: '0.6.5', to: '0.7.0', bundle: APP, backup: `${APP}.old-0.6.5` });
     // The probe file is gone again.
-    expect([...h.mem.files.keys()].some((key) => key.endsWith('.ajzakomator-write-probe'))).toBe(false);
+    expect([...h.mem.files.keys()].some((key) => key.endsWith('.unimux-write-probe'))).toBe(false);
   });
   it('refuses (and starts nothing) when the app can no longer be replaced', async () => {
     const h = harness();
@@ -426,12 +426,12 @@ describe('MacUpdater.install', () => {
     expect(h.spawned).toEqual([]);
   });
   it('survives paths with spaces and quotes in the app location', async () => {
-    const exec = "/Users/o'neil/My Apps/ajzakomator.app/Contents/MacOS/ajzakomator";
+    const exec = "/Users/o'neil/My Apps/unimux.app/Contents/MacOS/unimux";
     const h = harness({ execPath: exec });
-    h.mem.put("/Users/o'neil/My Apps/ajzakomator.app/Contents/Info.plist", plist(INFO));
+    h.mem.put("/Users/o'neil/My Apps/unimux.app/Contents/Info.plist", plist(INFO));
     const s = await staged(h);
     expect(await h.updater.install(s)).toEqual({ ok: true });
-    expect(h.mem.text(`${DIR}/install-0.7.0.sh`)).toContain(`BUNDLE='/Users/o'\\''neil/My Apps/ajzakomator.app'`);
+    expect(h.mem.text(`${DIR}/install-0.7.0.sh`)).toContain(`BUNDLE='/Users/o'\\''neil/My Apps/unimux.app'`);
   });
 });
 
@@ -510,20 +510,20 @@ describe('MacUpdater after the swap', () => {
   it('markReady and the start-up cleanup only remove files of this version or older, never a newer download', async () => {
     const h = harness({ currentVersion: '0.7.0' });
     h.mem.put(`${DIR}/pending.json`, marker());
-    for (const name of ['ajzakomator-0.7.0-mac-arm64.zip', 'ajzakomator-0.6.9-mac-arm64.zip', 'install-0.7.0.sh', 'extracted-0.7.0/a', 'update.log', 'notes.txt']) h.mem.put(`${DIR}/${name}`, 'x');
-    for (const name of ['ajzakomator-0.8.0-mac-arm64.zip', 'ajzakomator-0.8.0-mac-arm64.zip.part', 'extracted-0.8.0/a', 'install-0.8.0.sh']) h.mem.put(`${DIR}/${name}`, 'x');
+    for (const name of ['unimux-0.7.0-mac-arm64.zip', 'unimux-0.6.9-mac-arm64.zip', 'install-0.7.0.sh', 'extracted-0.7.0/a', 'update.log', 'notes.txt']) h.mem.put(`${DIR}/${name}`, 'x');
+    for (const name of ['unimux-0.8.0-mac-arm64.zip', 'unimux-0.8.0-mac-arm64.zip.part', 'extracted-0.8.0/a', 'install-0.8.0.sh']) h.mem.put(`${DIR}/${name}`, 'x');
     h.mem.put(`${APP}.new-0.7.0/a`, 'x'); h.mem.put(`${APP}.new-0.8.0/a`, 'x'); h.mem.put(`${APP}.old-0.6.5/a`, 'x');
     await h.updater.finishPrevious();
     await h.updater.markReady();
-    for (const gone of ['ajzakomator-0.7.0-mac-arm64.zip', 'ajzakomator-0.6.9-mac-arm64.zip', 'install-0.7.0.sh', 'extracted-0.7.0/a']) expect(h.mem.files.has(`${DIR}/${gone}`), gone).toBe(false);
-    for (const kept of ['ajzakomator-0.8.0-mac-arm64.zip', 'ajzakomator-0.8.0-mac-arm64.zip.part', 'extracted-0.8.0/a', 'install-0.8.0.sh', 'update.log', 'notes.txt']) expect(h.mem.files.has(`${DIR}/${kept}`), kept).toBe(true);
+    for (const gone of ['unimux-0.7.0-mac-arm64.zip', 'unimux-0.6.9-mac-arm64.zip', 'install-0.7.0.sh', 'extracted-0.7.0/a']) expect(h.mem.files.has(`${DIR}/${gone}`), gone).toBe(false);
+    for (const kept of ['unimux-0.8.0-mac-arm64.zip', 'unimux-0.8.0-mac-arm64.zip.part', 'extracted-0.8.0/a', 'install-0.8.0.sh', 'update.log', 'notes.txt']) expect(h.mem.files.has(`${DIR}/${kept}`), kept).toBe(true);
     expect(h.mem.files.has(`${APP}.new-0.7.0/a`)).toBe(false);
     expect(h.mem.files.has(`${APP}.new-0.8.0/a`)).toBe(true);
     expect(h.mem.files.has(`${APP}.old-0.6.5/a`)).toBe(false);
   });
   it('knows which version a staging file belongs to', () => {
-    expect(stagedFileVersion('ajzakomator-0.7.0-mac-arm64.zip')).toBe('0.7.0');
-    expect(stagedFileVersion('ajzakomator-0.7.0-beta.1-mac-x64.zip.part')).toBe('0.7.0-beta.1');
+    expect(stagedFileVersion('unimux-0.7.0-mac-arm64.zip')).toBe('0.7.0');
+    expect(stagedFileVersion('unimux-0.7.0-beta.1-mac-x64.zip.part')).toBe('0.7.0-beta.1');
     expect(stagedFileVersion('extracted-0.7.0')).toBe('0.7.0');
     expect(stagedFileVersion('install-0.7.0.sh')).toBe('0.7.0');
     expect(stagedFileVersion('update.log')).toBeUndefined();

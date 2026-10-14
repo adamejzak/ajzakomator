@@ -8,7 +8,7 @@ import { existsSync, readFileSync, statSync } from 'fs';
 import { dirname, join, relative, sep } from 'path';
 import type { UpdateSplashConfig } from '../shared/updateProgress';
 
-export const SPLASH_EXE = 'ajzakomator-update.exe';
+export const SPLASH_EXE = 'unimux-update.exe';
 const STAGED_MARKER = '.staged';
 /** GPU compiler libraries and licence pages are never needed by a small software-rendered window. */
 const SKIPPED_FILES = new Set(['dxcompiler.dll', 'dxil.dll', 'licenses.chromium.html', 'elevate.exe']);
@@ -74,7 +74,7 @@ async function copyTree(source: string, target: string): Promise<void> {
 async function writeSplashApp(appDir: string, splashApp: string): Promise<void> {
   await rm(splashApp, { recursive: true, force: true });
   await mkdir(splashApp, { recursive: true });
-  await writeFile(join(splashApp, 'package.json'), JSON.stringify({ name: 'ajzakomator-update', version: '1.0.0', main: 'main/updatesplash.js' }));
+  await writeFile(join(splashApp, 'package.json'), JSON.stringify({ name: 'unimux-update', version: '1.0.0', main: 'main/updatesplash.js' }));
   await copyTree(join(appDir, 'out', 'main'), join(splashApp, 'main'));
   await copyTree(join(appDir, 'out', 'preload'), join(splashApp, 'preload'));
   await copyTree(join(appDir, 'resources', 'update-splash'), join(splashApp, 'ui'));

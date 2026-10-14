@@ -12,7 +12,7 @@ export class PtyHostClient extends EventEmitter {
 
   start(): void {
     const child = utilityProcess.fork(join(__dirname, 'ptyhost.js'), [], {
-      serviceName: 'ajzakomator Pty Host',
+      serviceName: 'unimux Pty Host',
       stdio: 'inherit',
     });
     this.child = child;

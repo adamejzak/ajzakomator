@@ -6,7 +6,7 @@ import { IX } from './icons';
 import { RefreshIcon, useHoldBusy } from './Spinner';
 import { useUpdateState } from './UpdateBadge';
 
-const RELEASES_PAGE = 'https://github.com/adamejzak/ajzakomator/releases';
+const RELEASES_PAGE = 'https://github.com/daven-team/unimux/releases';
 
 function Inlines({ items }: { items: Inline[] }) {
   return <>{items.map((item, i) => item.type === 'bold' ? <strong key={i}>{item.text}</strong> : item.type === 'code' ? <code key={i}>{item.text}</code> : <Fragment key={i}>{item.text}</Fragment>)}</>;

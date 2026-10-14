@@ -17,7 +17,7 @@ mkdirSync(output, { recursive: true });
 // Set MC_CAPTURE_ROOT to a generic path if your OS temp path contains a personal name.
 const temporaryBase = resolve(process.env.MC_CAPTURE_ROOT ?? tmpdir());
 mkdirSync(temporaryBase, { recursive: true });
-const root = mkdtempSync(join(temporaryBase, 'ajzakomator-readme-'));
+const root = mkdtempSync(join(temporaryBase, 'unimux-readme-'));
 const data = join(root, 'data'), project = join(root, 'atlas');
 for (const dir of [data, project, join(project, 'src'), join(project, 'test')]) mkdirSync(dir, { recursive: true });
 writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'atlas-demo', private: true, type: 'module', scripts: { test: 'node --test', check: 'node --check src/catalog.mjs' } }, null, 2));
@@ -178,6 +178,7 @@ try {
   // Electron does not expose Chrome's Browser window-management CDP methods.
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false });
   await until(() => evaluate('!!window.mc && document.querySelectorAll(".cell").length === 4'), 'four terminals');
+  if (await evaluate('document.title !== "unimux" || document.querySelector(".bn-base")?.textContent !== "unimux"')) throw new Error('Expected Unimux branding');
   // Observe real PTY output and use its existing MessagePort to enter demo commands.
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `window.__readmeOutput = {}; window.addEventListener('message', e => { if (e.data === 'mc:pty-port' && e.ports[0]) { window.__readmePort = e.ports[0]; e.ports[0].addEventListener('message', e => { if (e.data.t === 'data' || e.data.t === 'replay') window.__readmeOutput[e.data.id] = (window.__readmeOutput[e.data.id] || '') + e.data.data; }); } });` });
   await cdp('Page.reload');
@@ -199,6 +200,13 @@ try {
   await screenshot('editor');
   await evaluate(`(() => { const tab = [...document.querySelectorAll('.workspace-tabs .tab')].find(el => el.textContent.includes('Development')); if (!tab) throw new Error('Missing Development workspace tab'); tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })); })()`);
   await click('#projects-view');
+  await evaluate(`(() => { const row = [...document.querySelectorAll('.project')].find(el => el.textContent.includes('Atlas storefront')); if (!row) throw new Error('Missing Atlas project'); const rect = row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: rect.left + 30, clientY: rect.top + 10 })); })()`);
+  await until(() => evaluate('!!document.querySelector(".menu")'), 'project menu');
+  await click('.menu-item', 'Edit project (name, icon)…');
+  await until(() => evaluate('!!document.querySelector(".overlay")'), 'project editor');
+  await screenshot('project');
+  await click('.modal-foot button', 'Cancel');
+  await until(() => evaluate('!document.querySelector(".overlay")'), 'close project editor');
   await key('G', 'KeyG', { ctrlKey: process.platform !== 'darwin', metaKey: process.platform === 'darwin', shiftKey: true });
   await until(() => evaluate('!!document.querySelector(".cell-table")'), 'grid dialog');
   await click('.presets span.btn', 'Review team');

@@ -1,4 +1,4 @@
-// Starts the ajzakomator MCP server standalone with fake automation (one project: coordinator, worker, reviewer) so that
+// Starts the unimux MCP server standalone with fake automation (one project: coordinator, worker, reviewer) so that
 // `claude mcp` / `codex mcp` can be pointed at it with a scratch CLAUDE_CONFIG_DIR / CODEX_HOME. Prints JSON, then waits.
 // Usage: node scripts/mcp-serve.mjs   (Ctrl+C to stop). No model calls are made by anything here.
 import { build } from 'esbuild';

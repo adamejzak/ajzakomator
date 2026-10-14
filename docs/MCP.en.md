@@ -8,7 +8,7 @@ Choose a role for each agent in **New grid**:
 
 | Role | Access |
 | --- | --- |
-| No MCP | Ordinary agent session without ajzakomator tools |
+| No MCP | Ordinary agent session without unimux tools |
 | Worker | Its own tasks, result reporting, project messages and snippets |
 | Coordinator | Worker tools, plus background grids, team presets and tasks assigned to other cells |
 
@@ -89,7 +89,7 @@ The Streamable HTTP server listens on `127.0.0.1` on a random port. Each cell re
 
 ## Claude Code and Codex
 
-Claude gets `--mcp-config` with a per-cell file (`type: http`, header `Authorization: Bearer ${AJZ_MCP_TOKEN}`); Codex gets `-c mcp_servers.ajzakomator.url=...` and `bearer_token_env_var="AJZ_MCP_TOKEN"`. Both connect to the local server and see the same tools. The schemas are flat (no `$ref`, `anyOf` or `null` types) because Codex passes them to the model unchanged.
+Claude gets `--mcp-config` with a per-cell file (`type: http`, header `Authorization: Bearer ${UNIMUX_MCP_TOKEN}`); Codex gets `-c mcp_servers.unimux.url=...` and `bearer_token_env_var="UNIMUX_MCP_TOKEN"`. Both connect to the local server and see the same tools. The schemas are flat (no `$ref`, `anyOf` or `null` types) because Codex passes them to the model unchanged.
 
 Only Codex honours the tool hints, and it asks the user before a call unless the tool is `readOnlyHint`, or both `destructiveHint` and `openWorldHint` are false (Claude Code asks according to its own permission rules). The hints are:
 
@@ -100,7 +100,7 @@ Only Codex honours the tool hints, and it asks the user before a call unless the
 | asks (`openWorldHint: true`) | `send_message`, `create_task`, `deliver` (reach other agents' sessions), `snippets` (a saved snippet can be auto-sent; `list` and `get` ask too because a hint covers the whole tool), `update_agent` (name, color; for coordinators also profile, model, restart), `create_grid` (starts agents and spends model usage) |
 | asks (`destructiveHint: true`) | `close_grid`, and `update_task` for coordinators (it can cancel other cells' tasks) |
 
-A user who trusts the team can pre-approve tools in Codex with `default_tools_approval_mode` or `tools.<name>.approval_mode` under `[mcp_servers.ajzakomator]`.
+A user who trusts the team can pre-approve tools in Codex with `default_tools_approval_mode` or `tools.<name>.approval_mode` under `[mcp_servers.unimux]`.
 
 You can check the connection without a model: `node scripts/mcp-serve.mjs` starts the server with fake dependencies, then `claude mcp add --transport http ...` / `codex mcp add --url ... --bearer-token-env-var ...` with a temporary `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, and `claude mcp list`, show the connection state.
 

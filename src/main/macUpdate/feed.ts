@@ -8,8 +8,8 @@
 export interface MacAsset { name: string; sha512: string; size: number }
 export interface MacFeed { version: string; files: MacAsset[] }
 
-export const MAC_FEED_URL = 'https://github.com/adamejzak/ajzakomator/releases/latest/download/latest-mac.yml';
-export const macAssetBase = (version: string): string => `https://github.com/adamejzak/ajzakomator/releases/download/v${version}/`;
+export const MAC_FEED_URL = 'https://github.com/daven-team/unimux/releases/latest/download/latest-mac.yml';
+export const macAssetBase = (version: string): string => `https://github.com/daven-team/unimux/releases/download/v${version}/`;
 
 const VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 /** Only plain file names are accepted: a feed can never point the download at another place. */

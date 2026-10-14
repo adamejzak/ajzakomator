@@ -497,7 +497,7 @@ export class AutomationService {
     try {
       if (this.state.get().automation.paused) throw new Error('Automation is paused by the user.');
       this.target(cellId, actorId);
-      const prompt = kind === 'task' ? taskPrompt(item as AgentTask) : `[Ajzakomator message ${id} from ${item.fromCellId ?? 'user'}]\n${(item as AgentMessage).text}\nRead it with read_inbox (acknowledge:true).`;
+      const prompt = kind === 'task' ? taskPrompt(item as AgentTask) : `[Unimux message ${id} from ${item.fromCellId ?? 'user'}]\n${(item as AgentMessage).text}\nRead it with read_inbox (acknowledge:true).`;
       await this.deps.deliver(cellId, prompt);
     } catch (error) { deliveryError = error instanceof Error ? error.message : String(error); }
     finally { this.delivering.delete(id); }
