@@ -110,11 +110,11 @@ html[data-platform="darwin"] .first-run-titlebar { padding-left: 84px; }
 /* the tile rail: one icon tile per panel, always visible; the panel content sits to its right */
 .rail { width: 48px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
 .sidebar.collapsed .rail { border-right: 0; }
-.rail-tiles { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
-.rail-tile { position: relative; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; transition: background .15s, color .15s; }
+.rail-tiles { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0; }
+.rail-tile { position: relative; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #858585; cursor: pointer; transition: background .15s, color .15s; }
 .rail-tile:hover { background: var(--bg-hover); color: var(--text); }
 .rail-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.rail-tile svg { width: 23px; height: 23px; }
+.rail-tile svg { width: 20px; height: 20px; stroke-width: 1.5; }
 .rail-tile.on { background: #303030; color: #f0f0f0; }
 .rail-tile[aria-disabled="true"] { opacity: .4; cursor: default; }
 .rail-tile[aria-disabled="true"]:hover { background: transparent; color: var(--muted); }
