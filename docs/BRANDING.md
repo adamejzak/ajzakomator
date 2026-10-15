@@ -18,6 +18,9 @@ Two internal identities intentionally retain the previous name:
 - `com.ajzakomator.app` remains the Electron application ID and Windows
   AppUserModelID. Electron Builder derives the NSIS installation identity from
   it, so keeping it allows existing installations to update in place.
+  Runs from the repository (`npm run dev`, a clone) use `com.ajzakomator.app.dev`
+  instead, so they never share the taskbar entry and icon with the installed app;
+  the window also sets its taskbar icon explicitly (`setAppDetails`).
 - The application keeps `%APPDATA%\ajzakomator` on Windows and
   `~/Library/Application Support/ajzakomator` on macOS. This preserves projects,
   session history, editor drafts, saved accounts and update handoff files.

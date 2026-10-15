@@ -80,8 +80,10 @@ const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
 app.setPath('userData', DATA_DIR);
-// Must match the original installer identity so updates replace the existing installation.
-if (process.platform === 'win32') app.setAppUserModelId('com.ajzakomator.app');
+// The installed app must keep the original installer identity so updates replace the existing installation. A run from the repository
+// (npm run dev, a clone of the project) gets its own identity: it must never share the taskbar entry (and its icon) with the installed app.
+const APP_USER_MODEL_ID = app.isPackaged ? 'com.ajzakomator.app' : 'com.ajzakomator.app.dev';
+if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
 // Module code keeps running after app.quit(), so every later step checks `superseded` instead of assuming the exit is immediate.
@@ -320,6 +322,10 @@ function createWindow(): void {
     // Off-screen, non-focusable window for automated screenshots (docs).
     ...(process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
   });
+  // The taskbar button shows our icon (not the Electron one), whatever was cached for this identity before.
+  if (process.platform === 'win32') {
+    try { win.setAppDetails({ appId: APP_USER_MODEL_ID, appIconPath: app.isPackaged ? process.execPath : windowIcon(), appIconIndex: 0 }); } catch { /* the window icon still applies */ }
+  }
   win.once('ready-to-show', () => {
     if (process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show();
     void signalUpdateReady();
