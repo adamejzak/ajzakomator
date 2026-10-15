@@ -282,17 +282,6 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
     </Select>
   );
 
-  const historyActions = status ? (
-    <>
-      <div className="git-actions" role="group" aria-label="Git">
-        <button className="btn ghost icon small" disabled={!!busy || !canWrite} onClick={fetchNow} aria-label="Fetch" title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : <GitTransferIcon kind="fetch" />}</button>
-        <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} aria-label="Pull" title={status.upstream ? tr('Pobierz i dołącz zmiany (pull, tylko fast-forward)') : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>{busy === 'Pull' ? '…' : <GitTransferIcon kind="pull" />}</button>
-        <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.push || (!status.ahead && !status.push.setUpstream)} onClick={() => void pushNow()} aria-label="Push" title={tr('Wyślij commity do zdalnego repozytorium (push)')}>{busy === 'Push' ? '…' : <GitTransferIcon kind="push" />}</button>
-      </div>
-      <button className={`btn ghost icon small ${spinning ? 'busy' : ''}`} onClick={() => void refreshNow()} title={spinning ? tr('Odświeżanie…') : tr('Odśwież')} aria-label={tr('Odśwież')} aria-busy={spinning}><RefreshIcon spinning={spinning} /></button>
-    </>
-  ) : null;
-
   /** The "..." menu of the panel: how the changes are shown and ordered, and the everyday actions (Cursor's menu, limited to what the panel can do). */
   const openOverflow = (button: HTMLElement) => {
     const mark = (on: boolean): string | undefined => (on ? '✓' : undefined);
@@ -357,6 +346,9 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
   const branchLabel = status.branch ?? tr('Odłączony HEAD ({head})', { head: status.head });
   const conflicts = status.files.filter((f) => f.conflict).length;
   const historyKey = `${status.branch ?? ''}:${status.head}:${status.upstream ?? ''}:${status.ahead}:${status.behind}`;
+  // The pull and push buttons carry the counts; the label says it too for the title and for screen readers.
+  const pullLabel = status.behind > 0 ? tr('Pull (commitów do pobrania: {count})', { count: status.behind }) : tr('Pobierz i dołącz zmiany (pull, tylko fast-forward)');
+  const pushLabel = status.ahead > 0 ? tr('Push (commitów do wysłania: {count})', { count: status.ahead }) : tr('Wyślij commity do zdalnego repozytorium (push)');
 
   return (
     <div className="sidebar-content git-panel" ref={panel}>
@@ -365,10 +357,15 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
         <button className="git-branch" onClick={(e) => void openBranches(e.currentTarget)} title={status.upstream ? `${tr('Zmień gałąź')}\n${tr('Śledzi: {upstream}', { upstream: status.upstream })}` : tr('Zmień gałąź')} aria-haspopup="menu">
           <IBranch /><span className="git-branch-name">{branchLabel}</span><IChevron />
         </button>
-        {status.ahead > 0 && <span className="git-badge up" title={tr('Commitów do wysłania: {count}', { count: status.ahead })}>↑{status.ahead}</span>}
-        {status.behind > 0 && <span className="git-badge down" title={tr('Commitów do pobrania: {count}', { count: status.behind })}>↓{status.behind}</span>}
         {conflicts > 0 && <span className="git-badge conflict" title={tr('Konflikt scalania')}>!{conflicts}</span>}
         <span className="git-spacer" />
+        <button className="btn ghost icon small" disabled={!!busy || !canWrite} onClick={fetchNow} aria-label="Fetch" title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : <GitTransferIcon kind="fetch" />}</button>
+        <button className={`btn ghost icon small git-sync ${status.behind > 0 ? 'down' : ''}`} disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} aria-label={pullLabel} title={status.upstream ? pullLabel : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>
+          {busy === 'Pull' ? '…' : <><GitTransferIcon kind="pull" />{status.behind > 0 && <span className="git-sync-count">{status.behind}</span>}</>}
+        </button>
+        <button className={`btn ghost icon small git-sync ${status.ahead > 0 ? 'up' : ''}`} disabled={!!busy || !canWrite || !status.push || (!status.ahead && !status.push.setUpstream)} onClick={() => void pushNow()} aria-label={pushLabel} title={pushLabel}>
+          {busy === 'Push' ? '…' : <><GitTransferIcon kind="push" />{status.ahead > 0 && <span className="git-sync-count">{status.ahead}</span>}</>}
+        </button>
         <button className={`btn ghost icon small ${spinning ? 'busy' : ''}`} onClick={() => void refreshNow()} title={spinning ? tr('Odświeżanie…') : tr('Odśwież')} aria-label={tr('Odśwież')} aria-busy={spinning}><RefreshIcon spinning={spinning} /></button>
         <button className="btn ghost icon small" onClick={(e) => openOverflow(e.currentTarget)} title={tr('Więcej akcji Git')} aria-label={tr('Więcej akcji Git')} aria-haspopup="menu"><IMore /></button>
       </div>
@@ -382,7 +379,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
       )}
       <GitChanges view={changesLayout.view} sort={changesLayout.sort} projectId={projectId} status={status} busy={!!busy} writable={canWrite} programsNote={programsNote} opts={opts} run={run} onOpen={openDiff} onMenu={fileMenu} />
       <div className="git-splitter" role="separator" aria-orientation="horizontal" aria-label={tr('Zmień wysokość historii')} tabIndex={0} onPointerDown={startResize} onKeyDown={resizeKey} />
-      <GitHistory projectId={projectId} historyKey={historyKey} initial={status.initial} opts={opts} nonce={nonce} {...historyProps} actions={historyActions} />
+      <GitHistory projectId={projectId} historyKey={historyKey} initial={status.initial} opts={opts} nonce={nonce} {...historyProps} />
     </div>
   );
 }
