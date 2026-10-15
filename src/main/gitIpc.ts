@@ -6,8 +6,6 @@ import { appPlatform } from '../shared/platform';
 import type { GitProbe, GitResult } from '../shared/git';
 import { Git } from './git';
 import { GIT_CHANNELS, GONE, handleGit } from './gitHandler';
-import { listGithub } from './github';
-import type { GithubKind, GithubResult } from '../shared/github';
 
 export interface GitIpcDeps {
   projectPath(projectId: string): string | undefined;
@@ -58,11 +56,6 @@ export function registerGitIpc(deps: GitIpcDeps): void {
     }
     void shell.openExternal(GIT_DOWNLOAD);
     return { ok: true, data: { message: 'Otwarto stronę pobierania Gita.', restart: false } };
-  });
-  ipcMain.handle('github:list', async (_e, projectId: unknown, kind: unknown): Promise<GithubResult> => {
-    const path = typeof projectId === 'string' ? deps.projectPath(projectId) : undefined;
-    if (!path) return { ok: false, code: 'failed', error: GONE };
-    return listGithub(path, (kind === 'issues' ? 'issues' : 'pulls') as GithubKind);
   });
   ipcMain.handle('git:worktrees', async (_e, projectId: unknown, request: unknown): Promise<GitResult<unknown>> => {
     const path = typeof projectId === 'string' ? deps.projectPath(projectId) : undefined;

@@ -12,10 +12,10 @@ import { IBranch, IChevron, ICloud, ITag, IX } from './icons';
 const MAX_LOADED = 3000;
 
 /** `historyKey` changes when HEAD or the branches moved (the list then starts again); `initial`: the repository has no commit yet. */
-interface Props { projectId: string; historyKey: string; initial: boolean; opts: { worktree?: string }; nonce: number; collapsed?: boolean; onToggle?(): void; height?: number | null }
+interface Props { projectId: string; historyKey: string; initial: boolean; opts: { worktree?: string }; nonce: number; collapsed?: boolean; onToggle?(): void; height?: number | null; /** Buttons at the right of the header (fetch, pull, push, refresh), next to the history like in Cursor. */ actions?: React.ReactNode }
 
 /** The History section: commits in pages of 50 (loaded while scrolling), a thin graph, filters, and the details of one commit. */
-export function GitHistory({ projectId, historyKey, initial, opts, nonce, collapsed = false, onToggle, height = null }: Props) {
+export function GitHistory({ projectId, historyKey, initial, opts, nonce, collapsed = false, onToggle, height = null, actions }: Props) {
   const { tr, language, errorText } = useI18n();
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -81,6 +81,7 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce, collap
         {!collapsed && <button className={`btn ghost icon small ${all ? 'on' : ''}`} aria-pressed={all} title={tr('Pokaż commity wszystkich gałęzi')} aria-label={tr('Pokaż commity wszystkich gałęzi')} onClick={() => setAll((v) => !v)}>
           <IBranch />
         </button>}
+        {actions}
       </div>
       {!collapsed && <>
       <div className="git-search">

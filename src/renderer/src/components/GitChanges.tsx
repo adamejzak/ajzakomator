@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import type { GitFileChange, GitOpResult, GitResult, GitStatus } from '../../../shared/git';
 import { useI18n } from '../i18n';
 import { askChoice, toast } from '../store';
-import { baseName, CONFLICT_LETTER, dirName, groupChanges, letterOf, newRequestId, type ChangeGroup, type Letter } from '../../../shared/gitUi';
+import { baseName, buildChangeTree, CONFLICT_LETTER, dirName, groupChanges, letterOf, newRequestId, sortChanges, type ChangeGroup, type ChangeNode, type ChangesSort, type ChangesView, type Letter } from '../../../shared/gitUi';
 import { ICheck, IChevron } from './icons';
 import { matchesShortcut, titleWithShortcut } from '../shortcuts';
 
@@ -20,14 +20,18 @@ interface Props {
   run(action: string, call: () => Promise<GitResult<GitOpResult>>, quiet?: boolean): Promise<boolean>;
   onOpen(file: GitFileChange, source: Source): void;
   onMenu(e: React.MouseEvent, file: GitFileChange, source: Source): void;
+  view: ChangesView;
+  sort: ChangesSort;
 }
 
 /** The Changes section: files grouped as conflicts, staged, changed and untracked, with stage / unstage and a commit box. */
-export function GitChanges({ projectId, status, busy, writable, programsNote, opts, run, onOpen, onMenu }: Props) {
+export function GitChanges({ projectId, status, busy, writable, programsNote, opts, run, onOpen, onMenu, view, sort }: Props) {
   const { tr } = useI18n();
   const [open, setOpen] = useState(true);
   const [message, setMessage] = useState('');
   const messageBox = useRef<HTMLTextAreaElement>(null);
+  const [closed, setClosed] = useState<Set<string>>(new Set());
+  const toggleDir = (key: string) => setClosed((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const groups = groupChanges(status.files);
   const total = status.files.length;
   const staged = groups.staged.length;
@@ -55,9 +59,52 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
     if (ok) setMessage('');
   };
 
+  const letterOfGroup = (id: ChangeGroup, file: GitFileChange): Letter => (id === 'conflict' ? CONFLICT_LETTER : id === 'staged' ? letterOf(file.x) : letterOf(file.untracked ? '?' : file.y));
+
   const group = (id: ChangeGroup, title: string, files: GitFileChange[]) => {
     if (!files.length) return null;
     const source: Source = id === 'staged' ? 'staged' : id === 'untracked' ? 'untracked' : 'working';
+    const letterFor = (file: GitFileChange): string => letterOfGroup(id, file).letter;
+    const fileRow = (file: GitFileChange, depth: number, tree: boolean) => {
+      const letter = letterOfGroup(id, file);
+      return (
+        <div
+          key={`${id}:${file.path}`}
+          className="git-file"
+          role="button"
+          tabIndex={0}
+          style={tree ? { paddingLeft: 14 + depth * 12 } : undefined}
+          title={file.origPath ? `${file.origPath} → ${file.path}` : file.path}
+          onClick={() => onOpen(file, source)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onOpen(file, source); }}
+          onContextMenu={(e) => onMenu(e, file, source)}
+        >
+          <span className={`git-letter ${letter.cls}`} title={tr(letter.title)}>{letter.letter}</span>
+          <span className="git-file-name">{tree ? baseName(file.path) : <>{baseName(file.path)}<span className="git-file-dir">{dirName(file.path)}</span></>}</span>
+          {writable && <button
+            className="btn ghost small git-file-action"
+            disabled={busy}
+            aria-label={id === 'staged' ? tr('Usuń z commita') : tr('Dodaj do commita')}
+            title={id === 'staged' ? tr('Usuń z commita') : tr('Dodaj do commita')}
+            onClick={(e) => { e.stopPropagation(); if (id === 'staged') unstage(pathsOf([file])); else stage(pathsOf([file])); }}
+          >{id === 'staged' ? '−' : '+'}</button>}
+        </div>
+      );
+    };
+    const renderNodes = (nodes: ChangeNode[], depth: number): React.ReactNode[] => nodes.map((node) => {
+      if (node.file) return fileRow(node.file, depth, true);
+      const key = `${id}:${node.path}`;
+      const open = !closed.has(key);
+      return (
+        <div key={key}>
+          <div className="git-file git-dir" role="button" tabIndex={0} style={{ paddingLeft: 14 + depth * 12 }} aria-expanded={open} onClick={() => toggleDir(key)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDir(key); } }}>
+            <span className={`tree-chevron ${open ? 'open' : ''}`}><IChevron /></span>
+            <span className="git-file-name">{node.name}</span>
+          </div>
+          {open && renderNodes(node.children, depth + 1)}
+        </div>
+      );
+    });
     const bulk = id === 'staged'
       ? { label: tr('Usuń wszystko z commita'), onClick: () => unstage([], true) }
       : { label: tr('Dodaj wszystko do commita'), onClick: () => stage([], true) };
@@ -67,31 +114,7 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
           <span>{title} <span className="git-count">{files.length}</span></span>
           {writable && id !== 'conflict' && <button className="btn ghost small" disabled={busy} onClick={bulk.onClick} title={bulk.label} aria-label={bulk.label}>{id === 'staged' ? '−' : '+'}</button>}
         </div>
-        {files.map((file) => {
-          const letter: Letter = id === 'conflict' ? CONFLICT_LETTER : id === 'staged' ? letterOf(file.x) : letterOf(file.untracked ? '?' : file.y);
-          return (
-            <div
-              key={`${id}:${file.path}`}
-              className="git-file"
-              role="button"
-              tabIndex={0}
-              title={file.origPath ? `${file.origPath} → ${file.path}` : file.path}
-              onClick={() => onOpen(file, source)}
-              onKeyDown={(e) => { if (e.key === 'Enter') onOpen(file, source); }}
-              onContextMenu={(e) => onMenu(e, file, source)}
-            >
-              <span className={`git-letter ${letter.cls}`} title={tr(letter.title)}>{letter.letter}</span>
-              <span className="git-file-name">{baseName(file.path)}<span className="git-file-dir">{dirName(file.path)}</span></span>
-              {writable && <button
-                className="btn ghost small git-file-action"
-                disabled={busy}
-                aria-label={id === 'staged' ? tr('Usuń z commita') : tr('Dodaj do commita')}
-                title={id === 'staged' ? tr('Usuń z commita') : tr('Dodaj do commita')}
-                onClick={(e) => { e.stopPropagation(); if (id === 'staged') unstage(pathsOf([file])); else stage(pathsOf([file])); }}
-              >{id === 'staged' ? '−' : '+'}</button>}
-            </div>
-          );
-        })}
+        {view === 'tree' ? renderNodes(buildChangeTree(files), 0) : sortChanges(files, sort, letterFor).map((file) => fileRow(file, 0, false))}
       </div>
     );
   };

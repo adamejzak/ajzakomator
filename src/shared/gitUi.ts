@@ -51,4 +51,44 @@ export function chipRefs(refs: readonly GitRef[], max = 3): { shown: GitRef[]; m
   return { shown: sorted.slice(0, max), more: Math.max(0, sorted.length - max) };
 }
 
+export type ChangesView = 'list' | 'tree';
+export type ChangesSort = 'name' | 'path' | 'status';
+
+const STATUS_ORDER = '!MARDTCU';
+const byText = (a: string, b: string): number => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+
+/** The files of one group in the chosen order; `letterOf` says which status letter a file shows in that group. */
+export function sortChanges(files: readonly GitFileChange[], sort: ChangesSort, letterOf: (file: GitFileChange) => string): GitFileChange[] {
+  const rank = (file: GitFileChange): number => { const i = STATUS_ORDER.indexOf(letterOf(file)); return i < 0 ? STATUS_ORDER.length : i; };
+  return [...files].sort((a, b) => {
+    if (sort === 'name') return byText(baseName(a.path), baseName(b.path)) || byText(a.path, b.path);
+    if (sort === 'status') return rank(a) - rank(b) || byText(a.path, b.path);
+    return byText(a.path, b.path);
+  });
+}
+
+export interface ChangeNode { name: string; path: string; file?: GitFileChange; children: ChangeNode[] }
+
+/** The files of one group as folders and files: folders first, everything by name (a folder entry like "build/" stays a leaf). */
+export function buildChangeTree(files: readonly GitFileChange[]): ChangeNode[] {
+  const root: ChangeNode = { name: '', path: '', children: [] };
+  for (const file of files) {
+    const parts = file.path.replace(/\/+$/, '').split('/');
+    let node = root;
+    parts.forEach((part, index) => {
+      const path = parts.slice(0, index + 1).join('/');
+      const leaf = index === parts.length - 1;
+      let next = leaf ? undefined : node.children.find((child) => !child.file && child.name === part);
+      if (!next) { next = { name: part, path, children: [], ...(leaf ? { file } : {}) }; node.children.push(next); }
+      node = next;
+    });
+  }
+  const order = (nodes: ChangeNode[]): void => {
+    nodes.sort((a, b) => Number(!!a.file) - Number(!!b.file) || byText(a.name, b.name));
+    nodes.forEach((node) => order(node.children));
+  };
+  order(root.children);
+  return root.children;
+}
+
 export const LANE_COLORS = ['#60a5fa', '#4ade80', '#f59e0b', '#c084fc', '#f472b6', '#22d3ee', '#fb923c', '#a3e635'];

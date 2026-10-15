@@ -164,8 +164,6 @@ export interface GitApi {
   probe(projectId: string): Promise<GitProbe>;
   /** `git init` in the project folder (only when it is not a repository yet). */
   init(projectId: string): Promise<GitResult<{ message: string }>>;
-  /** Open pull requests or issues of the project's GitHub repository (read from its origin). */
-  github(projectId: string, kind: 'pulls' | 'issues'): Promise<import('./github').GithubResult>;
   /** Installs Git (winget / Xcode tools) or opens its download page. */
   installGit(): Promise<GitResult<{ message: string; restart: boolean }>>;
   worktrees(projectId: string, req?: { prefer?: string }): Promise<GitResult<GitWorktree[]>>;

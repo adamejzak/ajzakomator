@@ -56,6 +56,8 @@
 .git-file-stat { flex: none; font-size: 10.5px; }
 .git-panel .git-file-action { flex: none; width: 20px; height: 20px; padding: 0; border: 0; opacity: 0; }
 .git-file:hover .git-file-action, .git-file:focus-within .git-file-action { opacity: 1; }
+.git-dir { color: var(--text-2); }
+.git-dir .git-file-name { font-weight: 500; }
 .git-letter { flex: none; width: 16px; height: 16px; display: inline-grid; place-items: center; border-radius: 4px; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 10.5px; font-weight: 700; background: #ffffff0d; }
 .git-letter.add { color: #4ade80; background: #4ade8018; }
 .git-letter.del { color: #f87171; background: #f8717118; }
@@ -131,18 +133,6 @@
 .git-diff-line.note .code, .git-diff-line.meta .code { padding-left: 14px; }
 
 /* Trust model: a repository whose configuration can start programs is read-only until trusted */
-.git-github { flex: none; display: flex; flex-direction: column; border-top: 1px solid var(--border); max-height: 40%; min-height: 0; }
-.git-github-body { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.git-github-tabs { flex: none; display: flex; gap: 2px; padding: 0 10px 4px; }
-.git-github-tabs button { padding: 2px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--text-2); font: inherit; font-size: 11px; cursor: pointer; }
-.git-github-tabs button:hover { background: var(--bg-hover); color: var(--text); }
-.git-github-tabs button.on { background: #ffffff12; color: var(--text); }
-.git-github-list { min-height: 0; overflow-y: auto; }
-.git-pr { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 4px 12px; border: 0; background: transparent; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
-.git-pr:hover, .git-pr:focus-visible { background: var(--bg-hover); color: var(--text); outline: none; }
-.git-pr-title { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.git-pr-num { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
-.git-pr-meta { font-size: 10.5px; }
 .git-setup { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 10px; padding: 14px; border: 1px solid #ffffff10; border-radius: 10px; background: #1b1b1b; color: var(--text-2); line-height: 1.5; }
 .git-setup strong { color: var(--text); font-size: 12.5px; }
 .git-setup p { margin: 0; font-size: 11.5px; color: var(--muted); }
@@ -159,3 +149,5 @@
 .git-branch.static { cursor: default; }
 .git-branch.static:hover { background: transparent; }
 .git-commit-box .git-note { padding: 0; font-size: 10.5px; }
+.git-panel .git-section-head .git-actions .btn { height: 24px; }
+.git-section-head .git-actions { margin-left: 2px; }
