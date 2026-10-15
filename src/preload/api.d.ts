@@ -67,8 +67,13 @@ export interface McApi {
   loadAlertSound(event: AlertEventId, knownKey?: string): Promise<{ ok: true; key: string; data: Uint8Array | null } | { ok: false }>;
   systemBeep(): void;
   pathExists(path: string): Promise<boolean>;
+  /** Folder, file or gone, for absolute paths (files dropped from the system file manager). */
+  pathKinds(paths: string[]): Promise<Array<'dir' | 'file' | null>>;
+  /** The absolute path of a File from a drop ('' when it has none). */
+  pathForFile(file: File): string;
   listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;
-  readProjectFile(projectId: string, relativePath: string): Promise<ProjectFilePreview>;
+  /** `large`: the editor's read (images, Parquet tables and up to 8 MB of text); without it the small preview. */
+  readProjectFile(projectId: string, relativePath: string, large?: boolean): Promise<ProjectFilePreview>;
   listProjectDirectories(projectId: string): Promise<{ ok: true; paths: string[]; truncated: boolean } | { ok: false; error: string }>;
   searchProject(projectId: string, options: SearchOptions): Promise<SearchResult>;
   replaceInProject(projectId: string, request: ReplaceRequest): Promise<ReplaceResult>;

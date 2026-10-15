@@ -75,17 +75,63 @@ export async function listProjectDirectories(root: string, limit = 2500): Promis
   }
 }
 
-export async function readProjectFile(root: string, path: string): Promise<ProjectFilePreview> {
+/** The editor opens bigger files read-only: this much of the beginning is loaded (the rest stays on disk). */
+export const LARGE_VIEW_BYTES = 8 * 1024 * 1024;
+const IMAGE_BYTES = 20 * 1024 * 1024;
+const PARQUET_ROWS = 1000;
+const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif' };
+const extensionOf = (path: string): string => path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+
+/** A cell as shown in the table: dates, bigints, nested values and bytes become readable text. */
+function cellText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  if (typeof value === 'bigint') return value.toString();
+  if (value instanceof Uint8Array) return `<${value.byteLength} B>`;
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value, (_k, v) => typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? `<${v.byteLength} B>` : v); } catch { return String(value); }
+  }
+  return String(value);
+}
+
+async function readParquet(target: string, size: number): Promise<ProjectFilePreview> {
+  try {
+    const { asyncBufferFromFile, parquetMetadataAsync, parquetReadObjects, parquetSchema } = await import('hyparquet');
+    const { compressors } = await import('hyparquet-compressors');
+    const file = await asyncBufferFromFile(target);
+    const metadata = await parquetMetadataAsync(file);
+    const fields = parquetSchema(metadata).children;
+    const columns = fields.map((field) => field.element.name);
+    const types = fields.map((field) => String(field.element.logical_type?.type ?? field.element.converted_type ?? field.element.type ?? ''));
+    const objects = await parquetReadObjects({ file, metadata, compressors, rowStart: 0, rowEnd: PARQUET_ROWS, utf8: true });
+    const rows = objects.map((row) => columns.map((name) => cellText((row as Record<string, unknown>)[name])));
+    return { kind: 'table', format: 'parquet', columns, types, rows, totalRows: Number(metadata.num_rows), size };
+  } catch {
+    return { kind: 'error', message: 'Nie udało się odczytać pliku Parquet.' };
+  }
+}
+
+/** `limit` is how much of the beginning of a text file is returned (the preview modal and search keep the small default). */
+export async function readProjectFile(root: string, path: string, limit = PREVIEW_BYTES): Promise<ProjectFilePreview> {
   try {
     const target = await projectFilePath(root, path);
     const file = await open(target, 'r');
     try {
       const stat = await file.stat();
       if (!stat.isFile()) return { kind: 'error', message: 'Wybierz plik, aby zobaczyć jego treść.' };
-      const buffer = Buffer.alloc(PREVIEW_BYTES + 1);
+      const extension = extensionOf(path);
+      const mime = IMAGE_MIME[extension];
+      if (mime && limit > PREVIEW_BYTES) {
+        if (stat.size > IMAGE_BYTES) return { kind: 'binary', size: stat.size };
+        const bytes = await file.readFile();
+        return { kind: 'image', mime, dataUrl: `data:${mime};base64,${bytes.toString('base64')}`, size: stat.size };
+      }
+      if (extension === 'parquet' && limit > PREVIEW_BYTES) return await readParquet(target, stat.size);
+      const cap = Math.max(PREVIEW_BYTES, Math.min(limit, LARGE_VIEW_BYTES));
+      const buffer = Buffer.alloc(Math.min(stat.size, cap) + 1);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      const truncated = bytesRead > PREVIEW_BYTES;
-      const data = buffer.subarray(0, Math.min(bytesRead, PREVIEW_BYTES));
+      const truncated = bytesRead > cap;
+      const data = buffer.subarray(0, Math.min(bytesRead, cap));
       const utf16 = data[0] === 0xff && data[1] === 0xfe ? 'utf-16le'
         : data[0] === 0xfe && data[1] === 0xff ? 'utf-16be' : null;
       if (!utf16 && data.includes(0)) return { kind: 'binary', size: stat.size };

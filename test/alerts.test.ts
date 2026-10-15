@@ -16,6 +16,16 @@ const ctx = (patch: Partial<AlertContext> = {}): AlertContext => ({
 const withAlerts = (patch: Partial<AlertSettings>): AlertSettings => ({ ...defaultAlerts(), ...patch });
 
 describe('decideAlert', () => {
+  it('raises nothing at all while the master switch is off, and keeps the rest of the settings', () => {
+    const off = withAlerts({ enabled: false });
+    for (const reason of ['done', 'attention', 'error'] as const) {
+      expect(decideAlert(off, ctx({ reason }))).toMatchObject({ notify: false, sound: null, suppressed: 'disabled' });
+    }
+    expect(normalizeAlerts({ ...off, events: off.events }).enabled).toBe(false);
+    expect(normalizeAlerts({}).enabled).toBe(true);
+    expect(defaultAlerts().enabled).toBe(true);
+  });
+
   it('chooses the event from the hook reason', () => {
     expect(decideAlert(defaultAlerts(), ctx({ reason: 'done' })).event).toBe('done');
     expect(decideAlert(defaultAlerts(), ctx({ reason: 'attention' })).event).toBe('attention');
@@ -163,7 +173,7 @@ describe('alerts normalization', () => {
 
   it('keeps valid values', () => {
     const raw = {
-      volume: 0.35, notifyWhenFocused: true, quietHours: { enabled: true, start: '23:15', end: '06:45' },
+      enabled: false, volume: 0.35, notifyWhenFocused: true, quietHours: { enabled: true, start: '23:15', end: '06:45' },
       events: {
         done: { notify: false, sound: { kind: 'file', path: 'C:\\a\\b.wav' } },
         attention: { notify: true, sound: { kind: 'system' } },

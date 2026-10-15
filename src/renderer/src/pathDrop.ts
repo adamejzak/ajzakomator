@@ -66,6 +66,35 @@ export async function addPathsToCell(cellId: string, items: PathItem[], rejected
   focusCell(cellId);
 }
 
+/** Files and folders dragged in from the system file manager: their own absolute paths go into the input, like a tree drop. */
+export async function addDroppedFilesToCell(cellId: string, files: File[]): Promise<void> {
+  const all = files.map((file) => window.mc.pathForFile(file)).filter(Boolean);
+  if (!all.length) return void toast(tr('Nie udało się dodać ścieżki.'), 'error');
+  const capped = capItems(all);
+  if (capped.cut) toast(tr('Dodano pierwsze {count} ścieżek', { count: MAX_DROP_ITEMS }));
+  const state = getS();
+  const found = findCell(state, cellId);
+  if (!found) return void toast(tr('Nie udało się dodać ścieżki.'), 'error');
+  const ui = getUi();
+  const block = dropBlock({ held: ui.heldCells[cellId] === true, error: !!ui.cellErrors[cellId], started: isStarted(cellId), status: ui.statuses[cellId] ?? 'idle' });
+  if (block === 'starting') {
+    ensureStarted(cellId);
+    return void toast(tr('Komórka dopiero się uruchamia - upuść ścieżkę ponownie za chwilę.'));
+  }
+  if (block) return void toast(tr('Nie dodano ścieżki: komórka nie jest uruchomiona.'), 'error');
+  const kinds = await window.mc.pathKinds(capped.items);
+  const resolved = capped.items.flatMap((abs, i) => (kinds[i] ? [{ kind: kinds[i]!, abs }] : []));
+  let rejected = capped.items.length - resolved.length;
+  if (!findCell(getS(), cellId) || cellRefusesPaths(cellId)) return void toast(tr('Nie dodano ścieżki: komórka nie jest uruchomiona.'), 'error');
+  const format = cellDropFormat(cellId)!;
+  const { text, skipped } = buildPathText(format.target, resolved, { cwd: format.cwd, platform: window.mc.platform, shell: state.settings.shell });
+  rejected += skipped;
+  if (rejected > 0) toast(tr('Pominięto elementy, których nie można dodać: {count}', { count: rejected }), 'error');
+  if (!text) return;
+  terminals.paste(cellId, text, false);
+  focusCell(cellId);
+}
+
 /** The focused cell of the visible grid (where "Add to conversation" from the tree sends its items), or null. */
 export function focusedCellId(): string | null {
   const id = getUi().focusedCellId;

@@ -18,12 +18,9 @@ export interface PanelDef {
 
 export const DEFAULT_PANEL = 'projects';
 
-/** The Git tile needs a project that is a git repository on a machine that has git. */
+/** The Git tile needs a project; without a repository (or without git) the panel itself offers `git init` / installing Git. */
 export function gitPanelReason(ctx: PanelContext): MessageKey | null {
-  if (!ctx.hasProject) return 'Najpierw dodaj projekt';
-  if (ctx.git === 'no-repo') return 'To nie jest repozytorium git';
-  if (ctx.git === 'no-git') return 'Nie znaleziono gita. Zainstaluj Git (git-scm.com).';
-  return null;
+  return ctx.hasProject ? null : 'Najpierw dodaj projekt';
 }
 
 export function visiblePanels<T extends PanelDef>(defs: readonly T[], ctx: PanelContext): T[] {

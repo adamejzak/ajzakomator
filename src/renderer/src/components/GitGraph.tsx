@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import type { GraphRow } from '../../../shared/git';
 import { LANE_COLORS } from '../../../shared/gitUi';
 
-export const GRAPH_ROW = 32;
+export const GRAPH_ROW = 24;
 const LANE = 11;
 const MAX_LANES = 6;
 
@@ -35,7 +35,7 @@ export function GitGraph({ row, lanes }: { row: GraphRow; lanes: number }) {
   return (
     <svg className="git-graph" width={width} height={GRAPH_ROW} viewBox={`0 0 ${width} ${GRAPH_ROW}`} aria-hidden>
       <g strokeWidth="1.6" strokeLinecap="round">{lines}</g>
-      <circle cx={x(row.col)} cy={mid} r="3.4" fill={color(row.col)} stroke="var(--bg)" strokeWidth="1.5" />
+      <circle cx={x(row.col)} cy={mid} r="3.2" fill={color(row.col)} stroke="var(--bg)" strokeWidth="1.5" />
     </svg>
   );
 }

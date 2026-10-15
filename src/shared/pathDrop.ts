@@ -77,7 +77,6 @@ export function parsePathPayload(raw: unknown, platform: AppPlatform = 'linux'):
   return { items, rejected, cut };
 }
 
-const separatorOf = (platform: AppPlatform) => (platform === 'win32' ? '\\' : '/');
 const slashes = (path: string, platform: AppPlatform) => (platform === 'win32' ? path.replace(/\\/g, '/') : path);
 
 /** `abs` relative to `cwd` with forward slashes when it lies inside it ("." for the folder itself); otherwise null. */
@@ -138,8 +137,9 @@ export function buildPathText(
     else if (target === 'shell') token = quoteForShell(abs, opts.shell);
     else {
       const inside = relativeInside(opts.cwd, abs, opts.platform);
-      const base = inside ?? abs;
-      const path = item.kind === 'dir' ? (base.endsWith('/') || base.endsWith('\\') ? base : base + (inside === null ? separatorOf(opts.platform) : '/')) : base;
+      // Agents get forward slashes everywhere (Windows accepts them too): backslashes in a path or an @mention confuse Codex.
+      const base = (inside ?? abs).replace(/\\/g, '/');
+      const path = item.kind === 'dir' && !base.endsWith('/') ? `${base}/` : base;
       const spaced = /\s/.test(path);
       if (spaced && path.includes('"')) token = path; // cannot be quoted: the plain path still tells the agent what is meant
       else if (spaced) token = target === 'claude' ? `@"${path}"` : `"${path}"`;

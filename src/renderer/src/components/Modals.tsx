@@ -1,6 +1,6 @@
 import { matchesShortcut, shortcutText } from '../shortcuts';
 import { tr, useI18n } from '../i18n';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { describeLayout } from '../../../shared/layout';
 import {
   deleteArchived, getProfile, PROJECT_COLORS, removeSnippet, uid, updateProject, upsertSnippet,
@@ -18,8 +18,6 @@ import { IEdit, IGrip, IX } from './icons';
 import { ProjectIconView } from './ProjectIcon';
 import { FilePreview } from './FilePreview';
 import { formatAgo } from '../../../shared/i18n';
-
-const GitDiffModal = lazy(() => import('./GitDiffModal'));
 
 export function Modals() {
   const modal = useStore((st) => st.ui.modal);
@@ -51,7 +49,6 @@ export function Modals() {
           {modal.kind === 'snippet' && <SnippetEditor key={modal.snippetId ?? modal.projectId ?? 'new'} snippetId={modal.snippetId} projectId={modal.projectId} />}
           {modal.kind === 'project' && <ProjectEditor key={modal.projectId} projectId={modal.projectId} />}
           {modal.kind === 'file' && <FilePreview projectId={modal.projectId} relativePath={modal.relativePath} />}
-          {modal.kind === 'gitDiff' && <Suspense fallback={null}><GitDiffModal key={`${modal.worktree}:${modal.source}:${modal.hash}:${modal.path}`} {...modal} /></Suspense>}
           {modal.kind === 'auth' && <AuthModal key={`${modal.provider}:${JSON.stringify(modal.target)}`} provider={modal.provider} target={modal.target} />}
         </div>
       )}

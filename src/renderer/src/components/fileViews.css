@@ -1,0 +1,24 @@
+/* Read-only editor views: tables, images, large text */
+.data-view, .large-view, .image-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.data-scroll, .large-scroll { flex: 1; min-height: 0; overflow: auto; outline: none; }
+.data-view, .large-view { font-size: calc(12px * var(--file-zoom, 1)); }
+.data-row { display: grid; align-items: center; height: calc(20px * var(--file-zoom, 1)); width: max-content; min-width: 100%; }
+.data-view .data-row[role=row]:not(.data-head) { position: absolute; left: 0; }
+.data-cell { min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: inherit; line-height: calc(20px * var(--file-zoom, 1)); color: var(--text-2); border-right: 1px solid #ffffff08; }
+.data-head { position: sticky; top: 0; z-index: 1; height: calc(24px * var(--file-zoom, 1)); background: #1d1d1d; border-bottom: 1px solid var(--border); }
+.data-head .data-cell { color: var(--text); font-weight: 600; line-height: calc(24px * var(--file-zoom, 1)); }
+.data-head .data-cell em { margin-left: 6px; font-style: normal; font-weight: 400; font-size: 10px; color: var(--muted); }
+.data-index { position: sticky; left: 0; text-align: right; color: var(--muted); background: var(--bg); }
+.data-head .data-index { background: #1d1d1d; }
+.data-null { color: var(--muted); font-style: italic; }
+.data-row:hover .data-cell { background: var(--bg-hover); }
+
+.large-line { position: absolute; left: 0; display: flex; height: calc(20px * var(--file-zoom, 1)); white-space: pre; font-family: 'Cascadia Mono', Consolas, monospace; font-size: inherit; line-height: calc(20px * var(--file-zoom, 1)); }
+.large-no { position: sticky; left: 0; flex: none; width: calc(var(--digits) + 20px); padding-right: 12px; text-align: right; color: #5a5a5a; background: var(--bg); user-select: none; }
+.large-code { padding-right: 24px; color: var(--text-2); user-select: text; }
+
+.image-stage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 16px; overflow: auto; background-color: #151515; background-image: conic-gradient(#1c1c1c 25%, transparent 0 50%, #1c1c1c 0 75%, transparent 0); background-size: 16px 16px; }
+.image-stage img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; }
+.image-meta { flex: none; padding: 6px 12px; font-size: 11.5px; border-top: 1px solid var(--border); }
+
+.tab-diff-tag { flex: none; margin-left: 4px; padding: 0 4px; border-radius: 3px; background: #ffffff14; color: var(--text-2); font-size: 9.5px; line-height: 14px; text-transform: uppercase; letter-spacing: .03em; }

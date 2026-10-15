@@ -73,7 +73,9 @@ function parseClaudeSession(headText: string, tailText: string, st: FileStat): S
   const all = [...head, ...tail];
   const id = all.find((e) => typeof e?.sessionId === 'string')?.sessionId;
   if (!id) return null;
-  const title = [...all].reverse().find((e) => e?.type === 'ai-title' && e.aiTitle)?.aiTitle ?? head.map(claudeText).find(Boolean);
+  // A title the user gave with /rename wins over the generated one; the latest entry of either kind counts.
+  const newest = (type: string, key: string) => [...all].reverse().find((e) => e?.type === type && typeof e[key] === 'string' && e[key])?.[key];
+  const title = newest('custom-title', 'customTitle') ?? newest('ai-title', 'aiTitle') ?? head.map(claudeText).find(Boolean);
   if (!title) return null; // sessions without any user prompt are noise
   const firstTs = head.find((e) => e?.timestamp)?.timestamp;
   return {

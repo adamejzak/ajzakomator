@@ -2,11 +2,12 @@ import type { ReactNode } from 'react';
 import brandIcon from '../../../../resources/icon-64.png';
 
 const Svg = ({ children, size = 14 }: { children: ReactNode; size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     {children}
   </svg>
 );
 
+export const ICheck = () => <Svg><path d="M3 8.5l3.2 3.2L13 4.8" /></Svg>;
 export const IPlus = () => <Svg><path d="M8 3v10M3 8h10" /></Svg>;
 export const IX = () => <Svg size={12}><path d="M4 4l8 8M12 4l-8 8" /></Svg>;
 export const IMax = () => <Svg size={12}><rect x="3" y="3" width="10" height="10" rx="1.5" /></Svg>;
@@ -28,6 +29,8 @@ export const IEdit = () => <Svg size={12}><path d="M10.5 2.5l3 3L6 13H3v-3z" /><
 export const IBranch = () => <Svg size={11}><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="5.5" r="1.5" /><path d="M4.5 5v6M11.5 7c0 3-7 2-7 4" /></Svg>;
 export const IChangelog = () => <Svg><path d="M3 3.5h10M3 8h10M3 12.5h6" /><path d="M12 10.5v4M10 12.5h4" /></Svg>;
 export const ITerminalTab = () => <Svg><path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5z" /><path d="M5 6.5l2 1.5-2 1.5M8.5 10h2.5" /></Svg>;
+export const ICloud = () => <Svg size={12}><path d="M4.5 12.5a3 3 0 0 1-.4-5.97 4 4 0 0 1 7.7 1.07A2.5 2.5 0 0 1 11.5 12.5z" /></Svg>;
+export const ITag = () => <Svg size={11}><path d="M8.6 2H13a1 1 0 0 1 1 1v4.4a1 1 0 0 1-.3.7l-5.6 5.6a1 1 0 0 1-1.4 0L2.3 9.3a1 1 0 0 1 0-1.4l5.6-5.6a1 1 0 0 1 .7-.3z" /><path d="M11 5h.01" /></Svg>;
 export const IChevron = () => <Svg size={10}><path d="M4 6l4 4 4-4" /></Svg>;
 
 /** Supplied brand artwork, shared with the installer and update splash. */
@@ -39,7 +42,7 @@ export function Logo({ size = 18 }: { size?: number }) {
 
 // Toolbar icons drawn on a 24px grid (crisp at 18px).
 const T = ({ children }: { children: ReactNode }) => (
-  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     {children}
   </svg>
 );

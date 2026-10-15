@@ -9,3 +9,12 @@ export function SettingRow({ title, hint, htmlFor, children }: { title: ReactNod
     <div className="setting-control">{children}</div>
   </div>;
 }
+
+/** A titled card of settings; a page with several topics shows several of them. */
+export function SettingsGroup({ title, description, children }: { title?: ReactNode; description?: ReactNode; children: ReactNode }) {
+  return <section className="settings-group">
+    {title && <h3 className="settings-group-title">{title}</h3>}
+    {description && <p className="settings-group-desc">{description}</p>}
+    <div className="settings-card">{children}</div>
+  </section>;
+}

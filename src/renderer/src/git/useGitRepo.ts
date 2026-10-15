@@ -11,6 +11,8 @@ export interface GitRepoState {
   loading: boolean;
   /** Reads the status after `delay` ms (calls within the delay collapse into one). */
   refresh(delay?: number): void;
+  /** Reads the status now and resolves when it is in (for a visible "refreshing" state). */
+  reload(): Promise<void>;
 }
 
 /**
@@ -53,5 +55,5 @@ export function useGitRepo(projectId: string, worktree: string | undefined, enab
     return () => { window.clearTimeout(timer.current); sequence.current++; window.removeEventListener('focus', onFocus); };
   }, [load, refresh, enabled]);
 
-  return { status, error, loading, refresh };
+  return { status, error, loading, refresh, reload: load };
 }

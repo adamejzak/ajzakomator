@@ -16,13 +16,15 @@ export function StatusBar() {
   const checking = useHoldBusy(u.status === 'checking' || clicked, 800);
   const check = () => { setClicked(true); requestUpdateCheck(); setTimeout(() => setClicked(false), 50); };
   const version = u.version ?? '';
+  let currentTitle = '';
 
   const status = (() => {
     switch (u.status) {
       case 'current': {
         const when = u.checkedAt ? new Date(u.checkedAt).toLocaleTimeString(language) : '';
         const title = when && u.version ? tr('Ostatnie sprawdzenie: {time} · najnowsza wersja: {version}', { time: when, version: u.version }) : tr('Sprawdź aktualizacje');
-        return <button className="sb-btn sb-current" onClick={check} title={`${tr('Masz najnowszą wersję')} · ${title}`} aria-label={tr('Masz najnowszą wersję')}><span className="sb-dot ok" aria-hidden /></button>;
+        currentTitle = `${tr('Masz najnowszą wersję')} · ${title}`;
+        return null;
       }
       case 'downloading': {
         const percent = Math.round(Math.min(100, Math.max(0, Number.isFinite(u.percent) ? u.percent! : 0)));
@@ -58,12 +60,15 @@ export function StatusBar() {
     }
   })();
 
+  const dot = u.status === 'current' ? 'ok' : ['available', 'ready', 'downloading'].includes(u.status) ? 'new' : u.status === 'error' ? 'err' : '';
   const shown = checking && !['downloading', 'ready', 'available', 'installing', 'error', 'unavailable'].includes(u.status)
     ? <span className="sb-item" role="status"><RefreshIcon spinning />{tr('Sprawdzanie aktualizacji…')}</span>
     : status;
   return (
     <footer className="statusbar">
-      {currentVersion && <span className="sb-version" title={tr('Wersja {version}', { version: currentVersion })}>v{currentVersion}</span>}
+      {currentVersion && <button className="sb-version" onClick={check} title={currentTitle || `${tr('Wersja {version}', { version: currentVersion })} · ${tr('Sprawdź aktualizacje')}`} aria-label={`${tr('Wersja {version}', { version: currentVersion })}. ${tr('Sprawdź aktualizacje')}`}>
+        <span className={`sb-dot ${dot}`} aria-hidden />v{currentVersion}
+      </button>}
       {shown}
       <BackgroundLoadHint />
       <span className="sb-spacer" />

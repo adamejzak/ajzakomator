@@ -1,3 +1,4 @@
+.markdown-preview, .markdown-body { zoom: var(--file-zoom, 1); }
 .markdown-view-toggle { display: inline-flex; flex: none; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; background: #151719; }
 .markdown-view-toggle .btn { border-color: transparent; }
 .markdown-view-toggle .btn.primary { background: #303740; border-color: #465260; color: #eef3f9; }

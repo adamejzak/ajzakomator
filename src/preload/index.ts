@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { release } from 'os';
 import type { McApi } from './api';
 import { appPlatform } from '../shared/platform';
@@ -31,9 +31,11 @@ const api: McApi = {
   loadAlertSound: (event, knownKey) => ipcRenderer.invoke('sound:load', event, knownKey),
   systemBeep: () => ipcRenderer.send('sound:beep'),
   pathExists:(path) => ipcRenderer.invoke('fs:exists', path),
+  pathKinds: (paths) => ipcRenderer.invoke('fs:pathKinds', paths),
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   listProjectDirectory: (projectId, path = '') => ipcRenderer.invoke('fs:listProjectDirectory', projectId, path),
   writeProjectFile: (projectId, path, text, expectedText) => ipcRenderer.invoke('fs:writeProjectFile', projectId, path, text, expectedText),
-  readProjectFile: (projectId, path) => ipcRenderer.invoke('fs:readProjectFile', projectId, path),
+  readProjectFile: (projectId, path, large) => ipcRenderer.invoke('fs:readProjectFile', projectId, path, large),
   listProjectDirectories: (projectId) => ipcRenderer.invoke('fs:listProjectDirectories', projectId),
   searchProject: (projectId, options) => ipcRenderer.invoke('fs:searchProject', projectId, options),
   replaceInProject: (projectId, request) => ipcRenderer.invoke('fs:replaceInProject', projectId, request),
@@ -48,6 +50,9 @@ const api: McApi = {
   removeWorktree: (projectPath, wt, deleteBranch) => ipcRenderer.invoke('git:removeWorktree', projectPath, wt, deleteBranch),
   git: {
     probe: (projectId) => ipcRenderer.invoke('git:probe', projectId),
+    init: (projectId) => ipcRenderer.invoke('git:init', projectId),
+    github: (projectId, kind) => ipcRenderer.invoke('github:list', projectId, kind),
+    installGit: () => ipcRenderer.invoke('git:installGit'),
     worktrees: (projectId, req) => ipcRenderer.invoke('git:worktrees', projectId, req),
     status: (projectId, req) => ipcRenderer.invoke('git:status', projectId, req),
     log: (projectId, req) => ipcRenderer.invoke('git:log', projectId, req),

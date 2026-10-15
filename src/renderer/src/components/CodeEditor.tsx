@@ -22,7 +22,44 @@ import { standardSQL } from '@codemirror/legacy-modes/mode/sql';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import './file-workspace.css';
 
+/** .env files: `# comments`, `export KEY=value`, quoted values and ${VAR} references. */
+const dotenv = StreamLanguage.define<{ value: boolean }>({
+  startState: () => ({ value: false }),
+  token(stream, state) {
+    if (stream.sol()) state.value = false;
+    if (!state.value) {
+      if (stream.eatSpace()) return null;
+      if (stream.peek() === '#') { stream.skipToEnd(); return 'comment'; }
+      if (stream.match(/^export\s+/)) return 'keyword';
+      if (stream.match(/^[A-Za-z_][\w.-]*/)) return 'propertyName';
+      if (stream.eat('=')) { state.value = true; return 'operator'; }
+      stream.next();
+      return 'invalid';
+    }
+    if (stream.eatSpace()) return null;
+    const quote = stream.peek();
+    if (quote === '"' || quote === "'") {
+      stream.next();
+      let escaped = false;
+      for (let ch = stream.next(); ch != null; ch = stream.next()) {
+        if (ch === quote && !escaped) break;
+        escaped = quote === '"' && ch === '\\' && !escaped;
+      }
+      return 'string';
+    }
+    if (stream.match(/^\$\{[^}]*\}|^\$[A-Za-z_]\w*/)) return 'variableName';
+    if (stream.peek() === '#' && stream.pos > 0 && /\s/.test(stream.string[stream.pos - 1] ?? '')) { stream.skipToEnd(); return 'comment'; }
+    if (stream.match(/^-?\d+(\.\d+)?(?=\s|$)/)) return 'number';
+    if (stream.match(/^(true|false|null)(?=\s|$)/i)) return 'bool';
+    stream.next();
+    return 'string';
+  },
+  languageData: { commentTokens: { line: '#' } },
+});
+
 function languageForFile(path: string): Extension {
+  const name = path.split('/').pop()?.toLowerCase() ?? '';
+  if (name === '.env' || name.startsWith('.env.') || name.endsWith('.env') || name === '.envrc') return dotenv;
   const extension = path.split('.').pop()?.toLowerCase();
   if (['js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx'].includes(extension ?? '')) {
     return javascript({ typescript: ['ts', 'mts', 'cts', 'tsx'].includes(extension!), jsx: ['jsx', 'tsx'].includes(extension!) });
@@ -44,6 +81,7 @@ function languageForFile(path: string): Extension {
     case 'cs': return StreamLanguage.define(csharp);
     case 'sql': return StreamLanguage.define(standardSQL);
     case 'toml': return StreamLanguage.define(toml);
+    case 'env': case 'properties': case 'ini': case 'cfg': case 'conf': return dotenv;
     default: return [];
   }
 }
@@ -63,7 +101,7 @@ const colors = syntaxHighlighting(HighlightStyle.define([
   { tag: [tags.invalid], color: '#ef8e8e' },
 ]));
 const theme = EditorView.theme({
-  '&': { height: '100%', backgroundColor: 'var(--bg)', color: '#d6d6d6', fontSize: '13px' },
+  '&': { height: '100%', backgroundColor: 'var(--bg)', color: '#d6d6d6', fontSize: 'calc(13px * var(--file-zoom, 1))' },
   '.cm-scroller': { overflow: 'auto', fontFamily: 'Consolas, Menlo, monospace', lineHeight: '1.7' },
   '.cm-content': { padding: '12px 0', caretColor: '#eeeeee' },
   '.cm-line': { padding: '0 16px' },

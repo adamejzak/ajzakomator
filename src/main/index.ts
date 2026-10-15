@@ -3,7 +3,8 @@ import { execFile, spawn, spawnSync } from 'child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell, type OpenDialogOptions } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
+import { stat } from 'fs/promises';
 import type { SpawnCellRequest } from '../preload/api';
 import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
@@ -13,7 +14,8 @@ import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
-import { listProjectDirectories, listProjectDirectory, readProjectFile, writeProjectFile } from './files';
+import { applyDockIcon, windowIcon } from './appIcon';
+import { LARGE_VIEW_BYTES, listProjectDirectories, listProjectDirectory, readProjectFile, writeProjectFile } from './files';
 import { registerFileOpsIpc } from './filesIpc';
 import { registerGitIpc } from './gitIpc';
 import { replaceInProject, searchProject } from './search';
@@ -308,7 +310,7 @@ function createWindow(): void {
     minHeight: 500,
     backgroundColor: '#0d0d0d',
     title: 'unimux',
-    icon: join(app.getAppPath(), 'resources', 'icon.png'),
+    icon: windowIcon(),
     titleBarStyle: 'hidden',
     ...(process.platform === 'darwin'
       ? { trafficLightPosition: { x: 12, y: 10 } }
@@ -569,6 +571,14 @@ ipcMain.handle('sound:pick', async () => {
 ipcMain.handle('sound:load', (_e, event?: unknown, knownKey?: unknown) => loadEventSound(state.settings.alerts, event, knownKey));
 ipcMain.on('sound:beep', () => shell.beep());
 ipcMain.handle('fs:exists',(_e, p: string) => existsSync(p));
+/** Files dropped from the system file manager: whether each absolute path is a folder, a file or gone. */
+ipcMain.handle('fs:pathKinds', async (_e, paths: unknown): Promise<Array<'dir' | 'file' | null>> => {
+  if (!Array.isArray(paths) || paths.length > 200) return [];
+  return Promise.all(paths.map(async (p) => {
+    if (typeof p !== 'string' || !isAbsolute(p) || p.includes('\0')) return null;
+    try { const info = await stat(p); return info.isDirectory() ? 'dir' as const : info.isFile() ? 'file' as const : null; } catch { return null; }
+  }));
+});
 ipcMain.handle('fs:listProjectDirectory', (_e, projectId: string, path: string) => {
   const project = state.projects.find((p) => p.id === projectId);
   return project ? listProjectDirectory(project.path, path) : { ok: false, error: 'Projekt już nie istnieje.' };
@@ -585,9 +595,9 @@ ipcMain.handle('fs:replaceInProject', (_e, projectId: string, request: ReplaceRe
   const project = state.projects.find((p) => p.id === projectId);
   return project ? replaceInProject(project.path, request) : { ok: false, error: 'Projekt już nie istnieje.' };
 });
-ipcMain.handle('fs:readProjectFile', (_e, projectId: string, path: string) => {
+ipcMain.handle('fs:readProjectFile', (_e, projectId: string, path: string, large?: boolean) => {
   const project = state.projects.find((p) => p.id === projectId);
-  return project ? readProjectFile(project.path, path) : { kind: 'error', message: 'Projekt już nie istnieje.' };
+  return project ? readProjectFile(project.path, path, large === true ? LARGE_VIEW_BYTES : undefined) : { kind: 'error', message: 'Projekt już nie istnieje.' };
 });
 ipcMain.handle('fs:writeProjectFile', (_e, projectId: string, path: string, text: string, expectedText: string) => {
   const project = state.projects.find((p) => p.id === projectId);
@@ -839,6 +849,7 @@ async function startMainApp(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  applyDockIcon();
   if (superseded) return;
   // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
   Menu.setApplicationMenu(null);

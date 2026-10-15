@@ -7,6 +7,8 @@ import { openMenu } from './ContextMenu';
 import { IChevron, IFolder } from './icons';
 import { FileIcon } from './FileIcon';
 import { RefreshIcon, useHoldBusy } from './Spinner';
+import { refreshGitBadges, useGitBadgeSync, useProjectBadges } from '../git/gitBadges';
+import { badgeFor } from '../../../shared/gitBadges';
 import { ProjectIconView } from './ProjectIcon';
 import { fullProjectPath as projectPath } from '../../../shared/platform';
 import { baseName, parentPath, renameSelectionEnd, summarizeNames, topLevelPaths, validateEntryName } from '../../../shared/fileOps';
@@ -98,6 +100,7 @@ function Directory({ path, depth }: DirectoryProps) {
   const { tr, errorText } = useI18n();
   const tree = useContext(Tree);
   const { project, expanded, refresh } = tree;
+  const badges = useProjectBadges(project.id);
   const [listing, setListing] = useState<ProjectDirectory | null>(null);
   const [retry, setRetry] = useState(0);
   const loadedKey = useRef('');
@@ -158,6 +161,11 @@ function Directory({ path, depth }: DirectoryProps) {
                 {folder ? <span className={`explorer-folder-icon ${open ? 'open' : ''}`}><IFolder /></span> : <FileIcon name={entry.name} />}
                 <span className="file-name">{entry.name}</span>
                 {entry.kind === 'symlink' && <span className="muted">↗</span>}
+                {(() => {
+                  const mark = badgeFor(badges, entry.path, folder);
+                  if (mark.letter) return <span className={`file-git git-letter ${mark.letter.cls}`} title={tr(mark.letter.title)}>{mark.letter.letter}</span>;
+                  return mark.dot ? <span className={`file-git git-dot ${mark.dot}`} aria-hidden /> : null;
+                })()}
               </button>
             )}
             {folder && open && <Directory path={entry.path} depth={depth + 1} />}
@@ -191,7 +199,8 @@ export function ProjectExplorer({ project }: { project: Project }) {
   const selected = new Set(selection?.paths ?? []);
   const cut = new Set(clipboard && clipboard.mode === 'cut' && clipboard.projectId === project.id ? clipboard.paths : []);
 
-  const reload = () => { bumpRefresh(); setManualRefresh(true); setTimeout(() => setManualRefresh(false), 50); };
+  useGitBadgeSync(project.id, project.path);
+  const reload = () => { bumpRefresh(); refreshGitBadges(project.id, 0); setManualRefresh(true); setTimeout(() => setManualRefresh(false), 50); };
   const expandAll = async () => {
     try {
       const result = await window.mc.listProjectDirectories(project.id);

@@ -9,3 +9,8 @@ import * as actions from './actions';
 import { useStore } from './store';
 import { terminals } from './terminals/TerminalManager';
 (window as unknown as { __mc: unknown }).__mc = { actions, useStore, terminals };
+
+// A file dropped anywhere the app does not handle must never make the window navigate to it.
+for (const type of ['dragover', 'drop'] as const) {
+  window.addEventListener(type, (e) => { if (!e.defaultPrevented && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
+}

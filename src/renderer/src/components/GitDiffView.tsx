@@ -1,14 +1,12 @@
-// Read-only unified diff of one file (working tree, index, an untracked file or a commit). Loaded on demand (lazy) from Modals.
+// Read-only unified diff of one file (working tree, index, an untracked file or a commit), shown in an editor tab. Loaded on demand (lazy) from FileEditor.
 import { useEffect, useMemo, useState } from 'react';
 import { GIT_DIFF_LINES, parseUnifiedDiff, type GitDiffResult, type GitDiffSource } from '../../../shared/git';
 import { useI18n } from '../i18n';
-import { closeModal } from '../store';
-import { IFile, IX } from './icons';
 import './gitPanel.css';
 
 interface Props { projectId: string; worktree?: string; source: GitDiffSource; path: string; oldPath?: string; hash?: string }
 
-export default function GitDiffModal({ projectId, worktree, source, path, oldPath, hash }: Props) {
+export default function GitDiffView({ projectId, worktree, source, path, oldPath, hash }: Props) {
   const { tr, errorText } = useI18n();
   const [result, setResult] = useState<GitDiffResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,14 +24,8 @@ export default function GitDiffModal({ projectId, worktree, source, path, oldPat
   const width = parsed ? String(Math.max(...parsed.lines.map((l) => Math.max(l.oldNo ?? 0, l.newNo ?? 0)), 1)).length : 1;
 
   return (
-    <div className="modal wide git-diff-modal" role="dialog" aria-label={tr('Zmiany w pliku')}>
-      <div className="modal-head">
-        <IFile />
-        <h3 title={path}>{path.split('/').pop()}</h3>
-        <span className="muted git-diff-source">{sourceLabel}</span>
-        <button className="btn ghost icon" aria-label={tr('Zamknij')} onClick={closeModal}><IX /></button>
-      </div>
-      <div className="git-diff-path muted" title={path}>{oldPath && oldPath !== path ? `${oldPath} → ${path}` : path}</div>
+    <div className="git-diff-view" aria-label={tr('Zmiany w pliku')}>
+      <div className="git-diff-path muted" title={path}><span className="git-diff-source">{sourceLabel}</span>{' · '}{oldPath && oldPath !== path ? `${oldPath} → ${path}` : path}</div>
       {!result && !error && <div className="git-diff-message muted">{tr('Wczytywanie…')}</div>}
       {error && <div className="git-diff-message error">{tr('Nie udało się wczytać zmian: {error}', { error: errorText(error) })}</div>}
       {result && parsed && (
@@ -57,7 +49,6 @@ export default function GitDiffModal({ projectId, worktree, source, path, oldPat
           )}
         </>
       )}
-      <div className="modal-foot"><button className="btn" onClick={closeModal}>{tr('Zamknij')}</button></div>
     </div>
   );
 }

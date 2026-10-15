@@ -13,7 +13,7 @@ import {
 } from '../actions';
 import { PATH_MIME, type DropTarget } from '../../../shared/pathDrop';
 import type { PathMode } from '../../../shared/types';
-import { addPathsToCell, cellDropFormat, cellRefusesPaths, readDroppedPaths } from '../pathDrop';
+import { addDroppedFilesToCell, addPathsToCell, cellDropFormat, cellRefusesPaths, readDroppedPaths } from '../pathDrop';
 import { setUi, toast, update, useStore } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { openMenu, openMenuAt, type MenuItem } from './ContextMenu';
@@ -69,7 +69,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
     setUi({ focusedCellId: cell.id });
   };
 
-  const label = cell.name ?? sessionTitle;
+  const label = cell.name ?? sessionTitle ?? profile.name;
 
   const profileItems = (): MenuItem[] => [
     { header: tr("Zmień profil (nowa rozmowa)") },
@@ -133,7 +133,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       onMouseDownCapture={markFocused}
       onFocusCapture={markFocused}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(PATH_MIME)) {
+        if (e.dataTransfer.types.includes(PATH_MIME) || e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
           e.dataTransfer.dropEffect = 'copy';
           const blocked = cellRefusesPaths(cell.id);
@@ -154,6 +154,11 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       onDrop={(e) => {
         setDrop(false);
         setPathDrop(null);
+        if (!e.dataTransfer.types.includes(PATH_MIME) && e.dataTransfer.files.length) {
+          e.preventDefault();
+          void addDroppedFilesToCell(cell.id, [...e.dataTransfer.files]);
+          return;
+        }
         const paths = e.dataTransfer.types.includes(PATH_MIME) ? e.dataTransfer.getData(PATH_MIME) : '';
         if (paths) {
           e.preventDefault();

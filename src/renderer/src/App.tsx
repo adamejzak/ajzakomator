@@ -67,6 +67,10 @@ async function boot(): Promise<void> {
     refreshSessionTitles(activeProject(st.s)?.path);
   });
 
+  // A conversation renamed inside the CLI (/rename) shows its new title in the cell header: look again now and then while the window is in use.
+  window.setInterval(() => { if (document.hasFocus()) refreshSessionTitles(activeProject(useStore.getState().s)?.path); }, 20000);
+  window.addEventListener('focus', () => refreshSessionTitles(activeProject(useStore.getState().s)?.path, 800));
+
   // Coming back to the app (after installing a CLI in another window) is the moment to look again, but only if a cell waits for it.
   let focusTimer: number | undefined;
   window.addEventListener('focus', () => {

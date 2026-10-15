@@ -2,14 +2,14 @@ import { Select } from './Select';
 // The Git panel of the left rail: the state of the active project's repository (branch, changes) and its history, with the
 // everyday actions (fetch, pull --ff-only, push with confirmation, stage, commit, switch branch). Nothing destructive lives here.
 // A repository whose own configuration can start programs stays read-only (history only) until the user trusts it.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { activeProject, findCell } from '../../../shared/state';
 import {
   projectRelativePath, type GitBranch, type GitFileChange, type GitOpResult, type GitResult, type GitTrustInfo, type GitWorktree,
 } from '../../../shared/git';
 import { useI18n } from '../i18n';
 import { askChoice, setUi, toast, useStore } from '../store';
-import { openFile } from '../files';
+import { openDiffTab, openFile } from '../files';
 import { locateInFiles } from '../explorer';
 import { useGitProbe } from '../git/gitProbe';
 import { newRequestId } from '../../../shared/gitUi';
@@ -17,7 +17,11 @@ import { useGitRepo } from '../git/useGitRepo';
 import { openMenu, openMenuAt } from './ContextMenu';
 import { GitChanges } from './GitChanges';
 import { GitHistory } from './GitHistory';
-import { IBranch, IChevron, IRestart } from './icons';
+import { GitSetup } from './GitSetup';
+import { GitGithub } from './GitGithub';
+import { refreshGitBadges } from '../git/gitBadges';
+import { IBranch, IChevron } from './icons';
+import { RefreshIcon, useHoldBusy } from './Spinner';
 import './gitPanel.css';
 
 export function GitPanel() {
@@ -25,8 +29,7 @@ export function GitPanel() {
   const project = useStore((st) => activeProject(st.s));
   const probe = useGitProbe(project?.id);
   if (!project) return <div className="sidebar-content git-panel"><p className="git-note">{tr('Najpierw dodaj projekt')}</p></div>;
-  if (probe === 'no-repo') return <div className="sidebar-content git-panel"><p className="git-note">{tr('To nie jest repozytorium git')}</p></div>;
-  if (probe === 'no-git') return <div className="sidebar-content git-panel"><p className="git-note">{tr('Nie znaleziono polecenia git. Zainstaluj Git (git-scm.com) i uruchom aplikację ponownie.')}</p></div>;
+  if (probe === 'no-repo' || probe === 'no-git') return <GitSetup key={`${project.id}:${probe}`} projectId={project.id} projectName={project.name} kind={probe} />;
   return <RepoView key={`${project.id}:${project.path}`} projectId={project.id} projectPath={project.path} />;
 }
 
@@ -34,7 +37,7 @@ const MAX_KEYS_SHOWN = 8;
 /** Small, distinct transfer marks for the repository toolbar; labels and confirmations live on the buttons. */
 function GitTransferIcon({ kind }: { kind: 'fetch' | 'pull' | 'push' }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {kind === 'push' ? <path d="M8 11V2M5 5l3-3 3 3" /> : <path d="M8 2v9M5 8l3 3 3-3" />}
       {kind === 'fetch' ? <path d="M3 14h2m2 0h2m2 0h2" /> : <path d="M3 11v3h10v-3" />}
     </svg>
@@ -73,6 +76,11 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const spinning = useHoldBusy(refreshing, 700);
+  const panel = useRef<HTMLDivElement>(null);
+  const [historyLayout, setHistoryLayout] = useState(readHistoryLayout);
+  const updateHistoryLayout = (next: HistoryLayout) => { setHistoryLayout(next); try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch { /* the layout just is not remembered */ } };
   const [trust, setTrust] = useState<GitTrustInfo | null>(null);
   const [trustError, setTrustError] = useState<string | null>(null);
   const [folded, setFolded] = useState(false);
@@ -144,6 +152,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
       setNonce((n) => n + 1);
       repo.refresh(0);
       void loadTrust();
+      refreshGitBadges(projectId, 400);
     }
     return done;
   }, [busy, tr, errorText, repo, loadTrust]);
@@ -172,6 +181,33 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
       else toast(tr('Git: {error}', { error: errorText(result.error) }), 'error');
     } catch (e) { toast(tr('Git: {error}', { error: String(e) }), 'error'); }
   };
+
+  /** The refresh button: reads everything again and shows it (the arrow turns for at least a moment). */
+  const refreshNow = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setNonce((n) => n + 1);
+    try { await Promise.all([repo.reload(), loadTrust()]); } finally { setRefreshing(false); }
+  };
+
+  /** Dragging the divider resizes the history (up = bigger); the arrow keys do the same in steps. */
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    const total = panel.current?.clientHeight ?? 600;
+    const start = { y: e.clientY, height: historyLayout.height ?? Math.round(total * 0.45) };
+    const move = (ev: PointerEvent) => updateHistoryLayout({ ...historyLayout, collapsed: false, height: clampHistory(start.height - (ev.clientY - start.y), total) });
+    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    e.preventDefault();
+  };
+  const resizeKey = (e: React.KeyboardEvent) => {
+    const step = e.key === 'ArrowUp' ? 24 : e.key === 'ArrowDown' ? -24 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const total = panel.current?.clientHeight ?? 600;
+    updateHistoryLayout({ ...historyLayout, collapsed: false, height: clampHistory((historyLayout.height ?? Math.round(total * 0.45)) + step, total) });
+  };
+  const historyProps = { collapsed: historyLayout.collapsed, height: historyLayout.height, onToggle: () => updateHistoryLayout({ ...historyLayout, collapsed: !historyLayout.collapsed }) };
 
   const hasLocalChanges = !!status?.files.some((f) => !f.untracked);
 
@@ -214,7 +250,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
 
   const openDiff = (file: GitFileChange, source: 'working' | 'staged' | 'untracked') => {
     if (file.path.endsWith('/')) return;
-    setUi({ modal: { kind: 'gitDiff', projectId, source, path: file.path, ...(file.origPath && source === 'staged' ? { oldPath: file.origPath } : {}), ...(worktree ? { worktree } : {}) } });
+    openDiffTab(projectId, { source, path: file.path, ...(file.origPath && source === 'staged' ? { oldPath: file.origPath } : {}), ...(worktree ? { worktree } : {}) });
   };
 
   const fileMenu = (e: React.MouseEvent, file: GitFileChange, source: 'working' | 'staged' | 'untracked') => {
@@ -265,7 +301,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
           <span className="git-branch static" title={branchLabel}><IBranch /><span className="git-branch-name">{branchLabel}</span></span>
           <span className="git-badge conflict" title={tr('Tryb tylko do odczytu')}>{tr('Tryb tylko do odczytu')}</span>
           <span className="git-spacer" />
-          <button className="btn ghost icon small" onClick={() => { setNonce((n) => n + 1); void loadTrust(); }} title={tr('Odśwież')} aria-label={tr('Odśwież')}><IRestart /></button>
+          <button className="btn ghost icon small" onClick={() => void refreshNow()} title={tr('Odśwież')} aria-label={tr('Odśwież')}><RefreshIcon spinning={spinning} /></button>
         </div>
         <TrustBanner keys={trust.keys} folded={folded} onFold={() => setFolded(true)} onTrust={() => void grantTrust()} />
         <GitHistory projectId={projectId} historyKey={`ro:${readOnlyHead?.name ?? ''}:${readOnlyHead?.hash ?? ''}`} initial={false} opts={opts} nonce={nonce} />
@@ -288,10 +324,10 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
   const historyKey = `${status.branch ?? ''}:${status.head}:${status.upstream ?? ''}:${status.ahead}:${status.behind}`;
 
   return (
-    <div className="sidebar-content git-panel">
+    <div className="sidebar-content git-panel" ref={panel}>
       {worktreeSelect}
       <div className="git-bar">
-        <button className="git-branch" onClick={(e) => void openBranches(e.currentTarget)} title={tr('Zmień gałąź')} aria-haspopup="menu">
+        <button className="git-branch" onClick={(e) => void openBranches(e.currentTarget)} title={status.upstream ? `${tr('Zmień gałąź')}\n${tr('Śledzi: {upstream}', { upstream: status.upstream })}` : tr('Zmień gałąź')} aria-haspopup="menu">
           <IBranch /><span className="git-branch-name">{branchLabel}</span><IChevron />
         </button>
         {status.ahead > 0 && <span className="git-badge up" title={tr('Commitów do wysłania: {count}', { count: status.ahead })}>↑{status.ahead}</span>}
@@ -303,11 +339,10 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
           <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} aria-label="Pull" title={status.upstream ? tr('Pobierz i dołącz zmiany (pull, tylko fast-forward)') : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>{busy === 'Pull' ? '…' : <GitTransferIcon kind="pull" />}</button>
           <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.push || (!status.ahead && !status.push.setUpstream)} onClick={() => void pushNow()} aria-label="Push" title={tr('Wyślij commity do zdalnego repozytorium (push)')}>{busy === 'Push' ? '…' : <GitTransferIcon kind="push" />}</button>
         </div>
-        <button className="btn ghost icon small" onClick={() => { setNonce((n) => n + 1); repo.refresh(0); void loadTrust(); }} title={tr('Odśwież')} aria-label={tr('Odśwież')}><IRestart /></button>
+        <button className={`btn ghost icon small ${spinning ? 'busy' : ''}`} onClick={() => void refreshNow()} title={spinning ? tr('Odświeżanie…') : tr('Odśwież')} aria-label={tr('Odśwież')} aria-busy={spinning}><RefreshIcon spinning={spinning} /></button>
       </div>
       {repo.error && <p className="git-note error" role="alert">{errorText(repo.error.message)}</p>}
       {status.parent && <p className="git-note error" role="note">{tr('Repozytorium nadrzędne: ten projekt jest podfolderem większego repozytorium ({root}). Zmiany w nim są wyłączone.', { root: status.root })}</p>}
-      {status.upstream && <div className="git-upstream muted" title={status.upstream}>{tr('Śledzi: {upstream}', { upstream: status.upstream })}</div>}
       {trustedWithPrograms && (
         <div className="git-trust folded" role="note">
           <span>{tr('Zaufane repozytorium: hooki i filtry z jego konfiguracji mogą się uruchamiać przy tych operacjach.')}</span>
@@ -315,7 +350,19 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
         </div>
       )}
       <GitChanges projectId={projectId} status={status} busy={!!busy} writable={canWrite} programsNote={programsNote} opts={opts} run={run} onOpen={openDiff} onMenu={fileMenu} />
-      <GitHistory projectId={projectId} historyKey={historyKey} initial={status.initial} opts={opts} nonce={nonce} />
+      <GitGithub key={`gh:${projectId}`} projectId={projectId} nonce={nonce} />
+      <div className="git-splitter" role="separator" aria-orientation="horizontal" aria-label={tr('Zmień wysokość historii')} tabIndex={0} onPointerDown={startResize} onKeyDown={resizeKey} />
+      <GitHistory projectId={projectId} historyKey={historyKey} initial={status.initial} opts={opts} nonce={nonce} {...historyProps} />
     </div>
   );
 }
+
+const HISTORY_KEY = 'mc-git-history-v1';
+interface HistoryLayout { collapsed: boolean; height: number | null }
+function readHistoryLayout(): HistoryLayout {
+  try {
+    const value = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? 'null') as Partial<HistoryLayout> | null;
+    return { collapsed: value?.collapsed === true, height: typeof value?.height === 'number' && value.height > 0 ? value.height : null };
+  } catch { return { collapsed: false, height: null }; }
+}
+const clampHistory = (height: number, total: number): number => Math.round(Math.max(72, Math.min(total - 170, height)));

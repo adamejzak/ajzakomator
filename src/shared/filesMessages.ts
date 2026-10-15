@@ -1,6 +1,7 @@
 // File operations in the project tree, the editor tab strip and the tab menus.
 // Each row: English, German, Spanish, French, Portuguese. Polish is the key.
 export const filesMessages = {
+  'Tabela': ['Table', 'Tabelle', 'Tabla', 'Tableau', 'Tabela'],
   'Nowy plik': ['New file', 'Neue Datei', 'Nuevo archivo', 'Nouveau fichier', 'Novo ficheiro'],
   'Nowy folder': ['New folder', 'Neuer Ordner', 'Nueva carpeta', 'Nouveau dossier', 'Nova pasta'],
   'Nazwa nowego pliku': ['Name of the new file', 'Name der neuen Datei', 'Nombre del nuevo archivo', 'Nom du nouveau fichier', 'Nome do novo ficheiro'],

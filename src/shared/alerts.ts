@@ -28,6 +28,8 @@ export interface QuietHours {
 }
 
 export interface AlertSettings {
+  /** The master switch: false silences every alert (popups and sounds) whatever the events below say. */
+  enabled: boolean;
   /** 0..1, applies to presets and own files (the system sound ignores it). */
   volume: number;
   /** Also alert while the app window is focused and the cell is visible. */
@@ -48,6 +50,7 @@ export const DEFAULT_EVENT_SOUNDS: Record<AlertEventId, SoundChoice> = {
 
 export function defaultAlerts(): AlertSettings {
   return {
+    enabled: true,
     volume: DEFAULT_ALERT_VOLUME,
     notifyWhenFocused: false,
     quietHours: { ...DEFAULT_QUIET_HOURS },
@@ -104,6 +107,7 @@ export function normalizeAlerts(value: unknown): AlertSettings {
     return { notify: typeof e.notify === 'boolean' ? e.notify : d.events[id].notify, sound: normalizeSoundChoice(e.sound, d.events[id].sound) };
   };
   return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : d.enabled,
     volume: normalizeVolume(r.volume),
     notifyWhenFocused: typeof r.notifyWhenFocused === 'boolean' ? r.notifyWhenFocused : d.notifyWhenFocused,
     quietHours: normalizeQuietHours(r.quietHours),
@@ -237,6 +241,7 @@ export function decideAlert(alerts: AlertSettings, ctx: AlertContext): AlertDeci
   if (!ctx.agent || !shouldNotify(ctx.prev, ctx.status, ctx.cause, ctx.hooked)) return none;
   if (ctx.muted) return { ...none, suppressed: 'muted' };
   if (ctx.duplicate) return { ...none, suppressed: 'duplicate' };
+  if (!alerts.enabled) return { ...none, suppressed: 'disabled' };
   if (!shouldAlertUser(true, ctx.userLooking, alerts.notifyWhenFocused)) return { ...none, suppressed: 'focused' };
   if (inQuietHours(alerts.quietHours, ctx.now)) return { ...none, suppressed: 'quiet-hours' };
   const config = alerts.events[event];

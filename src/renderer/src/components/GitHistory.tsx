@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatAgo } from '../../../shared/i18n';
-import { GIT_LOG_PAGE, layoutGraph, type GitCommit, type GitCommitDetails } from '../../../shared/git';
+import { GIT_LOG_PAGE, layoutGraph, type GitCommit, type GitCommitDetails, type GitRef } from '../../../shared/git';
 import { useI18n } from '../i18n';
-import { setUi } from '../store';
+import { openDiffTab } from '../files';
 import { baseName, chipRefs, dirName, letterOf } from '../../../shared/gitUi';
 import { openMenu } from './ContextMenu';
 import { GitGraph, graphLanes } from './GitGraph';
-import { IBranch, IChevron, IX } from './icons';
+import { IBranch, IChevron, ICloud, ITag, IX } from './icons';
 
 /** Loaded rows stop here: the list stays light, a filter or the search finds older commits. */
 const MAX_LOADED = 3000;
 
 /** `historyKey` changes when HEAD or the branches moved (the list then starts again); `initial`: the repository has no commit yet. */
-interface Props { projectId: string; historyKey: string; initial: boolean; opts: { worktree?: string }; nonce: number }
+interface Props { projectId: string; historyKey: string; initial: boolean; opts: { worktree?: string }; nonce: number; collapsed?: boolean; onToggle?(): void; height?: number | null }
 
 /** The History section: commits in pages of 50 (loaded while scrolling), a thin graph, filters, and the details of one commit. */
-export function GitHistory({ projectId, historyKey, initial, opts, nonce }: Props) {
+export function GitHistory({ projectId, historyKey, initial, opts, nonce, collapsed = false, onToggle, height = null }: Props) {
   const { tr, language, errorText } = useI18n();
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -72,14 +72,17 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce }: Prop
   if (selected) return <GitCommitView projectId={projectId} commit={selected} opts={opts} onBack={() => setSelected(null)} />;
 
   return (
-    <section className="git-history" aria-label={tr('Historia')}>
+    <section className={`git-history ${collapsed ? 'collapsed' : ''}`} aria-label={tr('Historia')} style={!collapsed && height ? { flex: `0 0 ${height}px` } : undefined}>
       <div className="git-section-head static">
-        <span>{tr('Historia')}</span>
+        {onToggle
+          ? <button className="git-toggle" aria-expanded={!collapsed} onClick={onToggle} title={collapsed ? tr('Rozwiń historię') : tr('Zwiń historię')}><span className={`tree-chevron ${collapsed ? '' : 'open'}`}><IChevron /></span><span>{tr('Historia')}</span></button>
+          : <span>{tr('Historia')}</span>}
         <span className="git-spacer" />
-        <button className={`btn ghost icon small ${all ? 'on' : ''}`} aria-pressed={all} title={tr('Pokaż commity wszystkich gałęzi')} aria-label={tr('Pokaż commity wszystkich gałęzi')} onClick={() => setAll((v) => !v)}>
+        {!collapsed && <button className={`btn ghost icon small ${all ? 'on' : ''}`} aria-pressed={all} title={tr('Pokaż commity wszystkich gałęzi')} aria-label={tr('Pokaż commity wszystkich gałęzi')} onClick={() => setAll((v) => !v)}>
           <IBranch />
-        </button>
+        </button>}
       </div>
+      {!collapsed && <>
       <div className="git-search">
         <input className="input" value={search} placeholder={tr('Szukaj w opisach commitów…')} aria-label={tr('Szukaj w opisach commitów…')} onChange={(e) => setSearch(e.target.value)} />
         {search && <button className="btn ghost icon small" aria-label={tr('Wyczyść')} title={tr('Wyczyść')} onClick={() => setSearch('')}><IX /></button>}
@@ -98,7 +101,7 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce }: Prop
               className="git-commit"
               role="button"
               tabIndex={0}
-              title={`${commit.subject}\n${commit.short} - ${commit.author}`}
+              title={`${commit.subject}\n${commit.short} · ${commit.author} · ${formatAgo(language, commit.at * 1000)}`}
               onClick={() => setSelected(commit)}
               onKeyDown={(e) => { if (e.key === 'Enter') setSelected(commit); }}
               onContextMenu={(e) => {
@@ -113,10 +116,11 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce }: Prop
               <div className="git-commit-text">
                 <div className="git-commit-subject">
                   <span className="git-subject-text">{commit.subject}</span>
-                  {shown.map((ref) => <span key={`${ref.kind}:${ref.name}`} className={`git-chip ${ref.kind} ${ref.current ? 'current' : ''}`} title={ref.name}>{ref.name}</span>)}
-                  {more > 0 && <span className="git-chip more">+{more}</span>}
+                  <span className="git-chips">
+                    {shown.map((ref) => <RefChip key={`${ref.kind}:${ref.name}`} gitRef={ref} />)}
+                    {more > 0 && <span className="git-chip more" title={tr('Pokaż commity wszystkich gałęzi')}>+{more}</span>}
+                  </span>
                 </div>
-                <div className="git-commit-meta muted">{commit.short} · {commit.author} · {formatAgo(language, commit.at * 1000)}</div>
               </div>
             </div>
           );
@@ -124,7 +128,19 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce }: Prop
         {loading && <p className="git-note muted">{tr('Wczytywanie…')}</p>}
         {!loading && hasMore && <button className="btn small git-more" onClick={loadMore}>{tr('Wczytaj więcej')}</button>}
       </div>
+      </>}
     </section>
+  );
+}
+
+/** A branch or tag of a commit: local branches and tags show their name, remote ones only a cloud (the name is in the tooltip). */
+function RefChip({ gitRef }: { gitRef: GitRef }) {
+  const remote = gitRef.kind === 'remote';
+  return (
+    <span className={`git-chip ${gitRef.kind} ${gitRef.current ? 'current' : ''} ${remote ? 'icon-only' : ''}`} title={gitRef.name}>
+      {remote ? <ICloud /> : gitRef.kind === 'tag' ? <ITag /> : <IBranch />}
+      {!remote && <span className="git-chip-name">{gitRef.name}</span>}
+    </span>
   );
 }
 
@@ -150,7 +166,7 @@ function GitCommitView({ projectId, commit, opts, onBack }: { projectId: string;
       <div className="git-details-body">
         <div className="git-details-subject">{commit.subject}</div>
         <div className="git-commit-meta muted" title={commit.hash}>{commit.short} · {commit.author} · {formatAgo(language, commit.at * 1000)}</div>
-        {shown.length > 0 && <div className="git-details-chips">{shown.map((ref) => <span key={`${ref.kind}:${ref.name}`} className={`git-chip ${ref.kind} ${ref.current ? 'current' : ''}`}>{ref.name}</span>)}</div>}
+        {shown.length > 0 && <div className="git-details-chips">{shown.map((ref) => <RefChip key={`${ref.kind}:${ref.name}`} gitRef={ref} />)}</div>}
         {error && <p className="git-note error">{errorText(error)}</p>}
         {!details && !error && <p className="git-note muted">{tr('Wczytywanie…')}</p>}
         {details && (
@@ -170,7 +186,7 @@ function GitCommitView({ projectId, commit, opts, onBack }: { projectId: string;
                     role="button"
                     tabIndex={0}
                     title={file.origPath ? `${file.origPath} → ${file.path}` : file.path}
-                    onClick={() => setUi({ modal: { kind: 'gitDiff', projectId, source: 'commit', hash: commit.hash, path: file.path, ...(file.origPath ? { oldPath: file.origPath } : {}), ...(worktree ? { worktree } : {}) } })}
+                    onClick={() => openDiffTab(projectId, { source: 'commit', hash: commit.hash, path: file.path, ...(file.origPath ? { oldPath: file.origPath } : {}), ...(worktree ? { worktree } : {}) })}
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}
                   >
                     <span className={`git-letter ${letter.cls}`} title={tr(letter.title)}>{letter.letter}</span>

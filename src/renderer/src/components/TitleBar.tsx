@@ -256,7 +256,7 @@ export function WorkspaceTabs() {
               onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); void closeFile(doc.id); } }}
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               onContextMenu={(e) => { e.preventDefault(); fileTabMenu(e.clientX, e.clientY, doc); }}>
-              <span className="tab-type-icon" aria-hidden="true"><FileIcon name={doc.name} /></span><span className="label">{doc.name}</span>
+              <span className="tab-type-icon" aria-hidden="true"><FileIcon name={doc.name} /></span><span className="label">{doc.name}</span>{doc.diff && <span className="tab-diff-tag">diff</span>}
               {doc.text !== doc.savedText && <span className="file-dirty" aria-label={tr('Niezapisane zmiany')}>●</span>}
               <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); void closeFile(doc.id); }}><IX /></button>
             </div>

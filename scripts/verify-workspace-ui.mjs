@@ -132,7 +132,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
     assert.equal(await evaluate('document.querySelectorAll(".settings-nav button[role=tab][aria-selected=true]").length'), 1);
     assert.ok(await evaluate('!!document.querySelector(".settings-content input, .settings-content .styled-select")'), 'settings section provides controls');
     if (label === 'Notifications and sounds') {
-      assert.ok(await evaluate('document.querySelectorAll(".alert-event-settings input[role=switch]").length === 3 && [...document.querySelectorAll(".alert-event-settings .setting-row")].every(row => row.querySelector(".setting-copy") && row.querySelector(".setting-control"))'), 'event settings keep separate notification and sound rows');
+      assert.ok(await evaluate('document.querySelectorAll(".alert-event-row input[role=switch]").length === 3 && [...document.querySelectorAll(".alert-event-row")].every(row => row.querySelector(".styled-select") && row.querySelector(".alert-test"))'), 'event rows keep the notification switch, the sound select and the test button');
       assert.ok(await evaluate('[...document.querySelectorAll(".settings-card input[role=switch]")].every(input => { const r = input.getBoundingClientRect(); return r.width === 28 && r.height === 16; })'), 'switch tracks retain their dimensions');
       await screenshot('settings-notifications');
     }

@@ -1,7 +1,10 @@
 import { create } from 'zustand';
 import { detectLanguage, type Language } from '../../shared/languages';
 import { askChoice, getS, getUi, setUi } from './store';
+import { refreshGitBadges } from './git/gitBadges';
 import { tr } from './i18n';
+import type { GitDiffSource } from '../../shared/git';
+import type { ProjectFilePreview } from '../../shared/types';
 import { documentId, documentsUnder, removeDocuments, retargetDocuments, type FileMoveRecord } from '../../shared/fileOps';
 
 export interface FileDocument {
@@ -12,18 +15,28 @@ export interface FileDocument {
   text: string;
   savedText: string;
   diskText: string;
-  status: 'loading' | 'ready' | 'error' | 'binary' | 'truncated';
+  status: 'loading' | 'ready' | 'error' | 'binary' | 'truncated' | 'image' | 'table';
   saving: boolean;
   error: string | null;
   wrap: boolean;
   markdownView?: 'preview' | 'source';
+  /** CSV / TSV: the table or the text source. */
+  dataView?: 'table' | 'source';
+  /** Size on disk in bytes (shown for read-only views; a 'truncated' text holds only its beginning). */
+  size?: number;
+  /** An image or a Parquet table read by main; never persisted (only unsaved drafts are). */
+  view?: Extract<ProjectFilePreview, { kind: 'image' | 'table' }>;
+  /** A read-only git diff opened as a tab instead of a file. */
+  diff?: DiffRef;
 }
+export interface DiffRef { source: GitDiffSource; path: string; oldPath?: string; hash?: string; worktree?: string }
 const labels = {
   dirty: ['Unsaved changes', 'Niezapisane zmiany', 'Ungespeicherte Änderungen', 'Cambios sin guardar', 'Modifications non enregistrées', 'Alterações não guardadas'],
   discard: ['Discard', 'Odrzuć', 'Verwerfen', 'Descartar', 'Ignorer', 'Descartar'],
   close: ['Save changes before closing?', 'Zapisać zmiany przed zamknięciem?', 'Änderungen vor dem Schließen speichern?', '¿Guardar antes de cerrar?', 'Enregistrer avant de fermer ?', 'Guardar antes de fechar?'],
   saving: ['Saving…', 'Zapisywanie…', 'Speichern…', 'Guardando…', 'Enregistrement…', 'A guardar…'],
   saved: ['Saved', 'Zapisano', 'Gespeichert', 'Guardado', 'Enregistré', 'Guardado'],
+  largeNotice: ['Read-only view: the first {shown} of {total}. Open the file in an external editor to see all of it.', 'Tylko do odczytu: pierwsze {shown} z {total}. Otwórz plik w zewnętrznym edytorze, aby zobaczyć całość.', 'Nur Lesen: die ersten {shown} von {total}. Öffne die Datei in einem externen Editor, um alles zu sehen.', 'Solo lectura: los primeros {shown} de {total}. Abre el archivo en un editor externo para verlo completo.', 'Lecture seule : les premiers {shown} sur {total}. Ouvrez le fichier dans un éditeur externe pour tout voir.', 'Só de leitura: os primeiros {shown} de {total}. Abra o ficheiro num editor externo para ver tudo.'],
   tooLarge: ['This file exceeds 256 KB and cannot be edited safely here.', 'Ten plik przekracza 256 KB i nie może być tu bezpiecznie edytowany.', 'Diese Datei ist größer als 256 KB und kann hier nicht sicher bearbeitet werden.', 'Este archivo supera 256 KB y no se puede editar aquí con seguridad.', 'Ce fichier dépasse 256 Ko et ne peut pas être modifié ici en sécurité.', 'Este ficheiro excede 256 KB e não pode ser editado aqui em segurança.'],
   failed: ['Could not save. Your draft is preserved.', 'Nie udało się zapisać. Szkic został zachowany.', 'Speichern fehlgeschlagen. Der Entwurf bleibt erhalten.', 'No se pudo guardar. El borrador se conserva.', 'Échec de l’enregistrement. Le brouillon est conservé.', 'Não foi possível guardar. O rascunho foi preservado.'],
   conflict: ['The file changed outside the editor. Your draft is preserved.', 'Plik zmienił się poza edytorem. Twój szkic został zachowany.', 'Die Datei wurde außerhalb des Editors geändert. Der Entwurf bleibt erhalten.', 'El archivo cambió fuera del editor. El borrador se conserva.', 'Le fichier a été modifié en dehors de l’éditeur. Le brouillon est conservé.', 'O ficheiro foi alterado fora do editor. O rascunho foi preservado.'],
@@ -83,14 +96,15 @@ export async function openFile(projectId: string, relativePath: string): Promise
 const loads = new Map<string, symbol>();
 export async function retryFile(id: string): Promise<void> {
   const doc = useFileStore.getState().documents.find((d) => d.id === id);
-  if (!doc || isFileDirty(doc) || doc.saving) return;
+  if (!doc || doc.diff || isFileDirty(doc) || doc.saving) return;
   const token = Symbol(); loads.set(id, token);
   patch(id, { status: 'loading', error: null });
   try {
-    const result = await window.mc.readProjectFile(doc.projectId, doc.relativePath);
+    const result = await window.mc.readProjectFile(doc.projectId, doc.relativePath, true);
     if (loads.get(id) !== token) return;
-    if (result.kind === 'text') patch(id, { status: result.truncated ? 'truncated' : 'ready', text: normalize(result.text), savedText: normalize(result.text), diskText: result.text });
-    else patch(id, { status: result.kind, error: result.kind === 'error' ? result.message : null });
+    if (result.kind === 'text') patch(id, { status: result.truncated ? 'truncated' : 'ready', size: result.size, view: undefined, text: normalize(result.text), savedText: normalize(result.text), diskText: result.text });
+    else if (result.kind === 'image' || result.kind === 'table') patch(id, { status: result.kind, size: result.size, view: result, text: '', savedText: '', diskText: '' });
+    else patch(id, { status: result.kind, size: result.kind === 'binary' ? result.size : undefined, error: result.kind === 'error' ? result.message : null });
   } catch (error) { if (loads.get(id) === token) patch(id, { status: 'error', error: String(error) }); }
   finally { if (loads.get(id) === token) loads.delete(id); }
 }
@@ -101,6 +115,19 @@ export function editFile(id: string, text: string): void {
 export function toggleFileWrap(id: string): void {
   const doc = useFileStore.getState().documents.find((d) => d.id === id);
   if (doc) patch(id, { wrap: !doc.wrap });
+}
+export function setFileDataView(id: string, dataView: 'table' | 'source'): void {
+  patch(id, { dataView });
+}
+/** A git diff as a tab (read-only, next to the files). The same change opened twice focuses the existing tab. */
+export function openDiffTab(projectId: string, diff: DiffRef): void {
+  setUi({ settingsActive: false });
+  const id = JSON.stringify([projectId, 'diff', diff.source, diff.hash ?? '', diff.worktree ?? '', diff.oldPath ?? '', diff.path]);
+  if (!useFileStore.getState().documents.some((d) => d.id === id)) {
+    const document: FileDocument = { id, projectId, relativePath: diff.path, name: diff.path.split('/').pop() ?? diff.path, text: '', savedText: '', diskText: '', status: 'ready', saving: false, error: null, wrap: false, diff };
+    useFileStore.setState((s) => ({ documents: [...s.documents, document] }));
+  }
+  activateFile(id);
 }
 export function setFileMarkdownView(id: string, markdownView: 'preview' | 'source'): void {
   patch(id, { markdownView });
@@ -118,6 +145,7 @@ export async function saveFile(id: string): Promise<boolean> {
     const diskText = doc.text.replace(/\n/g, () => endings[index++] ?? endings[0] ?? '\n');
     // Edits made while saving stay dirty against the snapshot that was written.
     patch(id, { savedText: doc.text, diskText });
+    refreshGitBadges(doc.projectId, 600);
     return true;
   } catch { patch(id, { error: fileLabel('failed') }); return false; }
   finally { patch(id, { saving: false }); }

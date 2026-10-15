@@ -7,10 +7,12 @@ import { cliMessages } from './cliMessages';
 import { codexMessages } from './codexMessages';
 import { filesMessages } from './filesMessages';
 import { gitMessages } from './gitMessages';
+import { gitSetupMessages } from './gitSetupMessages';
 import { gridMessages } from './gridMessages';
 import { macUpdateMessages } from './macUpdateMessages';
 import { perfMessages } from './perfMessages';
 import { railMessages } from './railMessages';
+import { settingsMessages } from './settingsMessages';
 import { shortcutMessages } from './shortcutMessages';
 import { statusMessages } from './statusMessages';
 import { swapMessages } from './swapMessages';
@@ -27,10 +29,12 @@ export const messages = {
   ...codexMessages,
   ...filesMessages,
   ...gitMessages,
+  ...gitSetupMessages,
   ...gridMessages,
   ...macUpdateMessages,
   ...perfMessages,
   ...railMessages,
+  ...settingsMessages,
   ...shortcutMessages,
   ...statusMessages,
   ...swapMessages,

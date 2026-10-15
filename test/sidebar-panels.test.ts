@@ -67,21 +67,22 @@ describe('git and terminal tiles', () => {
   const git: PanelDef = { id: 'git', unavailableReason: gitPanelReason };
   const base: PanelContext = { hasProject: true, platform: 'win32' };
 
-  it('opens Git only for a project that is a repository on a machine with git', () => {
+  it('opens Git for every project: without a repository or git the panel itself offers git init / installing Git', () => {
     expect(gitPanelReason({ ...base, git: 'repo' })).toBeNull();
-    expect(gitPanelReason({ ...base, git: null })).toBeNull(); // not probed yet: never blocks
-    expect(gitPanelReason(base)).toBeNull();
-    expect(gitPanelReason({ ...base, git: 'no-repo' })).toBe('To nie jest repozytorium git');
-    expect(gitPanelReason({ ...base, git: 'no-git' })).toBe('Nie znaleziono gita. Zainstaluj Git (git-scm.com).');
+    expect(gitPanelReason({ ...base, git: null })).toBeNull();
+    expect(gitPanelReason({ ...base, git: 'no-repo' })).toBeNull();
+    expect(gitPanelReason({ ...base, git: 'no-git' })).toBeNull();
     expect(gitPanelReason({ hasProject: false, platform: 'win32', git: 'repo' })).toBe('Najpierw dodaj projekt');
   });
 
-  it('shows the Git tile disabled (not hidden) and falls back to the default panel', () => {
+  it('keeps the Git tile openable without a repository, and disabled only without a project', () => {
     const ctx: PanelContext = { ...base, git: 'no-repo' };
     expect(visiblePanels([git], ctx).map((d) => d.id)).toEqual(['git']);
-    expect(panelOpenable(git, ctx)).toBe(false);
-    expect(resolvePanelId([git], 'git', ctx)).toBe(DEFAULT_PANEL);
-    expect(resolvePanelId([git], 'git', { ...base, git: 'repo' })).toBe('git');
+    expect(panelOpenable(git, ctx)).toBe(true);
+    expect(resolvePanelId([git], 'git', ctx)).toBe('git');
+    const none: PanelContext = { hasProject: false, platform: 'win32' };
+    expect(panelOpenable(git, none)).toBe(false);
+    expect(resolvePanelId([git], 'git', none)).toBe(DEFAULT_PANEL);
   });
 
   it('keeps the rail order Projects, Files, Git, SSH and the SSH tile greyed out until the connection manager exists', () => {

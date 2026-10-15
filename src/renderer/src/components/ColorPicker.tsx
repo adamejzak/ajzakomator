@@ -1,0 +1,44 @@
+import { useEffect, useId, useRef, useState } from 'react';
+import { PROJECT_COLORS } from '../../../shared/state';
+import { useI18n } from '../i18n';
+import './colorPicker.css';
+
+const PALETTE = [...PROJECT_COLORS, '#d97757', '#10a37f', '#8b5cf6', '#64748b', '#eab308', '#f43f5e', '#14b8a6', '#9ca3af'];
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/** A round swatch that opens a small palette with a hex field (instead of the system colour dialog). */
+export function ColorPicker({ value, onChange, label }: { value: string; onChange(color: string): void; label?: string }) {
+  const { tr } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const root = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useEffect(() => setDraft(value), [value]);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key, true); };
+  }, [open]);
+  const commit = (color: string) => { if (HEX.test(color)) onChange(color.toLowerCase()); };
+  return (
+    <div className="color-picker" ref={root}>
+      <button type="button" className="color-swatch" style={{ background: value }} aria-label={label ?? tr('Wybierz kolor')} title={value} aria-haspopup="dialog" aria-expanded={open} aria-controls={id} onClick={() => setOpen((v) => !v)} />
+      {open && (
+        <div className="color-pop" id={id} role="dialog" aria-label={tr('Wybierz kolor')}>
+          <div className="color-grid">
+            {PALETTE.map((color) => (
+              <button key={color} type="button" className={`color-dot ${color.toLowerCase() === value.toLowerCase() ? 'on' : ''}`} style={{ background: color }} aria-label={color} title={color} onClick={() => { onChange(color); setOpen(false); }} />
+            ))}
+          </div>
+          <label className="color-custom">
+            <span>{tr('Własny kolor')}</span>
+            <input className="input" value={draft} spellCheck={false} maxLength={7} onChange={(e) => { setDraft(e.target.value); commit(e.target.value); }} onBlur={() => setDraft(value)} />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -27,8 +27,8 @@ describe('text inserted into a Claude cell', () => {
   it('uses @ mentions relative to the cell folder, absolute outside it, folders with a trailing slash', () => {
     expect(buildPathText('claude', [item('D:\\Projekty\\app\\src\\a.ts')], winOpts)).toEqual({ text: '@src/a.ts ', skipped: 0 });
     expect(buildPathText('claude', [item('D:\\Projekty\\app\\src', 'dir')], winOpts).text).toBe('@src/ ');
-    expect(buildPathText('claude', [item('D:\\Other\\x.txt')], winOpts).text).toBe('@D:\\Other\\x.txt ');
-    expect(buildPathText('claude', [item('D:\\Other\\dir', 'dir')], winOpts).text).toBe('@D:\\Other\\dir\\ ');
+    expect(buildPathText('claude', [item('D:\\Other\\x.txt')], winOpts).text).toBe('@D:/Other/x.txt ');
+    expect(buildPathText('claude', [item('D:\\Other\\dir', 'dir')], winOpts).text).toBe('@D:/Other/dir/ ');
     expect(buildPathText('claude', [item('/home/u/app/a.ts'), item('/home/u/app/docs', 'dir'), item('/tmp/z')], posixOpts).text).toBe('@a.ts @docs/ @/tmp/z ');
   });
 
@@ -58,7 +58,7 @@ describe('text inserted into a Codex cell', () => {
   it('uses the plain relative path (a literal @ attaches nothing in Codex), quoted when it has whitespace', () => {
     expect(buildPathText('codex', [item('/home/u/app/src/a.ts'), item('/home/u/app/docs', 'dir')], posixOpts).text).toBe('src/a.ts docs/ ');
     expect(buildPathText('codex', [item('/home/u/app/a b.ts')], posixOpts).text).toBe('"a b.ts" ');
-    expect(buildPathText('codex', [item('D:\\Elsewhere\\f.txt')], winOpts).text).toBe('D:\\Elsewhere\\f.txt ');
+    expect(buildPathText('codex', [item('D:\\Elsewhere\\f.txt')], winOpts).text).toBe('D:/Elsewhere/f.txt ');
   });
 });
 
@@ -244,7 +244,7 @@ describe('files dropped on a cell that runs in a worktree', () => {
   it('falls back to the main checkout path when the worktree has no such file', () => {
     const abs = dropAbsPath({ ...base, sameProject: true, worktreePath: wt, existsInWorktree: false });
     expect(abs).toBe('D:\\Projekty\\app\\src\\a.ts');
-    expect(buildPathText('claude', [{ kind: 'file', abs }], { cwd: wt, platform: 'win32', shell: 'pwsh' }).text).toBe('@D:\\Projekty\\app\\src\\a.ts ');
+    expect(buildPathText('claude', [{ kind: 'file', abs }], { cwd: wt, platform: 'win32', shell: 'pwsh' }).text).toBe('@D:/Projekty/app/src/a.ts ');
   });
 
   it('keeps the project path for cells without a worktree and for files of another project', () => {

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { GitFileChange, GitOpResult, GitResult, GitStatus } from '../../../shared/git';
 import { useI18n } from '../i18n';
+import { askChoice, toast } from '../store';
 import { baseName, CONFLICT_LETTER, dirName, groupChanges, letterOf, newRequestId, type ChangeGroup, type Letter } from '../../../shared/gitUi';
-import { IChevron } from './icons';
+import { ICheck, IChevron } from './icons';
 import { matchesShortcut, titleWithShortcut } from '../shortcuts';
 
 type Source = 'working' | 'staged' | 'untracked';
@@ -26,6 +27,7 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
   const { tr } = useI18n();
   const [open, setOpen] = useState(true);
   const [message, setMessage] = useState('');
+  const messageBox = useRef<HTMLTextAreaElement>(null);
   const groups = groupChanges(status.files);
   const total = status.files.length;
   const staged = groups.staged.length;
@@ -36,6 +38,19 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
 
   const commit = async () => {
     if (!message.trim() || !staged) return;
+    const ok = await run('Commit', () => window.mc.git.commit(projectId, { requestId: newRequestId(), message, ...opts }));
+    if (ok) setMessage('');
+  };
+
+  /** The check mark of the Changes header: commits what is staged; without a message it asks for one, without staged files it offers to add everything. */
+  const commitFromHeader = async () => {
+    if (!message.trim()) { messageBox.current?.focus(); toast(tr('Wpisz opis commita.')); return; }
+    if (!staged) {
+      if (!groups.unstaged.length && !groups.untracked.length) { toast(tr('Brak zmian do zatwierdzenia.')); return; }
+      const choice = await askChoice(tr('Dodać wszystkie zmiany do commita?'), tr('Żadne pliki nie są jeszcze dodane. Wszystkie zmiany (także nowe pliki) zostaną dodane i zatwierdzone razem.'), [{ label: tr('Dodaj i zatwierdź'), value: 'all', primary: true }]);
+      if (choice !== 'all') return;
+      if (!await run('Stage', () => window.mc.git.stage(projectId, { requestId: newRequestId(), paths: [], all: true, ...opts }), true)) return;
+    }
     const ok = await run('Commit', () => window.mc.git.commit(projectId, { requestId: newRequestId(), message, ...opts }));
     if (ok) setMessage('');
   };
@@ -86,6 +101,7 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
       {writable && (
         <div className="git-commit-box">
           <textarea
+            ref={messageBox}
             className="input"
             rows={1}
             value={message}
@@ -95,16 +111,21 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
             onKeyDown={(e) => { if (matchesShortcut('git.commit', e)) { e.preventDefault(); void commit(); } }}
           />
           <button className="btn small primary" disabled={busy || !staged || !message.trim()} onClick={() => void commit()} title={titleWithShortcut(tr('Zatwierdź dodane pliki'), 'git.commit')}>
-            {tr('Commit')}{staged > 0 && ` (${staged})`}
+            <ICheck />{tr('Commit')}{staged > 0 && ` (${staged})`}
           </button>
           {programsNote && <span className="git-note muted">{programsNote}</span>}
         </div>
       )}
-      <button className="git-section-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <span className={`tree-chevron ${open ? 'open' : ''}`}><IChevron /></span>
-        <span>{tr('Zmiany')}</span>
-        <span className="git-count">{total}</span>
-      </button>
+      <div className="git-section-bar">
+        <button className="git-section-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          <span className={`tree-chevron ${open ? 'open' : ''}`}><IChevron /></span>
+          <span>{tr('Zmiany')}</span>
+          <span className="git-count">{total}</span>
+        </button>
+        {writable && (
+          <button className="btn ghost icon small git-bar-action" disabled={busy || !total} onClick={() => void commitFromHeader()} title={titleWithShortcut(tr('Zatwierdź zmiany (commit)'), 'git.commit')} aria-label={tr('Zatwierdź zmiany (commit)')}><ICheck /></button>
+        )}
+      </div>
       {open && (
         <div className="git-changes-body">
           {!total && <p className="git-note muted">{tr('Brak zmian.')}</p>}

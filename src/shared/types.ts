@@ -156,6 +156,9 @@ export type ProjectDirectory =
 
 export type ProjectFilePreview =
   | { kind: 'text'; text: string; size: number; truncated: boolean }
+  | { kind: 'image'; mime: string; dataUrl: string; size: number }
+  /** A columnar file (Parquet) read by main: the first rows as display strings (null = NULL). */
+  | { kind: 'table'; format: 'parquet'; columns: string[]; types: string[]; rows: (string | null)[][]; totalRows: number; size: number }
   | { kind: 'binary'; size: number }
   | { kind: 'error'; message: string };
 
