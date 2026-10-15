@@ -13,18 +13,50 @@ three exports. The full image, rounded tile, padding and transparency are preser
 no brightness-based crop or additional CSS mask is applied. Then run `npm run build` and
 `node scripts/capture-readme.mjs` to refresh the screenshots from the actual app.
 
-Two internal identities intentionally retain the previous name:
+Since 0.8.5 the internal identities use the new name as well, with these
+compatibility measures for installations from before the rebranding:
 
-- `com.ajzakomator.app` remains the Electron application ID and Windows
-  AppUserModelID. Electron Builder derives the NSIS installation identity from
-  it, so keeping it allows existing installations to update in place.
-  Runs from the repository (`npm run dev`, a clone) use `com.ajzakomator.app.dev`
-  instead, so they never share the taskbar entry and icon with the installed app;
-  the window also sets its taskbar icon explicitly (`setAppDetails`).
-- The application keeps `%APPDATA%\ajzakomator` on Windows and
-  `~/Library/Application Support/ajzakomator` on macOS. This preserves projects,
-  session history, editor drafts, saved accounts and update handoff files.
-  `MC_DATA_DIR` still overrides this path for isolated development and capture.
+- The Electron application ID (`build.appId`) and the Windows AppUserModelID are
+  `com.unimux.app`. Runs from the repository (`npm run dev`, a clone) use
+  `com.unimux.app.dev`, so they never share the taskbar entry and icon with the
+  installed app; the window also sets its taskbar icon explicitly (`setAppDetails`).
+- `build.nsis.guid` is pinned to `214279c4-b798-5d4e-848f-0b9245114cd1`. Electron
+  Builder otherwise derives the NSIS GUID from the application ID (UUID v5 of the
+  appId); this value is the one derived from the previous ID `com.ajzakomator.app`.
+  The GUID names the uninstall and install registry keys (which hold the install
+  location) and the installer mutex, so pinning it lets the new installer find and
+  replace the existing installation in place instead of installing a second copy.
+  Do not change it.
+- Updates keep the existing shortcuts, which carry the previous AppUserModelID.
+  `resources/installer.nsh` stamps `com.unimux.app` on the Start menu, desktop and
+  pinned taskbar shortcuts after an update, so the window groups with its pin and
+  notifications keep working.
+- On macOS the bundle identifier stays `com.ajzakomator.app` (`build.mac.appId`):
+  the in-app updater of 0.8.4 and earlier refuses an update whose
+  `CFBundleIdentifier` differs from the running app. From 0.8.5 the updater accepts
+  both identifiers, so a later release can switch the bundle to `com.unimux.app`
+  once installations older than 0.8.5 no longer matter. Switching also resets
+  macOS permissions that are stored per bundle identifier (notifications).
+- The data directory is `%APPDATA%\unimux` on Windows and
+  `~/Library/Application Support/unimux` on macOS. The first start of 0.8.5 or
+  later moves the previous `ajzakomator` directory there
+  (`src/main/dataDirMigration.ts`) before anything else touches it, and leaves a
+  link at the old path (a directory junction on Windows, a symlink on macOS).
+  The rename is atomic and nothing is copied or deleted: if it fails (locked files)
+  the old directory is used for that run and the move is retried on the next start;
+  if only the link fails it is created on a later start. An empty `unimux` directory
+  without a state is moved aside as `unimux.pre-migration-<timestamp>`.
+  While the update window of the previous version still runs in the old directory,
+  the move waits for a later start.
+- The link keeps every old path working: the update window of 0.8.4 polls
+  `%APPDATA%\ajzakomator\update` for the `installer-done` and `ready` markers, the
+  macOS update script of 0.8.4 waits for `.../ajzakomator/updates/mac/ready`, and a
+  downgraded build still finds its data. The installer writes `installer-done`
+  into `$APPDATA\ajzakomator\update` while that path exists (real directory or link)
+  and into `$APPDATA\unimux\update` otherwise, so it never creates the new
+  directory before the migration.
+- `MC_DATA_DIR` overrides the data directory for isolated development and capture;
+  no migration runs then.
 
 Previously published release notes keep their historical product names and
 asset filenames. Their repository links point to the renamed repository.

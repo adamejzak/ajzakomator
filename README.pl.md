@@ -154,7 +154,7 @@ Workflow [CI](.github/workflows/ci.yml) testuje i buduje Windows x64 oraz macOS 
 
 Wydanie wszystkich platform opublikujesz przez **Actions → Publish release**, podając istniejący tag wersji i ID udanego CI dla tego samego commita. Wcześniej dodaj opis w `docs/releases/x.y.z.md`. Workflow sprawdza sumy paczek i dodaje instalatory Windows oraz DMG/ZIP obu architektur Maca do jednego wydania.
 
-Dane aplikacji są lokalne: `%APPDATA%\ajzakomator\state.json` na Windowsie i `~/Library/Application Support/ajzakomator/state.json` na Macu. Unimux zachowuje dotychczasowy katalog danych, dzięki czemu po aktualizacji nadal masz swoje projekty, rozmowy i zapisane konta.
+Dane aplikacji są lokalne: `%APPDATA%\unimux\state.json` na Windowsie i `~/Library/Application Support/unimux/state.json` na Macu. Pierwsze uruchomienie po aktualizacji z wydania sprzed zmiany nazwy przenosi tam dotychczasowy katalog danych i zostawia w starym miejscu dowiązanie, dzięki czemu nadal masz swoje projekty, rozmowy i zapisane konta.
 
 Sprawdzanie aktualizacji łączy się z GitHub Releases. Agenci używają usług skonfigurowanych w ich własnych CLI. Lokalny MCP służy do zarządzania zespołem w aplikacji - [instrukcja po polsku](docs/MCP.md), [English guide](docs/MCP.en.md).
 
