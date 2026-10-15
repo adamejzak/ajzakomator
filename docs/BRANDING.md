@@ -29,8 +29,8 @@ compatibility measures for installations from before the rebranding:
   Do not change it.
 - Updates keep the existing shortcuts, which carry the previous AppUserModelID.
   `resources/installer.nsh` stamps `com.unimux.app` on the Start menu, desktop and
-  pinned taskbar shortcuts after an update, so the window groups with its pin and
-  notifications keep working.
+  pinned taskbar shortcuts on every install (an update and a manual reinstall both
+  keep the pin), so the window groups with its pin and notifications keep working.
 - On macOS the bundle identifier stays `com.ajzakomator.app` (`build.mac.appId`):
   the in-app updater of 0.8.4 and earlier refuses an update whose
   `CFBundleIdentifier` differs from the running app. From 0.8.5 the updater accepts
@@ -47,7 +47,9 @@ compatibility measures for installations from before the rebranding:
   if only the link fails it is created on a later start. An empty `unimux` directory
   without a state is moved aside as `unimux.pre-migration-<timestamp>`.
   While the update window of the previous version still runs in the old directory,
-  the move waits for a later start.
+  the move waits for a later start. A link at the old path that the user made to
+  another place (data kept on another drive) stays the data directory and is not
+  replaced; only the app's own link, which points to `unimux`, counts as migrated.
 - The link keeps every old path working: the update window of 0.8.4 polls
   `%APPDATA%\ajzakomator\update` for the `installer-done` and `ready` markers, the
   macOS update script of 0.8.4 waits for `.../ajzakomator/updates/mac/ready`, and a

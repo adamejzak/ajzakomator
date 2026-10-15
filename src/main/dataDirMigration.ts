@@ -7,7 +7,7 @@
  * at the old path. Update windows of older versions, the NSIS installer and a downgraded build all keep using the old
  * path and reach the same files through that link.
  */
-import { existsSync, lstatSync, renameSync, symlinkSync, writeFileSync } from 'fs';
+import { existsSync, lstatSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 export const LEGACY_DATA_DIR_NAME = 'ajzakomator';
@@ -19,6 +19,8 @@ export interface MigrationFs {
   /** Undefined when nothing exists at `path` (a dangling link still counts as existing). */
   lstat(path: string): { isDirectory(): boolean; isSymbolicLink(): boolean } | undefined;
   exists(path: string): boolean;
+  /** The resolved path, undefined when it cannot be resolved (a dangling link). */
+  realpath(path: string): string | undefined;
   rename(from: string, to: string): void;
   /** Creates a directory link at `path` pointing to `target`. */
   symlink(target: string, path: string): void;
@@ -28,6 +30,7 @@ export interface MigrationFs {
 export const nodeMigrationFs = (platform: NodeJS.Platform): MigrationFs => ({
   lstat: (path) => { try { return lstatSync(path); } catch { return undefined; } },
   exists: (path) => existsSync(path),
+  realpath: (path) => { try { return realpathSync.native(path); } catch { return undefined; } },
   rename: (from, to) => renameSync(from, to),
   // A junction needs no administrator rights or developer mode on Windows; elsewhere a plain directory symlink.
   symlink: (target, path) => symlinkSync(target, path, platform === 'win32' ? 'junction' : 'dir'),
@@ -45,6 +48,8 @@ export type MigrationAction =
   | 'migrated-without-link'
   /** A run from the repository (not the installed app) found the old directory: it uses it and never moves it. */
   | 'not-packaged'
+  /** The old path is a link the user made to another place: it stays the data directory. */
+  | 'user-link'
   /** The old directory is in use (an update window still supervises an install): stays where it is for this run. */
   | 'deferred'
   /** A rename failed (locked files): the old directory is used for this run, retried on the next start. */
@@ -92,7 +97,14 @@ export function migrateDataDir(o: MigrationOptions): MigrationResult {
     if (fs.exists(join(current, MIGRATION_MARKER))) link();
     return { dataDir: current, action: 'current' };
   }
-  if (old.isSymbolicLink() || !old.isDirectory()) return { dataDir: current, action: 'current' };
+  if (old.isSymbolicLink()) {
+    // Our own link points to the new directory. A link the user made (data kept on another drive) stays the data directory.
+    const target = fs.realpath(legacy);
+    const ours = !target || target.toLowerCase() === (fs.realpath(current) ?? current).toLowerCase();
+    if (!ours) log(`data directory: ${legacy} links to ${target}, kept as the data directory`);
+    return ours ? { dataDir: current, action: 'current' } : { dataDir: legacy, action: 'user-link' };
+  }
+  if (!old.isDirectory()) return { dataDir: current, action: 'current' };
 
   if (!o.packaged) return { dataDir: legacy, action: 'not-packaged' };
   if (o.busy?.(legacy)) {
@@ -118,6 +130,8 @@ export function migrateDataDir(o: MigrationOptions): MigrationResult {
 
   try { fs.rename(legacy, current); }
   catch (error) {
+    // Another instance starting at the same moment moved it first: follow it instead of recreating an empty old directory.
+    if (!fs.lstat(legacy) && fs.lstat(current)) return { dataDir: current, action: 'current' };
     log(`data directory: ${legacy} could not be moved to ${current} (${describe(error)}), using it for now`);
     return { dataDir: legacy, action: 'rename-failed' };
   }

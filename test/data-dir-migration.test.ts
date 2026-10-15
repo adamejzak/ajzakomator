@@ -133,6 +133,24 @@ describe('data directory migration', () => {
     expect(readFileSync(join(oldDir, 'state.json'), 'utf8')).toBe('old');
   });
 
+  it('keeps a link the user made to another place as the data directory', () => {
+    const elsewhere = join(appData, 'elsewhere');
+    put(join(elsewhere, 'state.json'), 'mine');
+    nodeMigrationFs(platform).symlink(elsewhere, oldDir);
+    expect(run()).toEqual({ dataDir: oldDir, action: 'user-link' });
+    expect(existsSync(newDir)).toBe(false);
+    expect(readFileSync(join(oldDir, 'state.json'), 'utf8')).toBe('mine');
+  });
+
+  it('follows another instance that moved the directory first instead of recreating the old one', () => {
+    put(join(oldDir, 'state.json'), 'old');
+    const real = nodeMigrationFs(platform);
+    const fs = fsWith({ rename: (from, to) => { real.rename(from, to); throw new Error('ENOENT: already moved'); } });
+    expect(run({ fs })).toEqual({ dataDir: newDir, action: 'current' });
+    expect(existsSync(oldDir)).toBe(false);
+    expect(readFileSync(join(newDir, 'state.json'), 'utf8')).toBe('old');
+  });
+
   it('still migrates when the marker cannot be written', () => {
     put(join(oldDir, 'state.json'), 'old');
     expect(run({ fs: fsWith({ writeFile: fail('EACCES') }) })).toEqual({ dataDir: newDir, action: 'migrated' });
@@ -152,7 +170,7 @@ describe('data directory migration', () => {
   it('never moves anything when the old path is a link or a file', () => {
     mkdirSync(join(appData, 'elsewhere'));
     nodeMigrationFs(platform).symlink(join(appData, 'elsewhere'), oldDir);
-    expect(run()).toEqual({ dataDir: newDir, action: 'current' });
+    expect(run()).toEqual({ dataDir: oldDir, action: 'user-link' });
     expect(isLink(oldDir)).toBe(true);
     (platform === 'win32' ? rmdirSync : unlinkSync)(oldDir);
     writeFileSync(oldDir, 'not a directory');

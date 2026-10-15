@@ -16,18 +16,18 @@
     ${endIf}
     FileWrite $0 "${VERSION}"
     FileClose $0
-    ; An update keeps the existing shortcuts, which still carry the AppUserModelID of builds up to 0.8.4
-    ; (com.ajzakomator.app). Stamp the current one so the taskbar groups the window with its pin and
-    ; notifications keep working.
-    ${if} ${FileExists} "$newStartMenuLink"
-      WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
-    ${endIf}
-    ${if} ${FileExists} "$newDesktopLink"
-      WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
-    ${endIf}
-    ${if} ${FileExists} "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\${SHORTCUT_NAME}.lnk"
-      WinShell::SetLnkAUMI "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\${SHORTCUT_NAME}.lnk" "${APP_ID}"
-    ${endIf}
-    ClearErrors
   ${endIf}
+  ; An update, and a manual reinstall over an existing installation (the taskbar pin always), keep the existing shortcuts,
+  ; which still carry the AppUserModelID of builds up to 0.8.4 (com.ajzakomator.app). Stamp the current one so the
+  ; taskbar groups the window with its pin and notifications keep working.
+  ${if} ${FileExists} "$newStartMenuLink"
+    WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
+  ${endIf}
+  ${if} ${FileExists} "$newDesktopLink"
+    WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+  ${endIf}
+  ${if} ${FileExists} "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\${SHORTCUT_NAME}.lnk"
+    WinShell::SetLnkAUMI "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\${SHORTCUT_NAME}.lnk" "${APP_ID}"
+  ${endIf}
+  ClearErrors
 !macroend
