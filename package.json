@@ -36,6 +36,7 @@
     "dist:win": "electron-vite build && electron-builder --win --publish never",
     "dist:mac": "electron-vite build && electron-builder --mac --publish never -c.npmRebuild=true",
     "test:packaged": "node scripts/smoke-pty.mjs",
+    "perf": "node scripts/perf-profile.mjs",
     "publish-release": "node scripts/release.mjs"
   },
   "dependencies": {
@@ -94,7 +95,9 @@
     "files": [
       "out/**",
       "resources/**",
-      "package.json"
+      "package.json",
+      "!resources/branding/**",
+      "!**/node_modules/node-addon-api/**"
     ],
     "win": {
       "target": [
@@ -118,6 +121,8 @@
         "out/**",
         "resources/**",
         "package.json",
+        "!resources/branding/**",
+        "!**/node_modules/node-addon-api/**",
         "!**/node_modules/node-pty/prebuilds/darwin-*/**",
         "!**/node_modules/node-pty/prebuilds/win32-arm64/**",
         "!**/node_modules/node-pty/prebuilds/*/*.pdb",
