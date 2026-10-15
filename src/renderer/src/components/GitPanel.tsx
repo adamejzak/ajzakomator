@@ -285,11 +285,10 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
   const historyActions = status ? (
     <>
       <div className="git-actions" role="group" aria-label="Git">
-          <button className="btn ghost icon small" disabled={!!busy || !canWrite} onClick={fetchNow} aria-label="Fetch" title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : <GitTransferIcon kind="fetch" />}</button>
-          <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} aria-label="Pull" title={status.upstream ? tr('Pobierz i dołącz zmiany (pull, tylko fast-forward)') : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>{busy === 'Pull' ? '…' : <GitTransferIcon kind="pull" />}</button>
-          <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.push || (!status.ahead && !status.push.setUpstream)} onClick={() => void pushNow()} aria-label="Push" title={tr('Wyślij commity do zdalnego repozytorium (push)')}>{busy === 'Push' ? '…' : <GitTransferIcon kind="push" />}</button>
-        </div>
-        <button className={`btn ghost icon small ${spinning ? 'busy' : ''}`} onClick={() => void refreshNow()} title={spinning ? tr('Odświeżanie…') : tr('Odśwież')} aria-label={tr('Odśwież')} aria-busy={spinning}><RefreshIcon spinning={spinning} /></button>
+        <button className="btn ghost icon small" disabled={!!busy || !canWrite} onClick={fetchNow} aria-label="Fetch" title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : <GitTransferIcon kind="fetch" />}</button>
+        <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} aria-label="Pull" title={status.upstream ? tr('Pobierz i dołącz zmiany (pull, tylko fast-forward)') : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>{busy === 'Pull' ? '…' : <GitTransferIcon kind="pull" />}</button>
+        <button className="btn ghost icon small" disabled={!!busy || !canWrite || !status.push || (!status.ahead && !status.push.setUpstream)} onClick={() => void pushNow()} aria-label="Push" title={tr('Wyślij commity do zdalnego repozytorium (push)')}>{busy === 'Push' ? '…' : <GitTransferIcon kind="push" />}</button>
+      </div>
       <button className={`btn ghost icon small ${spinning ? 'busy' : ''}`} onClick={() => void refreshNow()} title={spinning ? tr('Odświeżanie…') : tr('Odśwież')} aria-label={tr('Odśwież')} aria-busy={spinning}><RefreshIcon spinning={spinning} /></button>
     </>
   ) : null;
@@ -370,6 +369,7 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
         {status.behind > 0 && <span className="git-badge down" title={tr('Commitów do pobrania: {count}', { count: status.behind })}>↓{status.behind}</span>}
         {conflicts > 0 && <span className="git-badge conflict" title={tr('Konflikt scalania')}>!{conflicts}</span>}
         <span className="git-spacer" />
+        <button className={`btn ghost icon small ${spinning ? 'busy' : ''}`} onClick={() => void refreshNow()} title={spinning ? tr('Odświeżanie…') : tr('Odśwież')} aria-label={tr('Odśwież')} aria-busy={spinning}><RefreshIcon spinning={spinning} /></button>
         <button className="btn ghost icon small" onClick={(e) => openOverflow(e.currentTarget)} title={tr('Więcej akcji Git')} aria-label={tr('Więcej akcji Git')} aria-haspopup="menu"><IMore /></button>
       </div>
       {repo.error && <p className="git-note error" role="alert">{errorText(repo.error.message)}</p>}
