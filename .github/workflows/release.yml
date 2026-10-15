@@ -49,7 +49,8 @@ jobs:
         run: node scripts/prepare-release-assets.mjs release-assets "${RELEASE_TAG#v}"
       - name: Prepare release description with download guide
         run: |
-          cat "docs/releases/${RELEASE_TAG#v}.md" docs/releases/DOWNLOADS.md > release-notes.md
+          # The download guide names the files of this release: <version> becomes the real version number.
+          cat "docs/releases/${RELEASE_TAG#v}.md" docs/releases/DOWNLOADS.md | sed "s/<version>/${RELEASE_TAG#v}/g" > release-notes.md
       - name: Create draft with all platform packages
         run: |
           gh release create "$RELEASE_TAG" release-assets/publish/* \
