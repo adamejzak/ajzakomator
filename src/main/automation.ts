@@ -344,6 +344,14 @@ export class AutomationService {
     const cells = a.cells ?? preset?.cells;
     if (!cells?.length || cells.length > 20) throw new Error('Specify 1 to 20 cells or a presetId.');
     this.validateCells(cells);
+    const afterOf = (i: number) => (cells[i] as { after?: number[] }).after;
+    const tracked = (i: number) => !!(cells[i].prompt && cells[i].role);
+    for (let i = 0; i < cells.length; i++) {
+      for (const j of afterOf(i) ?? []) {
+        if (j >= i) throw new Error(`Cell ${i}: after must reference earlier cells (got ${j}).`);
+        if (!tracked(i) || !tracked(j)) throw new Error(`Cell ${i}: after needs a role and prompt on both cells (${i} and ${j}).`);
+      }
+    }
     if (a.rows && a.layout) throw new Error('Specify rows or layout, not both.');
     const count = (existing?.tab.cells.length ?? 0) + cells.length;
     if (count > 20) throw new Error('Grid cell limit reached (20).');
@@ -372,6 +380,8 @@ export class AutomationService {
       }
       let gridId = '';
       const cellIds: string[] = [];
+      const taskIds = new Map<number, string>();
+      const taskByCell: Record<string, string> = {};
       this.state.change((s) => {
         // Recheck permissions and project after asynchronous git operations.
         this.coordinator(actorId);
@@ -402,8 +412,12 @@ export class AutomationService {
             next = updateCell(next, cell.id, { startupPrompt: cells[i].prompt });
             continue;
           }
+          const dependsOn = [...new Set(afterOf(i) ?? [])].map((j) => taskIds.get(j)!);
           const task: AgentTask = { id: uid(), projectId: project.id, cellId: cell.id, fromCellId: actorId,
-            title: cells[i].name ?? `${a.name || grid.name} ${i + 1}`, prompt: cells[i].prompt!, status: 'queued', delivery: 'startup', createdAt: Date.now(), updatedAt: Date.now() };
+            title: cells[i].name ?? `${a.name || grid.name} ${i + 1}`, prompt: cells[i].prompt!, status: 'queued', delivery: 'startup', createdAt: Date.now(), updatedAt: Date.now(),
+            ...(dependsOn.length ? { dependsOn } : {}) };
+          taskIds.set(i, task.id);
+          taskByCell[cell.id] = task.id;
           tasks.push(task);
           next = updateCell(next, cell.id, { startupPrompt: taskPrompt(task) });
         }
@@ -421,7 +435,7 @@ export class AutomationService {
         this.statuses.set(cellId, 'exited');
         return [{ cellId, cli, error: `${CLI_NAMES[cli]} is not installed on this computer, so this cell did not start an agent. It shows an install prompt; ask the user to install ${CLI_NAMES[cli]} or switch the profile.` }];
       });
-      return unavailable.length ? { gridId, cellIds, unavailable } : { gridId, cellIds };
+      return { gridId, cellIds, ...(Object.keys(taskByCell).length ? { tasks: taskByCell } : {}), ...(unavailable.length ? { unavailable } : {}) };
     } catch (error) {
       for (const worktree of created.reverse()) await this.deps.removeWorktree(project.path, worktree).catch(() => undefined);
       throw error;

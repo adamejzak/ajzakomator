@@ -72,6 +72,8 @@ const gridCell = z.object({
   profileId: id, name: name.optional(), role: role.optional(), color: color.optional(), model: model.optional(),
   prompt: text.optional(), worktree: z.boolean().default(false),
 }).strict();
+/** A cell launched by an agent: `after` lists positions (0-based, earlier cells only) whose startup tasks must finish first. */
+const launchCell = gridCell.extend({ after: z.array(z.number().int().min(0).max(19)).max(19).optional() }).strict();
 const gridLayout = z.object({
   cols: z.number().int().min(1).max(60), rows: z.number().int().min(1).max(4),
   areas: z.array(z.object({ col: z.number().int().min(0).max(59), row: z.number().int().min(0).max(3),
@@ -86,12 +88,12 @@ export const automationSchemas = {
   get_snippet: z.object({ snippetId: id }).strict(),
   apply_snippet: z.object({ snippetId: id, cellId: id }).strict(),
   create_grid: z.object({
-    projectId: id.optional(), name, color: color.optional(), cells: z.array(gridCell).min(1).max(20).optional(), presetId: id.optional(),
+    projectId: id.optional(), name, color: color.optional(), cells: z.array(launchCell).min(1).max(20).optional(), presetId: id.optional(),
     rows: z.array(z.number().int().min(1).max(5)).min(1).max(4).optional(),
     layout: gridLayout.optional(),
   }).strict(),
   close_grid: z.object({ gridId: id, cancelTasks: z.boolean().default(false) }).strict(),
-  add_agents: z.object({ gridId: id, cells: z.array(gridCell).min(1).max(20),
+  add_agents: z.object({ gridId: id, cells: z.array(launchCell).min(1).max(20),
     rows: z.array(z.number().int().min(1).max(5)).min(1).max(4).optional(), layout: gridLayout.optional(), }).strict(),
   update_grid: z.object({ gridId: id, name: name.optional(), color: color.nullable().optional() }).strict(),
   update_agent: z.object({ cellId: id, name: name.optional(), color: color.nullable().optional(),

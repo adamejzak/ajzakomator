@@ -182,6 +182,29 @@ describe('MCP protocol behaviour (official SDK client)', () => {
     expect(await call(lead, 'close_grid', { gridId: grid.gridId, cancelTasks: true })).toMatchObject({ stopped: 2 });
     expect(await call(worker, 'help', { topic: 'grids' })).toMatchObject({ topic: 'grids' });
   });
+  it('builds a chained team in one create_grid call and returns the task ids', async () => {
+    const h = await setup();
+    const lead = await connect(h, h.coordinator.id);
+    const call = async (name: string, args: Record<string, unknown>) => data(await lead.callTool({ name, arguments: args }));
+    const team = await call('create_grid', { name: 'Pipeline', cells: [
+      { profileId: 'codex', role: 'worker', name: 'Dev', count: 2, prompt: 'Implement' },
+      { profileId: 'claude', role: 'worker', name: 'Review', prompt: 'Review', after: [0, 1] },
+    ] });
+    expect(team.cellIds).toHaveLength(3);
+    expect(Object.keys(team.tasks)).toEqual(team.cellIds);
+    const tasks = h.controller.get().automation.tasks;
+    const review = tasks.find((t) => t.id === team.tasks[team.cellIds[2]])!;
+    expect(review.dependsOn).toEqual([team.tasks[team.cellIds[0]], team.tasks[team.cellIds[1]]]);
+    const names = h.controller.get().projects[0].tabs.find((t) => t.id === team.gridId)!.cells.map((c) => c.name);
+    expect(names).toEqual(['Dev 1', 'Dev 2', 'Review']);
+    // The returned ids go straight to wait_for: no get_tasks round trip.
+    expect(await call('wait_for', { taskIds: [team.tasks[team.cellIds[0]]], timeoutSec: 1 })).toEqual({ event: 'timeout' });
+    const forward = await lead.callTool({ name: 'create_grid', arguments: { name: 'Bad', cells: [{ profileId: 'codex', role: 'worker', prompt: 'x', after: [1] }, { profileId: 'codex', role: 'worker', prompt: 'y' }] } });
+    expect(forward.isError).toBe(true);
+    expect(text(forward)).toMatch(/earlier cells/);
+    const plain = await lead.callTool({ name: 'create_grid', arguments: { name: 'Bad2', cells: [{ profileId: 'codex', name: 'a' }, { profileId: 'codex', role: 'worker', prompt: 'y', after: [0] }] } });
+    expect(plain.isError).toBe(true);
+  });
   it('reports tool errors as isError text and protocol errors for unknown tools', async () => {
     const h = await setup();
     const client = await connect(h, h.worker.id);
