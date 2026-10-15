@@ -83,7 +83,7 @@
     "zustand": "^5.0.15"
   },
   "build": {
-    "appId": "com.ajzakomator.app",
+    "appId": "com.unimux.app",
     "productName": "unimux",
     "asar": false,
     "npmRebuild": false,
@@ -139,6 +139,7 @@
       ]
     },
     "nsis": {
+      "guid": "214279c4-b798-5d4e-848f-0b9245114cd1",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -147,6 +148,7 @@
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "mac": {
+      "appId": "com.ajzakomator.app",
       "target": [
         "dmg",
         "zip"

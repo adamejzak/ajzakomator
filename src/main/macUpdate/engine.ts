@@ -111,6 +111,16 @@ export function plistString(xml: string, key: string): string | undefined {
 
 const fail = (message: string): Error => new Error(message);
 
+/** Bundle identifiers of this app: the one kept from before the rebranding and the current one. */
+const OWN_BUNDLE_IDS = new Set(['com.ajzakomator.app', 'com.unimux.app']);
+
+/**
+ * Whether an update bundle belongs to the running app. Builds up to 0.8.4 only accept their own identifier, which is why
+ * the macOS bundle still keeps `com.ajzakomator.app`; accepting both lets a later release switch to `com.unimux.app`.
+ */
+export const sameApp = (identifier: string, running: string): boolean =>
+  identifier === running || (OWN_BUNDLE_IDS.has(identifier) && OWN_BUNDLE_IDS.has(running));
+
 /** Version a file of the staging directory belongs to (archive, partial archive, unpacked bundle, script); undefined for other files. */
 export function stagedFileVersion(name: string): string | undefined {
   return /-(\d+\.\d+\.\d+[^/]*?)-mac-(?:arm64|x64)\.zip(?:\.part)?$/.exec(name)?.[1]
@@ -387,7 +397,7 @@ export class MacUpdater {
     const announced = plistString(info, 'CFBundleShortVersionString');
     if (announced !== version) return reject(`version ${announced ?? '(none)'} instead of ${version}`);
     const identifier = plistString(info, 'CFBundleIdentifier');
-    if (!identifier || !running || identifier !== running) return reject(`identifier ${identifier ?? '(none)'} does not match the running app`);
+    if (!identifier || !running || !sameApp(identifier, running)) return reject(`identifier ${identifier ?? '(none)'} does not match the running app`);
     const executable = plistString(info, 'CFBundleExecutable');
     if (!executable || executable.includes('/') || executable === '..' || executable === '.') return reject('no valid CFBundleExecutable');
     const exe = await this.d.fs.stat(posix.join(bundle, 'Contents', 'MacOS', executable)).catch(() => undefined);

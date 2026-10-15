@@ -67,10 +67,20 @@ import type { CodexNotice } from '../shared/codexHooks';
 import { isSoundFile, SOUND_EXTENSIONS } from '../shared/sound';
 import { loadEventSound } from './alertSound';
 import { notificationOptions } from './notifyOptions';
+import { migrateDataDir } from './dataDirMigration';
+import { updateWindowAlive } from './updateRuntime';
 
-// Keep the storage identity across rebranding: projects, sessions and saved accounts stay available.
-const DATA_DIR = process.env.MC_DATA_DIR || join(app.getPath('appData'), 'ajzakomator');
-// Carry over state from the app's previous name.
+// Moves %APPDATA%\ajzakomator (macOS: ~/Library/Application Support/ajzakomator) to `unimux` once, leaving a link behind, before
+// anything else touches the data directory. While the previous version's update window still supervises an install the old
+// directory stays in place for this run (its files are open and that window polls paths inside it).
+const DATA_DIR = migrateDataDir({
+  appData: app.getPath('appData'),
+  platform: process.platform,
+  env: process.env,
+  busy: (legacy) => updateWindowAlive(join(legacy, 'update')),
+  log: (message) => console.warn(message),
+}).dataDir;
+// Carry over state from the app's earliest name (MultiCoding) into the final data directory.
 const LEGACY_STATE = join(app.getPath('appData'), 'MultiCoding', 'state.json');
 if (!process.env.MC_DATA_DIR && !existsSync(join(DATA_DIR, 'state.json')) && existsSync(LEGACY_STATE)) {
   mkdirSync(DATA_DIR, { recursive: true });
@@ -80,9 +90,9 @@ const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
 app.setPath('userData', DATA_DIR);
-// The installed app must keep the original installer identity so updates replace the existing installation. A run from the repository
-// (npm run dev, a clone of the project) gets its own identity: it must never share the taskbar entry (and its icon) with the installed app.
-const APP_USER_MODEL_ID = app.isPackaged ? 'com.ajzakomator.app' : 'com.ajzakomator.app.dev';
+// Matches build.appId, which the installer also stamps on the shortcuts. A run from the repository (npm run dev, a clone of the
+// project) gets its own identity: it must never share the taskbar entry (and its icon) with the installed app.
+const APP_USER_MODEL_ID = app.isPackaged ? 'com.unimux.app' : 'com.unimux.app.dev';
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
 if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);

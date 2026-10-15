@@ -23,7 +23,7 @@ import type { AccountsStore } from './store';
  * when a rollback was not clean or the state is ambiguous. `recoverInterruptedSwap` decides once from the phase and
  * from which login (A = old main, X = the target's) each file's refresh token belongs to; when that is not provable
  * it modifies no credential file and reports 'manual'. On Windows the mode bits are ignored; the directory inherits
- * the ACL of %APPDATA%\ajzakomator (the user's profile), no extra ACL is set.
+ * the ACL of %APPDATA%\unimux (the user's profile), no extra ACL is set.
  */
 
 export interface SwapFs {

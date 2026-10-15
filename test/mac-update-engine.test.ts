@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { Readable } from 'stream';
 import { describe, expect, it, vi } from 'vitest';
-import { MAC_MESSAGES, MacUpdater, plistString, REFUSAL_MESSAGES, stagedFileVersion, type ExecResult, type MacOffer, type MacUpdaterDeps } from '../src/main/macUpdate/engine';
+import { MAC_MESSAGES, MacUpdater, plistString, REFUSAL_MESSAGES, sameApp, stagedFileVersion, type ExecResult, type MacOffer, type MacUpdaterDeps } from '../src/main/macUpdate/engine';
 
 // ── fixtures ───────────────────────────────────────────────────────────────────────────────────
 
@@ -319,6 +319,13 @@ describe('MacUpdater.download', () => {
     });
     it('rejects another bundle identifier than the running app', async () => {
       expect((await failing({ unpacked: { CFBundleIdentifier: 'com.evil.app' } })).mem.text(`${DIR}/update.log`)).toContain('identifier com.evil.app');
+    });
+    it('treats the identifier from before the rebranding and the current one as the same app', () => {
+      expect(sameApp('com.unimux.app', 'com.ajzakomator.app')).toBe(true);
+      expect(sameApp('com.ajzakomator.app', 'com.unimux.app')).toBe(true);
+      expect(sameApp('com.ajzakomator.app', 'com.ajzakomator.app')).toBe(true);
+      expect(sameApp('com.evil.app', 'com.unimux.app')).toBe(false);
+      expect(sameApp('com.unimux.app', 'com.evil.app')).toBe(false);
     });
     it('rejects a bundle whose executable is missing, not executable or has a path in its name', async () => {
       await failing({ unpacked: { CFBundleExecutable: '../../escape' } });
