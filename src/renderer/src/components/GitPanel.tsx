@@ -355,11 +355,11 @@ function RepoView({ projectId, projectPath }: { projectId: string; projectPath: 
       {worktreeSelect}
       <div className="git-bar">
         <button className="git-branch" onClick={(e) => void openBranches(e.currentTarget)} title={status.upstream ? `${tr('Zmień gałąź')}\n${tr('Śledzi: {upstream}', { upstream: status.upstream })}` : tr('Zmień gałąź')} aria-haspopup="menu">
-          <IBranch /><span className="git-branch-name">{branchLabel}</span><IChevron />
+          <IBranch /><span className="git-branch-name">{branchLabel}</span><span className="git-branch-chevron"><IChevron /></span>
         </button>
         {conflicts > 0 && <span className="git-badge conflict" title={tr('Konflikt scalania')}>!{conflicts}</span>}
         <span className="git-spacer" />
-        <button className="btn ghost icon small" disabled={!!busy || !canWrite} onClick={fetchNow} aria-label="Fetch" title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : <GitTransferIcon kind="fetch" />}</button>
+        <button className="btn ghost icon small git-fetch" disabled={!!busy || !canWrite} onClick={fetchNow} aria-label="Fetch" title={tr('Pobierz zmiany ze zdalnego repozytorium (fetch)')}>{busy === 'Fetch' ? '…' : <GitTransferIcon kind="fetch" />}</button>
         <button className={`btn ghost icon small git-sync ${status.behind > 0 ? 'down' : ''}`} disabled={!!busy || !canWrite || !status.upstream} onClick={pullNow} aria-label={pullLabel} title={status.upstream ? pullLabel : tr('Ta gałąź nie śledzi gałęzi zdalnej')}>
           {busy === 'Pull' ? '…' : <><GitTransferIcon kind="pull" />{status.behind > 0 && <span className="git-sync-count">{status.behind}</span>}</>}
         </button>
