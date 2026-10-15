@@ -90,7 +90,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 - Resize both side panels by dragging their inner edge; double click to reset. Widths and list order are saved
 - Browse the active project's file tree in **Files**, edit source in the integrated code editor, or open it in your external editor
 - Right-click projects, grids, snippets, files, or empty panel space for their actions; click the project editor's avatar to choose an image
-- Updates for the installed Windows app and for the macOS app (never without your click); portable Windows builds link to the download page
+- Updates for the installed Windows app and for the macOS app (never without your click)
 - Polish, English, German, Spanish, French and Portuguese UI: choose on first launch, change anytime in Settings
 - Sessions of the active project's other tabs start in the background a moment after launch (one or two at a time, paused while you type or resize), so switching tabs shows live agents with status and alerts; **Settings → Terminal → Load sessions in the background** chooses visible only, the active project (default) or every project. At most 12 sessions (`BACKGROUND_MAX_CELLS`) start this way per launch, because each one is a real agent process; the status bar then says "Loaded 12 of N sessions in the background (limit)" and the rest start when their tab is opened, as before
 - Dark, minimal UI in the spirit of Cursor
@@ -137,8 +137,6 @@ Releases published before the Unimux rebranding use `ajzakomator` in package nam
 3. Choose the app language on first launch
 4. Add a project (any folder) and open a grid
 
-`unimux-Portable-x.y.z.exe` runs without installing. See [Updating](#updating) for the differences between builds.
-
 **macOS (Apple Silicon and Intel)**
 
 1. Download **`unimux-x.y.z-mac-arm64.dmg`** for Apple Silicon or **`unimux-x.y.z-mac-x64.dmg`** for Intel from the [latest release](https://github.com/daven-team/unimux/releases/latest).
@@ -164,7 +162,7 @@ The installed Windows app checks GitHub Releases. **Settings → Updates** has t
 
 To check manually, right-click the **unimux** name/version and choose **Check for updates**. If checking or downloading fails, the header offers a retry and shows the error.
 
-Portable Windows builds open the release download page instead of installing updates automatically. Replace the app with the new download; your local app data is kept separately. Development builds do not install updates.
+Development builds do not install updates.
 
 **macOS.** Squirrel.Mac (electron-updater) refuses updates that are only ad-hoc signed, so the macOS app has its own updater with the same two modes and the same rule that nothing installs without your click. It reads `latest-mac.yml` from the latest GitHub release, downloads the `.zip` for your processor (Apple Silicon or Intel) into `~/Library/Application Support/unimux/updates/mac`, checks its size and SHA-512, unpacks it with `ditto` and verifies the bundle (version, bundle identifier, executable and `codesign --verify`). After you click install, a small script waits until the app has quit, moves the old app aside, puts the new one in its place (restoring the old one if anything fails), removes the quarantine flag and starts the new version. The log is `updates/mac/update.log`. In **Automatic** mode the prompt at start works like on Windows; the download starts while you decide. The app only replaces itself when it runs from a normal, writable `.app` that belongs to you (for example in **Applications**). From the mounted DMG, a translocated (quarantined) copy, a read-only or administrator-owned location, or when macOS denies the **App Management** permission, the status bar offers the download page instead and the tooltip says why.
 
@@ -232,7 +230,7 @@ cd unimux
 npm install          # .npmrc sets legacy-peer-deps
 npm run dev          # app with hot reload
 npm test             # unit tests + integration tests against a real native PTY
-npm run dist:win     # Windows installer + portable build in release/
+npm run dist:win     # Windows installer in release/
 npm run dist:mac     # macOS DMG + ZIP in release/ (run on a Mac)
 npm run test:packaged # verify node-pty using the packaged Electron runtime
 ```

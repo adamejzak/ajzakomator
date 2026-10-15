@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 // Renaming the repository does not rename assets attached to historical releases.
 const PACKAGE_PATTERN = /^(?:unimux|ajzakomator)-(Setup-.+\.exe|Portable-.+\.exe|.+-mac-(arm64|x64)\.(dmg|zip))$/;
 
-/** Sums download_count of the installer and portable packages over all releases. */
+/** Sums download_count of the installer packages over all releases (older releases also had portable builds; they still count). */
 export function countPackageDownloads(releases) {
   let total = 0;
   for (const release of releases) {

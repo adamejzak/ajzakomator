@@ -103,12 +103,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "icon": "resources/icon.ico",
@@ -146,9 +140,6 @@
       "createDesktopShortcut": true,
       "shortcutName": "unimux",
       "artifactName": "${productName}-Setup-${version}.${ext}"
-    },
-    "portable": {
-      "artifactName": "${productName}-Portable-${version}.${ext}"
     },
     "mac": {
       "target": [

@@ -37,7 +37,6 @@ writeFileSync(join(output, 'latest-mac.yml'), yaml.dump({ ...preferredMac, files
 const expected = [
   `unimux-Setup-${version}.exe`,
   `unimux-Setup-${version}.exe.blockmap`,
-  `unimux-Portable-${version}.exe`,
   `unimux-${version}-mac-arm64.dmg`,
   `unimux-${version}-mac-arm64.zip`,
   `unimux-${version}-mac-x64.dmg`,
