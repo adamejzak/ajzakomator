@@ -109,7 +109,7 @@
           ]
         }
       ],
-      "icon": "resources/icon.png",
+      "icon": "resources/icon.ico",
       "electronLanguages": [
         "en-US",
         "pl",

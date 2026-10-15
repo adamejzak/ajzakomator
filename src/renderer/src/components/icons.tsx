@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import brandIcon from '../../../../resources/icon.png';
+import brandIcon from '../../../../resources/icon-64.png';
 
 const Svg = ({ children, size = 14 }: { children: ReactNode; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -33,7 +33,7 @@ export const IChevron = () => <Svg size={10}><path d="M4 6l4 4 4-4" /></Svg>;
 /** Supplied brand artwork, shared with the installer and update splash. */
 export function Logo({ size = 18 }: { size?: number }) {
   return (
-    <img src={brandIcon} width={size} height={size} alt="" aria-hidden="true" style={{ flex: 'none', display: 'block', borderRadius: size * .2 }} />
+    <img src={brandIcon} width={size} height={size} alt="" aria-hidden="true" draggable={false} style={{ flex: 'none', display: 'block', objectFit: 'contain' }} />
   );
 }
 

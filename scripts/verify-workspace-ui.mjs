@@ -6,6 +6,7 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   // The rail tile of the open panel collapses it, so only click when Files is not the shown panel yet.
   const openFilesPanel = async () => { if (!(await evaluate("document.querySelector('#files-view')?.getAttribute('aria-selected') === 'true'"))) await click('#files-view'); };
   const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  await until(() => evaluate('Array.from(document.querySelectorAll(".brand-mark img")).length > 0 && Array.from(document.querySelectorAll(".brand-mark img")).every(img => img.complete && img.naturalWidth === 64 && img.naturalHeight === 64)'), 'bundled brand icon loads at its intended resolution');
   assert.equal(await evaluate('document.querySelectorAll(".titlebar .tab").length'), 0);
   assert.equal(await evaluate('document.querySelectorAll(".workspace-tabs .tab").length >= 2'), true);
   assert.equal(await evaluate('document.querySelectorAll(".sidebar .list-drag-grip, .explorer-foot").length'), 0);

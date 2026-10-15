@@ -10,10 +10,27 @@ const executable = resolve(bundle, mac ? 'MacOS/unimux' : 'unimux.exe');
 // through the archive like the app does; macOS keeps a plain resources/app directory.
 const resources = resolve(bundle, mac ? 'Resources' : 'resources');
 const asar = resolve(resources, 'app.asar');
+const appRoot = existsSync(asar) ? asar : resolve(resources, 'app');
 const modulePath = existsSync(asar) ? resolve(asar, 'node_modules/node-pty') : resolve(resources, 'app/node_modules/node-pty');
 if (!existsSync(executable) || !(existsSync(asar) || existsSync(modulePath))) throw new Error('Packaged Electron or node-pty is missing');
 
 const script = `
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const assert = require('node:assert/strict');
+  const appRoot = ${JSON.stringify(appRoot)};
+  for (const [name, size] of [['icon.png', 1024], ['icon-64.png', 64]]) {
+    const png = fs.readFileSync(path.join(appRoot, 'resources', name));
+    assert.equal(png.subarray(1, 4).toString(), 'PNG', name + ' signature');
+    assert.equal(png.readUInt32BE(16), size, name + ' width');
+    assert.equal(png.readUInt32BE(20), size, name + ' height');
+  }
+  const ico = fs.readFileSync(path.join(appRoot, 'resources', 'icon.ico'));
+  assert.equal(ico.readUInt16LE(2), 1);
+  assert.equal(ico.readUInt16LE(4), 7);
+  const splash = fs.readFileSync(path.join(appRoot, 'resources/update-splash/index.html'), 'utf8');
+  assert.match(splash, /class="logo" src="icon.png"/);
+  process.stdout.write('Packaged branding assets OK\\n');
   const pty = require(${JSON.stringify(modulePath)});
   const windows = process.platform === 'win32';
   const env = { ...process.env };

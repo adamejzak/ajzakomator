@@ -17,7 +17,8 @@ function fakeInstall(): { installDir: string; appDir: string } {
     'resources/app/node_modules/big/index.js']) put(join(installDir, f));
   const appDir = join(installDir, 'resources', 'app');
   put(join(appDir, 'out/main/updatesplash.js')); put(join(appDir, 'out/main/chunks/shared.js'), 'chunk'); put(join(appDir, 'out/preload/updatesplash.js'));
-  put(join(appDir, 'resources/update-splash/index.html')); put(join(appDir, 'resources/icon.png'));
+  put(join(appDir, 'resources/update-splash/index.html'), readFileSync(new URL('../resources/update-splash/index.html', import.meta.url), 'utf8'));
+  put(join(appDir, 'resources/icon.png'));
   return { installDir, appDir };
 }
 
@@ -49,6 +50,10 @@ describe('update window runtime', () => {
     const manifest = JSON.parse(readFileSync(join(runtimeDir, 'resources', 'app', 'package.json'), 'utf8'));
     expect(manifest.main).toBe('main/updatesplash.js');
     for (const file of ['main/updatesplash.js', 'main/chunks/shared.js', 'preload/updatesplash.js', 'ui/index.html', 'ui/icon.png']) expect(existsSync(join(runtimeDir, 'resources', 'app', file))).toBe(true);
+    const uiDir = join(runtimeDir, 'resources', 'app', 'ui');
+    const logoSrc = readFileSync(join(uiDir, 'index.html'), 'utf8').match(/<img\b[^>]*class="logo"[^>]*src="([^"]+)"/)?.[1];
+    expect(logoSrc).toBeTruthy();
+    expect(existsSync(join(uiDir, logoSrc!))).toBe(true);
     expect(existsSync(`${runtimeDir}.partial`)).toBe(false);
   });
 

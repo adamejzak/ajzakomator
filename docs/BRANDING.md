@@ -4,11 +4,13 @@ The product, package, terminal identifier and MCP server are named `unimux`.
 The repository and update feed are `daven-team/unimux`. Original supplied artwork
 lives in `resources/branding/logo.png` and `resources/branding/banner.png`.
 Both README languages use the banner. The renderer and update window use
-`resources/icon.png`, the same artwork exported for Electron Builder.
+the same artwork: `resources/icon-64.png` in the renderer and `resources/icon.png`
+in the update window and macOS packages. Windows uses `resources/icon.ico` with
+16, 24, 32, 48, 64, 128 and 256 px variants for shortcuts, Explorer and the taskbar.
 
-After updating the source logo, run `npm run icons` to regenerate the centered
-1024×1024 PNG used by Electron Builder. The export trims the outer black margin
-without changing the supplied source artwork. Then run `npm run build` and
+After updating the square source logo, run `npm run icons` to regenerate all
+three exports. The full image, rounded tile, padding and transparency are preserved;
+no brightness-based crop or additional CSS mask is applied. Then run `npm run build` and
 `node scripts/capture-readme.mjs` to refresh the screenshots from the actual app.
 
 Two internal identities intentionally retain the previous name:
