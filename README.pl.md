@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="resources/branding/banner.png" width="100%" alt="unimux — terminalowy workspace dla agentów programistycznych" />
+<img src="resources/branding/banner.png" width="100%" alt="unimux - terminalowy workspace dla agentów programistycznych" />
 
 <br />
 

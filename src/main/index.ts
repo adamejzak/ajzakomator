@@ -77,6 +77,7 @@ const DATA_DIR = migrateDataDir({
   appData: app.getPath('appData'),
   platform: process.platform,
   env: process.env,
+  packaged: app.isPackaged,
   busy: (legacy) => updateWindowAlive(join(legacy, 'update')),
   log: (message) => console.warn(message),
 }).dataDir;

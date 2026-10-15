@@ -43,6 +43,8 @@ export type MigrationAction =
   | 'migrated'
   /** Moved, but the link at the old path could not be created (retried on the next start). */
   | 'migrated-without-link'
+  /** A run from the repository (not the installed app) found the old directory: it uses it and never moves it. */
+  | 'not-packaged'
   /** The old directory is in use (an update window still supervises an install): stays where it is for this run. */
   | 'deferred'
   /** A rename failed (locked files): the old directory is used for this run, retried on the next start. */
@@ -54,6 +56,8 @@ export interface MigrationOptions {
   appData: string;
   platform: NodeJS.Platform;
   env: { MC_DATA_DIR?: string };
+  /** Only the installed app moves the directory; a run from the repository (`npm run dev`) never does. */
+  packaged: boolean;
   fs?: MigrationFs;
   now?: () => number;
   /** True while something still works inside the old directory (the update window of the previous version). */
@@ -90,6 +94,7 @@ export function migrateDataDir(o: MigrationOptions): MigrationResult {
   }
   if (old.isSymbolicLink() || !old.isDirectory()) return { dataDir: current, action: 'current' };
 
+  if (!o.packaged) return { dataDir: legacy, action: 'not-packaged' };
   if (o.busy?.(legacy)) {
     log(`data directory: ${legacy} is still in use by an update, it is moved on a later start`);
     return { dataDir: legacy, action: 'deferred' };

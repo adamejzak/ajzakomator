@@ -56,7 +56,8 @@ compatibility measures for installations from before the rebranding:
   and into `$APPDATA\unimux\update` otherwise, so it never creates the new
   directory before the migration.
 - `MC_DATA_DIR` overrides the data directory for isolated development and capture;
-  no migration runs then.
+  no migration runs then. Runs from the repository (`npm run dev`) never move the
+  directory either: they use the old one while it is still a real directory.
 
 Previously published release notes keep their historical product names and
 asset filenames. Their repository links point to the renamed repository.

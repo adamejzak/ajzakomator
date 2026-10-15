@@ -21,7 +21,7 @@ afterEach(() => rmSync(appData, { recursive: true, force: true }));
 
 const put = (file: string, body = 'x') => { mkdirSync(join(file, '..'), { recursive: true }); writeFileSync(file, body); };
 const run = (over: Partial<MigrationOptions> = {}) =>
-  migrateDataDir({ appData, platform, env: {}, now: () => NOW, log: (line) => logs.push(line), ...over });
+  migrateDataDir({ appData, platform, env: {}, packaged: true, now: () => NOW, log: (line) => logs.push(line), ...over });
 /** Real file operations with selected ones replaced. */
 const fsWith = (over: Partial<MigrationFs>): MigrationFs => ({ ...nodeMigrationFs(platform), ...over });
 const isLink = (path: string) => lstatSync(path).isSymbolicLink();
@@ -31,6 +31,13 @@ describe('data directory migration', () => {
   it('uses MC_DATA_DIR as is and touches nothing', () => {
     put(join(oldDir, 'state.json'), 'old');
     expect(run({ env: { MC_DATA_DIR: join(appData, 'custom') } })).toEqual({ dataDir: join(appData, 'custom'), action: 'override' });
+    expect(isLink(oldDir)).toBe(false);
+    expect(existsSync(newDir)).toBe(false);
+  });
+
+  it('never moves the old directory from a run outside the installed app', () => {
+    put(join(oldDir, 'state.json'), 'old');
+    expect(run({ packaged: false })).toEqual({ dataDir: oldDir, action: 'not-packaged' });
     expect(isLink(oldDir)).toBe(false);
     expect(existsSync(newDir)).toBe(false);
   });
