@@ -128,6 +128,9 @@ export async function generateKey(req: { type: SshKeyType; bits?: number; commen
 interface Draft { text: string; publicKey?: string; certificate?: string; meta?: KeyMeta; encrypted: boolean; passphrase?: string; certificateWarning?: boolean; created: number }
 export interface ReadyDraft { text: string; meta: KeyMeta; encrypted: boolean; passphrase?: string; certificate?: string }
 
+/** At most this many imports in progress (D3): a new one evicts the oldest, so pasted private keys never pile up in memory. */
+export const MAX_KEY_DRAFTS = 20;
+
 /** Imports in progress (spec 7.2): the private text stays here until committed or discarded (10 minutes at most). */
 export class KeyDrafts {
   private drafts = new Map<string, Draft>();
@@ -144,7 +147,11 @@ export class KeyDrafts {
     const draft: Draft = { text: input.privateKey, publicKey: input.publicKey?.trim() || undefined, certificate: input.certificate?.trim() || undefined, encrypted: false, created: this.now() };
     const id = randomUUID();
     const result = this.evaluate(id, draft, undefined, duplicateOf);
-    if (result.ok) this.drafts.set(id, draft);
+    if (result.ok) {
+      // Map order is insertion order: the first entries are the oldest drafts.
+      for (const oldest of this.drafts.keys()) { if (this.drafts.size < MAX_KEY_DRAFTS) break; this.drafts.delete(oldest); }
+      this.drafts.set(id, draft);
+    }
     return result;
   }
 

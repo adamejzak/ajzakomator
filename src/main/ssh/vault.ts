@@ -54,7 +54,7 @@ export class SshVault {
   constructor(private readonly file: string, private readonly cipher: Cipher, private readonly now: () => number = Date.now) {
     const read = readJsonFile(file);
     if (!read.ok) {
-      // Missing, or unparsable and moved to vault.json.bak: start empty. Still there means it could not be read: keep it untouched.
+      // Missing, or unparsable and moved to vault.json.bak-<time>: start empty. Still there means it could not be read: keep it untouched.
       if (existsSync(file)) this.newer = true;
       return;
     }

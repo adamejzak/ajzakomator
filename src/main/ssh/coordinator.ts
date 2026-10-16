@@ -18,7 +18,8 @@ export interface CoordinatorDeps {
   state(): AppState;
   vault: SshVault;
   knownHosts: KnownHostsStore;
-  host(m: SshHostCommand): void;
+  /** Sends a command to the Pty Host; false when no Pty Host is running (restarting or given up), so it was not delivered. */
+  host(m: SshHostCommand): boolean | void;
   events: { session(s: SshSessionState): void; prompt(cellId: string, prompt: SshPrompt | null): void; vaultChanged(): void };
   debug?: boolean;
   now?(): number;
@@ -116,12 +117,14 @@ export class SshCoordinator {
     const savedPassword = this.deps.vault.password(host.id);
     if (!current()) return { ok: false, error: 'cancelled' };
     const startup = startupInput(host.startupCommand);
-    this.deps.host({ t: 'sshConnect', req: {
+    const delivered = this.deps.host({ t: 'sshConnect', req: {
       id: req.cellId, host: host.address, port: host.port, username: host.username, cols: req.cols, rows: req.rows,
       ...(privateKey ? { privateKey } : {}), ...(passphrase ? { passphrase } : {}), ...(savedPassword.ok ? { password: savedPassword.password } : {}),
       ...(startup ? { startup } : {}),
       allowPasswordPrompt: true, ...(this.deps.debug ? { debug: true } : {}),
     } });
+    // M1: a connect sent while the Pty Host is restarting or gone would be lost and leave the cell `connecting` forever.
+    if (delivered === false) return fail('ptyHostCrashed');
     return { ok: true };
   }
 
@@ -253,7 +256,8 @@ export class SshCoordinator {
     const answer = await this.ask(m.id, null, body);
     if (this.sessionsByCell.get(m.id) !== live) return;
     if (!('values' in answer)) { reply(null); return; }
-    if (m.kind === 'password' && answer.remember) live.pendingSave = answer.values[0];
+    // I1: only the latest answer decides; a retry answered without "remember" must not save an earlier (wrong) password.
+    live.pendingSave = m.kind === 'password' && answer.remember ? answer.values[0] : undefined;
     reply(answer.values);
   }
 

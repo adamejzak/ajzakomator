@@ -58,6 +58,8 @@ interface Session {
   exitCode: number | undefined;
   startup: { text: string | undefined; quiet: NodeJS.Timeout | null; max: NodeJS.Timeout | null };
   ended: boolean;
+  /** The session ended and the last output of a paused channel is being drained (M2): it is still delivered. */
+  draining: boolean;
   closed: Promise<void>;
   markClosed: () => void;
 }
@@ -85,7 +87,7 @@ export class SshManager implements TerminalBackend {
       size: { cols: Math.max(2, req.cols), rows: Math.max(1, req.rows) },
       steps: [...(req.privateKey ? ['publickey' as const] : []), ...(req.password ? ['savedPassword' as const] : [])],
       passwordTries: 0, keyboardTries: 0, timer: null, hostKey: null, auth: null, override: undefined, error: undefined,
-      exited: false, exitCode: undefined, startup: { text: req.startup, quiet: null, max: null }, ended: false, closed, markClosed,
+      exited: false, exitCode: undefined, startup: { text: req.startup, quiet: null, max: null }, ended: false, draining: false, closed, markClosed,
     } as Omit<Session, 'out'> as Session;
     s.out = new OutputChannel(req.id, () => this.sink, { pause: () => this.pauseStreams(s), resume: () => this.resumeStreams(s) }, () => this.flowControl);
     this.sessions.set(req.id, s);
@@ -233,9 +235,9 @@ export class SshManager implements TerminalBackend {
   }
 
   private output(s: Session, text: string): void {
-    if (!text || !this.live(s)) return;
+    if (!text || this.sessions.get(s.id) !== s || (s.ended && !s.draining)) return;
     s.out.push(text);
-    if (s.startup.text) {
+    if (s.startup.text && !s.ended) {
       if (s.startup.quiet) clearTimeout(s.startup.quiet);
       s.startup.quiet = setTimeout(() => this.typeStartup(s), this.timers.quietMs);
     }
@@ -259,7 +261,8 @@ export class SshManager implements TerminalBackend {
 
   private fail(s: Session, error: SshErrorCode): void {
     if (!this.live(s)) return;
-    if (!s.error) s.error = error;
+    // I3: after the remote exit a hard-closing server may answer the disconnect with a reset; that is still a clean close.
+    if (!s.error && !s.exited) s.error = error;
     this.disarm(s);
     if (s.hostKey) { const { verify } = s.hostKey; s.hostKey = null; try { verify(false); } catch { /* ssh2 already gave up */ } }
     s.auth = null;
@@ -275,7 +278,9 @@ export class SshManager implements TerminalBackend {
     this.disarm(s);
     this.clearStartup(s);
     this.dropSecrets(s);
+    s.draining = true;
     s.out.drain(() => {
+      s.draining = false;
       if (this.sessions.get(s.id) === s) {
         s.out.flush();
         s.out.dispose();

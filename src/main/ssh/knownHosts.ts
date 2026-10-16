@@ -44,7 +44,7 @@ export class KnownHostsStore {
   constructor(private readonly file: string, private readonly now: () => number = Date.now) {
     const read = readJsonFile(file);
     if (!read.ok) {
-      // Missing, or unparsable and moved to .bak: start empty. Still there means it could not be read: never write over it.
+      // Missing, or unparsable and moved to a timestamped .bak-<time>: start empty. Still there means it could not be read: never write over it.
       if (existsSync(file)) this.newer = true;
       return;
     }

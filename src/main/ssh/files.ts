@@ -21,13 +21,24 @@ export function writePrivateFile(file: string, text: string): void {
   }
 }
 
-/** Reads a JSON file; an unparsable one is kept as <file>.bak (never silently overwritten). */
+/**
+ * Where an unparsable file is kept (M5): `<file>.bak-<ISO time>`, with a counter if that exists. An earlier backup is never
+ * overwritten: a second corruption must not destroy the first backup, which may hold the original secrets.
+ */
+export function backupPath(file: string, now = new Date()): string {
+  const base = `${file}.bak-${now.toISOString().replace(/[:.]/g, '-')}`;
+  let candidate = base;
+  for (let n = 2; existsSync(candidate); n++) candidate = `${base}-${n}`;
+  return candidate;
+}
+
+/** Reads a JSON file; an unparsable one is kept as a timestamped backup (see backupPath), never silently overwritten. */
 export function readJsonFile(file: string): { ok: true; value: unknown } | { ok: false; missing: boolean } {
   if (!existsSync(file)) return { ok: false, missing: true };
   let text: string;
   try { text = readFileSync(file, 'utf8'); } catch { return { ok: false, missing: false }; }
   try { return { ok: true, value: JSON.parse(text) }; } catch {
-    try { renameSync(file, `${file}.bak`); } catch { /* best effort */ }
+    try { renameSync(file, backupPath(file)); } catch { /* best effort */ }
     return { ok: false, missing: false };
   }
 }

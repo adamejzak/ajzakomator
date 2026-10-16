@@ -225,6 +225,33 @@ describe('SshManager', () => {
     expect(h.statuses.at(-1)).toMatchObject({ phase: 'closed', exitCode: 3 });
   });
 
+  it('a remote exit stays a clean close when the server answers the disconnect with a reset (I3)', async () => {
+    const s = await server({ password: 'pw', onExit: 'reset' });
+    const h = harness();
+    h.m.connect(req(s.port, { password: 'pw' }));
+    await h.trust();
+    await waitFor(() => (h.out.get('c1') ?? '').includes('$ '));
+    h.m.write('c1', 'exit\r');
+    await waitFor(() => h.exits.has('c1'));
+    expect(h.exits.get('c1')).toBe(3);
+    expect(h.statuses.at(-1)).toEqual({ id: 'c1', phase: 'closed', exitCode: 3 });
+  });
+
+  it('delivers the tail of back-pressured output when the server exits and hangs up (M2)', async () => {
+    const s = await server({ password: 'pw' });
+    const h = harness();
+    h.m.setFlowControl(true);
+    h.m.connect(req(s.port, { password: 'pw' }));
+    await h.trust();
+    await waitFor(() => (h.out.get('c1') ?? '').includes('$ '));
+    h.m.ack('c1', (h.out.get('c1') ?? '').length);
+    // No acks from here on: the channel pauses after HIGH_WATER and the rest waits in ssh2's buffers when the server hangs up.
+    h.m.write('c1', 'tail 1800000\r');
+    await waitFor(() => h.exits.has('c1'));
+    expect(h.out.get('c1') ?? '').toContain('TAIL-END');
+    expect(h.statuses.at(-1)).toEqual({ id: 'c1', phase: 'closed', exitCode: 0 });
+  });
+
   it('a dropped connection ends as reset with exit -1, never as a clean close (Review Focus 4)', async () => {
     const s = await server({ password: 'pw' });
     const h = harness();

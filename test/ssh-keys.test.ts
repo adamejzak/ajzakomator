@@ -2,7 +2,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import ssh2 from 'ssh2';
 import { describe, expect, it } from 'vitest';
-import { certificateCheck, checkPassphrase, generateKey, KeyDrafts, parsePrivateKey, publicKeyMatches } from '../src/main/ssh/keys';
+import { certificateCheck, checkPassphrase, generateKey, KeyDrafts, MAX_KEY_DRAFTS, parsePrivateKey, publicKeyMatches } from '../src/main/ssh/keys';
 import { sha256Fingerprint } from '../src/main/ssh/fingerprint';
 import { fakeCertificate, ppkV2Rsa, readableKeyPair } from './helpers/sshKeys';
 
@@ -70,6 +70,22 @@ describe('parsePrivateKey', () => {
 });
 
 describe('KeyDrafts', () => {
+  it('keeps at most 20 drafts and evicts the oldest (D3)', () => {
+    const drafts = new KeyDrafts();
+    const key = readableKeyPair('ed25519').private;
+    const ids: string[] = [];
+    for (let i = 0; i < MAX_KEY_DRAFTS + 2; i++) {
+      const r = drafts.create({ privateKey: key }, none);
+      if (!r.ok) throw new Error('fixture');
+      ids.push(r.draftId);
+    }
+    expect(MAX_KEY_DRAFTS).toBe(20);
+    expect(drafts.take(ids[0])).toBeNull();
+    expect(drafts.take(ids[1])).toBeNull();
+    expect(drafts.take(ids[2])).not.toBeNull();
+    expect(drafts.take(ids.at(-1)!)).not.toBeNull();
+  });
+
   it('creates, unlocks, flags duplicates and mismatches, and expires drafts', () => {
     let now = 0;
     const drafts = new KeyDrafts(() => now);

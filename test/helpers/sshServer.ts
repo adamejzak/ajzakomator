@@ -17,6 +17,8 @@ export interface TestServerOptions {
   greeting?: string;
   /** Accept alice without any credential ("none" method): only for real-app checks of many cells. */
   noAuth?: boolean;
+  /** After `exit`: 'reset' answers the client's next packet with a TCP RST, right after exit-status (a hard-closing server). */
+  onExit?: 'reset';
 }
 
 export interface TestServer {
@@ -85,7 +87,26 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
             if (ch !== '\r') { line += ch; stream.write(ch); continue; }
             const command = line.trim();
             line = '';
-            if (command === 'exit') { stream.exit(3); stream.end(); return; }
+            if (command === 'exit') {
+              stream.exit(3);
+              stream.end();
+              if (opts.onExit === 'reset') {
+                // The client's next packet (its channel close or DISCONNECT) is answered with a TCP RST.
+                const sock = (conn as unknown as { _sock: { resetAndDestroy?(): void; destroy(): void; prependOnceListener(e: 'data', f: () => void): void } })._sock;
+                sock.prependOnceListener('data', () => { if (sock.resetAndDestroy) sock.resetAndDestroy(); else sock.destroy(); });
+              }
+              return;
+            }
+            const tail = /^tail (\d+)$/.exec(command);
+            if (tail) {
+              // Writes N bytes and a marker, exits and hangs up: the tail must reach a paused (back-pressured) client.
+              stream.write(Buffer.alloc(Number(tail[1]), 'x'));
+              stream.write('TAIL-END');
+              stream.exit(0);
+              stream.end();
+              setTimeout(() => conn.end(), 100);
+              return;
+            }
             stream.write(command.startsWith('echo ') ? `\r\n${command.slice(5)}\r\n$ ` : '\r\n$ ');
           }
         });

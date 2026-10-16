@@ -29,7 +29,7 @@ const blobA = Buffer.concat([sshString('ssh-ed25519'), sshString(Buffer.alloc(32
 const blobB = Buffer.concat([sshString('ssh-ed25519'), sshString(Buffer.alloc(32, 2))]);
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
-function setup(opts: { encryptedKey?: boolean; savePassphrase?: boolean; promptTimeoutMs?: number; debug?: boolean } = {}) {
+function setup(opts: { encryptedKey?: boolean; savePassphrase?: boolean; promptTimeoutMs?: number; debug?: boolean; hostDown?: () => boolean } = {}) {
   const vault = new SshVault(join(dir, 'vault.json'), fakeCipher());
   const knownHosts = new KnownHostsStore(join(dir, 'known_hosts.json'));
   let keyId: string | undefined;
@@ -51,7 +51,7 @@ function setup(opts: { encryptedKey?: boolean; savePassphrase?: boolean; promptT
   const prompts: Array<{ cellId: string; prompt: SshPrompt | null }> = [];
   const sessions: SshSessionState[] = [];
   const coordinator = new SshCoordinator({
-    state: () => state, vault, knownHosts, host: (m) => sent.push(m),
+    state: () => state, vault, knownHosts, host: (m) => { if (opts.hostDown?.()) return false; sent.push(m); return true; },
     events: { session: (s) => sessions.push(s), prompt: (cellId, prompt) => prompts.push({ cellId, prompt }), vaultChanged: () => undefined },
     promptTimeoutMs: opts.promptTimeoutMs, debug: opts.debug,
   });
@@ -170,6 +170,33 @@ describe('SshCoordinator', () => {
     expect(f.vault.password(OTHER)).toEqual({ ok: false, error: 'none' });
     f.coordinator.onHostMessage({ t: 'sshStatus', id: f.cells.d, phase: 'connected' });
     expect(f.vault.password(OTHER)).toEqual({ ok: true, password: 'typed-secret' });
+  });
+
+  it('does not save a wrong remembered password when the retry is answered without remember (I1)', async () => {
+    const f = setup();
+    await connect(f, f.cells.d, OTHER);
+    f.coordinator.onHostMessage({ t: 'sshAuthPrompt', id: f.cells.d, promptId: 'auth1', kind: 'password', fields: [], retry: false });
+    await tick();
+    f.coordinator.answer({ cellId: f.cells.d, promptId: f.open(f.cells.d)!.id, values: ['wrong'], remember: true });
+    await tick();
+    f.coordinator.onHostMessage({ t: 'sshAuthPrompt', id: f.cells.d, promptId: 'auth2', kind: 'password', fields: [], retry: true });
+    await tick();
+    f.coordinator.answer({ cellId: f.cells.d, promptId: f.open(f.cells.d)!.id, values: ['right'], remember: false });
+    await tick();
+    expect(f.sent.at(-1)).toEqual({ t: 'sshAuthAnswer', id: f.cells.d, promptId: 'auth2', values: ['right'] });
+    f.coordinator.onHostMessage({ t: 'sshStatus', id: f.cells.d, phase: 'connected' });
+    expect(f.vault.password(OTHER)).toEqual({ ok: false, error: 'none' });
+  });
+
+  it('fails a connect the Pty Host could not take (restarting or fatal) and lets a later one through (M1)', async () => {
+    let down = true;
+    const f = setup({ hostDown: () => down });
+    expect(await connect(f, f.cells.d, OTHER)).toEqual({ ok: false, error: 'ptyHostCrashed' });
+    expect(f.sessions.at(-1)).toMatchObject({ cellId: f.cells.d, phase: 'error', error: 'ptyHostCrashed' });
+    down = false;
+    expect(await connect(f, f.cells.d, OTHER)).toEqual({ ok: true });
+    expect(f.sent.filter((m) => m.t === 'sshConnect')).toHaveLength(1);
+    expect(f.sessions.at(-1)).toMatchObject({ cellId: f.cells.d, phase: 'connecting' });
   });
 
   it('cancels an unanswered prompt after the timeout', async () => {

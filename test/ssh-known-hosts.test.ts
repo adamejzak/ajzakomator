@@ -1,5 +1,5 @@
 // test/ssh-known-hosts.test.ts
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -64,13 +64,13 @@ describe('KnownHostsStore', () => {
     expect(store.judge('example.com', 2222, blob).judgement).toEqual({ result: 'match' });
   });
 
-  it('keeps an unparsable file as .bak and starts empty', () => {
+  it('keeps an unparsable file as a timestamped .bak and starts empty', () => {
     const store0 = new KnownHostsStore(file());
     store0.trust('a', 22, blob, 'save');
     writeFileSync(file(), '{ broken');
     const store = new KnownHostsStore(file());
     expect(store.list()).toEqual([]);
-    expect(existsSync(`${file()}.bak`)).toBe(true);
+    expect(readdirSync(join(dir, 'ssh')).filter((n) => n.startsWith('known_hosts.json.bak-'))).toHaveLength(1);
   });
 
   it('refuses to write a file of a newer version', () => {

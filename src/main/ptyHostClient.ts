@@ -54,9 +54,11 @@ export class PtyHostClient extends EventEmitter {
     this.send({ t: 'spawn', req });
   }
 
-  /** SSH control messages (they may carry secrets: never log them). */
-  sendSsh(m: SshHostCommand): void {
-    this.send(m);
+  /** SSH control messages (they may carry secrets: never log them). False when no Pty Host runs (restarting or fatal). */
+  sendSsh(m: SshHostCommand): boolean {
+    if (!this.child) return false;
+    this.child.postMessage(m);
+    return true;
   }
 
   kill(id: string): void {

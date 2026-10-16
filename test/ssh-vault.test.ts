@@ -1,8 +1,9 @@
 // test/ssh-vault.test.ts
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { backupPath } from '../src/main/ssh/files';
 import { SshVault, type NewKey } from '../src/main/ssh/vault';
 import { fakeCipher } from './helpers/sshKeys';
 
@@ -122,7 +123,7 @@ describe('SshVault', () => {
     expect(vault.prunePasswords(new Set([HOST_B]))).toBe(false);
   });
 
-  it('never writes a vault file of a newer version and keeps a corrupt one as .bak', () => {
+  it('never writes a vault file of a newer version and keeps a corrupt one as a timestamped .bak', () => {
     new SshVault(file(), fakeCipher()).setPassword(HOST_A, 'a');
     writeFileSync(file(), JSON.stringify({ version: 9, keys: [], passwords: [] }));
     const newer = new SshVault(file(), fakeCipher());
@@ -132,7 +133,21 @@ describe('SshVault', () => {
     expect(JSON.parse(readFileSync(file(), 'utf8')).version).toBe(9);
     writeFileSync(file(), '{ nope');
     expect(new SshVault(file(), fakeCipher()).info().keys).toEqual([]);
-    expect(existsSync(`${file()}.bak`)).toBe(true);
+    expect(readdirSync(join(dir, 'ssh')).filter((n) => n.startsWith('vault.json.bak-'))).toHaveLength(1);
+  });
+
+  it('never overwrites an earlier backup when the vault is corrupt again (M5)', () => {
+    new SshVault(file(), fakeCipher()).setPassword(HOST_A, 'a');
+    writeFileSync(file(), '{ first');
+    new SshVault(file(), fakeCipher());
+    writeFileSync(file(), '{ second');
+    new SshVault(file(), fakeCipher());
+    const backups = readdirSync(join(dir, 'ssh')).filter((n) => n.startsWith('vault.json.bak-')).map((n) => readFileSync(join(dir, 'ssh', n), 'utf8'));
+    expect(backups.sort()).toEqual(['{ first', '{ second']);
+    const at = new Date('2026-10-16T12:34:56.789Z');
+    expect(backupPath(file(), at)).toBe(`${file()}.bak-2026-10-16T12-34-56-789Z`);
+    writeFileSync(backupPath(file(), at), 'x');
+    expect(backupPath(file(), at)).toBe(`${file()}.bak-2026-10-16T12-34-56-789Z-2`);
   });
 
   it('opens an unreadable vault file read-only and never writes over it', () => {
