@@ -688,17 +688,31 @@ describe('usage keyed by account identity (W1)', () => {
       expect(Object.keys(stored.backoff)).not.toContain('claude:rec1');
     });
 
-    it("keeps the 0.9.0 live card's backoff for the live account, also when that card now has its record's id", async () => {
-      writeFileSync(cacheFile, JSON.stringify({
-        providers: [card('claude:main', 40, 'a@x.com')],
-        backoff: { 'claude:main': { until: NOW + 600_000, failures: 1, error: 'http-429', attemptAt: NOW - 1000 } },
-      }));
-      const live: AccountRef = { id: 'claude:rec9', provider: 'claude', key: 'uuid:A:-', active: true };
+    const legacyHeld = () => writeFileSync(cacheFile, JSON.stringify({
+      providers: [card('claude:main', 40, 'a@x.com')],
+      backoff: { 'claude:main': { until: NOW + 600_000, failures: 1, error: 'http-429', attemptAt: NOW - 1000 } },
+    }));
+    const live: AccountRef = { id: 'claude:rec9', provider: 'claude', key: 'uuid:A:-', active: true };
+
+    it("keeps the 0.9.0 live card's backoff and numbers only when the live account has its e-mail, also under its record's id", async () => {
+      legacyHeld();
       const fetchAccount = vi.fn(async (ref: AccountRef) => failedAs(ref, 'a@x.com'));
-      const service = new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+      const service = new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0, liveEmail: () => 'A@x.com' });
       await service.refresh(true, true);
       expect(fetchAccount).not.toHaveBeenCalled();
-      expect(service.getState().providers[0]).toMatchObject({ accountId: 'claude:rec9', status: 'error', error: 'http-429', windows: [], active: true });
+      expect(service.getState().providers[0]).toMatchObject({ accountId: 'claude:rec9', status: 'error', error: 'http-429', windows: [{ usedPercent: 40 }], active: true });
+    });
+
+    it("never gives the 0.9.0 live card's backoff to another account, nor keeps one it cannot check", async () => {
+      for (const liveEmail of [() => 'g@x.com', () => undefined]) {
+        legacyHeld();
+        const fetchAccount = vi.fn(async (ref: AccountRef) => failedAs(ref, 'g@x.com'));
+        const service = new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0, liveEmail });
+        await service.refresh(true, true);
+        expect(fetchAccount).toHaveBeenCalledOnce();
+        expect(service.getState().providers[0]).toMatchObject({ error: 'http-500', windows: [] });
+        expect(JSON.parse(readFileSync(cacheFile, 'utf8')).backoff['uuid:A:-']).toMatchObject({ error: 'http-500' });
+      }
     });
 
     it('gives the live card the old numbers only once a read proves it is the same account', async () => {
@@ -715,5 +729,105 @@ describe('usage keyed by account identity (W1)', () => {
       await other.refresh(true, true);
       expect(other.getState().providers[0]).toMatchObject({ status: 'error', windows: [] });
     });
+  });
+});
+
+describe('task 12 fix round 1', () => {
+  const live: AccountRef = { id: 'claude:main', provider: 'claude', key: 'uuid:A:-', active: true };
+
+  it('reads an account shared by the live login and a saved record once per run, keeps its spacing and one stable card state', async () => {
+    const saved: AccountRef = { id: 'claude:rec1', provider: 'claude', key: 'uuid:A:-', configDir: '/a', renew: 'held-by-live' };
+    let n = 0;
+    const fetchAccount = vi.fn(async (ref: AccountRef) => ok('claude', ++n, ref.id));
+    const service = new UsageService({ accounts: () => [saved, live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    expect(fetchAccount).toHaveBeenCalledOnce();
+    expect((fetchAccount.mock.calls[0][0] as AccountRef).configDir).toBeUndefined(); // through the live login
+    const first = service.getState().providers;
+    vi.advanceTimersByTime(30_000);
+    await service.refresh(true, true);
+    await service.refresh(true, true);
+    expect(fetchAccount).toHaveBeenCalledOnce();
+    expect(service.getState().providers).toEqual(first);
+    expect(first.map((p) => [p.accountId, p.windows[0].usedPercent, p.active, p.heldBy])).toEqual([['claude:rec1', 1, undefined, 'live'], ['claude:main', 1, true, undefined]]);
+    vi.advanceTimersByTime(MIN_IDENTITY_GAP_MS);
+    await service.refresh(true, true);
+    expect(fetchAccount).toHaveBeenCalledTimes(2);
+    // An action about the saved card is about the account: read (once) at once.
+    await service.refresh(true, true, 'claude:rec1');
+    expect(fetchAccount).toHaveBeenCalledTimes(3);
+  });
+
+  it('makes the follow-up run manual only when a manual caller joined it', async () => {
+    const x: AccountRef = { id: 'claude:x', provider: 'claude', key: 'uuid:X:-', configDir: '/x' };
+    const releases: Array<() => void> = [];
+    let slow = false;
+    const fetchAccount = vi.fn((ref: AccountRef): Promise<FetchResult> => {
+      if (ref.key === 'uuid:X:-') return Promise.resolve(failing('claude', 'error', 600_000, ref.id));
+      if (!slow) return Promise.resolve(ok('claude', 1, ref.id));
+      return new Promise((resolve) => { releases.push(() => resolve(ok('claude', 1, ref.id))); });
+    });
+    const service = new UsageService({ ...LEGACY, accounts: () => [live, x], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    const xCalls = () => fetchAccount.mock.calls.filter(([ref]) => (ref as AccountRef).key === 'uuid:X:-').length;
+    expect(xCalls()).toBe(1);
+    slow = true;
+    const run = service.refresh(false, true);
+    const joined = service.refresh(false, true); // a file change
+    releases.shift()!();
+    await run;
+    await vi.advanceTimersByTimeAsync(0);
+    releases.shift()!();
+    await joined;
+    expect(xCalls()).toBe(1); // its error hold stands
+    const run2 = service.refresh(false, true);
+    const button = service.refresh(true, true);
+    releases.shift()!();
+    await run2;
+    await vi.advanceTimersByTimeAsync(0);
+    releases.shift()!();
+    await button;
+    expect(xCalls()).toBe(2);
+  });
+
+  it('keeps the read spacing after a restart also when the last read left no numbers', async () => {
+    const results: Array<(ref: AccountRef) => FetchResult> = [
+      (ref) => ({ usage: { accountId: ref.id, provider: 'claude', status: 'forbidden', fetchedAt: Date.now(), source: 'live', windows: [], error: 'http-403' } }),
+      (ref) => failing('claude', 'expired', undefined, ref.id),
+      (ref) => ({ usage: { accountId: ref.id, provider: 'claude', status: 'signedOut', fetchedAt: Date.now(), source: 'live', windows: [] } }),
+    ];
+    for (const result of results) {
+      rmSync(cacheFile, { force: true });
+      const fetchAccount = vi.fn(async (ref: AccountRef) => result(ref));
+      await new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 }).refresh(true, true);
+      vi.advanceTimersByTime(30_000);
+      // The refresh button: it may bypass a forbidden hold, never the spacing.
+      await new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 }).refresh(true, true);
+      expect(fetchAccount).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('holds a forbidden account for 30 minutes and shows it as forbidden, also after a restart', async () => {
+    const fetchAccount = vi.fn(async (ref: AccountRef): Promise<FetchResult> => ({ usage: { accountId: ref.id, provider: 'claude', status: 'forbidden', fetchedAt: Date.now(), source: 'live', windows: [], error: 'http-403' } }));
+    const service = new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    expect(service.getState().providers[0]).toMatchObject({ status: 'forbidden', retryAt: NOW + 30 * 60_000 });
+    vi.advanceTimersByTime(MIN_IDENTITY_GAP_MS + 1);
+    await service.refresh(false, true);
+    expect(fetchAccount).toHaveBeenCalledOnce();
+    const after = new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await after.refresh(false, true);
+    expect(after.getState().providers[0]).toMatchObject({ status: 'forbidden', error: 'http-403', retryAt: NOW + 30 * 60_000 });
+    expect(fetchAccount).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(30 * 60_000);
+    await after.refresh(false, true);
+    expect(fetchAccount).toHaveBeenCalledTimes(2);
+  });
+
+  it('adds the margin to a usage 429 without Retry-After too', async () => {
+    const fetchAccount = vi.fn(async (ref: AccountRef): Promise<FetchResult> => ({ usage: { accountId: ref.id, provider: 'claude', status: 'error', fetchedAt: Date.now(), source: 'live', windows: [], error: 'http-429' } }));
+    const service = new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    expect(service.getState().providers[0].retryAt).toBe(NOW + 60_000 + RETRY_AFTER_MARGIN_MS);
   });
 });

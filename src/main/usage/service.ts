@@ -20,6 +20,8 @@ const RATE_LIMITED = /(?:^|-)http-429$/;
 /** Only the usage endpoint's own 429 gets the Retry-After margin (a token renewal's backoff is its own). */
 const USAGE_LIMITED = /^http-429$/;
 const CACHE_VERSION = 2;
+/** A 403 (access denied, e.g. a paused subscription) does not go away in minutes: the account is asked again after this. */
+const FORBIDDEN_HOLD_MS = 30 * 60_000;
 /** The card id of the live Claude login in 0.9.0; as a refresh subject it means the live Claude card, whatever its id. */
 const LIVE_CARD = 'claude:main';
 
@@ -50,6 +52,8 @@ export interface UsageServiceOptions {
   retryAfterMarginMs?: number;
   /** Notices about the saved accounts, sent with every state. */
   notices?(): AccountNotice[];
+  /** E-mail of the account signed in to Claude Code, when known: lets a 0.9.0 cache entry of the live card be checked. */
+  liveEmail?(): string | undefined;
 }
 
 /**
@@ -77,6 +81,8 @@ export class UsageService {
   private watcher: ReturnType<typeof setInterval> | undefined;
   private pending: Promise<UsageState> | undefined;
   private followUp: Promise<UsageState> | undefined;
+  /** Whether any caller that joined the follow-up run was manual (the refresh button). */
+  private followUpManual = false;
   private lastRun = 0;
   private running = false;
   private active = true;
@@ -90,9 +96,9 @@ export class UsageService {
   private keyOf(ref: AccountRef): string { return ref.key ?? ref.id; }
 
   /** The listed accounts, with any 0.9.0 cache entries moved to their accounts first. */
-  private refs(): AccountRef[] {
+  private refs(afterReconcile = false): AccountRef[] {
     const refs = this.options.accounts();
-    this.adoptLegacy(refs);
+    this.adoptLegacy(refs, afterReconcile);
     return refs;
   }
 
@@ -152,10 +158,14 @@ export class UsageService {
     if (subject) this.subjects.add(subject);
     if (this.pending) {
       if (!force) return this.pending;
+      // The follow-up is manual only when a caller was (a file-change run must not bypass error holds by joining).
+      this.followUpManual ||= manual;
       if (!this.followUp) {
         this.followUp = this.pending.catch(() => undefined).then(() => {
+          const asManual = this.followUpManual;
           this.followUp = undefined;
-          return this.refresh(true, true);
+          this.followUpManual = false;
+          return this.refresh(asManual, true);
         });
       }
       return this.followUp;
@@ -189,9 +199,11 @@ export class UsageService {
     const subjects = new Set(this.subjects);
     this.subjects.clear();
     if (this.options.beforeRun) { try { await this.options.beforeRun(); } catch { /* the poll still runs */ } }
-    const accounts = this.refs();
+    const accounts = this.refs(true);
     this.prune(accounts);
-    await Promise.all(accounts.map((ref) => this.update(ref, started, manual, subjects)));
+    // An action about any card of an account (also the saved card sharing the live login's account) makes it a subject.
+    const subjectKeys = new Set(accounts.filter((ref) => this.isSubject(ref, this.keyOf(ref), subjects)).map((ref) => this.keyOf(ref)));
+    await Promise.all(this.onePerAccount(accounts).map((ref) => this.update(ref, started, manual, subjectKeys.has(this.keyOf(ref)))));
     this.prune(this.options.accounts());
     // Whatever of a 0.9.0 cache found no account by now is history.
     this.legacyUsage.clear();
@@ -256,14 +268,24 @@ export class UsageService {
     } catch { /* the regular poll still runs */ }
   }
 
+  /**
+   * One card per account and run: the live login and a saved record of the same account (held by the live login) share a
+   * key, so the account is read once - through the live login - and its spacing applies; both cards show that one result.
+   */
+  private onePerAccount(refs: AccountRef[]): AccountRef[] {
+    const live = (ref: AccountRef) => ref.provider === 'claude' && !ref.configDir;
+    const chosen = new Map<string, AccountRef>();
+    for (const ref of [...refs.filter(live), ...refs.filter((ref) => !live(ref))]) if (!chosen.has(this.keyOf(ref))) chosen.set(this.keyOf(ref), ref);
+    return [...chosen.values()];
+  }
+
   private isSubject(ref: AccountRef, key: string, subjects: ReadonlySet<string>): boolean {
     return subjects.has(ref.id) || subjects.has(key) || (subjects.has(LIVE_CARD) && ref.provider === 'claude' && !ref.configDir);
   }
 
-  private async update(ref: AccountRef, now: number, manual: boolean, subjects: ReadonlySet<string>): Promise<void> {
+  private async update(ref: AccountRef, now: number, manual: boolean, subject: boolean): Promise<void> {
     const key = this.keyOf(ref);
     const { id, provider } = ref;
-    const subject = this.isSubject(ref, key, subjects);
     const hold = this.backoff.get(key);
     // A rate limit is never bypassed (not even by the refresh button): hitting the limiter again keeps it engaged.
     if (hold && hold.until > now && !subject && (!manual || RATE_LIMITED.test(hold.error ?? ''))) { this.restoreHeld(ref, key, hold); return; }
@@ -271,7 +293,7 @@ export class UsageService {
     const asProfile = !!ref.configDir;
     // Spacing applies to the same copy of the sign-in; an account that moved between the live login and a profile is read once.
     const sameRole = (this.readAsProfile.get(key) ?? asProfile) === asProfile;
-    if (!subject && sameRole && last !== undefined && now - last < (this.options.minIdentityGapMs ?? MIN_IDENTITY_GAP_MS) && this.providers.has(key)) return;
+    if (!subject && sameRole && last !== undefined && now - last < (this.options.minIdentityGapMs ?? MIN_IDENTITY_GAP_MS)) return;
     this.lastRead.set(key, now);
     this.readAsProfile.set(key, asProfile);
     let result: FetchResult;
@@ -291,8 +313,10 @@ export class UsageService {
     this.verifyLegacyLive(key, read);
     const { retryAfterMs } = result;
     const failed = read.status === 'error' || result.failed === true;
-    const retryAt = failed ? this.startBackoff(key, now, hold?.failures, retryAfterMs, read.error) : undefined;
-    if (!failed) this.backoff.delete(key);
+    const forbidden = read.status === 'forbidden';
+    const retryAt = failed ? this.startBackoff(key, now, hold?.failures, retryAfterMs, read.error)
+      : forbidden ? this.startBackoff(key, now, hold?.failures, FORBIDDEN_HOLD_MS, read.error ?? 'http-403') : undefined;
+    if (!failed && !forbidden) this.backoff.delete(key);
     const usage: ProviderUsage = { ...read, attemptAt: now, ...(retryAt !== undefined ? { retryAt } : {}) };
     if (usage.status === 'dormant' || this.watchedLive(ref)) this.stamps.set(key, stamp); else this.stamps.delete(key);
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
@@ -308,8 +332,9 @@ export class UsageService {
   /** Returns when the next automatic attempt may happen. */
   private startBackoff(key: string, now: number, previousFailures = 0, retryAfterMs?: number, error?: string): number {
     const failures = previousFailures + 1;
-    const margin = retryAfterMs !== undefined && error && USAGE_LIMITED.test(error) ? this.options.retryAfterMarginMs ?? RETRY_AFTER_MARGIN_MS : 0;
-    const wait = retryAfterMs !== undefined ? retryAfterMs + margin : Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1));
+    // A usage-endpoint 429 waits the margin longer, with or without a Retry-After.
+    const margin = error && USAGE_LIMITED.test(error) ? this.options.retryAfterMarginMs ?? RETRY_AFTER_MARGIN_MS : 0;
+    const wait = (retryAfterMs !== undefined ? retryAfterMs : Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1))) + margin;
     this.backoff.set(key, { until: now + wait, failures, ...(error ? { error } : {}), attemptAt: now });
     return now + wait;
   }
@@ -320,15 +345,16 @@ export class UsageService {
     const current = this.providers.get(key);
     if (current?.error === hold.error) return;
     const base: ProviderUsage = current ?? { accountId: ref.id, provider: ref.provider, status: 'error', windows: [], fetchedAt: hold.attemptAt ?? this.now(), source: 'cache' };
-    this.providers.set(key, { ...base, status: 'error', error: hold.error, ...(hold.attemptAt !== undefined ? { attemptAt: hold.attemptAt } : {}), retryAt: hold.until });
+    this.providers.set(key, { ...base, status: hold.error === 'http-403' ? 'forbidden' : 'error', error: hold.error, ...(hold.attemptAt !== undefined ? { attemptAt: hold.attemptAt } : {}), retryAt: hold.until });
   }
 
   /**
    * Moves 0.9.0 cache entries (keyed by card id) to the accounts now listed. A saved card kept its id and its profile, so its
    * numbers and backoff go to its account at once. The 0.9.0 live card may have been another account (cswap may have switched
-   * since): its backoff is kept (waiting longer is harmless), its numbers only after a read proves the same e-mail.
+   * since): its numbers and backoff are taken only when its e-mail is the live account's (known now, or proven by the first
+   * read for the numbers); a backoff that cannot be checked now is dropped, never given to another account.
    */
-  private adoptLegacy(refs: AccountRef[]): void {
+  private adoptLegacy(refs: AccountRef[], afterReconcile: boolean): void {
     if (!this.legacyUsage.size && !this.legacyHold.size) return;
     const adopt = (key: string, from: string): void => {
       const usage = this.legacyUsage.get(from);
@@ -340,14 +366,22 @@ export class UsageService {
     };
     // Same card id, same account (a card without identity is keyed by its id, as in 0.9.0).
     for (const ref of refs) if (ref.id !== LIVE_CARD || this.keyOf(ref) === ref.id) adopt(this.keyOf(ref), ref.id);
-    // The live card of an identified account (its id is `claude:main` or its record's).
+    // The live card of an identified account (its id is `claude:main` or its record's): only once a run has looked at
+    // who is signed in now (beforeRun), never from a live identity remembered before the upgrade.
+    if (!afterReconcile) return;
     const live = refs.find((ref) => ref.provider === 'claude' && !ref.configDir);
     if (!live) return;
     const key = this.keyOf(live);
     const hold = this.legacyHold.get(LIVE_CARD);
-    if (hold && !this.backoff.has(key)) this.backoff.set(key, hold);
     const usage = this.legacyUsage.get(LIVE_CARD);
-    if (usage) this.legacyLive = { key, usage };
+    const liveEmail = this.options.liveEmail?.()?.toLowerCase();
+    const same = !!liveEmail && !!usage?.email && usage.email.toLowerCase() === liveEmail;
+    if (same) {
+      if (!this.providers.has(key)) this.providers.set(key, usage);
+      if (hold && !this.backoff.has(key)) this.backoff.set(key, hold);
+    } else if (usage && !liveEmail) {
+      this.legacyLive = { key, usage };
+    }
     this.legacyHold.delete(LIVE_CARD);
     this.legacyUsage.delete(LIVE_CARD);
   }

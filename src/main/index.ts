@@ -172,6 +172,7 @@ const usage = new UsageService({
   },
   watchLive: true,
   notices: () => accounts.notices(),
+  liveEmail: () => accounts.live()?.email,
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
 const cliDetector = new CliDetector(systemCliDeps({
