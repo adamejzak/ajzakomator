@@ -42,7 +42,11 @@ export interface TestServer {
 const { Server, utils } = ssh2;
 
 export async function startTestServer(opts: TestServerOptions = {}): Promise<TestServer> {
-  const host = utils.generateKeyPairSync('ed25519');
+  // ssh2 writes a key it cannot read back about 1 in 200 times: generate the host key again until both halves parse.
+  let host = utils.generateKeyPairSync('ed25519');
+  for (let tries = 1; tries < 20 && [utils.parseKey(host.private), utils.parseKey(host.public)].some((k) => k instanceof Error || Array.isArray(k)); tries++) {
+    host = utils.generateKeyPairSync('ed25519');
+  }
   const hostParsed = utils.parseKey(host.public);
   if (hostParsed instanceof Error || Array.isArray(hostParsed)) throw new Error('host key');
   const userKey = opts.publicKey ? utils.parseKey(opts.publicKey) : null;
