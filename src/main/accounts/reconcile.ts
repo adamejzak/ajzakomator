@@ -46,8 +46,9 @@ export async function reconcileLive(deps: ReconcileDeps, opts: { ownChange?: boo
     }
     for (const record of visible()) {
       if (record.id === active?.id || custodyOf(record) !== 'live') continue;
-      // A second record of the live account did not leave the login: it is set aside below, without a false notice.
-      if (current && compareIdentity(record, current) === 'same') continue;
+      // A second record of the live account did not leave the login: it is set aside below, without a false notice. The test
+      // is the very one the set-aside loop uses (against the holder), so a record is always either set aside or marked.
+      if (active && current && compareIdentity(record, active) === 'same') continue;
       // It left the live login. Whoever switched it holds the newest tokens; ours may be consumed, so they are never renewed.
       store.setCustody(record.id, opts.ownChange ? 'app' : 'foreign');
       if (!opts.ownChange) store.addNotice({ kind: current ? 'switchedOut' : 'loggedOut', at, recordId: record.id, ...(record.email ? { email: record.email } : {}) });

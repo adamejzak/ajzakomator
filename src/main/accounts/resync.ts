@@ -23,12 +23,17 @@ export interface ResyncDeps {
   /**
    * Signature of the live files at the previous look, per record (kept by the caller across polls). Claude Code writes the
    * credentials and `.claude.json` separately (a `/login` can be seen with the new tokens and the old identity), so new tokens
-   * are copied only once both files read the same as last time. Absent: copied at once (tests of the copy itself).
+   * are copied only once the tokens and the identity read the same as last time. The map keeps only the record looked at
+   * last (others are dropped, so removed records never linger). A look is remembered even when the copy then fails, so the
+   * next poll with the same files retries the copy at once. Absent: copied at once (tests of the copy itself).
    */
   seen?: Map<string, string>;
 }
 
-/** `sig`: SHA-256 of both live files' text (kept in memory only), so a same-size rewrite in the same millisecond still differs. */
+/**
+ * `sig`: SHA-256 of the credentials text and of the `oauthAccount` object only (kept in memory only). The rest of
+ * `.claude.json` (stats, projects, counters) changes all the time and must not keep a backup waiting.
+ */
 type Live = { oauth: Record<string, unknown>; account: unknown; sig: string };
 
 export async function resyncActiveBackup(deps: ResyncDeps, recordId: string, expected: AccountIdentity): Promise<ResyncResult> {
@@ -44,7 +49,7 @@ export async function resyncActiveBackup(deps: ResyncDeps, recordId: string, exp
       if (!creds || !json || !oauth || typeof oauth.refreshToken !== 'string' || !oauth.refreshToken) return 'missing';
       const account = json.data.oauthAccount;
       if (compareIdentity(identityFromOauthAccount(account), expected) !== 'same') return 'mismatch';
-      return { oauth, account, sig: createHash('sha256').update(creds.text).update('|').update(json.text).digest('hex') };
+      return { oauth, account, sig: createHash('sha256').update(creds.text).update('|').update(JSON.stringify(account) ?? '').digest('hex') };
     }, { ...deps.locks, credentialsOnly: true });
   } catch (error) {
     if (error instanceof LockTimeout) return 'locked';
@@ -53,7 +58,7 @@ export async function resyncActiveBackup(deps: ResyncDeps, recordId: string, exp
   if (typeof live === 'string') return live;
   const { oauth, account, sig } = live;
   const previous = deps.seen?.get(recordId);
-  deps.seen?.set(recordId, sig);
+  if (deps.seen) { for (const key of [...deps.seen.keys()]) if (key !== recordId) deps.seen.delete(key); deps.seen.set(recordId, sig); }
   const dir = deps.store.dirOf(recordId);
   return withProfileLock(dir, async (): Promise<ResyncResult> => {
     const own = await readSnap(fs, join(dir, '.credentials.json'));

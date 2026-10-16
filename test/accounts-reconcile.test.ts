@@ -8,7 +8,7 @@ import { gateFamilyRefresh } from '../src/main/accounts/guards';
 import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
 import { resyncActiveBackup } from '../src/main/accounts/resync';
 import { AccountsStore } from '../src/main/accounts/store';
-import { claimSwap, isSwapRunning, releaseSwap } from '../src/main/accounts/swap';
+import { claimSwap, isSwapRunning, nodeSwapFs, releaseSwap, type SwapFs } from '../src/main/accounts/swap';
 
 const G = { email: 'g@x.com', accountUuid: 'ug' };
 const A = { email: 'a@x.com', accountUuid: 'ua' };
@@ -148,6 +148,17 @@ describe('reconcileLive', () => {
     expect(readFileSync(file, 'utf8')).toBe(before);
   });
 
+  it('uses one test for "left the login" and "set aside": a partial-identity live record ends either aside or marked, never live twice', async () => {
+    const holder = add({ email: 'a@x.com', accountUuid: 'ua', organizationUuid: 'o1' }, 'live');
+    const other = add({ email: 'a@x.com', organizationUuid: 'o2' }, 'live');
+    store.setLive({ email: 'a@x.com', accountUuid: 'ua', recordId: holder });
+    live = A; // no organisation: `other` matches the live identity but not the holder
+    await reconcileLive(deps());
+    expect(store.list().filter((r) => custodyOf(r) === 'live').map((r) => r.id)).toEqual([holder]);
+    expect(store.get(other)?.custody).toBe('foreign');
+    expect(store.notices()).toEqual([expect.objectContaining({ kind: 'switchedOut', recordId: other })]);
+  });
+
   it('changes nothing when the live identity cannot be read', async () => {
     add(A, 'live');
     const result = await reconcileLive({ ...deps(), readLiveIdentity: async () => { throw new Error('io'); } });
@@ -259,6 +270,30 @@ describe('resyncActiveBackup', () => {
     expect(JSON.parse(readFileSync(join(store.dirOf(p), '.claude.json'), 'utf8')).oauthAccount.organizationName).toBe('New Org');
     expect(readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8')).toBe(credsBefore);
     expect(await resyncActiveBackup(rdeps(), p, A)).toBe('unchanged');
+  });
+
+  it('ignores .claude.json churn outside oauthAccount when deciding that the live files are stable', async () => {
+    const p = add(A, 'live');
+    const seen = new Map<string, string>();
+    putLive({ emailAddress: 'a@x.com', accountUuid: 'ua' }, '7');
+    expect(await resyncActiveBackup({ ...rdeps(), seen }, p, A)).toBe('settling');
+    writeFileSync(paths().claudeJson, JSON.stringify({ numStartups: 42, projects: { x: {} }, oauthAccount: { emailAddress: 'a@x.com', accountUuid: 'ua' } }));
+    expect(await resyncActiveBackup({ ...rdeps(), seen }, p, A)).toBe('copied');
+    expect(JSON.parse(readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8')).claudeAiOauth.refreshToken).toBe('fake-ref-7');
+  });
+
+  it('retries a failed copy on the next look with the same files, and remembers only the record looked at last', async () => {
+    const p = add(A, 'live');
+    const q = add(G, 'live');
+    const seen = new Map<string, string>([[q, 'old']]);
+    let failOnce = true;
+    const fs: SwapFs = { ...nodeSwapFs, writeFile: async (path, data, mode) => { if (failOnce) { failOnce = false; throw new Error('disk'); } return nodeSwapFs.writeFile(path, data, mode); } };
+    putLive({ emailAddress: 'a@x.com', accountUuid: 'ua' }, '8');
+    expect(await resyncActiveBackup({ ...rdeps(), seen, fs }, p, A)).toBe('settling');
+    expect([...seen.keys()]).toEqual([p]);
+    await expect(resyncActiveBackup({ ...rdeps(), seen, fs }, p, A)).rejects.toThrow('disk');
+    expect(await resyncActiveBackup({ ...rdeps(), seen, fs }, p, A)).toBe('copied');
+    expect(JSON.parse(readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8')).claudeAiOauth.refreshToken).toBe('fake-ref-8');
   });
 
   it('reports a missing live login', async () => {
