@@ -7,7 +7,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import electron from 'electron';
-import { scrubAppEnv } from './app-env.mjs';
+import { removeScratchHome, scratchHome, scrubAppEnv } from './app-env.mjs';
 
 const repo = process.cwd();
 const label = process.argv[2] ?? 'run';
@@ -25,10 +25,13 @@ writeFileSync(join(data, 'state.json'), JSON.stringify({
   sidebarCollapsed: false, snippetsOpen: true, sidebarWidth: 228, snippetsWidth: 210,
 }));
 const port = await new Promise((res, rej) => { const s = createServer(); s.on('error', rej); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
-const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port) };
-scrubAppEnv(env); // never the real login folders or tokens
+const home = scratchHome(root); // never the real home: the app reads ~/.claude and ~/.codex, Electron its appData
+const env = { ...scrubAppEnv({ ...process.env }), MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), ...home.env };
 const t0 = Date.now();
 const child = spawn(electron, ['.'], { cwd: repo, env, windowsHide: true, stdio: 'ignore' });
+let exited = false;
+child.once('exit', () => { exited = true; });
+child.once('error', () => { exited = true; });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let socket, id = 0; const pending = new Map();
 const cdp = (method, params = {}) => new Promise((res, rej) => { const i = ++id; pending.set(i, { res, rej }); socket.send(JSON.stringify({ id: i, method, params })); });
@@ -58,4 +61,9 @@ try {
   const ps = execFileSync('powershell', ['-NoProfile', '-Command', `$p = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*node_modules*electron*' -or $_.ExecutablePath -like '*node_modules\\\\electron*' }; $m = ($p | Measure-Object WorkingSetSize -Sum).Sum / 1MB; "{0:N0} MB in {1} processes" -f $m, $p.Count`], { encoding: 'utf8' }).trim();
   console.log(JSON.stringify({ label, bootToTerminalsMs: bootMs, nav: JSON.parse(nav), renderer: JSON.parse(mem), idleCpuActiveMsOf8000: Math.round((total - idle) / 1000), processTree: ps }, null, 1));
   console.log('top idle self-time:\n' + top.join('\n'));
-} finally { child.kill(); }
+} finally {
+  child.kill();
+  for (let i = 0; i < 50 && !exited; i++) await sleep(100);
+  if (!exited && process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* already gone */ } }
+  removeScratchHome(home.home);
+}

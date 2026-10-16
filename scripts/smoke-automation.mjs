@@ -8,7 +8,7 @@ import { delimiter, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import electron from 'electron';
-import { scrubAppEnv } from './app-env.mjs';
+import { removeScratchHome, scratchHome, scrubAppEnv } from './app-env.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'unimux-automation-'));
 const data = join(root, 'data'), agents = join(root, 'fake-agents'), tokens = join(root, 'tokens');
@@ -35,9 +35,9 @@ const port = await new Promise((resolvePort, reject) => {
   const probe = createServer(); probe.on('error', reject);
   probe.listen(0, '127.0.0.1', () => { const p = probe.address().port; probe.close(() => resolvePort(p)); });
 });
-const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), UNIMUX_SMOKE_TOKENS: tokens,
-  PATH: agents + delimiter + (process.env.PATH ?? process.env.Path ?? '') };
-scrubAppEnv(env); // never the real login folders or tokens
+const home = scratchHome(root); // never the real home: the app reads ~/.claude and ~/.codex, Electron its appData
+const env = { ...scrubAppEnv({ ...process.env }), MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), UNIMUX_SMOKE_TOKENS: tokens,
+  PATH: agents + delimiter + (process.env.PATH ?? process.env.Path ?? ''), ...home.env };
 const child = spawn(electron, ['.'], { cwd: process.cwd(), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let appOutput = '', exited = false;
 child.on('error', (error) => { appOutput += error.message; exited = true; });
@@ -236,4 +236,6 @@ try {
     if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
     else child.kill('SIGTERM');
   }
+  for (let i = 0; i < 50 && !exited; i++) await sleep(100);
+  removeScratchHome(home.home);
 }
