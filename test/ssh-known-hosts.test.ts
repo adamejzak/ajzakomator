@@ -109,6 +109,28 @@ describe('KnownHostsStore', () => {
     expect(store.judge('a', 22, rsaBlob).judgement).toEqual({ result: 'match' });
   });
 
+  it('opens an unreadable file read-only and never writes over it', () => {
+    mkdirSync(join(file(), 'child'), { recursive: true });
+    const store = new KnownHostsStore(file());
+    expect(store.readOnly()).toBe(true);
+    expect(store.trust('a', 22, blob, 'save')).toBe(false);
+    expect(existsSync(join(file(), 'child'))).toBe(true);
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['entries that are not a list', '{"version":1,"entries":{}}'],
+    ['only malformed entries', '{"version":1,"entries":[{"id":"x","host":5},null]}'],
+  ])('opens a file holding %s read-only and keeps its bytes', (_name, text) => {
+    mkdirSync(join(dir, 'ssh'), { recursive: true });
+    writeFileSync(file(), text);
+    const store = new KnownHostsStore(file());
+    expect(store.readOnly()).toBe(true);
+    expect(store.trust('a', 22, blob, 'save')).toBe(false);
+    expect(readFileSync(file(), 'utf8')).toBe(text);
+  });
+
   it('drops malformed entries when loading', () => {
     const store0 = new KnownHostsStore(file());
     store0.trust('a', 22, blob, 'save');

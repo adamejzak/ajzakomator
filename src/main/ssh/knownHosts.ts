@@ -1,5 +1,6 @@
 // Trusted host keys of the app (<data>/ssh/known_hosts.json, spec 5 and 9). Never reads or writes ~/.ssh/known_hosts.
 import { randomUUID } from 'crypto';
+import { existsSync } from 'fs';
 import { dirname } from 'path';
 import { knownHostId, type KnownHostInfo } from '../../shared/ssh';
 import { keyTypeOfBlob, sha256Fingerprint } from './fingerprint';
@@ -37,14 +38,27 @@ function parseEntry(raw: unknown): KnownHostEntry | null {
 
 export class KnownHostsStore {
   private entries: KnownHostEntry[] = [];
+  /** A newer version, an unreadable file or one of the wrong shape: never written over. */
   private newer = false;
 
   constructor(private readonly file: string, private readonly now: () => number = Date.now) {
     const read = readJsonFile(file);
-    if (!read.ok) return;
+    if (!read.ok) {
+      // Missing, or unparsable and moved to .bak: start empty. Still there means it could not be read: never write over it.
+      if (existsSync(file)) this.newer = true;
+      return;
+    }
     const value = read.value as { version?: unknown; entries?: unknown };
-    if (typeof value?.version === 'number' && value.version > VERSION) { this.newer = true; }
-    if (Array.isArray(value?.entries)) this.entries = value.entries.map(parseEntry).filter((e): e is KnownHostEntry => e !== null);
+    if (typeof value !== 'object' || value === null || Array.isArray(value) || (value.entries !== undefined && !Array.isArray(value.entries))) {
+      this.newer = true;
+      return;
+    }
+    if (typeof value.version === 'number' && value.version > VERSION) { this.newer = true; }
+    if (Array.isArray(value.entries)) {
+      this.entries = value.entries.map(parseEntry).filter((e): e is KnownHostEntry => e !== null);
+      // Nothing readable in a non-empty list: probably not ours to overwrite.
+      if (value.entries.length > 0 && this.entries.length === 0) this.newer = true;
+    }
   }
 
   readOnly(): boolean { return this.newer; }

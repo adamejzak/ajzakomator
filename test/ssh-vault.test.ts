@@ -1,5 +1,5 @@
 // test/ssh-vault.test.ts
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -133,6 +133,84 @@ describe('SshVault', () => {
     writeFileSync(file(), '{ nope');
     expect(new SshVault(file(), fakeCipher()).info().keys).toEqual([]);
     expect(existsSync(`${file()}.bak`)).toBe(true);
+  });
+
+  it('opens an unreadable vault file read-only and never writes over it', () => {
+    // A directory where the file belongs: it exists, but reading it throws (like a transient EBUSY/EACCES lock).
+    mkdirSync(join(file(), 'child'), { recursive: true });
+    const vault = new SshVault(file(), fakeCipher());
+    expect(vault.readOnly()).toBe(true);
+    expect(vault.info().readOnly).toBe(true);
+    expect(vault.addKey(key())).toEqual({ ok: false, error: 'readOnly' });
+    expect(vault.setPassword(HOST_A, 'pw')).toEqual({ ok: false, error: 'readOnly' });
+    expect(statSync(file()).isDirectory()).toBe(true);
+    expect(existsSync(join(file(), 'child'))).toBe(true);
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['keys that are not a list', '{"version":1,"keys":{},"passwords":[]}'],
+    ['malformed entries', '{"version":1,"keys":[null,{"id":5}],"passwords":[{"hostId":"x"}]}'],
+  ])('opens a vault file holding %s read-only and keeps its bytes', (_name, text) => {
+    mkdirSync(join(dir, 'ssh'), { recursive: true });
+    writeFileSync(file(), text);
+    const vault = new SshVault(file(), fakeCipher());
+    expect(vault.readOnly()).toBe(true);
+    expect(vault.addKey(key())).toEqual({ ok: false, error: 'readOnly' });
+    expect(vault.setPassword(HOST_A, 'pw')).toEqual({ ok: false, error: 'readOnly' });
+    expect(readFileSync(file(), 'utf8')).toBe(text);
+  });
+
+  it('keeps one malformed entry safe: the readable ones load, the file is not rewritten', () => {
+    new SshVault(file(), fakeCipher()).addKey(key());
+    const raw = JSON.parse(readFileSync(file(), 'utf8'));
+    raw.keys.push({ id: 'from-the-future', type: 'ssh-ed448' });
+    const text = JSON.stringify(raw);
+    writeFileSync(file(), text);
+    const vault = new SshVault(file(), fakeCipher());
+    expect(vault.info().keys).toHaveLength(1);
+    expect(vault.readOnly()).toBe(true);
+    expect(vault.setPassword(HOST_A, 'pw')).toEqual({ ok: false, error: 'readOnly' });
+    expect(readFileSync(file(), 'utf8')).toBe(text);
+  });
+
+  it('leaves memory unchanged when a write fails, and a retry writes for real', () => {
+    const vault = new SshVault(file(), fakeCipher());
+    const first = vault.addKey(key());
+    vault.setPassword(HOST_A, 'a');
+    if (!first.ok) throw new Error('add');
+    const before = JSON.stringify(vault.info());
+    // A non-empty directory where the file belongs makes the atomic rename throw.
+    rmSync(file());
+    mkdirSync(join(file(), 'child'), { recursive: true });
+    const other = key({ fingerprint: 'SHA256:other', label: 'other' });
+    expect(() => vault.addKey(other)).toThrow();
+    expect(() => vault.updateKey(first.key.id, { label: 'renamed' })).toThrow();
+    expect(() => vault.updateKey(first.key.id, { passphrase: { forget: true } })).toThrow();
+    expect(() => vault.removeKey(first.key.id)).toThrow();
+    expect(() => vault.setPassword(HOST_B, 'b')).toThrow();
+    expect(() => vault.clearPassword(HOST_A)).toThrow();
+    expect(() => vault.prunePasswords(new Set())).toThrow();
+    expect(JSON.stringify(vault.info())).toBe(before);
+    expect(vault.keySecret(first.key.id)).toEqual({ ok: true, privateKey: PRIVATE, passphrase: 'very-secret-passphrase' });
+    rmSync(file(), { recursive: true, force: true });
+    expect(vault.addKey(other)).toMatchObject({ ok: true, duplicate: false });
+    expect(new SshVault(file(), fakeCipher()).info().keys.map((k) => k.label)).toEqual(['laptop', 'other']);
+  });
+
+  it('refuses to change the saved passphrase of a stored key while encryption is unavailable', () => {
+    let available = true;
+    const base = fakeCipher();
+    const cipher = { ...base, available: () => available };
+    const vault = new SshVault(file(), cipher);
+    const r = vault.addKey(key({ savePassphrase: false }));
+    if (!r.ok) throw new Error('add');
+    available = false;
+    expect(vault.updateKey(r.key.id, { passphrase: { save: 'new' } })).toEqual({ ok: false, error: 'failed' });
+    expect(vault.updateKey(r.key.id, { passphrase: { forget: true } })).toEqual({ ok: false, error: 'failed' });
+    expect(vault.key(r.key.id)).toMatchObject({ ephemeral: false, passphraseSaved: false });
+    expect(new SshVault(file(), fakeCipher()).keySecret(r.key.id)).toEqual({ ok: true, privateKey: PRIVATE });
   });
 
   it.skipIf(process.platform === 'win32')('creates the ssh directory 0700 and the file 0600', () => {

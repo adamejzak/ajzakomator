@@ -36,22 +36,35 @@ interface PasswordRecord { hostId: string; updatedAt: number; secret: string | n
 
 const VERSION = 1;
 const ALGOS = new Set<string>(KEY_ALGOS);
+const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const str = (v: unknown, max = 4000) => (typeof v === 'string' && v.length <= max ? v : undefined);
 
 export class SshVault {
   private keys: KeyRecord[] = [];
   private passwords: PasswordRecord[] = [];
+  /** A newer version, an unreadable file or one of the wrong shape: nothing is ever written over it (no stored secret is lost). */
   private newer = false;
   /** D7: passphrases typed into a prompt with "remember until the app quits". Never written. */
   private rememberedPassphrases = new Map<string, string>();
 
   constructor(private readonly file: string, private readonly cipher: Cipher, private readonly now: () => number = Date.now) {
     const read = readJsonFile(file);
-    if (!read.ok) return;
+    if (!read.ok) {
+      // Missing, or unparsable and moved to vault.json.bak: start empty. Still there means it could not be read: keep it untouched.
+      if (existsSync(file)) this.newer = true;
+      return;
+    }
     const v = read.value as { version?: unknown; keys?: unknown; passwords?: unknown };
-    if (typeof v?.version === 'number' && v.version > VERSION) this.newer = true;
-    for (const raw of Array.isArray(v?.keys) ? v.keys : []) {
-      const k = raw as Record<string, unknown>;
+    if (!isObject(v) || (v.keys !== undefined && !Array.isArray(v.keys)) || (v.passwords !== undefined && !Array.isArray(v.passwords))) {
+      this.newer = true;
+      return;
+    }
+    if (typeof v.version === 'number' && v.version > VERSION) this.newer = true;
+    const rawKeys: unknown[] = Array.isArray(v.keys) ? v.keys : [];
+    const rawPasswords: unknown[] = Array.isArray(v.passwords) ? v.passwords : [];
+    for (const raw of rawKeys) {
+      if (!isObject(raw)) continue;
+      const k = raw;
       const id = str(k.id, 64), label = str(k.label, 80), type = str(k.type, 40), fingerprint = str(k.fingerprint, 100), publicKey = str(k.publicKey, 20000), secret = str(k.secret, 400000);
       if (!id || label === undefined || !type || !ALGOS.has(type) || !fingerprint || !publicKey || !secret) continue;
       this.keys.push({ meta: {
@@ -60,11 +73,13 @@ export class SshVault {
         source: k.source === 'generated' ? 'generated' : 'imported', createdAt: typeof k.createdAt === 'number' ? k.createdAt : 0,
       }, secret, plain: null, locked: false });
     }
-    for (const raw of Array.isArray(v?.passwords) ? v.passwords : []) {
-      const p = raw as Record<string, unknown>;
-      const hostId = str(p.hostId, 64), secret = str(p.secret, 20000);
-      if (hostId && secret) this.passwords.push({ hostId, updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : 0, secret, plain: null, locked: false });
+    for (const raw of rawPasswords) {
+      if (!isObject(raw)) continue;
+      const hostId = str(raw.hostId, 64), secret = str(raw.secret, 20000);
+      if (hostId && secret) this.passwords.push({ hostId, updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0, secret, plain: null, locked: false });
     }
+    // An entry this version cannot read would be dropped by the next write: open read-only instead.
+    if (this.keys.length !== rawKeys.length || this.passwords.length !== rawPasswords.length) this.newer = true;
     // DPAPI decrypts without a prompt, so locked entries are known at once (spec 7.3). The Keychain stays lazy: no prompt at startup,
     // and a denial is retried on the next use. The decrypted values are dropped right away.
     if (this.cipher.storage === 'dpapi') {
@@ -111,8 +126,9 @@ export class SshVault {
       },
       secret, plain: secret === null ? plain : null, locked: false,
     };
-    this.keys.push(record);
-    this.write();
+    const next = [...this.keys, record];
+    this.write(next, this.passwords);
+    this.keys = next;
     return { ok: true, key: this.infoOf(record), duplicate: false };
   }
 
@@ -130,34 +146,41 @@ export class SshVault {
     } catch { r.locked = true; return { ok: false, error: 'keyLocked' }; }
   }
 
-  updateKey(id: string, patch: { label?: string; certificate?: string | null; passphrase?: { save: string } | { forget: true } }): { ok: true; key: SshKeyInfo } | { ok: false; error: 'notFound' | 'readOnly' | 'keyLocked' } {
+  updateKey(id: string, patch: { label?: string; certificate?: string | null; passphrase?: { save: string } | { forget: true } }): { ok: true; key: SshKeyInfo } | { ok: false; error: 'notFound' | 'readOnly' | 'keyLocked' | 'failed' } {
     if (this.newer) return { ok: false, error: 'readOnly' };
     const r = this.keys.find((k) => k.meta.id === id);
     if (!r) return { ok: false, error: 'notFound' };
+    const updated: KeyRecord = { ...r, meta: { ...r.meta } };
     if (patch.passphrase) {
+      // A stored key must be sealed again; without encryption it would turn memory-only and vanish from the file on the next write.
+      if (r.secret !== null && !this.cipher.available()) return { ok: false, error: 'failed' };
       const current = this.keySecret(id);
       if (!current.ok) return { ok: false, error: 'keyLocked' };
       const plain = { privateKey: current.privateKey, ...('save' in patch.passphrase ? { passphrase: patch.passphrase.save } : {}) };
       const secret = r.secret === null ? null : this.seal(JSON.stringify(plain));
-      r.secret = secret;
-      r.plain = secret === null ? plain : null;
-      r.meta = { ...r.meta, passphraseSaved: !!plain.passphrase };
-      this.rememberedPassphrases.delete(id);
+      if (r.secret !== null && secret === null) return { ok: false, error: 'failed' };
+      updated.locked = false; // keySecret just decrypted it
+      updated.secret = secret;
+      updated.plain = secret === null ? plain : null;
+      updated.meta.passphraseSaved = !!plain.passphrase;
     }
-    if (patch.label !== undefined) r.meta = { ...r.meta, label: patch.label.slice(0, 80) };
-    if (patch.certificate === null) { const { certificate: _c, ...rest } = r.meta; r.meta = rest; }
-    else if (patch.certificate !== undefined) r.meta = { ...r.meta, certificate: patch.certificate };
-    this.write();
-    return { ok: true, key: this.infoOf(r) };
+    if (patch.label !== undefined) updated.meta.label = patch.label.slice(0, 80);
+    if (patch.certificate === null) delete updated.meta.certificate;
+    else if (patch.certificate !== undefined) updated.meta.certificate = patch.certificate;
+    const next = this.keys.map((k) => (k === r ? updated : k));
+    this.write(next, this.passwords);
+    this.keys = next;
+    if (patch.passphrase) this.rememberedPassphrases.delete(id);
+    return { ok: true, key: this.infoOf(updated) };
   }
 
   removeKey(id: string): boolean {
     if (this.newer) return false;
-    const before = this.keys.length;
-    this.keys = this.keys.filter((k) => k.meta.id !== id);
+    const next = this.keys.filter((k) => k.meta.id !== id);
+    if (next.length === this.keys.length) return false;
+    this.write(next, this.passwords);
+    this.keys = next;
     this.rememberedPassphrases.delete(id);
-    if (this.keys.length === before) return false;
-    this.write();
     return true;
   }
 
@@ -169,17 +192,18 @@ export class SshVault {
     if (this.newer) return { ok: false, error: 'readOnly' };
     const secret = this.seal(password);
     const record: PasswordRecord = { hostId, updatedAt: this.now(), secret, plain: secret === null ? password : null, locked: false };
-    this.passwords = [...this.passwords.filter((p) => p.hostId !== hostId), record];
-    this.write();
+    const next = [...this.passwords.filter((p) => p.hostId !== hostId), record];
+    this.write(this.keys, next);
+    this.passwords = next;
     return { ok: true, ephemeral: secret === null };
   }
 
   clearPassword(hostId: string): boolean {
     if (this.newer) return false;
-    const before = this.passwords.length;
-    this.passwords = this.passwords.filter((p) => p.hostId !== hostId);
-    if (before === this.passwords.length) return false;
-    this.write();
+    const next = this.passwords.filter((p) => p.hostId !== hostId);
+    if (next.length === this.passwords.length) return false;
+    this.write(this.keys, next);
+    this.passwords = next;
     return true;
   }
 
@@ -198,15 +222,16 @@ export class SshVault {
     if (this.newer) return false;
     const next = this.passwords.filter((p) => hostIds.has(p.hostId));
     if (next.length === this.passwords.length) return false;
+    this.write(this.keys, next);
     this.passwords = next;
-    this.write();
     return true;
   }
 
-  private write(): void {
+  /** Writes the given lists; callers adopt them only after this returns, so a failed write leaves memory as it was. */
+  private write(allKeys: readonly KeyRecord[], allPasswords: readonly PasswordRecord[]): void {
     if (this.newer) return;
-    const keys = this.keys.filter((k) => k.secret !== null);
-    const passwords = this.passwords.filter((p) => p.secret !== null);
+    const keys = allKeys.filter((k) => k.secret !== null);
+    const passwords = allPasswords.filter((p) => p.secret !== null);
     if (!keys.length && !passwords.length && !existsSync(this.file)) return; // memory-only vault: nothing touches the disk (D8)
     ensurePrivateDir(dirname(this.file));
     writePrivateFile(this.file, JSON.stringify({
