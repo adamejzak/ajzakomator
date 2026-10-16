@@ -2,7 +2,7 @@
 // the pasted private text is cleared right after it was sent and when the paste mode is left, passphrases on submit.
 // The editor stays mounted while its tab is open (SshEditorScreen); a draft that was never stored is discarded when the tab closes.
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { DEFAULT_KEY_BITS, draftErrorKey, KEY_SIZES, newKeyProblem, type DraftResult, type SshKeyType } from '../../../../shared/ssh';
+import { DEFAULT_KEY_BITS, draftErrorKey, KEY_SIZES, READ_ONLY_VAULT_HINT, newKeyProblem, type DraftResult, type SshKeyType } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { toast } from '../../store';
 import { activateSshEditor, retargetSshEditor } from '../../ssh';
@@ -103,7 +103,7 @@ export function NewKeyEditor({ editorId, initialMode }: { editorId: string; init
     return (
       <div className="ssh-editor">
         <h2>{tr('Nowy klucz')}</h2>
-        <div className="ssh-banner-warn">{tr('Plik sejfu SSH pochodzi z nowszej wersji')}</div>
+        <div className="ssh-banner-warn">{tr(READ_ONLY_VAULT_HINT)}</div>
       </div>
     );
   }

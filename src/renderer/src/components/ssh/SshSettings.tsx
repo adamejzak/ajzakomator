@@ -1,7 +1,7 @@
 // Settings, section "SSH" (D12, spec 9 step 5): where secrets are kept, the trusted host keys, forgetting remembered passphrases.
 // A store that opened read-only (unreadable, wrong shape, malformed entry or a newer format) is explained here, with its file path.
 import { useEffect, useState } from 'react';
-import { readOnlyStoreNote, storageLabel, type KnownHostInfo, type SshStorageStatus } from '../../../../shared/ssh';
+import { knownHostsDescription, readOnlyStoreNote, storageLabel, type KnownHostInfo, type SshStorageStatus } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { toast } from '../../store';
 import { useSshStore } from '../../sshStore';
@@ -19,8 +19,8 @@ export function SshSettings() {
   }, []);
   const vaultReadOnly = !!vault?.readOnly || !!status?.vaultReadOnly;
   const hostsReadOnly = !!status?.knownHostsReadOnly;
-  const vaultNote = readOnlyStoreNote('vault', vaultReadOnly);
-  const hostsNote = readOnlyStoreNote('knownHosts', hostsReadOnly);
+  const vaultNote = readOnlyStoreNote('vault', vaultReadOnly, status?.vaultFile);
+  const hostsNote = readOnlyStoreNote('knownHosts', hostsReadOnly, status?.knownHostsFile);
   const remove = (id: string) => void window.mc.ssh.removeKnownHost(id).then((r) => {
     if (!r.ok) toast(tr('Nie udało się usunąć wpisu'), 'error');
     reload();
@@ -36,7 +36,7 @@ export function SshSettings() {
       </SettingRow>
     </SettingsGroup>
     <SettingsGroup title={tr('Znane hosty')}
-      description={tr('Klucze hostów zaakceptowane z opcją „Zaufaj i zapisz”. Gdy zapis do pliku {file} się nie uda (brak uprawnień, brak miejsca albo plik tylko do odczytu), połączenie jest odrzucane z ogólnym błędem - sprawdź wtedy ten plik i spróbuj ponownie.', { file: status?.knownHostsFile ?? '' })}>
+      description={tr(knownHostsDescription(status?.knownHostsFile), { file: status?.knownHostsFile ?? '' })}>
       {hostsNote && <div className="ssh-banner-warn" role="alert">{tr(hostsNote, { file: status?.knownHostsFile ?? '' })}</div>}
       {known && !known.length && <p className="muted">{tr('Brak znanych hostów')}</p>}
       {!!known?.length && (

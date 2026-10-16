@@ -513,7 +513,7 @@ export function draftErrorKey(error: DraftError | KeyError | 'cancelled'): Messa
     case 'mismatch': return 'Klucz publiczny nie pasuje do prywatnego';
     case 'certMismatch': return 'Certyfikat nie pasuje do klucza';
     case 'readFailed': return 'Nie udało się odczytać pliku';
-    case 'readOnly': return 'Plik sejfu SSH pochodzi z nowszej wersji';
+    case 'readOnly': return READ_ONLY_VAULT_HINT;
     case 'notFound': return 'Klucz przypisany do hosta nie istnieje';
     case 'failed': return 'Nie udało się wygenerować klucza';
     case 'invalid': return 'Nieprawidłowe dane';
@@ -521,14 +521,24 @@ export function draftErrorKey(error: DraftError | KeyError | 'cancelled'): Messa
   }
 }
 
+/** Short text for any read-only vault (unreadable, damaged or newer); Settings > SSH explains the cause with the file path. */
+export const READ_ONLY_VAULT_HINT: MessageKey = 'Sejf SSH jest tylko do odczytu - szczegóły w Ustawienia > SSH';
+
 export const storageLabel = (storage: SshVaultInfo['storage']): MessageKey =>
   storage === 'dpapi' ? 'Szyfrowanie: Windows (DPAPI)' : storage === 'keychain' ? 'Szyfrowanie: pęk kluczy macOS' : 'Szyfrowanie: niedostępne';
 
-/** Settings text for a store that opened read-only (it takes the file path as {file}); null while the store is writable. */
-export const readOnlyStoreNote = (store: 'vault' | 'knownHosts', readOnly: boolean): MessageKey | null =>
-  !readOnly ? null : store === 'vault'
+/** Settings text for a store that opened read-only (it takes the file path as {file}); null while the store is writable
+ *  or while the path is not known yet (storage status loading or failed), so no note shows an empty path. */
+export const readOnlyStoreNote = (store: 'vault' | 'knownHosts', readOnly: boolean, file: string | undefined): MessageKey | null =>
+  !readOnly || !file ? null : store === 'vault'
     ? 'Sejf SSH jest tylko do odczytu: plik {file} jest nieczytelny, ma nieprawidłowy format, zawiera uszkodzony wpis albo pochodzi z nowszej wersji aplikacji. Nie można dodawać ani zmieniać kluczy i haseł, a plik pozostaje nietknięty. Napraw lub usuń ten plik i uruchom aplikację ponownie.'
-    : 'Lista znanych hostów jest tylko do odczytu: plik {file} jest nieczytelny, ma nieprawidłowy format albo pochodzi z nowszej wersji aplikacji. Nie można usuwać wpisów, a klucz hosta zaakceptowany z opcją „Zaufaj i zapisz” obowiązuje tylko dla tego jednego połączenia. Napraw lub usuń ten plik i uruchom aplikację ponownie.';
+    : 'Lista znanych hostów jest tylko do odczytu: plik {file} jest nieczytelny, ma nieprawidłowy format albo pochodzi z nowszej wersji aplikacji. Nie można usuwać wpisów, a klucz hosta zaakceptowany z opcją „Zaufaj i zapisz” albo zmieniony klucz przyjęty przyciskiem „Zastąp zapisany klucz” obowiązuje tylko dla tego jednego połączenia. Napraw lub usuń ten plik i uruchom aplikację ponownie.';
+
+/** Description of Settings > SSH > Known hosts: with the file path ({file}) once known, a generic text before that. */
+export const knownHostsDescription = (file: string | undefined): MessageKey =>
+  file
+    ? 'Klucze hostów zaakceptowane z opcją „Zaufaj i zapisz”. Gdy zapis do pliku {file} się nie uda (brak uprawnień, brak miejsca albo plik tylko do odczytu), połączenie jest odrzucane z ogólnym błędem - sprawdź wtedy ten plik i spróbuj ponownie.'
+    : 'Klucze hostów zaakceptowane z opcją „Zaufaj i zapisz”. Gdy zapis do pliku znanych hostów się nie uda (brak uprawnień, brak miejsca albo plik tylko do odczytu), połączenie jest odrzucane z ogólnym błędem - sprawdź wtedy ten plik i spróbuj ponownie.';
 
 export function newKeyProblem(p: { label: string; passphrase: string; repeat: string }): MessageKey | null {
   if (!p.label.trim()) return 'Podaj etykietę';

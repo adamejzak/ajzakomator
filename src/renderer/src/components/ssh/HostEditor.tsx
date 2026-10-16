@@ -1,6 +1,6 @@
 // Host details (spec 10.2). A new host is stored on "Zapisz" only; the password is write-only (D6).
 import { useMemo, useState } from 'react';
-import { hostToDraft, validateHostDraft, type HostDraftField, type SshHostDraft } from '../../../../shared/ssh';
+import { hostToDraft, READ_ONLY_VAULT_HINT, validateHostDraft, type HostDraftField, type SshHostDraft } from '../../../../shared/ssh';
 import { addSshHost, uid, updateSshHost } from '../../../../shared/state';
 import type { MessageKey } from '../../../../shared/i18n';
 import { showTerminalTabs } from '../../files';
@@ -56,7 +56,7 @@ export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: st
     const value = password;
     setPassword('');
     const r = await window.mc.ssh.setPassword(host.id, value);
-    if (!r.ok) toast(tr(r.error === 'readOnly' ? 'Plik sejfu SSH pochodzi z nowszej wersji' : r.error === 'failed' ? 'Nie udało się zapisać zmian' : 'Nieprawidłowe dane'), 'error');
+    if (!r.ok) toast(tr(r.error === 'readOnly' ? READ_ONLY_VAULT_HINT : r.error === 'failed' ? 'Nie udało się zapisać zmian' : 'Nieprawidłowe dane'), 'error');
   };
   const clearPw = async () => {
     if (!host) return;
@@ -92,7 +92,7 @@ export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: st
         <div className="ssh-field"><span>{tr('Hasło')}</span>
           {!host ? <div className="ssh-card-hint">{tr('Najpierw zapisz host')}</div> : <>
             <div className="ssh-card-hint">{locked ? tr('Nie można odczytać tego sekretu na tym komputerze. Usuń go i dodaj ponownie.') : saved ? tr('Hasło zapisane') : tr('Hasło nie jest zapisane - zapytamy przy łączeniu')}</div>
-            {readOnly ? <div className="ssh-card-hint">{tr('Plik sejfu SSH pochodzi z nowszej wersji')}</div> : (
+            {readOnly ? <div className="ssh-card-hint">{tr(READ_ONLY_VAULT_HINT)}</div> : (
               <div className="ssh-row">
                 <input className="input grow" type="password" autoComplete="off" value={password} maxLength={1024} onChange={(e) => setPassword(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void setPw(); } }} />

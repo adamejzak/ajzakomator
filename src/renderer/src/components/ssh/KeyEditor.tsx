@@ -1,6 +1,6 @@
 // One key of the vault (spec 10.2, 7.4, D6, D9). Public parts are shown and copied; the private key only goes to a file, through main.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { draftErrorKey, hostsUsingKey, labelFieldValue, type KeyError } from '../../../../shared/ssh';
+import { draftErrorKey, READ_ONLY_VAULT_HINT, hostsUsingKey, labelFieldValue, type KeyError } from '../../../../shared/ssh';
 import type { MessageKey } from '../../../../shared/i18n';
 import { useI18n } from '../../i18n';
 import { askChoice, toast, useStore } from '../../store';
@@ -53,7 +53,7 @@ export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string
   return (
     <div className="ssh-editor">
       <h2>{key.label}</h2>
-      {readOnly && <div className="ssh-banner-warn">{tr('Plik sejfu SSH pochodzi z nowszej wersji')}</div>}
+      {readOnly && <div className="ssh-banner-warn">{tr(READ_ONLY_VAULT_HINT)}</div>}
       {key.locked && <div className="ssh-error">{tr('Nie można odczytać tego sekretu na tym komputerze. Usuń go i dodaj ponownie.')}</div>}
       {key.ephemeral && <div className="ssh-card-hint">{tr('do zamknięcia aplikacji')}</div>}
       {error && <div className="ssh-error" role="alert">{error}</div>}

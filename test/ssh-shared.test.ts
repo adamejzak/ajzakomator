@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  storageLabel, readOnlyStoreNote, addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
+  storageLabel, readOnlyStoreNote, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
   broadcastProblem, broadcastRowState, broadcastSend, pushHistory, sshCellsOfTab, cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -213,6 +213,10 @@ describe('editor tabs', () => {
     expect(draftErrorKey('ppkV3')).toBe('Klucz PuTTY w wersji 3 nie jest obsługiwany. Zapisz go w PuTTYgen jako OpenSSH.');
     expect(draftErrorKey('badPassphrase')).toBe('Nieprawidłowe hasło klucza');
     expect(draftErrorKey('cancelled')).toBeNull();
+    // Any read-only vault (unreadable, damaged or newer): a generic text that points to Settings > SSH, never "newer version" alone.
+    expect(draftErrorKey('readOnly')).toBe(READ_ONLY_VAULT_HINT);
+    expect(READ_ONLY_VAULT_HINT).toMatch(/tylko do odczytu.*Ustawienia > SSH/);
+    expect(READ_ONLY_VAULT_HINT).not.toMatch(/nowszej wersji/);
     expect(newKeyProblem({ label: '', passphrase: '', repeat: '' })).toBe('Podaj etykietę');
     expect(newKeyProblem({ label: 'k', passphrase: 'a', repeat: 'b' })).toBe('Hasła się różnią');
     expect(newKeyProblem({ label: 'k', passphrase: 'a', repeat: 'a' })).toBeNull();
@@ -311,17 +315,28 @@ describe('settings helpers', () => {
   });
 
   it('explains a read-only store only when it is one, and names what the user can do', () => {
-    expect(readOnlyStoreNote('vault', false)).toBeNull();
-    expect(readOnlyStoreNote('knownHosts', false)).toBeNull();
-    const vault = readOnlyStoreNote('vault', true) ?? '';
+    expect(readOnlyStoreNote('vault', false, 'v.json')).toBeNull();
+    expect(readOnlyStoreNote('knownHosts', false, 'k.json')).toBeNull();
+    // No path yet (status still loading or failed): no note with an empty {file}.
+    expect(readOnlyStoreNote('vault', true, undefined)).toBeNull();
+    expect(readOnlyStoreNote('knownHosts', true, '')).toBeNull();
+    const vault = readOnlyStoreNote('vault', true, 'v.json') ?? '';
     expect(vault).toContain('{file}');
     expect(vault).toMatch(/nieczytelny.*nieprawidłowy format.*uszkodzony wpis.*nowszej wersji/);
     expect(vault).toMatch(/Nie można dodawać ani zmieniać kluczy i haseł/);
     expect(vault).toMatch(/nietknięty/);
     expect(vault).toMatch(/uruchom aplikację ponownie/);
-    const hosts = readOnlyStoreNote('knownHosts', true) ?? '';
+    const hosts = readOnlyStoreNote('knownHosts', true, 'k.json') ?? '';
     expect(hosts).toContain('{file}');
-    expect(hosts).toMatch(/Zaufaj i zapisz.*tylko dla tego jednego połączenia/);
+    // Both ways of accepting a key (a new host and a changed key) apply to that one connection only.
+    expect(hosts).toMatch(/Zaufaj i zapisz.*Zastąp zapisany klucz.*tylko dla tego jednego połączenia/);
     expect(hosts).toMatch(/uruchom aplikację ponownie/);
+  });
+
+  it('describes the known hosts file with its path only once the path is known', () => {
+    expect(knownHostsDescription('k.json')).toContain('{file}');
+    expect(knownHostsDescription(undefined)).not.toContain('{file}');
+    expect(knownHostsDescription('')).not.toContain('{file}');
+    expect(knownHostsDescription(undefined)).toMatch(/Zaufaj i zapisz/);
   });
 });
