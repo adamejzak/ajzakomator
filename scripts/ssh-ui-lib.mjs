@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import electron from 'electron';
+import { scrubAppEnv } from './app-env.mjs';
 
 export const SHOTS = 'D:\\Projekty\\_shots';
 /** Scratch dirs live outside the repo, next to it: D:\Projekty\_tmp-ssh-<name>-<rand>. */
@@ -73,8 +74,9 @@ export async function startTestServer(args = []) {
 export async function launchApp(root, extraEnv = {}) {
   const port = await freePort();
   const home = join(root, 'home');
+  // Login variables of the real user are dropped first; extraEnv may still point them at a fake home.
   const env = {
-    ...process.env, MC_DATA_DIR: join(root, 'data'), MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port),
+    ...scrubAppEnv({ ...process.env }), MC_DATA_DIR: join(root, 'data'), MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port),
     // Never the real profile: the app reads ~/.claude and ~/.codex, Electron its appData.
     USERPROFILE: home, HOME: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local'),
     ...extraEnv,

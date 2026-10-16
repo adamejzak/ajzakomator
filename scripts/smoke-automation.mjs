@@ -8,6 +8,7 @@ import { delimiter, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import electron from 'electron';
+import { scrubAppEnv } from './app-env.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'unimux-automation-'));
 const data = join(root, 'data'), agents = join(root, 'fake-agents'), tokens = join(root, 'tokens');
@@ -36,8 +37,7 @@ const port = await new Promise((resolvePort, reject) => {
 });
 const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), UNIMUX_SMOKE_TOKENS: tokens,
   PATH: agents + delimiter + (process.env.PATH ?? process.env.Path ?? '') };
-delete env.ELECTRON_RUN_AS_NODE;
-delete env.ELECTRON_RENDERER_URL;
+scrubAppEnv(env); // never the real login folders or tokens
 const child = spawn(electron, ['.'], { cwd: process.cwd(), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let appOutput = '', exited = false;
 child.on('error', (error) => { appOutput += error.message; exited = true; });

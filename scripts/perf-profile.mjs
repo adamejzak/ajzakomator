@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import electron from 'electron';
+import { scrubAppEnv } from './app-env.mjs';
 
 const repo = process.cwd();
 const label = process.argv[2] ?? 'run';
@@ -25,7 +26,7 @@ writeFileSync(join(data, 'state.json'), JSON.stringify({
 }));
 const port = await new Promise((res, rej) => { const s = createServer(); s.on('error', rej); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port) };
-delete env.ELECTRON_RUN_AS_NODE; delete env.ELECTRON_RENDERER_URL;
+scrubAppEnv(env); // never the real login folders or tokens
 const t0 = Date.now();
 const child = spawn(electron, ['.'], { cwd: repo, env, windowsHide: true, stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

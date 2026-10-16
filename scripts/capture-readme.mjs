@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import electron from 'electron';
 import { verifyWorkspaceUI } from './verify-workspace-ui.mjs';
+import { scrubAppEnv } from './app-env.mjs';
 import { killTree, startTestServer, writeKnownHost } from './ssh-ui-lib.mjs';
 
 const checkout = process.cwd();
@@ -164,7 +165,7 @@ const port = await new Promise((resolvePort, reject) => {
   probe.listen(0, '127.0.0.1', () => { const p = probe.address().port; probe.close(() => resolvePort(p)); });
 });
 const env = { ...process.env, MC_DATA_DIR: data, MC_OFFSCREEN: '1', MC_DEBUG_PORT: String(port), USERPROFILE: home, HOME: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local') };
-delete env.ELECTRON_RUN_AS_NODE; delete env.ELECTRON_RENDERER_URL;
+scrubAppEnv(env); // never the real login folders or tokens
 const child = spawn(electron, ['.'], { cwd: checkout, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '', exited = false, socket, requestId = 0;
 child.stdout.on('data', d => { log += d; }); child.stderr.on('data', d => { log += d; });
