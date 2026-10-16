@@ -79,5 +79,9 @@
 .ssh-broadcast textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 .ssh-targets .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ssh-known { width: 100%; border-collapse: collapse; font-size: 12px; }
-.ssh-known td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.ssh-known tbody { display: block; }
+/* One entry per grid row: host, type, date and the button on the first line, the fingerprint across the whole width below (the Settings card can be narrow). */
+.ssh-known tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: baseline; border-bottom: 1px solid var(--border); }
+.ssh-known td { padding: 4px 6px; overflow-wrap: anywhere; }
+.ssh-known td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; padding-top: 0; }
 .settings-card > .ssh-banner-warn { margin: 8px 0; line-height: 1.5; user-select: text; overflow-wrap: anywhere; }
