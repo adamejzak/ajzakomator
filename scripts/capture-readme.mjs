@@ -284,6 +284,9 @@ try {
   await until(() => evaluate('document.querySelectorAll(".ssh-tile .ssh-state.connected").length === 3'), 'connected tiles');
   await evaluate(`(() => { const tile = [...document.querySelectorAll('.ssh-tile[data-host-id]')].find((t) => t.textContent.includes('web-1')); tile.click(); })()`);
   await until(() => evaluate(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`), 'web-1 details');
+  // The sidebar still shows the Git panel from the previous shot: the SSH shot shows the project list instead.
+  await click('#projects-view');
+  await until(() => evaluate('!document.querySelector(".git-file") && !!document.querySelector(".project")'), 'project list beside the SSH view');
   await screenshot('ssh');
   await evaluate(`document.querySelector('.workspace-tabs .ssh-tab .x')?.click()`);
   // Back to the Development grid and the project list for the optional checks.
