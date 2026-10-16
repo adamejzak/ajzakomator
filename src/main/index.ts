@@ -131,6 +131,8 @@ const usageDeps: FetcherDeps = {
   codexHome: () => process.env.CODEX_HOME?.trim() || join(homedir(), '.codex'),
   claudeUrl: (!app.isPackaged && process.env.MC_USAGE_CLAUDE_URL) || 'https://api.anthropic.com/api/oauth/usage',
   codexUrl: (!app.isPackaged && process.env.MC_USAGE_CODEX_URL) || 'https://chatgpt.com/backend-api/wham/usage',
+  // The usage endpoint counts its limit per client: the app reads as itself, never as Claude Code.
+  userAgent: `unimux/${app.getVersion()}`,
 };
 /** Token renewals: our own headers (no Chromium fingerprint, no Claude Code User-Agent), a persisted backoff after HTTP 429, system proxy only as a fallback. */
 const refreshLimits = createRefreshLimits(join(DATA_DIR, 'refresh-limits.json'));
@@ -139,6 +141,8 @@ const renewProfile = (dir: string) => refreshClaudeProfile(dir, { fetch: tokenFe
 const accounts = new AccountsStore(join(DATA_DIR, 'accounts'));
 /** cswap's roster, read before every poll (R6); `{ present: false }` without cswap. */
 let cswapRoster: CswapRoster = { present: false };
+/** How long a poll waits for the retry of failed profile restores before it reads the accounts. */
+const PARKED_RESTORE_WAIT_MS = 2_000;
 const usage = new UsageService({
   accounts: () => [
     ...claudeRefs({ records: accounts.list(), dirOf: (id) => accounts.dirOf(id), live: accounts.live(), cswap: cswapRoster, platform: process.platform }),
@@ -159,13 +163,15 @@ const usage = new UsageService({
       const recovered = await recoverInterruptedActivation(activateDeps()).catch(() => 'manual' as const);
       if (recovered !== 'locked') void pushSwapPending();
     }
-    // A re-login whose restore failed earlier is tried again (the card stays set aside until it works).
-    await login.retryParkedRestores().catch(() => undefined);
+    // A re-login whose restore failed earlier is tried again (the card stays set aside until it works). The poll waits for it
+    // briefly only: a restore waiting for Claude Code's locks goes on by itself instead of delaying every account's read.
+    await login.retryParkedRestores(PARKED_RESTORE_WAIT_MS).catch(() => undefined);
     // During a main login the roles stay as they are, but the outgoing live login keeps being backed up.
     if (login.isMainActive()) await resyncOutgoingWhenIdle(liveGuard(), reconcileDeps()).catch(() => null);
     else await reconcileIdle();
   },
   watchLive: true,
+  notices: () => accounts.notices(),
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
 const cliDetector = new CliDetector(systemCliDeps({
@@ -237,9 +243,11 @@ const login = new LoginManager({
   emit: (s) => send('auth:state', s),
   onChanged: (change) => {
     if (change.ownChange) ownLoginChange = true;
+    // The account the login was about is read at once, whatever its read spacing (`claude:main` = the live Claude card).
+    const subject = change.provider === 'codex' ? 'codex:main' : change.recordId ? `claude:${change.recordId}` : 'claude:main';
     void (async () => {
       if (change.ownChange) await reconcileIdle().catch(() => false);
-      void usage.refresh(true, true);
+      void usage.refresh(true, true, subject);
     })();
   },
   profilesSupported: process.platform !== 'darwin',
@@ -834,7 +842,7 @@ ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
     loginActive: () => login.isActive(),
     validate: (accountId) => checkActivationTarget(activateDeps(), accountId),
     swap: (accountId) => activateAccount(activateDeps(), accountId),
-    onSwapped: () => { void usage.refresh(true, true); },
+    onSwapped: () => { if (typeof id === 'string') void usage.refresh(true, true, `claude:${id}`); },
   }, id);
   void pushSwapPending();
   return result;

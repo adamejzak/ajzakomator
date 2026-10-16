@@ -45,8 +45,21 @@ describe('fetchClaude', () => {
     expect(usage.windows.map((w) => [w.id, w.usedPercent])).toEqual([['5h', 42], ['7d', 7]]);
     const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://claude.test/usage');
-    expect(init.headers).toMatchObject({ Authorization: `Bearer ${SECRET}`, 'anthropic-beta': 'oauth-2025-04-20' });
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${SECRET}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'unimux' });
     expect(init.method ?? 'GET').toBe('GET');
+  });
+
+  it('sends its own User-Agent, never claude-code/ (investigation test 9)', async () => {
+    claudeLogin();
+    const fetchSpy = vi.fn(async () => reply(200, claudeBody));
+    await fetchClaude({ ...deps(fetchSpy as never), userAgent: 'unimux/0.9.1' });
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['User-Agent']).toBe('unimux/0.9.1');
+  });
+
+  it('maps a 403 of the usage endpoint to forbidden, for the live login and saved accounts, without renewing (investigation test 6)', async () => {
+    claudeLogin();
+    expect((await fetchClaude(deps((async () => reply(403, {})) as never))).usage).toMatchObject({ status: 'forbidden', error: 'http-403' });
   });
 
   it('does not use an expired token and says so', async () => {
@@ -103,7 +116,7 @@ describe('fetchClaude', () => {
   it('maps rejected tokens, rate limiting and bad bodies', async () => {
     claudeLogin();
     expect((await fetchClaude(deps((async () => reply(401, {})) as never))).usage.status).toBe('expired');
-    expect((await fetchClaude(deps((async () => reply(403, {})) as never))).usage.status).toBe('expired');
+    expect((await fetchClaude(deps((async () => reply(403, {})) as never))).usage.status).toBe('forbidden');
     const limited = await fetchClaude(deps((async () => reply(429, {}, { 'retry-after': '120' })) as never));
     expect(limited.usage).toMatchObject({ status: 'error', error: 'http-429' });
     expect(limited.retryAfterMs).toBe(120_000);
@@ -293,7 +306,7 @@ describe('managed token renewal', () => {
     profileLogin('old-tok', NOW + 3_600_000);
     const refresh = vi.fn(async () => ({ kind: 'ok' as const }));
     const fetchSpy = vi.fn(async () => reply(403, {}));
-    expect((await fetchClaude(withRefresh(fetchSpy as never, refresh), ref())).usage.status).toBe('expired');
+    expect((await fetchClaude(withRefresh(fetchSpy as never, refresh), ref())).usage.status).toBe('forbidden');
     expect(refresh).not.toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
@@ -359,7 +372,7 @@ describe('why a saved account fails to read', () => {
   it('reports a rejected token after the renewal as expired with the status', async () => {
     profileLogin();
     const refresh = vi.fn(async () => ({ kind: 'ok' as const }));
-    expect((await fetchClaude(withRefresh((async () => reply(403, {})) as never, refresh), ref())).usage).toMatchObject({ status: 'expired', error: 'http-403' });
+    expect((await fetchClaude(withRefresh((async () => reply(403, {})) as never, refresh), ref())).usage).toMatchObject({ status: 'forbidden', error: 'http-403' });
   });
 
   describe('a saved account whose family lives elsewhere (R6)', () => {

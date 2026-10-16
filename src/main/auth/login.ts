@@ -90,6 +90,8 @@ export class LoginManager {
   private readonly restoring = new Map<string, Promise<boolean>>();
   /** Failed restores per record id, kept in memory only and retried (retryParkedRestores, the next start of that card). */
   private readonly parked = new Map<string, Parked>();
+  /** The retry of the parked restores in progress (retryParkedRestores). */
+  private retrying: Promise<void> | undefined;
 
   constructor(private readonly deps: LoginDeps) {}
 
@@ -213,8 +215,21 @@ export class LoginManager {
     return [...this.parked.values()].some((p) => norm(p.dir) === target);
   }
 
-  /** Tries the failed restores again (called before every usage poll); a card whose login is back leaves the set-aside state. */
-  async retryParkedRestores(): Promise<void> {
+  /**
+   * Tries the failed restores again (called before every usage poll); a card whose login is back leaves the set-aside state.
+   * One retry runs at a time (a call meanwhile joins it). With `waitMs` the caller waits at most that long: a restore waiting
+   * for Claude Code's locks (about 30 s per card) keeps running on its own instead of holding up every account's poll.
+   */
+  async retryParkedRestores(waitMs?: number): Promise<void> {
+    if (!this.retrying) this.retrying = this.retryAllParked().finally(() => { this.retrying = undefined; });
+    const run = this.retrying;
+    if (waitMs === undefined) return run;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((done) => { timer = setTimeout(done, waitMs); });
+    try { await Promise.race([run, waited]); } finally { clearTimeout(timer); }
+  }
+
+  private async retryAllParked(): Promise<void> {
     for (const id of [...this.parked.keys()]) {
       const session = this.current;
       if (session?.target.type === 'account' && session.target.id === id) continue;

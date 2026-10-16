@@ -575,6 +575,33 @@ describe('LoginManager re-login safety (fix round 1)', () => {
     expect(restoreProfile).toHaveBeenCalledTimes(3);
   });
 
+  it('bounds the wait for the parked restores before a poll and never starts a second retry while one runs', async () => {
+    const prepared = card();
+    const restoreProfile = vi.fn(async (): Promise<undefined> => { throw new Error('locked'); });
+    const h = setup({ identity: other, restoreProfile });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(2000 * 2 + 10);
+    expect(restoreProfile).toHaveBeenCalledTimes(3);
+    // Claude Code holds the locks: each try waits long (about 10 s per lock).
+    restoreProfile.mockImplementation(() => new Promise<undefined>((_resolve, reject) => { setTimeout(() => reject(new Error('locked')), 10_000); }));
+    let done = false;
+    const first = h.manager.retryParkedRestores(1_000).then(() => { done = true; });
+    await advance(1_000);
+    expect(done).toBe(true);
+    await first;
+    const second = h.manager.retryParkedRestores(1_000);
+    await advance(1_000);
+    await second;
+    expect(restoreProfile).toHaveBeenCalledTimes(4); // the second call shares the retry still running
+    await advance(40_000);
+    expect(restoreProfile).toHaveBeenCalledTimes(6);
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(true);
+    // The next retry starts again (no run left behind).
+    restoreProfile.mockImplementation(async () => undefined);
+    await h.manager.retryParkedRestores(1_000);
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(false);
+  });
+
   it('waits until the profile identity is rewritten before it compares, and never takes the old one for the card', async () => {
     const prepared = card({ email: 'new@example.com', accountUuid: undefined });
     let n = 0;

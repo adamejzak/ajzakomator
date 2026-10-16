@@ -1,8 +1,10 @@
 /** Limits of the user's Claude and Codex accounts: types and pure helpers shared by main process and window. */
+import type { AccountNotice } from './accounts';
 export type UsageProvider = 'claude' | 'codex';
-export type UsageStatus = 'ok' | 'signedOut' | 'expired' | 'dormant' | 'apiKey' | 'error' | 'elsewhere';
+export type UsageStatus = 'ok' | 'signedOut' | 'expired' | 'dormant' | 'apiKey' | 'error' | 'elsewhere' | 'forbidden';
 /* `dormant`: the main Claude login's access token is past its expiry but a refresh token exists; Claude Code renews it on next use. Not an error. */
 /* `elsewhere`: a saved account whose tokens this app must not renew (R6) and whose access token ran out. */
+/* forbidden: the usage endpoint answered 403 (e.g. a paused subscription); the sign-in itself is valid. */
 export type UsageSource = 'live' | 'log' | 'cache';
 
 export interface UsageWindow {
@@ -63,7 +65,7 @@ export function heldByOf(renew: AccountRef['renew']): ProviderUsage['heldBy'] {
   return renew && renew !== 'allowed' ? HELD_BY[renew] : undefined;
 }
 
-export interface UsageState { providers: ProviderUsage[] }
+export interface UsageState { providers: ProviderUsage[]; notices?: AccountNotice[] }
 
 export const USAGE_INTERVALS_MINUTES = [1, 5, 15] as const;
 

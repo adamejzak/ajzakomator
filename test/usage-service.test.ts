@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FetchResult } from '../src/main/usage/fetchers';
-import { MIN_GAP_MS, UsageService } from '../src/main/usage/service';
+import { MIN_GAP_MS, MIN_IDENTITY_GAP_MS, RETRY_AFTER_MARGIN_MS, UsageService } from '../src/main/usage/service';
 import { MAIN_ACCOUNTS, type AccountRef, type ProviderUsage, type UsageProvider } from '../src/shared/usage';
 
+/** Spacing and Retry-After margin off: these tests check other rules. */
+const LEGACY = { minIdentityGapMs: 0, retryAfterMarginMs: 0 };
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 const ok = (provider: UsageProvider, percent: number, accountId = `${provider}:main`): FetchResult => ({
   usage: { accountId, provider, status: 'ok', plan: 'Max 5x', fetchedAt: Date.now(), source: 'live', windows: [{ id: '5h', usedPercent: percent, resetsAt: Math.floor(Date.now() / 1000) + 3600 }] },
@@ -24,7 +26,7 @@ function make(overrides: { claude?: () => Promise<FetchResult>; codex?: () => Pr
   const claude = vi.fn(overrides.claude ?? (async () => ok('claude', 40)));
   const codex = vi.fn(overrides.codex ?? (async () => ok('codex', 8)));
   const fetchAccount = vi.fn(overrides.fetchAccount ?? ((ref: AccountRef) => (ref.id === 'codex:main' ? codex() : claude())));
-  const service = new UsageService({ accounts: overrides.accounts ?? (() => MAIN_ACCOUNTS), fetchAccount, cacheFile, enabled: overrides.enabled ?? (() => true), intervalMs: overrides.intervalMs ?? (() => 300_000) });
+  const service = new UsageService({ ...LEGACY, accounts: overrides.accounts ?? (() => MAIN_ACCOUNTS), fetchAccount, cacheFile, enabled: overrides.enabled ?? (() => true), intervalMs: overrides.intervalMs ?? (() => 300_000) });
   return { service, claude, codex, fetchAccount };
 }
 
@@ -429,7 +431,7 @@ describe('UsageService', () => {
       let renewed = false;
       const credentialsStamp = vi.fn(async () => stamp);
       const claude = vi.fn(async () => (renewed ? ok('claude', 12) : dormant()));
-      const service = new UsageService({ accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: claude, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp, watchMs: 20_000 });
+      const service = new UsageService({ ...LEGACY, accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: claude, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp, watchMs: 20_000 });
       service.start();
       await vi.advanceTimersByTimeAsync(0);
       expect(service.getState().providers[0].status).toBe('dormant');
@@ -451,7 +453,7 @@ describe('UsageService', () => {
   it('runs beforeRun before every poll and survives it throwing', async () => {
     const order: string[] = [];
     const beforeRun = vi.fn(async () => { order.push('before'); if (order.length > 2) throw new Error('x'); });
-    const service = new UsageService({ accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: async () => { order.push('fetch'); return ok('claude', 1); }, cacheFile, enabled: () => true, intervalMs: () => 0, beforeRun });
+    const service = new UsageService({ ...LEGACY, accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: async () => { order.push('fetch'); return ok('claude', 1); }, cacheFile, enabled: () => true, intervalMs: () => 0, beforeRun });
     await service.refresh(true, true);
     await service.refresh(true, true);
     expect(order).toEqual(['before', 'fetch', 'before', 'fetch']);
@@ -460,7 +462,7 @@ describe('UsageService', () => {
   it('watchLive: a changed live credentials file triggers a poll even when the login is fine', async () => {
     let stamp = 'a';
     const claude = vi.fn(async () => ok('claude', 10));
-    const service = new UsageService({ accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: claude, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp: async () => stamp, watchMs: 20_000, watchLive: true });
+    const service = new UsageService({ ...LEGACY, accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: claude, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp: async () => stamp, watchMs: 20_000, watchLive: true });
     service.start();
     await vi.advanceTimersByTimeAsync(100);
     const calls = claude.mock.calls.length;
@@ -474,7 +476,7 @@ describe('UsageService', () => {
 describe('a held account across a restart', () => {
   const SAVED: AccountRef = { id: 'claude:abc', provider: 'claude', configDir: '/tmp/ajza-profile' };
   const limited = (): FetchResult => ({ usage: { accountId: SAVED.id, provider: 'claude', status: 'error', fetchedAt: Date.now(), source: 'live', windows: [], managed: true, error: 'refresh-http-429' }, retryAfterMs: 900_000 });
-  const build = (fetchAccount: () => Promise<FetchResult>) => new UsageService({ accounts: () => [SAVED], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 60_000 });
+  const build = (fetchAccount: () => Promise<FetchResult>) => new UsageService({ ...LEGACY, accounts: () => [SAVED], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 60_000 });
 
   it('does not try again right after a restart and shows the same calm card until the window passes', async () => {
     const first = vi.fn(async () => limited());
@@ -509,5 +511,209 @@ describe('a held account across a restart', () => {
     await service.refresh();
     expect(fetchAccount).not.toHaveBeenCalled();
     expect(service.getState().providers[0]).toMatchObject({ status: 'error', error: 'refresh-http-429', source: 'cache', windows: [{ id: '7d', usedPercent: 100 }] });
+  });
+});
+
+describe('usage keyed by account identity (W1)', () => {
+  const refA: AccountRef = { id: 'claude:main', provider: 'claude', key: 'uuid:A:-', active: true };
+  const refG: AccountRef = { id: 'claude:main', provider: 'claude', key: 'uuid:G:-', active: true };
+  const limited = (accountId: string): FetchResult => ({ usage: { accountId, provider: 'claude', status: 'error', fetchedAt: Date.now(), source: 'live', windows: [], error: 'http-429' }, retryAfterMs: 46 * 60_000 });
+
+  it("never shows the previous account's numbers or backoff on the main card after a switch (investigation test 7)", async () => {
+    let listed: AccountRef[] = [refA];
+    const fetchAccount = vi.fn(async (ref: AccountRef) => (ref.key === 'uuid:A:-' ? ok('claude', 40, ref.id) : failing('claude', 'error', undefined, ref.id)));
+    const service = new UsageService({ accounts: () => listed, fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    expect(service.getState().providers[0].windows[0].usedPercent).toBe(40);
+    // cswap switched the live login to G; A is now a saved card of its own.
+    listed = [refG, { id: 'claude:a', provider: 'claude', key: 'uuid:A:-', configDir: '/a' }];
+    await service.refresh(true, true);
+    const [main, saved] = service.getState().providers;
+    expect(main).toMatchObject({ accountId: 'claude:main', status: 'error', windows: [] });
+    expect(saved).toMatchObject({ accountId: 'claude:a', windows: [{ usedPercent: 40 }] });
+    expect(saved.active).toBeUndefined();
+    const again = new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    expect(again.getState().providers[0]).toMatchObject({ source: 'cache', windows: [{ usedPercent: 40 }] });
+    const other = new UsageService({ accounts: () => [refG], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    expect(other.getState().providers[0]?.windows ?? []).toEqual([]);
+  });
+
+  it('reads one account at most every 3 minutes, also when forced, unless the action was about it (investigation test 8)', async () => {
+    const fetchAccount = vi.fn(async () => ok('claude', 10));
+    const service = new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    vi.advanceTimersByTime(60_000);
+    await service.refresh(true, true);
+    expect(fetchAccount).toHaveBeenCalledTimes(1);
+    await service.refresh(true, true, 'claude:main');
+    expect(fetchAccount).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(MIN_IDENTITY_GAP_MS);
+    await service.refresh(true, true);
+    expect(fetchAccount).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the read spacing across a restart', async () => {
+    const fetchAccount = vi.fn(async () => ok('claude', 10));
+    await new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 }).refresh(true, true);
+    vi.advanceTimersByTime(30_000);
+    await new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 }).refresh(true, true);
+    expect(fetchAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('never bypasses a 429 hold of an unrelated account and adds a margin to Retry-After', async () => {
+    const saved: AccountRef = { id: 'claude:abc', provider: 'claude', key: 'uuid:B:-', configDir: '/p' };
+    const fetchAccount = vi.fn(async (ref: AccountRef) => (ref.key === 'uuid:B:-' ? limited('claude:abc') : ok('claude', 10)));
+    const service = new UsageService({ accounts: () => [refA, saved], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0, minIdentityGapMs: 0 });
+    await service.refresh(true, true);
+    expect(service.getState().providers.find((p) => p.accountId === 'claude:abc')?.retryAt).toBe(Date.now() + 46 * 60_000 + RETRY_AFTER_MARGIN_MS);
+    await service.refresh(true, true, 'claude:main');
+    vi.advanceTimersByTime(21_000);
+    await service.refresh(true); // the refresh button
+    expect(fetchAccount.mock.calls.filter(([ref]) => (ref as AccountRef).key === 'uuid:B:-')).toHaveLength(1);
+  });
+
+  it('sends the account notices along with the state', async () => {
+    const notices = [{ id: 'n1', kind: 'switchedOut' as const, at: 1, email: 'g@x.com' }];
+    const service = new UsageService({ accounts: () => [refA], fetchAccount: async () => ok('claude', 1), cacheFile, enabled: () => true, intervalMs: () => 0, notices: () => notices });
+    expect(service.getState().notices).toEqual(notices);
+  });
+
+  it('adds the margin only to a 429 of the usage endpoint, not to a rate-limited token renewal (F23)', async () => {
+    const saved: AccountRef = { id: 'claude:abc', provider: 'claude', key: 'uuid:B:-', configDir: '/p' };
+    const renewal = (): FetchResult => ({ usage: { accountId: 'claude:abc', provider: 'claude', status: 'error', fetchedAt: Date.now(), source: 'live', windows: [], error: 'refresh-http-429' }, retryAfterMs: 600_000 });
+    const service = new UsageService({ accounts: () => [saved], fetchAccount: async () => renewal(), cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    expect(service.getState().providers[0].retryAt).toBe(Date.now() + 600_000);
+  });
+
+  it('re-derives the main, managed and held flags from the current card on every result, also while held or failed', async () => {
+    const mirror = (ref: AccountRef, result: FetchResult): FetchResult => ({ ...result, usage: { ...result.usage, accountId: ref.id, ...(ref.active ? { active: true } : {}), ...(ref.configDir ? { managed: true } : {}) } });
+    const a: AccountRef = { id: 'claude:a', provider: 'claude', key: 'uuid:A:-', active: true };
+    const b: AccountRef = { id: 'claude:b', provider: 'claude', key: 'uuid:B:-', configDir: '/b', renew: 'held-by-cswap' };
+    let listed: AccountRef[] = [a, b];
+    let round = 0;
+    const fetchAccount = vi.fn(async (ref: AccountRef) => mirror(ref, ref.key === 'uuid:B:-' ? limited(ref.id) : round === 0 ? ok('claude', 40, ref.id) : failing('claude', 'error', undefined, ref.id)));
+    const service = new UsageService({ accounts: () => listed, fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    expect(service.getState().providers.map((p) => [p.accountId, p.active, p.managed, p.heldBy])).toEqual([['claude:a', true, undefined, undefined], ['claude:b', undefined, true, 'cswap']]);
+    // B became main (held by its 429), A a saved card whose read fails: one main badge, on B.
+    round = 1;
+    listed = [{ id: 'claude:b', provider: 'claude', key: 'uuid:B:-', active: true }, { id: 'claude:a', provider: 'claude', key: 'uuid:A:-', configDir: '/a', renew: 'switched-out' }];
+    await service.refresh(true, true);
+    const state = service.getState().providers;
+    expect(state.map((p) => [p.accountId, p.active, p.managed, p.heldBy])).toEqual([['claude:b', true, undefined, undefined], ['claude:a', undefined, true, 'switched-out']]);
+    expect(state.filter((p) => p.active)).toHaveLength(1);
+    expect(state[0]).toMatchObject({ status: 'error', error: 'http-429' });
+    expect(state[1]).toMatchObject({ status: 'error', source: 'cache', windows: [{ usedPercent: 40 }] });
+  });
+
+  it('reads an account again when it moved between the live login and a saved profile (another copy of its sign-in)', async () => {
+    let listed: AccountRef[] = [refA];
+    const fetchAccount = vi.fn(async (ref: AccountRef) => ok('claude', 10, ref.id));
+    const service = new UsageService({ accounts: () => listed, fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+    await service.refresh(true, true);
+    vi.advanceTimersByTime(30_000);
+    listed = [refG, { id: 'claude:a', provider: 'claude', key: 'uuid:A:-', configDir: '/a' }];
+    await service.refresh(true, true);
+    expect(fetchAccount.mock.calls.filter(([ref]) => (ref as AccountRef).key === 'uuid:A:-')).toHaveLength(2);
+    vi.advanceTimersByTime(30_000);
+    await service.refresh(true, true);
+    expect(fetchAccount.mock.calls.filter(([ref]) => (ref as AccountRef).key === 'uuid:A:-')).toHaveLength(2);
+  });
+
+  describe('a changed live login file (watchLive, F23)', () => {
+    it('does not bypass the 3-minute spacing of the same account', async () => {
+      let stamp = 'a';
+      const beforeRun = vi.fn(async () => undefined);
+      const fetchAccount = vi.fn(async () => ok('claude', 10));
+      const service = new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp: async () => stamp, watchMs: 20_000, watchLive: true, beforeRun });
+      service.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchAccount).toHaveBeenCalledTimes(1);
+      stamp = 'b';
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(beforeRun).toHaveBeenCalledTimes(2); // the change is looked at (reconcile) once
+      expect(fetchAccount).toHaveBeenCalledTimes(1);
+      service.stop();
+    });
+
+    it('does not bypass a backoff', async () => {
+      let stamp = 'a';
+      const fetchAccount = vi.fn(async () => failing('claude', 'error', 600_000));
+      const service = new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp: async () => stamp, watchMs: 20_000, watchLive: true, minIdentityGapMs: 0 });
+      service.start();
+      await vi.advanceTimersByTimeAsync(100);
+      stamp = 'b';
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchAccount).toHaveBeenCalledTimes(1);
+      service.stop();
+    });
+
+    it('reads a newly signed-in account at once', async () => {
+      let stamp = 'a';
+      let listed: AccountRef[] = [refA];
+      const fetchAccount = vi.fn(async (ref: AccountRef) => ok('claude', ref.key === 'uuid:G:-' ? 70 : 10, ref.id));
+      const beforeRun = async () => { if (stamp === 'b') listed = [refG]; };
+      const service = new UsageService({ accounts: () => listed, fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp: async () => stamp, watchMs: 20_000, watchLive: true, beforeRun });
+      service.start();
+      await vi.advanceTimersByTimeAsync(100);
+      stamp = 'b';
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(fetchAccount).toHaveBeenCalledTimes(2);
+      expect(service.getState().providers[0].windows[0].usedPercent).toBe(70);
+      service.stop();
+    });
+  });
+
+  describe('a 0.9.0 cache (keyed by card)', () => {
+    const SAVED: AccountRef = { id: 'claude:rec1', provider: 'claude', key: 'uuid:B:-', configDir: '/b' };
+    const card = (accountId: string, percent: number, email: string) => ({ accountId, provider: 'claude', status: 'ok', source: 'live', fetchedAt: NOW - 60_000, email, windows: [{ id: '5h', usedPercent: percent, resetsAt: 10 }] });
+    const write = () => writeFileSync(cacheFile, JSON.stringify({
+      providers: [card('claude:main', 40, 'a@x.com'), card('claude:rec1', 33, 'b@x.com')],
+      backoff: { 'claude:rec1': { until: NOW + 600_000, failures: 1, error: 'http-429', attemptAt: NOW - 1000 } },
+    }));
+    const failedAs = (ref: AccountRef, email: string): FetchResult => ({ usage: { accountId: ref.id, provider: 'claude', status: 'error', fetchedAt: Date.now(), source: 'live', windows: [], error: 'http-500', email } });
+
+    it('moves a saved card to its account at once, its backoff too, and saves the account-keyed cache', async () => {
+      write();
+      const fetchAccount = vi.fn(async (ref: AccountRef) => failedAs(ref, 'a@x.com'));
+      const service = new UsageService({ accounts: () => [refA, SAVED], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+      expect(service.getState().providers.map((p) => [p.accountId, p.windows[0]?.usedPercent])).toEqual([['claude:rec1', 33]]);
+      await service.refresh(true, true);
+      expect(fetchAccount.mock.calls.map(([ref]) => (ref as AccountRef).id)).toEqual(['claude:main']); // rec1 is still held
+      const stored = JSON.parse(readFileSync(cacheFile, 'utf8')) as { version: number; entries: Array<{ key: string }>; backoff: Record<string, unknown> };
+      expect(stored.version).toBe(2);
+      expect(stored.entries.map((e) => e.key).sort()).toEqual(['uuid:A:-', 'uuid:B:-']);
+      expect(stored.backoff['uuid:B:-']).toMatchObject({ until: NOW + 600_000, error: 'http-429' });
+      expect(Object.keys(stored.backoff)).not.toContain('claude:rec1');
+    });
+
+    it("keeps the 0.9.0 live card's backoff for the live account, also when that card now has its record's id", async () => {
+      writeFileSync(cacheFile, JSON.stringify({
+        providers: [card('claude:main', 40, 'a@x.com')],
+        backoff: { 'claude:main': { until: NOW + 600_000, failures: 1, error: 'http-429', attemptAt: NOW - 1000 } },
+      }));
+      const live: AccountRef = { id: 'claude:rec9', provider: 'claude', key: 'uuid:A:-', active: true };
+      const fetchAccount = vi.fn(async (ref: AccountRef) => failedAs(ref, 'a@x.com'));
+      const service = new UsageService({ accounts: () => [live], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+      await service.refresh(true, true);
+      expect(fetchAccount).not.toHaveBeenCalled();
+      expect(service.getState().providers[0]).toMatchObject({ accountId: 'claude:rec9', status: 'error', error: 'http-429', windows: [], active: true });
+    });
+
+    it('gives the live card the old numbers only once a read proves it is the same account', async () => {
+      write();
+      let email = 'a@x.com';
+      const fetchAccount = vi.fn(async (ref: AccountRef) => failedAs(ref, email));
+      const service = new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+      expect(service.getState().providers).toEqual([]);
+      await service.refresh(true, true);
+      expect(service.getState().providers[0]).toMatchObject({ status: 'error', source: 'cache', windows: [{ usedPercent: 40 }] });
+      write();
+      email = 'other@x.com';
+      const other = new UsageService({ accounts: () => [refA], fetchAccount, cacheFile, enabled: () => true, intervalMs: () => 0 });
+      await other.refresh(true, true);
+      expect(other.getState().providers[0]).toMatchObject({ status: 'error', windows: [] });
+    });
   });
 });

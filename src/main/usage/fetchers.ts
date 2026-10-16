@@ -20,6 +20,8 @@ export interface FetcherDeps {
   refreshClaude?: (dir: string) => Promise<RefreshOutcome>;
   /** Pause used before re-reading the main login's file (Claude Code rewrites it atomically); tests inject an instant one. */
   sleep?: (ms: number) => Promise<void>;
+  /** Product name sent to the usage endpoint (`unimux/<version>`): the limit there is counted per client, so never Claude Code's. */
+  userAgent?: string;
 }
 
 /** How long to wait before the one re-read of a main login that looks missing, expired or rejected. */
@@ -102,7 +104,7 @@ async function readClaude(deps: FetcherDeps, ref: AccountRef): Promise<FetchResu
       Accept: 'application/json',
       Authorization: `Bearer ${credentials!.accessToken}`,
       'anthropic-beta': 'oauth-2025-04-20',
-      'User-Agent': 'claude-code/2.1.34',
+      'User-Agent': deps.userAgent ?? 'unimux',
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -123,7 +125,9 @@ async function readClaude(deps: FetcherDeps, ref: AccountRef): Promise<FetchResu
         response = await request();
       }
     }
-    if (response.status === 401 || response.status === 403) return { usage: { ...known, status: 'expired', error: `http-${response.status}` } };
+    // 403 = access denied (a paused subscription, an organisation policy), not a dead sign-in: signing in again would not help.
+    if (response.status === 403) return { usage: { ...known, status: 'forbidden', error: 'http-403' } };
+    if (response.status === 401) return { usage: { ...known, status: 'expired', error: 'http-401' } };
     if (!response.ok) return { usage: { ...known, status: 'error', error: `http-${response.status}` }, retryAfterMs: retryAfterMs(response, now) };
     const windows = parseClaudeUsage(await response.json());
     if (!windows) return { usage: { ...known, status: 'error', error: 'bad-response' } };

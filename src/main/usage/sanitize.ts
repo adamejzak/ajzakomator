@@ -1,7 +1,7 @@
 // src/main/usage/sanitize.ts
 import { clampPercent, type ProviderUsage, type UsageStatus, type UsageWindow } from '../../shared/usage';
 
-const STATUSES: UsageStatus[] = ['ok', 'signedOut', 'expired', 'dormant', 'apiKey', 'error', 'elsewhere'];
+const STATUSES: UsageStatus[] = ['ok', 'signedOut', 'expired', 'dormant', 'apiKey', 'error', 'elsewhere', 'forbidden'];
 const SOURCES = ['live', 'log', 'cache'] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
