@@ -445,3 +445,6 @@ export function newKeyProblem(p: { label: string; passphrase: string; repeat: st
 }
 
 export const hostsUsingKey = (hosts: readonly SshHost[], keyId: string): SshHost[] => hosts.filter((h) => h.keyId === keyId);
+
+/** The key label field follows the stored label (renamed elsewhere, late vault push) unless the user is typing in it. */
+export const labelFieldValue = (p: { field: string; stored: string; focused: boolean }): string => (p.focused ? p.field : p.stored);

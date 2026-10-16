@@ -19,7 +19,8 @@
 .cell-head .ssh-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 
 /* Editor tabs (spec 10.2): the look of the Settings page (#181818 page, #202020 cards, labels above inputs). */
-.ssh-editor-screen { flex: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; justify-content: center; padding: 48px clamp(32px, 4vw, 64px) 32px; background: #181818; }
+.ssh-editor-screen { flex: 1; min-width: 0; min-height: 0; overflow: auto; display: none; justify-content: center; padding: 48px clamp(32px, 4vw, 64px) 32px; background: #181818; }
+.ssh-editor-screen.active { display: flex; }
 .ssh-editor { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 680px; height: max-content; }
 .ssh-editor h2 { margin: 0 0 10px; color: var(--text); font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
 .ssh-section { display: flex; flex-direction: column; gap: 14px; padding: 14px 14px; background: #202020; border-radius: 12px; }

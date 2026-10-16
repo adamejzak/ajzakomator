@@ -1,5 +1,6 @@
 // A new key (spec 7.1, 7.2, 10.2): generate, import a file (picker or drop) or paste. Imports are drafts held in main;
-// the pasted private text is cleared right after it was sent, passphrases on submit and unmount.
+// the pasted private text is cleared right after it was sent and when the paste mode is left, passphrases on submit.
+// The editor stays mounted while its tab is open (SshEditorScreen); a draft that was never stored is discarded when the tab closes.
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { DEFAULT_KEY_BITS, draftErrorKey, KEY_SIZES, newKeyProblem, type DraftResult, type SshKeyType } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
@@ -32,10 +33,10 @@ export function NewKeyEditor({ editorId }: { editorId: string }) {
   const [dragOver, setDragOver] = useState(false);
   const draftRef = useRef<string | null>(null);
   draftRef.current = draft?.draftId ?? null;
-  // A draft that was never stored is dropped in main when the tab closes.
+  // Unmount = the tab closed (or became the stored key's tab, then draftRef is already null): drop the draft in main.
   useEffect(() => () => { if (draftRef.current) window.mc.ssh.discardDraft(draftRef.current); }, []);
 
-  const done = (keyId: string) => { draftRef.current = null; retargetSshEditor(editorId, 'key', keyId); activateSshEditor(editorId); };
+  const done = (keyId: string) => { draftRef.current = null; setDraft(null); retargetSshEditor(editorId, 'key', keyId); activateSshEditor(editorId); };
   const takeDraft = (r: DraftResult | { ok: false; error: 'cancelled' }) => {
     if (!r.ok) { const key = draftErrorKey(r.error); setError(key ? tr(key) : null); return; }
     setError(null);
@@ -114,7 +115,7 @@ export function NewKeyEditor({ editorId }: { editorId: string }) {
       {storage === 'unavailable' && <div className="ssh-banner-warn">{tr('Szyfrowanie systemowe jest niedostępne - klucze i hasła są trzymane tylko do zamknięcia aplikacji')}</div>}
       <div className="ssh-segmented" role="tablist">
         {modes.map(([m, text]) => (
-          <button key={m} type="button" role="tab" aria-selected={mode === m} className={mode === m ? 'on' : ''} disabled={!!draft || busy} onClick={() => { setMode(m); setError(null); }}>
+          <button key={m} type="button" role="tab" aria-selected={mode === m} className={mode === m ? 'on' : ''} disabled={!!draft || busy} onClick={() => { if (m !== 'paste') setPrivateText(''); setMode(m); setError(null); }}>
             {tr(text)}
           </button>
         ))}

@@ -51,11 +51,16 @@ function PaletteInner() {
     const focused = getUi().focusedCellId;
     // actions first so short queries like "his" / "ust" find them
     out.push({ kind: tr('Akcja'), title: tr("Nowy projekt") + '…', run: () => void createProject() });
+    // SSH editors need no project: after "Nowy terminal (zakładka)" with a project (L16), right here without one.
+    const ssh: Item[] = [
+      { kind: tr('Akcja'), title: tr('SSH: nowy host'), run: () => openSshEditor('host') },
+      { kind: tr('Akcja'), title: tr('SSH: nowy klucz'), run: () => openSshEditor('newKey') },
+    ];
+    if (!project) out.push(...ssh);
     if (project) {
       out.push({ kind: tr('Akcja'), title: tr("Nowy grid / preset…"), desc: keys('grid.new') || undefined, run: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Nowy terminal (zakładka)"), desc: keys('terminal.new') || undefined, run: () => quickTab() });
-      out.push({ kind: tr('Akcja'), title: tr('SSH: nowy host'), run: () => openSshEditor('host') });
-      out.push({ kind: tr('Akcja'), title: tr('SSH: nowy klucz'), run: () => openSshEditor('newKey') });
+      out.push(...ssh);
       out.push({ kind: tr('Akcja'), title: tr("Historia projektu"), desc: keys('history.open') || undefined, run: () => setUi({ modal: { kind: 'history', projectId: project.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz folder projektu"), run: () => window.mc.openPath(project.path) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz projekt w Cursorze"), run: () => window.mc.openInEditor(project.path) });

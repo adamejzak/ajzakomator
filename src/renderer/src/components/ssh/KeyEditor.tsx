@@ -1,6 +1,6 @@
 // One key of the vault (spec 10.2, 7.4, D6, D9). Public parts are shown and copied; the private key only goes to a file, through main.
-import { useMemo, useState } from 'react';
-import { draftErrorKey, hostsUsingKey, type KeyError } from '../../../../shared/ssh';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { draftErrorKey, hostsUsingKey, labelFieldValue, type KeyError } from '../../../../shared/ssh';
 import type { MessageKey } from '../../../../shared/i18n';
 import { useI18n } from '../../i18n';
 import { askChoice, toast, useStore } from '../../store';
@@ -17,6 +17,10 @@ export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string
   const allHosts = useStore((st) => st.s.sshHosts);
   const hosts = useMemo(() => hostsUsingKey(allHosts, keyId), [allHosts, keyId]);
   const [label, setLabel] = useState(key?.label ?? '');
+  const labelFocused = useRef(false);
+  // A rename elsewhere or a late vault push shows up unless the user is typing in the field.
+  const storedLabel = key?.label ?? '';
+  useEffect(() => { setLabel((field) => labelFieldValue({ field, stored: storedLabel, focused: labelFocused.current })); }, [storedLabel]);
   const [certificate, setCertificate] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +59,7 @@ export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string
       {error && <div className="ssh-error" role="alert">{error}</div>}
       <div className="ssh-section">
         <label className="ssh-field"><span>{tr('Etykieta')}</span>
-          <input className="input" value={label} maxLength={80} disabled={readOnly} onChange={(e) => setLabel(e.target.value)} onBlur={saveLabel}
+          <input className="input" value={label} maxLength={80} disabled={readOnly} onChange={(e) => setLabel(e.target.value)} onFocus={() => { labelFocused.current = true; }} onBlur={() => { labelFocused.current = false; saveLabel(); }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
         </label>
         <dl className="ssh-facts">
@@ -73,7 +77,7 @@ export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string
       </div>
       <div className="ssh-section">
         <div className="ssh-field"><span>{tr('Certyfikat')}</span>
-          <span className="ssh-card-hint">{tr('Certyfikat jest zapisany, ale logowanie certyfikatem nie jest jeszcze obsługiwane')}</span>
+          {key.certificate && <span className="ssh-card-hint">{tr('Certyfikat jest zapisany, ale logowanie certyfikatem nie jest jeszcze obsługiwane')}</span>}
           {key.certificate && <pre className="ssh-public">{key.certificate}</pre>}
           {!readOnly && <>
             <textarea className="input mono" rows={2} value={certificate} spellCheck={false} onChange={(e) => setCertificate(e.target.value)} />

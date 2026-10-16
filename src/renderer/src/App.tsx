@@ -155,6 +155,7 @@ export function App() {
   const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
   const fileOpen = documents.some((doc) => doc.id === selectedFile && doc.projectId === projectId);
   const sshEditorActive = useSshStore((st) => st.activeEditorId !== null);
+  const sshEditorsOpen = useSshStore((st) => st.editors.length > 0);
   const ready = useStore((st) => st.ready);
   const automationOpen = useStore((st) => st.ui.automationOpen);
   const languageChosen = useStore((st) => st.s.settings.language !== null);
@@ -216,7 +217,7 @@ export function App() {
           <div className="workspace-content">
             <div className="terminal-workspace" style={{ display: fileOpen || settingsActive || sshEditorActive ? 'none' : 'flex' }}><GridView /></div>
             {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><LazyScreen load={loadSettingsPage} /></div>}
-            {!settingsActive && sshEditorActive && <LazyScreen load={loadSshEditor} />}
+            {sshEditorsOpen && <LazyScreen load={loadSshEditor} />}
             {!settingsActive && !sshEditorActive && fileOpen && <LazyScreen load={loadFileEditor} />}
           </div>
           {automationOpen && <LazyScreen load={loadAutomationPanel} />}

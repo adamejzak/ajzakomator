@@ -1,25 +1,39 @@
 // The SSH editor view in the main area (spec 10.2): one tab per host or key, plus "new key" tabs.
+// Every open editor tab stays mounted (hidden when not active, like the Settings page), so unsaved input and a new-key
+// draft survive switching to a grid, a file or another tab; an editor unmounts only when its tab closes or is retargeted.
 // The tab title text lives in ../../ssh.ts (sshEditorTitleText), so the tab strip does not load this lazy screen (L11).
 import { useI18n } from '../../i18n';
 import { useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
+import type { SshEditorRef } from '../../../../shared/ssh';
 import { HostEditor } from './HostEditor';
 import { KeyEditor } from './KeyEditor';
 import { NewKeyEditor } from './NewKeyEditor';
 import './ssh.css';
 
 export function SshEditorScreen() {
-  const { tr } = useI18n();
-  const editor = useSshStore((st) => st.editors.find((e) => e.id === st.activeEditorId));
-  const hostExists = useStore((st) => !editor?.targetId || editor.kind !== 'host' || st.s.sshHosts.some((h) => h.id === editor.targetId));
-  if (!editor) return null;
+  const visible = useStore((st) => !st.ui.settingsActive);
+  const editors = useSshStore((st) => st.editors);
+  const activeEditorId = useSshStore((st) => st.activeEditorId);
   return (
-    <div className="ssh-editor-screen">
-      {editor.kind === 'host' && (hostExists
-        ? <HostEditor key={editor.id + (editor.targetId ?? '')} editorId={editor.id} hostId={editor.targetId} />
-        : <div className="ssh-editor"><p className="ssh-card-hint">{tr('Ten host został usunięty')}</p></div>)}
-      {editor.kind === 'key' && editor.targetId && <KeyEditor key={editor.id + editor.targetId} editorId={editor.id} keyId={editor.targetId} />}
-      {editor.kind === 'newKey' && <NewKeyEditor key={editor.id} editorId={editor.id} />}
-    </div>
+    <>
+      {editors.map((editor) => (
+        <div key={editor.id} className={`ssh-editor-screen ${visible && editor.id === activeEditorId ? 'active' : ''}`} data-editor-id={editor.id}>
+          <EditorPane editor={editor} />
+        </div>
+      ))}
+    </>
   );
+}
+
+function EditorPane({ editor }: { editor: SshEditorRef }) {
+  const { tr } = useI18n();
+  const hostExists = useStore((st) => !editor.targetId || editor.kind !== 'host' || st.s.sshHosts.some((h) => h.id === editor.targetId));
+  if (editor.kind === 'host') {
+    return hostExists
+      ? <HostEditor key={editor.targetId ?? 'new'} editorId={editor.id} hostId={editor.targetId} />
+      : <div className="ssh-editor"><p className="ssh-card-hint">{tr('Ten host został usunięty')}</p></div>;
+  }
+  if (editor.kind === 'key') return editor.targetId ? <KeyEditor key={editor.targetId} editorId={editor.id} keyId={editor.targetId} /> : null;
+  return <NewKeyEditor editorId={editor.id} />;
 }

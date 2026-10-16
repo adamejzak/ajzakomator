@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
+  addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
   sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -217,5 +217,9 @@ describe('editor tabs', () => {
     expect(newKeyProblem({ label: 'k', passphrase: 'a', repeat: 'b' })).toBe('Hasła się różnią');
     expect(newKeyProblem({ label: 'k', passphrase: 'a', repeat: 'a' })).toBeNull();
     expect(hostsUsingKey([host(1, { keyId: 'k' }), host(2)], 'k').map((h) => h.id)).toEqual([ID(1)]);
+  });
+  it('follows the stored key label unless the user is typing in the field', () => {
+    expect(labelFieldValue({ field: 'old', stored: 'renamed', focused: false })).toBe('renamed');
+    expect(labelFieldValue({ field: 'typing', stored: 'renamed', focused: true })).toBe('typing');
   });
 });
