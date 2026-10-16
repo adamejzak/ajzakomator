@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="resources/branding/banner.png" width="100%" alt="unimux — terminal workspace for coding agents" />
+<img src="resources/branding/banner.png" width="100%" alt="unimux - terminal workspace for coding agents" />
 
 <br />
 
@@ -36,6 +36,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 - **Nothing gets lost**: restart the app and every conversation resumes; closed grids go to History
 - **Snippets and `Ctrl+K` palette** to paste prompts into one cell or the whole grid
 - **Files, editor and Git panel** to read and edit source and commit without leaving the workspace
+- **SSH connections**: saved hosts and keys, host-key checks, SSH grids and one command sent to every host
 - **AI account limits** for Claude and Codex, with switching between saved Claude accounts
 - **Optional MCP** for coordinator / worker teams with tracked tasks and handoffs
 - **Native terminals**: ConPTY on Windows (with hold Space to dictate), login shells on macOS, GPU rendering
@@ -49,6 +50,14 @@ background, tells you which one needs you, and brings any grid or conversation b
   <tr>
     <td align="center"><sub>New grid: layout, profiles and startup prompts per cell</sub></td>
     <td align="center"><sub>File tree and built-in editor</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/git.png" alt="Git panel with changed files, a commit box and the commit history" /></td>
+    <td width="50%"><img src="docs/screenshots/ssh.png" alt="SSH panel with hosts grouped by environment beside a grid of three connected SSH sessions" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Git panel: changes, commit and history</sub></td>
+    <td align="center"><sub>SSH hosts and a grid of SSH sessions</sub></td>
   </tr>
 </table>
 
@@ -78,6 +87,7 @@ You also need the agents you want to use on your shell's `PATH` (`claude`, `code
 - [Status, alerts and AI accounts](docs/ALERTS.md)
 - [Agents and local MCP](docs/MCP.en.md)
 - [Git panel and repository trust](docs/GIT.md)
+- [SSH connections](docs/SSH.md)
 - [Updating](docs/UPDATES.md)
 - [Development, architecture and releasing](docs/DEVELOPMENT.md)
 
