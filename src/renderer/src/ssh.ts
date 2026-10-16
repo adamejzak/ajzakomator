@@ -3,7 +3,7 @@
 // the other at load time (only inside functions).
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell } from '../../shared/state';
-import { hostEndpoint, promptNeedsToast, sshCellStart, sshNotice, type SshPrompt, type SshSessionState } from '../../shared/ssh';
+import { hostEndpoint, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshNotice, type SshPrompt, type SshSessionState } from '../../shared/ssh';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
 import { tr } from './i18n';
@@ -27,8 +27,16 @@ const cellLabel = (cellId: string): string => {
 
 const cellVisible = (cellId: string): boolean => {
   const tab = activeTab(activeProject(getS()));
-  return !!tab?.cells.some((c) => c.id === cellId) && !getUi().settingsActive && !useSshStore.getState().activeEditorId && !useFileStore.getState().activeFileId;
+  const max = getUi().maximizedCellId;
+  return sshCellVisible({
+    cellId,
+    inActiveTab: !!tab?.cells.some((c) => c.id === cellId),
+    covered: getUi().settingsActive || !!useSshStore.getState().activeEditorId || !!useFileStore.getState().activeFileId,
+    maximizedCellId: max && tab?.cells.some((c) => c.id === max) ? max : null,
+  });
 };
+
+const announcePrompt = (cellId: string): void => toast(tr('SSH: {name} czeka na Twoją decyzję', { name: cellLabel(cellId) }));
 
 function onSession(state: SshSessionState): void {
   const previous = useSshStore.getState().sessions[state.cellId]?.phase;
@@ -44,9 +52,7 @@ function onSession(state: SshSessionState): void {
 function onPrompt(cellId: string, prompt: SshPrompt | null): void {
   const previousId = useSshStore.getState().prompts[cellId]?.id;
   useSshStore.getState().setPrompt(cellId, prompt);
-  if (prompt && promptNeedsToast({ visible: cellVisible(cellId), previousId, nextId: prompt.id })) {
-    toast(tr('SSH: {name} czeka na Twoją decyzję', { name: cellLabel(cellId) }));
-  }
+  if (prompt && promptNeedsToast({ visible: cellVisible(cellId), previousId, nextId: prompt.id })) announcePrompt(cellId);
 }
 
 export async function initSsh(): Promise<void> {
@@ -55,6 +61,8 @@ export async function initSsh(): Promise<void> {
   window.mc.on('ssh:vault:changed', (vault) => useSshStore.getState().setVault(vault));
   const [vault, snapshot] = await Promise.all([window.mc.ssh.vaultInfo(), window.mc.ssh.sessions()]);
   useSshStore.getState().load(vault, snapshot);
+  // A reload keeps the prompts open in main (R7): a hidden cell that waits is announced again (Review Focus 2 and 3).
+  for (const cellId of restoredPromptToasts(useSshStore.getState().prompts, cellVisible)) announcePrompt(cellId);
 }
 
 /** Called by startOnce for SSH cells (D5: never a connect without the user's intent). */
@@ -76,7 +84,8 @@ export async function connectCell(cellId: string): Promise<void> {
   terminals.prepareReconnect(cellId);
   const { cols, rows } = terminals.size(cellId);
   const result = await window.mc.ssh.connect({ cellId, hostId: ref.hostId, cols, rows });
-  if (!result.ok) useSshStore.getState().setSession({ cellId, hostId: ref.hostId, phase: 'error', error: result.error, since: Date.now() });
+  // A refusal before any session event: the same path as an event, so the "[SSH · błąd: ...]" line is written too.
+  if (!result.ok) onSession({ cellId, hostId: ref.hostId, phase: 'error', error: result.error, since: Date.now() });
   else terminals.syncSize(cellId);
 }
 

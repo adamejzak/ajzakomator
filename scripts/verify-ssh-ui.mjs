@@ -3,7 +3,7 @@
 // Only the local test server (scripts/ssh-test-server.mjs on 127.0.0.1) is used; scratch dirs are deleted afterwards.
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { connected, connectWithPassword, launchApp, scratchRoot, sshState, startTestServer, testHost, writeState } from './ssh-ui-lib.mjs';
+import { childPids, connected, connectWithPassword, killTree, launchApp, sleep, scratchRoot, sshState, startTestServer, testHost, writeState } from './ssh-ui-lib.mjs';
 
 if (!existsSync('out/main/index.js')) throw new Error('Build first: npm run build');
 const PARTS = {
@@ -39,6 +39,17 @@ const PARTS = {
         await app.click('.ssh-bar button', 'Połącz ponownie');
         await connected(app, 1);
         await app.screenshot('ssh-cell-reconnected.png');
+        // D5 after a Pty Host crash: the cell ends in the error bar and never connects by itself; "Połącz ponownie" works.
+        const hosts = childPids(app.pid, 'node.mojom.NodeService');
+        if (hosts.length !== 1) throw new Error(`expected one Pty Host process, found ${hosts.length}`);
+        killTree(hosts[0]);
+        await app.until(`document.querySelector('.ssh-bar.error')?.textContent.includes('Proces terminali został uruchomiony ponownie')`, 'crash bar');
+        await sleep(3000);
+        const after = await app.evaluate(`[!!document.querySelector('.ssh-bar.error'), !!document.querySelector('.ssh-card'), document.querySelector('.status-text.ssh')?.textContent ?? '']`);
+        if (!after[0] || after[1] || !after[2].includes('Proces terminali')) throw new Error(`unexpected state after the crash: ${JSON.stringify(after)}`);
+        await app.screenshot('ssh-cell-after-crash.png');
+        await app.click('.ssh-bar button', 'Połącz ponownie');
+        await connected(app, 1);
       } finally { await app.close(); }
       for (const file of ['state.json', 'ssh/vault.json', 'ssh/known_hosts.json']) {
         const path = join(root, 'data', file);

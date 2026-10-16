@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addressProblem, applySshSnapshot, broadcastTargets, isSshCell, promptNeedsToast, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
+  addressProblem, applySshSnapshot, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
   sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -158,5 +158,35 @@ describe('renderer helpers', () => {
   it('keeps a cell SSH whatever its profile says (R5)', () => {
     const cell = { ssh: { hostId: 'h' }, profileId: 'claude' };
     expect(isSshCell(cell)).toBe(true);
+  });
+});
+
+describe('renderer helpers (fix round 1)', () => {
+  const p = (id: string) => ({ id, kind: 'password' as const, user: 'u', endpoint: 'e', canSave: true, retry: false });
+  it('announces prompts restored after a reload for hidden cells only', () => {
+    expect(restoredPromptToasts({ a: p('1'), b: p('2') }, (cellId) => cellId === 'a')).toEqual(['b']);
+    expect(restoredPromptToasts({}, () => false)).toEqual([]);
+  });
+  it('treats a cell as hidden while another cell of its tab is maximized', () => {
+    const base = { inActiveTab: true, covered: false, cellId: 'a' };
+    expect(sshCellVisible({ ...base, maximizedCellId: null })).toBe(true);
+    expect(sshCellVisible({ ...base, maximizedCellId: 'a' })).toBe(true);
+    expect(sshCellVisible({ ...base, maximizedCellId: 'b' })).toBe(false);
+    expect(sshCellVisible({ ...base, covered: true, maximizedCellId: null })).toBe(false);
+    expect(sshCellVisible({ ...base, inActiveTab: false, maximizedCellId: null })).toBe(false);
+  });
+  it('shows a cell name next to the host chip only when the user gave one', () => {
+    expect(sshHeaderName(undefined)).toBeNull();
+    expect(sshHeaderName('  ')).toBeNull();
+    expect(sshHeaderName('db primary')).toBe('db primary');
+  });
+  it('submits a sign-in prompt on Enter only from its text fields', () => {
+    expect(enterSubmitsPrompt({ tagName: 'INPUT', type: 'password' })).toBe(true);
+    expect(enterSubmitsPrompt({ tagName: 'INPUT', type: 'text' })).toBe(true);
+    expect(enterSubmitsPrompt({ tagName: 'INPUT', type: 'checkbox' })).toBe(false);
+    expect(enterSubmitsPrompt({ tagName: 'BUTTON', type: 'button' })).toBe(false);
+  });
+  it('never connects a cell after a Pty Host crash (D5): no alive pty and no connectOnMount mark', () => {
+    expect(sshCellStart({ alive: false, connectOnMount: false })).toBe('idle');
   });
 });

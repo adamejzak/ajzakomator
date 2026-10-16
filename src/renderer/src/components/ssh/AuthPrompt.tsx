@@ -1,6 +1,6 @@
 // Passphrase, password and keyboard-interactive prompts inside an SSH cell (spec 10.3). Fields are cleared on submit and unmount.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { SshPrompt, SshVaultInfo } from '../../../../shared/ssh';
+import { enterSubmitsPrompt, type SshPrompt, type SshVaultInfo } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 
 type AuthKind = Extract<SshPrompt, { kind: 'passphrase' | 'password' | 'keyboard' }>;
@@ -21,7 +21,10 @@ export function AuthPrompt({ cellId, prompt, storage }: { cellId: string; prompt
   const cancel = () => { void window.mc.ssh.answer({ cellId, promptId: prompt.id, cancel: true }); setValues(fields.map(() => '')); };
   const onKey = (e: KeyboardEvent) => {
     e.stopPropagation();
-    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    const target = e.target as HTMLInputElement;
+    if (e.key === 'Enter' && enterSubmitsPrompt(target)) { e.preventDefault(); submit(); }
+    // A checkbox would submit the form implicitly; a button keeps its own Enter (Anuluj cancels, Połącz submits).
+    else if (e.key === 'Enter' && target.tagName === 'INPUT') e.preventDefault();
     if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   };
   const title = prompt.kind === 'passphrase' ? tr('Hasło do klucza {name}', { name: prompt.keyLabel })

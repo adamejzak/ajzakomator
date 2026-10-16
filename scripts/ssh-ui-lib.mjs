@@ -17,6 +17,13 @@ export const killTree = (pid) => {
     else process.kill(pid, 'SIGTERM');
   } catch { /* already gone */ }
 };
+/** Direct children of a process this script started whose command line contains `match` (Windows only). */
+export function childPids(pid, match) {
+  if (process.platform !== 'win32') throw new Error('childPids is Windows only');
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    `Get-CimInstance Win32_Process -Filter "ParentProcessId=${Number(pid)}" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`], { encoding: 'utf8', windowsHide: true });
+  return out.split(/\r?\n/).filter((line) => line.includes(match)).map((line) => Number(line.split(' ')[0])).filter(Boolean);
+}
 const freePort = () => new Promise((resolve) => { const s = createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 
 /** A fresh scratch root with data\, project\ and a scratch home (home\AppData\Roaming, home\AppData\Local: Electron needs both). */
@@ -117,7 +124,7 @@ export async function launchApp(root, extraEnv = {}) {
   await cdp('Runtime.enable');
   await cdp('Page.enable');
   await until(`!!document.querySelector('.app .workspace-tabs')`, 'app ready');
-  return { cdp, evaluate, until, click, setValue, press, insertText, screenshot, close };
+  return { pid: child.pid, cdp, evaluate, until, click, setValue, press, insertText, screenshot, close };
 }
 
 /**

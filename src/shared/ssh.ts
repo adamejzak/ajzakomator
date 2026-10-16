@@ -377,6 +377,24 @@ export function applySshSnapshot(snapshot: SshSessionsSnapshot): { sessions: Rec
 /** A new prompt for a cell the user cannot see right now is announced with a toast (Review Focus 3). */
 export const promptNeedsToast = (input: { visible: boolean; previousId?: string; nextId: string }): boolean => !input.visible && input.previousId !== input.nextId;
 
+/** Prompts found in the snapshot after a renderer reload: the cells whose prompt is announced like a new one. */
+export const restoredPromptToasts = (prompts: Readonly<Record<string, SshPrompt>>, visible: (cellId: string) => boolean): string[] =>
+  Object.entries(prompts).filter(([cellId, prompt]) => promptNeedsToast({ visible: visible(cellId), nextId: prompt.id })).map(([cellId]) => cellId);
+
+/**
+ * The user can see the cell: it is in the active tab, no settings page, editor or file covers the grid, and no other
+ * cell of the tab is maximized (`maximizedCellId` only counts when that cell is in the active tab).
+ */
+export const sshCellVisible = (v: { inActiveTab: boolean; covered: boolean; maximizedCellId: string | null; cellId: string }): boolean =>
+  v.inActiveTab && !v.covered && (!v.maximizedCellId || v.maximizedCellId === v.cellId);
+
+/** The header of an SSH cell: the chip always names the host; a cell name shows next to it only when the user gave one. */
+export const sshHeaderName = (name: string | undefined): string | null => (name?.trim() ? name : null);
+
+/** Enter submits a sign-in prompt only from its text fields; buttons and checkboxes handle Enter themselves. */
+export const enterSubmitsPrompt = (target: { tagName: string; type?: string }): boolean =>
+  target.tagName === 'INPUT' && (target.type === 'text' || target.type === 'password');
+
 /** What a freshly mounted SSH cell does (spec 6.1 step 2). */
 export function sshCellStart(input: { alive: boolean; connectOnMount: boolean }): 'attach' | 'connect' | 'idle' {
   return input.alive ? 'attach' : input.connectOnMount ? 'connect' : 'idle';

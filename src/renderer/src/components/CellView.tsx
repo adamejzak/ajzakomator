@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { errorPhrase, failureLabel } from '../../../shared/alerts';
 import { getProfile, PROJECT_COLORS, updateCell } from '../../../shared/state';
 import { missingCardCli } from '../../../shared/cliStatus';
-import { sshPhaseLabel, userAtEndpoint } from '../../../shared/ssh';
+import { sshHeaderName, sshPhaseLabel, userAtEndpoint } from '../../../shared/ssh';
 import { useSshStore } from '../sshStore';
 import { disconnectCell, reconnectCell, sshContext } from '../ssh';
 import { SshCellCard } from './ssh/SshCellCard';
@@ -79,7 +79,8 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
     setUi({ focusedCellId: cell.id });
   };
 
-  const label = cell.name ?? (ssh ? host?.label ?? tr('Host usunięty') : sessionTitle ?? profile.name);
+  // An SSH cell is named by its host chip; the name shows next to it only when the user gave the cell one.
+  const label = ssh ? sshHeaderName(cell.name) : cell.name ?? sessionTitle ?? profile.name;
 
   const sshItems = (): MenuItem[] => [
     { label: tr('Połącz ponownie'), onClick: () => void reconnectCell(cell.id) },
@@ -233,7 +234,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
               </span>
             )
           )}
-          {!label && !editing && (
+          {!label && !editing && !ssh && (
             <span className="cell-name placeholder" onDoubleClick={() => setEditing(true)} title={tr("Dwuklik: nadaj nazwę")}>{tr("bez nazwy")}</span>
           )}
           {cell.worktree && (

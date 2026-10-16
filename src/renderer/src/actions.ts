@@ -39,6 +39,8 @@ export function resetStarted(): void {
   started.clear();
   skippedInBackground.clear();
   aliveAtStart.clear();
+  // D5: after a Pty Host crash no SSH cell connects by itself, not even one marked but not yet mounted.
+  connectOnMount.clear();
   setUi((ui) => ({ epoch: ui.epoch + 1 }));
 }
 
