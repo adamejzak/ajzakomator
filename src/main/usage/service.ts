@@ -28,6 +28,10 @@ export interface UsageServiceOptions {
   credentialsStamp?(ref: AccountRef): Promise<string | null>;
   /** Poll period of that marker while some account is dormant; defaults to 20 s. */
   watchMs?: number;
+  /** Runs before every poll (reconciles the live Claude login with the saved accounts); a failure never stops the poll. */
+  beforeRun?(): Promise<void>;
+  /** Watch the live Claude login's file also while it is fine: an external switch or `/login` is picked up within watchMs. */
+  watchLive?: boolean;
 }
 
 /** Owns the provider state: polling, minimum gap between reads, backoff after failures, on-disk cache. */
@@ -128,6 +132,7 @@ export class UsageService {
   private async run(manual: boolean): Promise<UsageState> {
     const started = this.now();
     this.lastRun = started;
+    if (this.options.beforeRun) { try { await this.options.beforeRun(); } catch { /* the poll still runs */ } }
     const accounts = this.options.accounts();
     this.prune(accounts);
     await Promise.all(accounts.map((ref) => this.update(ref, started, manual)));
@@ -149,9 +154,9 @@ export class UsageService {
     for (const id of [...this.stamps.keys()]) if (!ids.has(id)) this.stamps.delete(id);
   }
 
-  /** Polls the credentials file of dormant accounts only (cheap stat) and refreshes at once when it changed. */
+  /** Polls the credentials file of dormant accounts and the watched live login only (cheap stat); refreshes at once when it changed. */
   private syncWatch(): void {
-    const dormant = this.options.accounts().filter((ref) => this.providers.get(ref.id)?.status === 'dormant' && this.stamps.has(ref.id));
+    const dormant = this.options.accounts().filter((ref) => (this.providers.get(ref.id)?.status === 'dormant' || this.watchedLive(ref)) && this.stamps.has(ref.id));
     const wanted = this.running && this.active && this.options.enabled() && !!this.options.credentialsStamp && dormant.length > 0;
     if (!wanted) {
       if (this.watcher) clearInterval(this.watcher);
@@ -168,11 +173,16 @@ export class UsageService {
     if (!stampOf || this.pending) return;
     try {
       for (const ref of this.options.accounts()) {
-        if (this.providers.get(ref.id)?.status !== 'dormant' || !this.stamps.has(ref.id)) continue;
+        if (!((this.providers.get(ref.id)?.status === 'dormant' || this.watchedLive(ref)) && this.stamps.has(ref.id))) continue;
         const current = await stampOf(ref);
         if (current !== this.stamps.get(ref.id)) { await this.refresh(true, true); return; }
       }
     } catch { /* the regular poll still runs */ }
+  }
+
+  /** The live Claude login (no profile dir) is watched when `watchLive` is on. */
+  private watchedLive(ref: AccountRef): boolean {
+    return this.options.watchLive === true && ref.provider === 'claude' && !ref.configDir;
   }
 
   private async update(ref: AccountRef, now: number, manual: boolean): Promise<void> {
@@ -200,12 +210,12 @@ export class UsageService {
     if (!failed) this.backoff.delete(id);
     const usage: ProviderUsage = { ...read, attemptAt: now, ...(retryAt !== undefined ? { retryAt } : {}) };
     if (usage.status === 'ok' || usage.status === 'signedOut' || usage.status === 'apiKey') {
-      this.stamps.delete(id);
+      if (this.watchedLive(ref)) this.stamps.set(id, stamp); else this.stamps.delete(id);
       this.providers.set(id, usage);
       return;
     }
     // Expired or failed: keep the last numbers, marked as remembered, so the panel is never blank after a hiccup.
-    if (usage.status === 'dormant') this.stamps.set(id, stamp); else this.stamps.delete(id);
+    if (usage.status === 'dormant' || this.watchedLive(ref)) this.stamps.set(id, stamp); else this.stamps.delete(id);
     const previous = this.providers.get(id);
     const own = usage.windows.length > 0;
     this.providers.set(id, !own && previous?.windows.length ? { ...usage, windows: previous.windows, fetchedAt: previous.fetchedAt, source: 'cache' } : usage);

@@ -73,7 +73,7 @@ export interface SwapDeps {
 }
 
 type Rec = Record<string, unknown>;
-const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
+export const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
 const str = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
 
 const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
@@ -102,8 +102,15 @@ let unresolved = false;
 export function isSwapUnresolved(): boolean { return unresolved; }
 /** True while a swap runs; the login flow must not start meanwhile. */
 export function isSwapRunning(): boolean { return running; }
+/** Takes the one swap slot (swaps, recoveries and reconciliations of the live login share it); false while it is taken. */
+export function claimSwap(): boolean {
+  if (running) return false;
+  running = true;
+  return true;
+}
+export function releaseSwap(): void { running = false; }
 
-interface Snap { text: string; data: Rec; sig: string }
+export interface Snap { text: string; data: Rec; sig: string }
 interface Identity { uuid?: string; email: string; org?: string }
 
 /** Where the main login lives, or null when CLAUDE_CONFIG_DIR is set but not absolute (never resolved against the cwd). */
@@ -114,7 +121,7 @@ export function swapPaths(deps: Pick<SwapDeps, 'home' | 'env'>): { credentials: 
   return { credentials: join(configDir, '.credentials.json'), claudeJson: custom ? join(custom, '.claude.json') : join(deps.home, '.claude.json') };
 }
 
-async function readSnap(fs: SwapFs, path: string): Promise<Snap | null> {
+export async function readSnap(fs: SwapFs, path: string): Promise<Snap | null> {
   const before = await fs.stat(path);
   const text = await fs.readFile(path);
   if (text === null || !before) return null;
@@ -141,7 +148,7 @@ async function retry<T>(deps: Pick<SwapDeps, 'delay'>, fn: () => Promise<T>): Pr
 }
 
 /** Temp file next to the target + rename. `guard` runs before EVERY rename attempt; false means the file changed meanwhile. */
-async function atomicWrite(deps: Pick<SwapDeps, 'delay'>, fs: SwapFs, path: string, data: string, guard?: () => Promise<boolean>): Promise<void> {
+export async function atomicWrite(deps: Pick<SwapDeps, 'delay'>, fs: SwapFs, path: string, data: string, guard?: () => Promise<boolean>): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`;
   try {
     await retry(deps, () => fs.writeFile(temp, data, 0o600));

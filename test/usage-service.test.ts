@@ -447,6 +447,28 @@ describe('UsageService', () => {
       service.stop();
     });
   });
+
+  it('runs beforeRun before every poll and survives it throwing', async () => {
+    const order: string[] = [];
+    const beforeRun = vi.fn(async () => { order.push('before'); if (order.length > 2) throw new Error('x'); });
+    const service = new UsageService({ accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: async () => { order.push('fetch'); return ok('claude', 1); }, cacheFile, enabled: () => true, intervalMs: () => 0, beforeRun });
+    await service.refresh(true, true);
+    await service.refresh(true, true);
+    expect(order).toEqual(['before', 'fetch', 'before', 'fetch']);
+  });
+
+  it('watchLive: a changed live credentials file triggers a poll even when the login is fine', async () => {
+    let stamp = 'a';
+    const claude = vi.fn(async () => ok('claude', 10));
+    const service = new UsageService({ accounts: () => [MAIN_ACCOUNTS[0]], fetchAccount: claude, cacheFile, enabled: () => true, intervalMs: () => 3_600_000, credentialsStamp: async () => stamp, watchMs: 20_000, watchLive: true });
+    service.start();
+    await vi.advanceTimersByTimeAsync(100);
+    const calls = claude.mock.calls.length;
+    stamp = 'b';
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(claude.mock.calls.length).toBe(calls + 1);
+    service.stop();
+  });
 });
 
 describe('a held account across a restart', () => {

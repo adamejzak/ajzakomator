@@ -37,11 +37,13 @@ import { createTokenFetch } from './accounts/tokenTransport';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
 import { gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
-import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapMainAccount, type SwapDeps } from './accounts/swap';
+import { claimSwap, clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, releaseSwap, swapMainAccount, swapPaths, type SwapDeps } from './accounts/swap';
+import { reconcileLive, type ReconcileDeps } from './accounts/reconcile';
+import { resyncActiveBackup } from './accounts/resync';
 import { readManagedIdentity } from './accounts/identity';
 import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
 import { LoginManager } from './auth/login';
-import { custodyOf, isAccountId, type LoginRequest } from '../shared/accounts';
+import { custodyOf, isAccountId, type AccountIdentity, type LoginRequest } from '../shared/accounts';
 import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
@@ -142,6 +144,13 @@ const usage = new UsageService({
   credentialsStamp: (ref) => (ref.provider === 'claude' && !ref.configDir ? claudeCredentialsStamp(usageDeps.credentials) : Promise.resolve(null)),
   enabled: () => state.settings.showAiUsage,
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
+  // Every poll first looks at who is signed in to Claude Code (cswap switch, /login); never while a swap or a login runs.
+  // The swap slot is held meanwhile, so a "Set as main" or a recovery can never interleave with the role changes.
+  beforeRun: async () => {
+    if (isSwapUnresolved() || login.isActive() || !claimSwap()) return;
+    try { await reconcileLive(reconcileDeps()); } finally { releaseSwap(); }
+  },
+  watchLive: true,
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
 const cliDetector = new CliDetector(systemCliDeps({
@@ -223,12 +232,30 @@ const migrationDeps = (): MigrationDeps => ({
   readExpiry: async (dir) => (await readClaudeCredentials(profileSource(usageDeps.credentials, dir)))?.expiresAt,
   now: () => Date.now(),
 });
+const reconcileDeps = (): ReconcileDeps => {
+  const paths = swapPaths({ home: homedir(), env: process.env });
+  return {
+    store: accounts,
+    readLiveIdentity,
+    // macOS keeps the live login in the Keychain: there is no file to back up.
+    ...(paths && process.platform !== 'darwin'
+      ? { resync: (recordId: string, identity: AccountIdentity) => resyncActiveBackup({ paths, store: accounts, delay: (ms) => new Promise((r) => setTimeout(r, ms)) }, recordId, identity) }
+      : {}),
+    now: () => Date.now(),
+  };
+};
 /** Tells the renderer whether an unresolved swap blocks further swaps. */
 async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
 }
 // Background refreshes never write into a managed profile while a swap runs or is unresolved.
-usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, (dir) => renewProfile(dir), { kind: 'transient', detail: { reason: 'blocked' } });
+// The live account's profile copy (resyncActiveBackup) shares its token family with Claude Code's login: never renewed here.
+const holdsLiveCopy = (dir: string) => accounts.list().some((a) => custodyOf(a) === 'live' && accounts.dirOf(a.id) === dir);
+usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(
+  guardDeps,
+  (dir) => (holdsLiveCopy(dir) ? Promise.resolve<RefreshOutcome>({ kind: 'transient', detail: { reason: 'blocked' } }) : renewProfile(dir)),
+  { kind: 'transient', detail: { reason: 'blocked' } },
+);
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();
