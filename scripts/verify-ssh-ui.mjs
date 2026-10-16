@@ -3,6 +3,7 @@
 // SSH_CHECK_LANGUAGE=en runs a part with the English UI (the `cell` part uses the TEXT table; screenshots get an -en suffix).
 // Only the local test server (scripts/ssh-test-server.mjs on 127.0.0.1) is used; scratch dirs are deleted afterwards.
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import ssh2 from 'ssh2';
 import { join } from 'node:path';
 import { childPids, connected, connectWithPassword, killTree, LANGUAGE, launchApp, sleep, scratchRoot, sshState, startTestServer, testHost, writeKnownHost, writeState } from './ssh-ui-lib.mjs';
@@ -317,6 +318,37 @@ const PARTS = {
         const named = await app.evaluate(`(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId); return t.cells.filter((c) => c.ssh).map((c) => c.name ?? null); })()`);
         if (!named.length || named.some((n) => n !== null)) throw new Error(`grid-dialog SSH cells: ${JSON.stringify(named)}`);
         await app.screenshot('ssh-grid-dialog-opened.png');
+      } finally { await app.close(); }
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
+  /** W3: a normal grid adds SSH cells from "Dodaj" and from a cell's menu, like choosing a profile. */
+  async gridAdd() {
+    const server = await startTestServer();
+    const root = scratchRoot('ssh-gridadd');
+    try {
+      const hosts = [testHost(server.port, { label: 'web-1', group: 'lab' }), testHost(server.port, { label: 'pi' })];
+      const state = sshState({ projectPath: join(root, 'project'), hosts });
+      const tab = { id: randomUUID(), name: 'Dev', layout: { cols: 1, rows: 1, areas: [{ col: 0, row: 0, colSpan: 1, rowSpan: 1 }] }, cells: [{ id: randomUUID(), profileId: 'shell' }] };
+      state.projects[0].tabs = [tab];
+      state.projects[0].activeTabId = tab.id;
+      writeState(root, state);
+      const app = await launchApp(root);
+      const menuHas = (text) => `[...document.querySelectorAll('.menu .menu-label, .menu .menu-item')].some((e) => e.textContent.includes(${JSON.stringify(text)}))`;
+      /** Exact label match: the cell menu has many items and "pi" is a substring of some. */
+      const clickExact = (label) => app.evaluate(`(() => { const el = [...document.querySelectorAll('.menu .menu-item')].find((e) => (e.firstChild?.textContent ?? e.textContent) === ${JSON.stringify(label)}); if (!el) throw new Error('menu item not found: ' + ${JSON.stringify(label)}); el.click(); return true; })()`);
+      try {
+        await app.until(`document.querySelectorAll('.cell').length === 1`, 'one shell cell');
+        await app.click('.tb-add');
+        await app.until(menuHas('web-1') + ` && ` + menuHas('Komórka SSH'), 'SSH section with the hosts in the Dodaj menu');
+        await app.screenshot('091-grid-add-menu.png');
+        await clickExact('web-1');
+        await app.until(`document.querySelectorAll('.cell').length === 2 && document.querySelectorAll('.cell .cell-head .ssh-host').length === 1`, 'an SSH cell joined the grid');
+        await app.evaluate(`(() => { const head = document.querySelector('.cell .cell-head'); head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 80, clientY: 60 })); return true; })()`);
+        await app.until(menuHas('Dodaj komórkę SSH'), 'SSH section in the cell menu');
+        await app.screenshot('091-grid-add-cell-menu.png');
+        await clickExact('pi');
+        await app.until(`document.querySelectorAll('.cell').length === 3 && document.querySelectorAll('.cell .cell-head .ssh-host').length === 2`, 'a second SSH cell');
+        await app.screenshot('091-grid-add-cells.png');
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },

@@ -1,5 +1,5 @@
 // The SSH view (W3): one workspace tab with the saved hosts as tiles by group, the keys, the local shells and a details pane
-// on the right (host or key form). Opened by the SSH rail tile, the palette, "Edytuj host" and "Wszystkie hosty…".
+// on the right (host or key form). Opened by the SSH rail tile, the palette, "Edytuj host" and "Wszystkie hosty…" (Add and cell menus).
 // It stays mounted while its tab is open; the pane is "active" only while the view is on screen (D4: typed secrets go).
 import { useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { activeProject, activeTab, duplicateSshHost, updateSshHost } from '../../../../shared/state';

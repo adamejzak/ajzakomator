@@ -7,7 +7,7 @@ import { getProfile, PROJECT_COLORS, updateCell } from '../../../shared/state';
 import { missingCardCli } from '../../../shared/cliStatus';
 import { sshHeaderName, sshPhaseLabel, userAtEndpoint } from '../../../shared/ssh';
 import { useSshStore } from '../sshStore';
-import { disconnectCell, openSshView, reconnectCell, sshContext } from '../ssh';
+import { disconnectCell, openSshView, reconnectCell, sshContext, sshHostMenuItems } from '../ssh';
 import { SshCellCard } from './ssh/SshCellCard';
 import { profileOptionLabel } from '../cliUi';
 import { CliMissingCard } from './CliMissingCard';
@@ -137,6 +137,8 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         { label: tr('Koordynator'), onClick: () => { void changeAgentRole(cell.id, 'coordinator'); } },
         { label: tr('Wykonawca'), onClick: () => { void changeAgentRole(cell.id, 'worker'); } },
       ] : []),
+      { sep: true },
+      ...sshHostMenuItems('Dodaj komórkę SSH'),
       { sep: true },
       { label: tr("Zamknij komórkę"), danger: true, onClick: () => void removeCell(cell.id) },
     ]);

@@ -19,7 +19,7 @@ import { fullProjectPath } from '../../../shared/platform';
 import { tabsToClose } from '../../../shared/fileOps';
 import { revealScroll, scrollEdges, stepScroll, wheelScroll } from '../../../shared/tabStrip';
 import { useSshStore } from '../sshStore';
-import { activateSshView, closeSshView } from '../ssh';
+import { activateSshView, closeSshView, sshHostMenuItems } from '../ssh';
 
 export function TitleBar() {
   const { tr } = useI18n();
@@ -196,6 +196,8 @@ export function WorkspaceTabs() {
       { sep: true as const },
       { header: tr("W osobnym git worktree") },
       ...s.profiles.filter((p) => p.cli !== 'shell').map((p) => ({ label: `${profileOptionLabel(p, cliStatus, tr)} + worktree`, onClick: () => void addAgent(p.id, true) })),
+      { sep: true as const },
+      ...sshHostMenuItems('Komórka SSH'),
     ]);
 
   return <div className="workspace-tabs" aria-label={tr('Gridy i pliki')}>

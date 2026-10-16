@@ -8,4 +8,8 @@ export const sshViewMessages = {
   'połączono': ['connected', 'verbunden', 'conectado', 'connecté', 'ligado'],
   'błąd połączenia': ['connection error', 'Verbindungsfehler', 'error de conexión', 'erreur de connexion', 'erro de ligação'],
   'SSH: hosty i klucze': ['SSH: hosts and keys', 'SSH: Hosts und Schlüssel', 'SSH: hosts y claves', 'SSH : hôtes et clés', 'SSH: hosts e chaves'],
+  'Komórka SSH': ['SSH cell', 'SSH-Zelle', 'Celda SSH', 'Cellule SSH', 'Célula SSH'],
+  'Dodaj komórkę SSH': ['Add an SSH cell', 'SSH-Zelle hinzufügen', 'Añadir una celda SSH', 'Ajouter une cellule SSH', 'Adicionar uma célula SSH'],
+  'Wszystkie hosty…': ['All hosts…', 'Alle Hosts…', 'Todos los hosts…', 'Tous les hôtes…', 'Todos os hosts…'],
+  'Dodaj host SSH…': ['Add an SSH host…', 'SSH-Host hinzufügen…', 'Añadir un host SSH…', 'Ajouter un hôte SSH…', 'Adicionar um host SSH…'],
 } as const;

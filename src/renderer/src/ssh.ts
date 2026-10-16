@@ -4,10 +4,12 @@
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell, removeSshHost } from '../../shared/state';
 import { connectingNotice, hostEndpoint, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshPrompt, type SshSessionState } from '../../shared/ssh';
-import type { SshDetail } from '../../shared/sshView';
+import { menuHosts, type SshDetail } from '../../shared/sshView';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
+import type { MenuItem } from './components/ContextMenu';
 import { tr } from './i18n';
+import type { MessageKey } from '../../shared/i18n';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
 import { createInitGate, useSshStore } from './sshStore';
 import { terminals } from './terminals/TerminalManager';
@@ -126,6 +128,18 @@ export async function openHostInCell(hostId: string, target: 'cell' | 'tab'): Pr
   const cell = activeTab(activeProject(getS()))?.cells.at(-1);
   // The cell view mounts in a later effect, so marking it here is in time.
   if (cell?.ssh) { connectOnMount.add(cell.id); focusCell(cell.id); }
+}
+
+/** Menu rows that add an SSH cell to the active grid, like choosing a profile (R14): at most 12 hosts, then "Wszystkie hosty…". */
+export function sshHostMenuItems(header: MessageKey): MenuItem[] {
+  const { shown, more } = menuHosts(getS().sshHosts);
+  return [
+    { header: tr(header) },
+    ...(shown.length
+      ? shown.map((h) => ({ label: h.label, hint: h.group, onClick: () => void openHostInCell(h.id, 'cell') }))
+      : [{ label: tr('Dodaj host SSH…'), onClick: () => openSshView({ kind: 'host' }) }]),
+    ...(more ? [{ label: tr('Wszystkie hosty…'), onClick: () => openSshView() }] : []),
+  ];
 }
 
 /** A new tab with one SSH cell per host; openTab marks the cells for connectOnMount before they render. */
