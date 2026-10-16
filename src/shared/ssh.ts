@@ -362,6 +362,21 @@ export function sanitizeServerText(text: unknown, max: number = SSH_LIMITS.serve
   return cleaned.length > max ? cleaned.slice(0, max) : cleaned;
 }
 
+// ── renderer helpers ─────────────────────────────────────────────────────────
+
+/** A cell is an SSH session by its ssh ref alone, whatever its profile says (R5). */
+export const isSshCell = (cell: { ssh?: SshCellRef }): boolean => !!cell.ssh;
+
+export function applySshSnapshot(snapshot: SshSessionsSnapshot): { sessions: Record<string, SshSessionState>; prompts: Record<string, SshPrompt> } {
+  return {
+    sessions: Object.fromEntries(snapshot.sessions.map((s) => [s.cellId, s])),
+    prompts: Object.fromEntries(snapshot.prompts.map((p) => [p.cellId, p.prompt])),
+  };
+}
+
+/** A new prompt for a cell the user cannot see right now is announced with a toast (Review Focus 3). */
+export const promptNeedsToast = (input: { visible: boolean; previousId?: string; nextId: string }): boolean => !input.visible && input.previousId !== input.nextId;
+
 /** What a freshly mounted SSH cell does (spec 6.1 step 2). */
 export function sshCellStart(input: { alive: boolean; connectOnMount: boolean }): 'attach' | 'connect' | 'idle' {
   return input.alive ? 'attach' : input.connectOnMount ? 'connect' : 'idle';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addressProblem, broadcastTargets, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
+  addressProblem, applySshSnapshot, broadcastTargets, isSshCell, promptNeedsToast, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
   sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -137,5 +137,26 @@ describe('server text', () => {
   });
   it('normalizes tags', () => {
     expect(normalizeTags(['A', 'a', '', 'b c', 7, ...'cdefghijk'.split('')])).toEqual(['a', 'b-c', 'c', 'd', 'e', 'f', 'g', 'h']);
+  });
+});
+
+describe('renderer helpers', () => {
+  it('turns a sessions snapshot into lookups by cell', () => {
+    const prompt = { id: 'p', kind: 'password' as const, user: 'u', endpoint: 'e', canSave: true, retry: false };
+    expect(applySshSnapshot({ sessions: [session('a', 'connected'), session('b', 'authenticating')], prompts: [{ cellId: 'b', prompt }] }))
+      .toEqual({ sessions: { a: session('a', 'connected'), b: session('b', 'authenticating') }, prompts: { b: prompt } });
+  });
+  it('toasts a new prompt only for a cell that is not visible (Review Focus 3)', () => {
+    expect(promptNeedsToast({ visible: false, nextId: 'p1' })).toBe(true);
+    expect(promptNeedsToast({ visible: false, previousId: 'p1', nextId: 'p1' })).toBe(false);
+    expect(promptNeedsToast({ visible: true, nextId: 'p2' })).toBe(false);
+  });
+  it('recognizes SSH cells', () => {
+    expect(isSshCell({ ssh: { hostId: 'h' } })).toBe(true);
+    expect(isSshCell({})).toBe(false);
+  });
+  it('keeps a cell SSH whatever its profile says (R5)', () => {
+    const cell = { ssh: { hostId: 'h' }, profileId: 'claude' };
+    expect(isSshCell(cell)).toBe(true);
   });
 });

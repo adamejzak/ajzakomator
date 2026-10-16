@@ -5,6 +5,10 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { errorPhrase, failureLabel } from '../../../shared/alerts';
 import { getProfile, PROJECT_COLORS, updateCell } from '../../../shared/state';
 import { missingCardCli } from '../../../shared/cliStatus';
+import { sshPhaseLabel, userAtEndpoint } from '../../../shared/ssh';
+import { useSshStore } from '../sshStore';
+import { disconnectCell, reconnectCell, sshContext } from '../ssh';
+import { SshCellCard } from './ssh/SshCellCard';
 import { profileOptionLabel } from '../cliUi';
 import { CliMissingCard } from './CliMissingCard';
 import type { Cell } from '../../../shared/types';
@@ -44,8 +48,14 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const epoch = useStore((st) => st.ui.epoch);
   const cliStatus = useStore((st) => st.ui.cliStatus);
   const held = useStore((st) => st.ui.heldCells[cell.id] === true);
+  // An SSH cell stays SSH whatever its profile says (R5): no CLI card, no profile, role or path mode choices.
+  const ssh = cell.ssh;
+  const host = useStore((st) => (ssh ? st.s.sshHosts.find((h) => h.id === ssh.hostId) : undefined));
+  const sshSession = useSshStore((st) => st.sessions[cell.id]);
+  const sshPrompt = useSshStore((st) => st.prompts[cell.id]);
+  const phaseLabel = ssh ? sshPhaseLabel(sshSession, sshPrompt, sshContext(ssh.hostId)) : null;
   // The card replaces the terminal only while the cell is held; a running terminal is never hidden by a late "missing".
-  const lackingCli = missingCardCli(profile, cliStatus, held);
+  const lackingCli = ssh ? null : missingCardCli(profile, cliStatus, held);
   const sessionTitle = useStore((st) => (cell.session ? st.ui.sessionTitles[cell.session.id] : undefined));
   const [drop, setDrop] = useState(false);
   /** A file or folder from the Files tree is over the cell (blocked: the cell is not running and would refuse it). */
@@ -69,14 +79,20 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
     setUi({ focusedCellId: cell.id });
   };
 
-  const label = cell.name ?? sessionTitle ?? profile.name;
+  const label = cell.name ?? (ssh ? host?.label ?? tr('Host usunięty') : sessionTitle ?? profile.name);
+
+  const sshItems = (): MenuItem[] => [
+    { label: tr('Połącz ponownie'), onClick: () => void reconnectCell(cell.id) },
+    { label: tr('Rozłącz'), onClick: () => disconnectCell(cell.id) },
+    ...(host ? [{ label: tr('Kopiuj adres'), onClick: () => window.mc.clipboardWrite(userAtEndpoint(host)) }] : []),
+  ];
 
   const profileItems = (): MenuItem[] => [
     { header: tr("Zmień profil (nowa rozmowa)") },
     ...profiles.map((p) => ({ label: profileOptionLabel(p, cliStatus, tr), onClick: () => changeCellProfile(cell.id, p.id) })),
   ];
 
-  const restartItems = (): MenuItem[] => [
+  const restartItems = (): MenuItem[] => ssh ? sshItems() : [
     ...(cell.session ? [{ label: tr("Uruchom ponownie i wznów rozmowę"), onClick: () => restartCell(cell.id, 'resume') }] : []),
     { label: profile.cli === 'shell' ? tr("Uruchom ponownie") : tr("Nowa rozmowa"), onClick: () => restartCell(cell.id, 'new') },
   ];
@@ -106,15 +122,14 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       ...(cell.color ? [{ label: tr("Usuń kolor"), onClick: () => setCellColor(cell.id, undefined) }] : []),
       { sep: true },
       ...restartItems(),
-      ...(profile.cli === 'shell' ? [{ sep: true as const }, ...pathModeItems()] : []),
-      ...(profile.cli !== 'shell' ? [
+      ...(!ssh && profile.cli === 'shell' ? [{ sep: true as const }, ...pathModeItems()] : []),
+      ...(!ssh && profile.cli !== 'shell' ? [
         { label: cell.muted ? tr("Włącz alerty tej komórki") : tr("Wycisz alerty tej komórki"), onClick: () => update((s) => updateCell(s, cell.id, { muted: cell.muted ? undefined : true })) },
       ] : []),
       { label: maximized ? tr("Przywróć siatkę") : tr("Maksymalizuj"), onClick: () => toggleMaximize(cell.id), hint: shortcutText('cell.maximize') || undefined },
       { label: tr("Zresetuj terminal"), onClick: () => { terminals.resetInput(cell.id); setFloodHint(false); toast(tr("Terminal zresetowany - historia została zachowana.")); } },
-      { sep: true },
-      ...profileItems(),
-      ...(profile.cli !== 'shell' ? [
+      ...(!ssh ? [{ sep: true as const }, ...profileItems()] : []),
+      ...(!ssh && profile.cli !== 'shell' ? [
         { sep: true as const },
         { label: tr('Bez MCP'), onClick: () => { void changeAgentRole(cell.id, null); } },
         { label: tr('Koordynator'), onClick: () => { void changeAgentRole(cell.id, 'coordinator'); } },
@@ -183,10 +198,17 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
         <div className="cell-heading">
           <span className="idx">{index + 1}</span>
           <span className={`dot ${status}${status === 'waiting' && failure !== undefined ? ' error' : ''}`} />
-          <button type="button" className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title={tr("Zmień profil")} aria-label={`${tr("Zmień profil")}: ${profile.name}`}>
-            <span className="pchip" style={{ background: profile.color }} />
-            <span className="profile-name">{profile.name}</span>
-          </button>
+          {ssh ? (
+            <button type="button" className="profile ssh-host" onClick={(e) => openMenuAt(e.currentTarget, sshItems())} title={host ? userAtEndpoint(host) : tr('Host usunięty')}>
+              <span className="ssh-dot" style={{ background: host?.color ?? 'var(--muted)' }} />
+              <span className="profile-name">{host?.label ?? tr('Host usunięty')}</span>
+            </button>
+          ) : (
+            <button type="button" className="profile" onClick={(e) => openMenuAt(e.currentTarget, profileItems())} title={tr("Zmień profil")} aria-label={`${tr("Zmień profil")}: ${profile.name}`}>
+              <span className="pchip" style={{ background: profile.color }} />
+              <span className="profile-name">{profile.name}</span>
+            </button>
+          )}
           {editing ? (
             <input
               className="cell-name-input"
@@ -217,7 +239,9 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
           {cell.worktree && (
             <span className="branch" title={cell.worktree.path}><IBranch /><span>{cell.worktree.branch}</span></span>
           )}
-          {status === 'waiting' && failure !== undefined
+          {phaseLabel
+            ? <span className="status-text ssh">{tr(phaseLabel.key, phaseLabel.params)}</span>
+            : status === 'waiting' && failure !== undefined
             ? <span className="status-text error" title={tr(errorPhrase(failure))}>{tr(failureLabel(failure))}</span>
             : status !== 'idle' && <span className={`status-text ${status}`}>{status === 'working' ? tr('pracuje') : status === 'waiting' ? tr('czeka na Ciebie') : tr('zakończony')}{status === 'working' ? '…' : ''}</span>}
           {cell.muted && <span className="muted-mark" title={tr("Alerty tej komórki są wyciszone")} aria-label={tr("Alerty tej komórki są wyciszone")}>
@@ -225,7 +249,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
           </span>}
         </div>
         <span className="actions">
-          {profile.cli !== 'shell' && <button className={`mcp-control ${cell.role ?? 'disabled'} ${mcpInfo.connectedCellIds?.includes(cell.id) ? 'connected' : ''}`}
+          {profile.cli !== 'shell' && !ssh && <button className={`mcp-control ${cell.role ?? 'disabled'} ${mcpInfo.connectedCellIds?.includes(cell.id) ? 'connected' : ''}`}
             aria-label={`${tr('Rola / MCP')}: ${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')}`}
             title={`${tr(cell.role === 'coordinator' ? 'Koordynator' : cell.role === 'worker' ? 'Wykonawca' : 'Bez MCP')} · ${tr(cell.role ? mcpInfo.connectedCellIds?.includes(cell.id) ? 'MCP działa' : mcpInfo.configuredCellIds?.includes(cell.id) ? 'MCP skonfigurowane · oczekiwanie na agenta' : 'Wymaga restartu' : 'Rola / MCP')}`}
             onClick={(e) => openMenuAt(e.currentTarget, [
@@ -247,8 +271,9 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       </div>
       <div className="cell-body" ref={bodyRef} style={lackingCli ? { visibility: 'hidden' } : undefined} />
       <span className="cell-frame" aria-hidden="true" />
-      {pathDrop && <div className={`cell-path-drop ${pathDrop.blocked ? 'blocked' : ''}`} role="status">{pathDrop.blocked ? tr('Komórka nie jest uruchomiona') : dropLabel(pathDrop.target)}</div>}
+      {pathDrop && <div className={`cell-path-drop ${pathDrop.blocked ? 'blocked' : ''}`} role="status">{pathDrop.blocked ? tr(ssh ? 'Ścieżki lokalne nie działają w sesji SSH' : 'Komórka nie jest uruchomiona') : dropLabel(pathDrop.target)}</div>}
       {lackingCli && <CliMissingCard cli={lackingCli} cellId={cell.id} onChangeProfile={(anchor) => openMenuAt(anchor, profileItems())} />}
+      {ssh && <SshCellCard cellId={cell.id} host={host} session={sshSession} prompt={sshPrompt} />}
       {floodHint && !error && (
         <div className="cell-hint" role="status">
           <span className="grow">{tr("Terminal wysyłał zdarzenia myszy do powłoki - zresetowano tryb")}</span>

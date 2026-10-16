@@ -7,8 +7,12 @@ import { tr } from './i18n';
 import { getS, getUi, toast } from './store';
 import { terminals } from './terminals/TerminalManager';
 
+/** Local paths mean nothing on a remote host: SSH cells refuse every path drop (snippets still work). */
+const isSsh = (cellId: string): boolean => !!findCell(getS(), cellId)?.cell.ssh;
+
 /** True while the cell would refuse the paths (shown on the drop hint). */
 export function cellRefusesPaths(cellId: string): boolean {
+  if (isSsh(cellId)) return true;
   const ui = getUi();
   return dropBlock({ held: ui.heldCells[cellId] === true, error: !!ui.cellErrors[cellId], started: isStarted(cellId), status: ui.statuses[cellId] ?? 'idle' }) !== null;
 }
@@ -33,6 +37,7 @@ export const readDroppedPaths = (raw: string) => parsePathPayload(raw, window.mc
  * whatever absolute path the drag carried is ignored.
  */
 export async function addPathsToCell(cellId: string, items: PathItem[], rejected = 0, cut = false): Promise<void> {
+  if (isSsh(cellId)) return void toast(tr('Ścieżki lokalne nie działają w sesji SSH'), 'error');
   if (cut) toast(tr('Dodano pierwsze {count} ścieżek', { count: MAX_DROP_ITEMS }));
   const state = getS();
   const found = findCell(state, cellId);
@@ -68,6 +73,7 @@ export async function addPathsToCell(cellId: string, items: PathItem[], rejected
 
 /** Files and folders dragged in from the system file manager: their own absolute paths go into the input, like a tree drop. */
 export async function addDroppedFilesToCell(cellId: string, files: File[]): Promise<void> {
+  if (isSsh(cellId)) return void toast(tr('Ścieżki lokalne nie działają w sesji SSH'), 'error');
   const all = files.map((file) => window.mc.pathForFile(file)).filter(Boolean);
   if (!all.length) return void toast(tr('Nie udało się dodać ścieżki.'), 'error');
   const capped = capItems(all);

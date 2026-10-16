@@ -24,6 +24,8 @@ const loadAutomationPanel = () => import('./components/AutomationPanel').then((m
 const loadFileEditor = () => import('./components/FileEditor').then((m) => ({ default: m.FileEditor }));
 const loadSettingsPage = () => import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage }));
 import { useFileStore } from './files';
+import { initSsh } from './ssh';
+import { useSshStore } from './sshStore';
 
 let booted = false;
 
@@ -36,7 +38,7 @@ async function boot(): Promise<void> {
   useStore.subscribe((st, prev) => {
     if (st.s.projects === prev.s.projects) return;
     const alive = new Set(st.s.projects.flatMap((p) => p.tabs.flatMap((t) => t.cells.map((c) => c.id))));
-    for (const p of prev.s.projects) for (const t of p.tabs) for (const c of t.cells) if (!alive.has(c.id)) releaseCellTerminal(c.id);
+    for (const p of prev.s.projects) for (const t of p.tabs) for (const c of t.cells) if (!alive.has(c.id)) { releaseCellTerminal(c.id); useSshStore.getState().forgetCell(c.id); }
   });
   // Debounced edits (the font size of a wheel gesture) are sent before the window goes away or is reloaded.
   window.mc.on('app:before-quit', flushPendingSaves);
@@ -51,6 +53,8 @@ async function boot(): Promise<void> {
   setAliveAtStart(alive);
   setUi({ cliStatus });
   useStore.getState().init(snapshot);
+  // Session states and open prompts of SSH cells (a reload finds them in main, R7).
+  await initSsh().catch(() => undefined);
   setUi({ mcpInfo });
   const state = getS();
 

@@ -16,6 +16,7 @@ import { sessionSearchPaths } from '../../shared/sessionTrack';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
 import { showTerminalTabs } from './files';
+import { connectOnMount, reconnectCell, startSshCell } from './ssh';
 import { terminals } from './terminals/TerminalManager';
 
 /** Cells whose pty was started (or found alive) during this renderer session. */
@@ -68,10 +69,13 @@ export function ensureTerminal(cellId: string): void {
   const found = findCell(getS(), cellId);
   if (!found) return;
   const profile = getProfile(getS(), found.cell.profileId);
+  // An SSH cell stays SSH whatever its profile says (R5).
+  const ssh = !!found.cell.ssh;
   terminals.ensure(cellId, {
     fontSize: found.cell.fontSize ?? getS().settings.fontSize,
-    agent: profile.cli !== 'shell',
-    codex: profile.cli === 'codex',
+    agent: !ssh && profile.cli !== 'shell',
+    codex: !ssh && profile.cli === 'codex',
+    remote: ssh,
     onFontSize: (size) => saveFontSize(cellId, size),
   });
 }
@@ -89,6 +93,10 @@ function startOnce(cellId: string, beforeSpawn?: (cellId: string) => void): Prom
   started.add(cellId);
   startListeners.forEach((l) => l());
   ensureTerminal(cellId);
+  if (findCell(getS(), cellId)?.cell.ssh) {
+    startSshCell(cellId, aliveAtStart.delete(cellId));
+    return Promise.resolve();
+  }
   // pty survived a renderer reload; its output is replayed
   if (aliveAtStart.delete(cellId)) {
     terminals.beginCodex(cellId, findCell(getS(), cellId)?.cell.session);
@@ -104,6 +112,7 @@ const skippedInBackground = new Set<string>();
 export const needsBackgroundStart = (cellId: string): boolean => {
   if (started.has(cellId) || skippedInBackground.has(cellId)) return false;
   const found = findCell(getS(), cellId);
+  if (found?.cell.ssh) return false; // SSH cells never connect in the background (D5)
   return !!found && !getUi().missingPaths[found.project.id];
 };
 
@@ -150,6 +159,8 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
   const { project, cell } = found;
   const profile = getProfile(getS(), cell.profileId);
   started.add(cellId);
+  // "Uruchom ponownie" of an SSH cell is "Połącz ponownie": kill and wait, then connect; the terminal is not reset (R13).
+  if (cell.ssh) { void reconnectCell(cellId); return; }
   ensureTerminal(cellId);
   // A CLI known to be missing never gets a shell that only prints "command not found": the cell shows an install card.
   if (!forcedCells.has(cellId) && !profileAvailable(profile, getUi().cliStatus)) return holdForCli(cellId);
@@ -444,12 +455,16 @@ export interface TabSpecCell {
   name?: string;
   prompt?: string;
   session?: CellSession;
+  /** A saved SSH host: the cell becomes an SSH session (a deleted host gives a local shell). */
+  sshHostId?: string;
 }
 
-export async function openTab(projectId: string, layout: GridLayout, cells: TabSpecCell[], name?: string): Promise<void> {
+/** Opens a new tab and resolves to the ids of its cells (none when it could not be created). */
+export async function openTab(projectId: string, layout: GridLayout, cells: TabSpecCell[], name?: string): Promise<string[]> {
   const project = getS().projects.find((p) => p.id === projectId);
-  if (!project) return;
-  if (!cells.some((cell) => cell.session)) {
+  if (!project) return [];
+  // SSH cells and resumed sessions take the direct path; MCP's create_grid never sees hosts (R2).
+  if (!cells.some((cell) => cell.session || cell.sshHostId)) {
     const used = new Set([...project.tabs, ...project.archive].map((tab) => tab.name));
     let number = 1;
     while (used.has(`Grid ${number}`)) number++;
@@ -465,11 +480,12 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
       update((s) => setActiveTab(setActiveProject(s, projectId), projectId, created.gridId));
       if (created.cellIds[0]) focusCell(created.cellIds[0]);
       update((s) => updateSettings(s, { lastProfileId: cells[0]?.profileId ?? s.settings.lastProfileId }));
+      return created.cellIds;
     } catch (error) { toast(tr('Nie udało się utworzyć gridu: {error}', { error: String(error) }), 'error'); }
-    return;
+    return [];
   }
   const tabName = name ?? undefined;
-  const specs: Array<{ model?: string; color?: string; profileId: string; role?: import('../../shared/automation').AgentRole; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession }> = [];
+  const specs: Array<{ model?: string; color?: string; profileId: string; role?: import('../../shared/automation').AgentRole; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession; ssh?: { hostId: string } }> = [];
   for (let i = 0; i < layout.areas.length; i++) {
     const spec = cells[i] ?? cells[cells.length - 1] ?? { profileId: getS().settings.lastProfileId, worktree: false };
     let worktree: Worktree | undefined;
@@ -480,12 +496,17 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
         toast(tr('Worktree nie powstał (komórka {number}): {error}', { number: i + 1, error: (e as Error).message }), 'error');
       }
     }
-    specs.push({ profileId: spec.profileId, model: spec.model, color: spec.color, role: spec.role, name: spec.name, startupPrompt: spec.prompt, worktree, session: spec.session });
+    const host = spec.sshHostId ? getS().sshHosts.find((h) => h.id === spec.sshHostId) : undefined;
+    specs.push({ profileId: spec.profileId, model: spec.model, color: spec.color, role: host ? undefined : spec.role, name: spec.name, startupPrompt: host ? undefined : spec.prompt, worktree, session: spec.session, ...(host ? { ssh: { hostId: host.id } } : {}) });
   }
   update((s) => setActiveProject(addTab(s, projectId, { name: tabName, layout, cells: specs }), projectId));
   const tab = activeTab(getS().projects.find((p) => p.id === projectId) ?? null);
+  // Marked before React renders the new cells (their views start them on mount): a grid of hosts connects on open (R19).
+  for (const c of tab?.cells ?? []) if (c.ssh) connectOnMount.add(c.id);
   if (tab?.cells[0]) focusCell(tab.cells[0].id);
-  update((s) => updateSettings(s, { lastProfileId: specs[0]?.profileId ?? s.settings.lastProfileId }));
+  // An SSH grid does not change the profile new agents get (L9).
+  if (!specs.every((spec) => spec.ssh)) update((s) => updateSettings(s, { lastProfileId: specs[0]?.profileId ?? s.settings.lastProfileId }));
+  return tab?.cells.map((c) => c.id) ?? [];
 }
 
 export function quickTab(profileId?: string): void {
@@ -498,7 +519,7 @@ export async function addAgent(profileId: string, worktree = false): Promise<voi
   const p = activeProject(getS());
   if (!p) return void createProject();
   const tab = activeTab(p);
-  if (!tab) return openTab(p.id, layoutForCount(1), [{ profileId, worktree }]);
+  if (!tab) { await openTab(p.id, layoutForCount(1), [{ profileId, worktree }]); return; }
   if (tab.cells.length >= 20) return toast(tr("Siatka ma już maksymalnie 20 komórek"), 'error');
   let wt: Worktree | undefined;
   if (worktree) {

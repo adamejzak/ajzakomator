@@ -56,6 +56,8 @@ interface Entry {
   /** Selection redraw that arrived while the terminal was parked (see `deferParkedSelection`). */
   parkedSelection: unknown[] | null;
   applySelection: ((args: unknown[]) => void) | null;
+  /** An SSH session: no ConPTY hints, no win32-input-mode, no local exit line (spec 6.2). */
+  remote: boolean;
 }
 
 /** `reason` is why the cell last became waiting (done / attention / error); `hooked` = precise hooks drive this cell; `info.turn` keys the alert of a turn. */
@@ -69,6 +71,8 @@ export interface EnsureOptions {
   agent: boolean;
   /** The profile runs Codex. */
   codex?: boolean;
+  /** The cell is an SSH session (src/renderer/src/ssh.ts). */
+  remote?: boolean;
   onFontSize?: (size: number) => void;
 }
 
@@ -111,6 +115,11 @@ class TerminalManager {
     window.addEventListener('blur', environment);
   }
 
+  /** ConPTY (and its win32-input-mode) applies only to local terminals on Windows. */
+  private conpty(e: Entry): boolean {
+    return window.mc.platform === 'win32' && !e.remote;
+  }
+
   setWindowsBuild(n: number): void {
     this.buildNumber = n;
   }
@@ -138,7 +147,8 @@ class TerminalManager {
       const e = this.entries.get(m.id);
       if (e) {
         e.infer.exited();
-        e.term.write(`${inputModesOff(window.mc.platform === 'win32')}\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
+        e.term.write(inputModesOff(this.conpty(e)));
+        if (!e.remote) e.term.write(`\r\n\x1b[90m[${tr('Terminal')} · ${tr('zakończony')}]\x1b[0m\r\n`);
         this.setStatus(e, () => e.tracker.exited(), 'exit');
       }
       this.exitListeners.forEach((l) => l(m.id));
@@ -205,6 +215,11 @@ class TerminalManager {
       existing.agent = opts.agent;
       existing.codex = opts.codex === true;
       existing.tracker.setCodex(existing.codex);
+      const remote = opts.remote === true;
+      if (existing.remote !== remote) {
+        existing.remote = remote;
+        existing.term.options.windowsPty = remote || window.mc.platform !== 'win32' ? {} : { backend: 'conpty', buildNumber: this.buildNumber || 26100 };
+      }
       return existing;
     }
     this.disposed.delete(cellId);
@@ -221,7 +236,7 @@ class TerminalManager {
       cursorBlink: true,
       scrollback: SCROLLBACK_LINES,
       allowProposedApi: true,
-      ...(window.mc.platform === 'win32' ? { windowsPty: { backend: 'conpty' as const, buildNumber: this.buildNumber || 26100 } } : {}),
+      ...(window.mc.platform === 'win32' && opts.remote !== true ? { windowsPty: { backend: 'conpty' as const, buildNumber: this.buildNumber || 26100 } } : {}),
       rightClickSelectsWord: false,
       drawBoldTextInBrightColors: false,
       minimumContrastRatio: 1,
@@ -236,8 +251,8 @@ class TerminalManager {
 
     const entry: Entry = {
       id: cellId, term, fit, webgl: null, shownAt: 0, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
-      codex: opts.codex === true, scanner: new FailureScanner(), guard: new MouseFloodGuard(), infer: new AgentInference(window.mc.platform === 'win32'), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
-      parkedSelection: null, applySelection: null,
+      codex: opts.codex === true, scanner: new FailureScanner(), guard: new MouseFloodGuard(), infer: new AgentInference(window.mc.platform === 'win32' && opts.remote !== true), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
+      parkedSelection: null, applySelection: null, remote: opts.remote === true,
     };
     entry.tracker.setCodex(entry.codex);
     entry.tracker.onBind = (thread) => this.bindListeners.forEach((l) => l(cellId, thread));
@@ -246,7 +261,7 @@ class TerminalManager {
 
     // ConPTY asks its host terminal for win32-input-mode with CSI ? 9001 h.
     const setW32 = (on: boolean) => (params: (number | number[])[]) => {
-      if (window.mc.platform === 'win32' && params.includes(9001)) entry.win32 = on;
+      if (this.conpty(entry) && params.includes(9001)) entry.win32 = on;
       return false; // let xterm process the remaining modes
     };
     term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, setW32(true));
@@ -386,7 +401,7 @@ class TerminalManager {
   }
 
   /** Pastes text as one bracketed-paste block; `submit` presses Enter afterwards. */
-  paste(cellId: string, text: string, submit: boolean): void {
+  paste(cellId: string, text: string, submit: boolean, opts: { focus?: boolean } = {}): void {
     const e = this.entries.get(cellId);
     if (!e) return;
     e.term.paste(text);
@@ -398,7 +413,7 @@ class TerminalManager {
         this.post({ t: 'write', id: cellId, data: e.win32 ? '\x1b[13;28;13;1;0;1_\x1b[13;28;13;0;0;1_' : '\r' });
       }, 60);
     }
-    e.term.focus();
+    if (opts.focus !== false) e.term.focus();
   }
 
   attach(cellId: string, el: HTMLElement): void {
@@ -529,7 +544,7 @@ class TerminalManager {
     const e = this.entries.get(cellId);
     if (!e) return;
     e.guard.reset();
-    e.term.write(terminalModeReset(this.inAlternate(e), window.mc.platform === 'win32'));
+    e.term.write(terminalModeReset(this.inAlternate(e), this.conpty(e)));
   }
 
   /** A full-screen program (a TUI) owns the terminal: it is not a shell prompt echoing mouse reports. */
@@ -538,7 +553,7 @@ class TerminalManager {
   }
 
   private mouseFlood(e: Entry): void {
-    e.term.write(inputModesOff(window.mc.platform === 'win32'));
+    e.term.write(inputModesOff(this.conpty(e)));
     this.floodListeners.forEach((l) => l(e.id));
   }
 
@@ -546,6 +561,23 @@ class TerminalManager {
   onMouseFlood(l: (cellId: string) => void): () => void {
     this.floodListeners.add(l);
     return () => this.floodListeners.delete(l);
+  }
+
+  /** A dim line written by the app (not part of the session output, not replayed). */
+  writeNotice(cellId: string, text: string): void {
+    this.entries.get(cellId)?.term.write(`\r\n\x1b[90m${text}\x1b[0m\r\n`);
+  }
+
+  /** Before an SSH reconnect: like prepareSpawn, but the screen and scrollback stay (spec 6.1 step 9). */
+  prepareReconnect(cellId: string): void {
+    const e = this.entries.get(cellId);
+    this.exited.delete(cellId);
+    if (!e) return;
+    e.win32 = false;
+    e.guard.reset();
+    e.scanner.reset();
+    e.infer.exited();
+    this.setStatus(e, () => e.tracker.reset(), 'restore');
   }
 
   /** Called right before (re)spawning the pty for a cell. */
