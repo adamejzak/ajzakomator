@@ -5,7 +5,7 @@ import { isAbsolute } from 'path';
 import { readFile, stat } from 'fs/promises';
 import { z } from 'zod';
 import { clearSshKeyRefs, findCell } from '../../shared/state';
-import { SSH_LIMITS, type DraftResult, type KeyResult, type KnownHostInfo, type SshErrorCode, type SshSessionsSnapshot, type SshVaultInfo } from '../../shared/ssh';
+import { SSH_LIMITS, type DraftResult, type KeyResult, type KnownHostInfo, type SshErrorCode, type SshSessionsSnapshot, type SshStorageStatus, type SshVaultInfo } from '../../shared/ssh';
 import type { AppState } from '../../shared/types';
 import type { SshCoordinator } from './coordinator';
 import { certificateCheck, checkPassphrase, generateKey, keyMetaFromPublic, type KeyDrafts } from './keys';
@@ -172,6 +172,9 @@ export function createSshHandlers(deps: SshIpcDeps) {
       return changed({ ok: true });
     },
     async forgetPassphrases(): Promise<{ ok: boolean }> { deps.vault.forgetRemembered(); return { ok: true }; },
+    async storageStatus(): Promise<SshStorageStatus> {
+      return { vaultFile: deps.vault.filePath(), vaultReadOnly: deps.vault.readOnly(), knownHostsFile: deps.knownHosts.filePath(), knownHostsReadOnly: deps.knownHosts.readOnly() };
+    },
     async knownHosts(): Promise<KnownHostInfo[]> { return deps.knownHosts.info(); },
     async removeKnownHost(raw: unknown): Promise<{ ok: boolean }> {
       const p = S.byId.safeParse(raw);
@@ -199,7 +202,7 @@ export const SSH_CHANNELS = {
   'ssh:vault:info': 'vaultInfo', 'ssh:key:generate': 'generateKey', 'ssh:key:pickFile': 'pickKeyFile', 'ssh:key:draftFromFile': 'draftFromFile',
   'ssh:key:draftFromText': 'draftFromText', 'ssh:key:unlockDraft': 'unlockDraft', 'ssh:key:commitDraft': 'commitDraft', 'ssh:key:update': 'updateKey',
   'ssh:key:remove': 'removeKey', 'ssh:key:exportPrivate': 'exportPrivateKey', 'ssh:password:set': 'setPassword', 'ssh:password:clear': 'clearPassword',
-  'ssh:passphrases:forget': 'forgetPassphrases', 'ssh:knownHosts:list': 'knownHosts', 'ssh:knownHosts:remove': 'removeKnownHost',
+  'ssh:passphrases:forget': 'forgetPassphrases', 'ssh:storage:status': 'storageStatus', 'ssh:knownHosts:list': 'knownHosts', 'ssh:knownHosts:remove': 'removeKnownHost',
   'ssh:connect': 'connect', 'ssh:sessions': 'sessions', 'ssh:prompt:answer': 'answer',
 } as const satisfies Record<string, Exclude<keyof SshHandlers, 'discardDraft'>>;
 

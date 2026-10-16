@@ -321,6 +321,57 @@ const PARTS = {
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },
+  /** Task 13: Settings > SSH shows the storage and the known host, and removes it. */
+  async settings() {
+    const server = await startTestServer(['--no-auth']);
+    const root = scratchRoot('ssh-settings');
+    try {
+      writeState(root, sshState({ projectPath: join(root, 'project') }));
+      writeKnownHost(root, server);
+      const app = await launchApp(root);
+      try {
+        await app.click('button[aria-label="Ustawienia"]');
+        await app.until(`!!document.querySelector('.settings-nav [role=tab]')`, 'settings page');
+        await app.click('.settings-nav [role=tab]', 'SSH');
+        await app.until(`!!document.querySelector('.ssh-known')`, 'known hosts table');
+        const storage = await app.evaluate(`document.querySelector('.settings-content').textContent`);
+        if (!/Szyfrowanie: (Windows \(DPAPI\)|pęk kluczy macOS)/.test(storage)) throw new Error('storage line missing');
+        if (storage.includes('tylko do odczytu:')) throw new Error('a healthy store is shown as read-only');
+        if (!storage.includes(join(root, 'data', 'ssh', 'known_hosts.json'))) throw new Error('known hosts file path missing');
+        await app.screenshot('ssh-settings.png');
+        await app.click('.ssh-known button', 'Usuń');
+        await app.until(`document.querySelector('.settings-content').textContent.includes('Brak znanych hostów')`, 'known host removed');
+      } finally { await app.close(); }
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
+  /** Task 13 (a)-(c): a vault and a known hosts file of a newer format open read-only; Settings says so, shows both paths, and neither file is touched. */
+  async settingsReadOnly() {
+    const server = await startTestServer(['--no-auth']);
+    const root = scratchRoot('ssh-settings-ro');
+    try {
+      writeState(root, sshState({ projectPath: join(root, 'project') }));
+      writeKnownHost(root, server);
+      const vaultFile = join(root, 'data', 'ssh', 'vault.json'), hostsFile = join(root, 'data', 'ssh', 'known_hosts.json');
+      writeFileSync(vaultFile, '{"version":99,"keys":[],"passwords":[]}');
+      const damaged = readFileSync(hostsFile, 'utf8').replace('"version":1', '"version":99'); // newer format: the entry is listed, nothing can change
+      writeFileSync(hostsFile, damaged);
+      const app = await launchApp(root);
+      try {
+        await app.click('button[aria-label="Ustawienia"]');
+        await app.until(`!!document.querySelector('.settings-nav [role=tab]')`, 'settings page');
+        await app.click('.settings-nav [role=tab]', 'SSH');
+        await app.until(`document.querySelectorAll('.settings-content .ssh-banner-warn').length === 2`, 'two read-only notes');
+        const text = await app.evaluate(`document.querySelector('.settings-content').textContent`);
+        for (const needle of ['Sejf SSH jest tylko do odczytu', vaultFile, 'Lista znanych hostów jest tylko do odczytu', hostsFile, 'Zaufaj i zapisz']) {
+          if (!text.includes(needle)) throw new Error(`Settings text misses: ${needle}`);
+        }
+        if (!(await app.evaluate(`[...document.querySelectorAll('.ssh-known button')].every((b) => b.disabled)`))) throw new Error('remove buttons are enabled on a read-only store');
+        await app.screenshot('ssh-settings-readonly.png');
+      } finally { await app.close(); }
+      if (readFileSync(vaultFile, 'utf8') !== '{"version":99,"keys":[],"passwords":[]}') throw new Error('the vault file was modified');
+      if (readFileSync(hostsFile, 'utf8') !== damaged) throw new Error('the known hosts file was modified');
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
 };
 
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(PARTS);

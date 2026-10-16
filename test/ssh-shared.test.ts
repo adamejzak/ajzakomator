@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
+  storageLabel, readOnlyStoreNote, addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
   broadcastProblem, broadcastRowState, broadcastSend, pushHistory, sshCellsOfTab, cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -300,5 +300,28 @@ describe('broadcast fix round', () => {
     expect(broadcastRowState({ enabled: false, reason: 'rozłączono' }, 'sent')).toBe('rozłączono');
     expect(broadcastRowState({ enabled: false, reason: 'rozłączono' }, 'skipped')).toBe('pominięto: rozłączono');
     expect(broadcastRowState({ enabled: true }, undefined)).toBeNull();
+  });
+});
+
+describe('settings helpers', () => {
+  it('names the secret storage', () => {
+    expect(storageLabel('dpapi')).toBe('Szyfrowanie: Windows (DPAPI)');
+    expect(storageLabel('keychain')).toBe('Szyfrowanie: pęk kluczy macOS');
+    expect(storageLabel('unavailable')).toBe('Szyfrowanie: niedostępne');
+  });
+
+  it('explains a read-only store only when it is one, and names what the user can do', () => {
+    expect(readOnlyStoreNote('vault', false)).toBeNull();
+    expect(readOnlyStoreNote('knownHosts', false)).toBeNull();
+    const vault = readOnlyStoreNote('vault', true) ?? '';
+    expect(vault).toContain('{file}');
+    expect(vault).toMatch(/nieczytelny.*nieprawidłowy format.*uszkodzony wpis.*nowszej wersji/);
+    expect(vault).toMatch(/Nie można dodawać ani zmieniać kluczy i haseł/);
+    expect(vault).toMatch(/nietknięty/);
+    expect(vault).toMatch(/uruchom aplikację ponownie/);
+    const hosts = readOnlyStoreNote('knownHosts', true) ?? '';
+    expect(hosts).toContain('{file}');
+    expect(hosts).toMatch(/Zaufaj i zapisz.*tylko dla tego jednego połączenia/);
+    expect(hosts).toMatch(/uruchom aplikację ponownie/);
   });
 });

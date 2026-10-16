@@ -184,6 +184,18 @@ describe('ssh IPC handlers', () => {
     expect(deps.vaultChanged).not.toHaveBeenCalled();
   });
 
+  it('reports the file paths and which store opened read-only (task 13)', async () => {
+    const vaultFile = join(dir, 'ssh', 'vault.json'), hostsFile = join(dir, 'ssh', 'known_hosts.json');
+    expect(await createSshHandlers(deps).storageStatus()).toEqual({ vaultFile, vaultReadOnly: false, knownHostsFile: hostsFile, knownHostsReadOnly: false });
+    // Files that exist but have the wrong shape are kept untouched and the stores open read-only.
+    mkdirSync(join(dir, 'ssh'), { recursive: true });
+    writeFileSync(vaultFile, '[]');
+    writeFileSync(hostsFile, '{"version":1,"entries":"nope"}');
+    const readOnly = createSshHandlers({ ...deps, vault: new SshVault(vaultFile, fakeCipher()), knownHosts: new KnownHostsStore(hostsFile) });
+    expect(await readOnly.storageStatus()).toEqual({ vaultFile, vaultReadOnly: true, knownHostsFile: hostsFile, knownHostsReadOnly: true });
+    expect(await readOnly.removeKnownHost({ id: '00000000-0000-4000-8000-000000000042' })).toEqual({ ok: false });
+  });
+
   it('never returns a secret from any handler (L25)', async () => {
     const h = createSshHandlers(deps);
     const keyFile = join(dir, 'id_fixture');
@@ -213,6 +225,7 @@ describe('ssh IPC handlers', () => {
       setPassword: { hostId: HOST, password: 'ipc-host-password' },
       clearPassword: { hostId: HOST },
       forgetPassphrases: undefined,
+      storageStatus: undefined,
       knownHosts: undefined,
       removeKnownHost: { id: '00000000-0000-4000-8000-000000000078' },
       connect: { cellId, hostId: HOST, cols: 80, rows: 24 },

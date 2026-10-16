@@ -84,6 +84,7 @@ const api: McApi = {
     setPassword: (hostId, password) => ipcRenderer.invoke('ssh:password:set', { hostId, password }),
     clearPassword: (hostId) => ipcRenderer.invoke('ssh:password:clear', { hostId }),
     forgetPassphrases: () => ipcRenderer.invoke('ssh:passphrases:forget'),
+    storageStatus: () => ipcRenderer.invoke('ssh:storage:status'),
     knownHosts: () => ipcRenderer.invoke('ssh:knownHosts:list'),
     removeKnownHost: (id) => ipcRenderer.invoke('ssh:knownHosts:remove', { id }),
     connect: (req) => ipcRenderer.invoke('ssh:connect', req),

@@ -16,6 +16,7 @@ import { USAGE_INTERVALS_MINUTES } from '../../../shared/usage';
 import { BACKGROUND_LOAD_MODES, BACKGROUND_MAX_CELLS, normalizeBackgroundLoad, type BackgroundLoadMode } from '../../../shared/backgroundLoad';
 import type { MessageKey } from '../../../shared/i18n';
 import { IX, TSettings } from './icons';
+import { SshSettings } from './ssh/SshSettings';
 
 const BACKGROUND_LABEL: Record<BackgroundLoadMode, MessageKey> = { visible: 'Tylko widoczne (jak dotąd)', project: 'Zakładki aktywnego projektu', all: 'Wszystkie projekty' };
 const BACKGROUND_HINT: Record<BackgroundLoadMode, MessageKey> = {
@@ -23,7 +24,7 @@ const BACKGROUND_HINT: Record<BackgroundLoadMode, MessageKey> = {
   project: 'Pozostałe zakładki aktywnego projektu startują w tle (do {max} sesji po uruchomieniu). Inne projekty i reszta sesji startują po otwarciu.',
   all: 'Zakładki wszystkich projektów startują w tle, po kolei (do {max} sesji po uruchomieniu). Reszta startuje po otwarciu. Zużywa więcej pamięci i procesora.',
 };
-const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia i dźwięki", "Aktualizacje", "Konta AI", "Profile agentów", "Skróty klawiszowe"] as const;
+const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia i dźwięki", "Aktualizacje", "Konta AI", "Profile agentów", "Skróty klawiszowe", "SSH"] as const;
 export function SettingsPage() {
   const { tr, language } = useI18n();
   const s = useStore((st) => st.s);
@@ -133,6 +134,7 @@ export function SettingsPage() {
         </div>
       </>}
       {section === 6 && <SettingsGroup><ShortcutsSettings /></SettingsGroup>}
+      {section === 7 && <SshSettings />}
       </div>
     </div>
   </div>;

@@ -62,6 +62,7 @@ export class KnownHostsStore {
   }
 
   readOnly(): boolean { return this.newer; }
+  filePath(): string { return this.file; }
   list(): KnownHostEntry[] { return [...this.entries]; }
 
   info(): KnownHostInfo[] {

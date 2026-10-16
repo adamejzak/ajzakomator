@@ -78,3 +78,6 @@
 .ssh-target-state { color: var(--muted); font-size: 11.5px; min-width: 120px; text-align: right; }
 .ssh-broadcast textarea.input { width: 100%; box-sizing: border-box; resize: vertical; }
 .ssh-targets .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ssh-known { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ssh-known td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.settings-card > .ssh-banner-warn { margin: 8px 0; line-height: 1.5; user-select: text; overflow-wrap: anywhere; }

@@ -93,6 +93,7 @@ export class SshVault {
   }
 
   readOnly(): boolean { return this.newer; }
+  filePath(): string { return this.file; }
 
   private infoOf(r: KeyRecord): SshKeyInfo { return { ...r.meta, ephemeral: r.secret === null, locked: r.locked }; }
 

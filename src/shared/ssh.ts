@@ -93,6 +93,9 @@ export interface SshSessionsSnapshot { sessions: SshSessionState[]; prompts: Arr
 
 export interface KnownHostInfo { id: string; display: string; keyType: string; fingerprint: string; addedAt: number }
 
+/** Where the two SSH files live and whether either one opened read-only (unreadable, wrong shape, malformed entry or a newer format). */
+export interface SshStorageStatus { vaultFile: string; vaultReadOnly: boolean; knownHostsFile: string; knownHostsReadOnly: boolean }
+
 export type DraftError = 'tooLarge' | 'notAKey' | 'publicOnly' | 'ppkV3' | 'unsupportedType' | 'badPassphrase' | 'mismatch' | 'certMismatch' | 'readFailed' | 'invalid';
 export type DraftResult =
   | { ok: true; draftId: string; type?: SshKeyAlgo; bits?: number; fingerprint?: string; comment: string; encrypted: boolean; needsPassphrase: boolean; publicKey?: string; certificateWarning?: boolean; duplicateOf?: string }
@@ -119,6 +122,7 @@ export interface SshApi {
   setPassword(hostId: string, password: string): Promise<{ ok: true; ephemeral: boolean } | { ok: false; error: 'notFound' | 'invalid' | 'readOnly' | 'failed' }>;
   clearPassword(hostId: string): Promise<{ ok: boolean }>;
   forgetPassphrases(): Promise<{ ok: boolean }>;
+  storageStatus(): Promise<SshStorageStatus>;
   knownHosts(): Promise<KnownHostInfo[]>;
   removeKnownHost(id: string): Promise<{ ok: boolean }>;
   connect(req: SshConnectCellRequest): Promise<{ ok: true } | { ok: false; error: SshErrorCode }>;
@@ -516,6 +520,15 @@ export function draftErrorKey(error: DraftError | KeyError | 'cancelled'): Messa
     default: return null;
   }
 }
+
+export const storageLabel = (storage: SshVaultInfo['storage']): MessageKey =>
+  storage === 'dpapi' ? 'Szyfrowanie: Windows (DPAPI)' : storage === 'keychain' ? 'Szyfrowanie: pęk kluczy macOS' : 'Szyfrowanie: niedostępne';
+
+/** Settings text for a store that opened read-only (it takes the file path as {file}); null while the store is writable. */
+export const readOnlyStoreNote = (store: 'vault' | 'knownHosts', readOnly: boolean): MessageKey | null =>
+  !readOnly ? null : store === 'vault'
+    ? 'Sejf SSH jest tylko do odczytu: plik {file} jest nieczytelny, ma nieprawidłowy format, zawiera uszkodzony wpis albo pochodzi z nowszej wersji aplikacji. Nie można dodawać ani zmieniać kluczy i haseł, a plik pozostaje nietknięty. Napraw lub usuń ten plik i uruchom aplikację ponownie.'
+    : 'Lista znanych hostów jest tylko do odczytu: plik {file} jest nieczytelny, ma nieprawidłowy format albo pochodzi z nowszej wersji aplikacji. Nie można usuwać wpisów, a klucz hosta zaakceptowany z opcją „Zaufaj i zapisz” obowiązuje tylko dla tego jednego połączenia. Napraw lub usuń ten plik i uruchom aplikację ponownie.';
 
 export function newKeyProblem(p: { label: string; passphrase: string; repeat: string }): MessageKey | null {
   if (!p.label.trim()) return 'Podaj etykietę';
