@@ -3,6 +3,7 @@
 import type { MessagePortMain } from 'electron';
 import type { HostToMain, HostToRenderer, MainToHost, RendererToHost } from '../shared/ipc';
 import { PtyManager } from './manager';
+import { HostRouter } from './router';
 
 const parentPort = process.parentPort;
 let rendererPort: MessagePortMain | null = null;
@@ -28,6 +29,8 @@ const manager = new PtyManager({
     toMain({ t: 'exit', id, code });
   },
 });
+/** Sends renderer messages and kills to the backend that owns the terminal. */
+const router = new HostRouter([manager]);
 
 function attachRenderer(port: MessagePortMain): void {
   rendererPort?.close();
@@ -35,20 +38,20 @@ function attachRenderer(port: MessagePortMain): void {
   port.on('message', (e) => {
     const m = e.data as RendererToHost;
     if (m.t === 'write') {
-      manager.write(m.id, m.data);
+      router.write(m.id, m.data);
       if (tapped.has(m.id) && m.data.includes('\x03')) toMain({ t: 'interrupt', id: m.id });
-    } else if (m.t === 'resize') manager.resize(m.id, m.cols, m.rows);
-    else if (m.t === 'ack') manager.ack(m.id, m.chars);
+    } else if (m.t === 'resize') router.resize(m.id, m.cols, m.rows);
+    else if (m.t === 'ack') router.ack(m.id, m.chars);
   });
   port.on('close', () => {
     // Only the current port counts: replacing it closes the old one after the new one is in place.
     if (rendererPort !== port) return;
     rendererPort = null;
-    manager.setFlowControl(false);
+    router.setFlowControl(false);
   });
   port.start();
-  manager.setFlowControl(true);
-  for (const h of manager.histories()) toRenderer({ t: 'replay', id: h.id, data: h.data });
+  router.setFlowControl(true);
+  for (const h of router.histories()) toRenderer({ t: 'replay', id: h.id, data: h.data });
 }
 
 parentPort.on('message', async (e) => {
@@ -60,7 +63,8 @@ parentPort.on('message', async (e) => {
     case 'spawn':
       try {
         if (m.req.tap) tapped.add(m.req.id);
-        toMain({ t: 'spawned', id: m.req.id, pid: manager.spawn(m.req) });
+        const early = router.takeEarlySize(m.req.id);
+        toMain({ t: 'spawned', id: m.req.id, pid: manager.spawn(early ? { ...m.req, ...early } : m.req) });
       } catch (err) {
         tapped.delete(m.req.id);
         toMain({ t: 'spawnError', id: m.req.id, message: err instanceof Error ? err.message : String(err) });
@@ -68,12 +72,12 @@ parentPort.on('message', async (e) => {
       break;
     case 'kill':
       tapped.delete(m.id);
-      await manager.kill(m.id);
+      await router.kill(m.id);
       if (m.ack) toMain({ t: 'killed', id: m.id });
       break;
     case 'killAll':
       tapped.clear();
-      await manager.killAll();
+      await router.killAll();
       toMain({ t: 'killedAll' });
       break;
   }

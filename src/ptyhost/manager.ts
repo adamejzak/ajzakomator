@@ -4,8 +4,8 @@ import { delimiter, join } from 'path';
 import * as pty from 'node-pty';
 import type { SpawnRequest } from '../shared/ipc';
 import type { ShellKind } from '../shared/types';
-import { PTY_REPLAY_CHARS } from '../shared/terminalLimits';
-import { coalesceDelay, FLUSH_NOW_CHARS, FlowGate, TailBuffer } from './flow';
+import { OutputChannel } from './output';
+import type { TerminalBackend } from './router';
 
 export interface PtySink {
   /** Returns false when nobody received the data (no renderer connected). */
@@ -13,22 +13,10 @@ export interface PtySink {
   exit(id: string, code: number): void;
 }
 
-/** A paused pty is resumed anyway when no acknowledgement arrives for this long (renderer gone or stuck). */
-const PAUSE_WATCHDOG_MS = 3000;
-/** How long the last output of a paused pty that exited may still arrive. */
-const EXIT_DRAIN_MS = 80;
-
 interface Entry {
   proc: pty.IPty;
-  buf: string;
-  timer: NodeJS.Timeout | null;
-  /** Tail of the output, replayed when a (reloaded) renderer reconnects. */
-  history: TailBuffer;
-  gate: FlowGate;
-  watchdog: NodeJS.Timeout | null;
-  lastWrite: number;
-  /** The process exited and its last output is being drained: never pause it again. */
-  exiting: boolean;
+  /** Coalescing, replay tail, back-pressure and the exit drain of this terminal's output. */
+  out: OutputChannel;
   exited: Promise<void>;
 }
 
@@ -54,10 +42,8 @@ export function resolveShell(kind: ShellKind, env: Record<string, string>, platf
   return { file: 'powershell.exe', args: ['-NoLogo'] };
 }
 
-export class PtyManager {
+export class PtyManager implements TerminalBackend {
   private entries = new Map<string, Entry>();
-  /** Sizes that arrived before their spawn request (the renderer's port is faster than main). */
-  private earlySizes = new Map<string, { cols: number; rows: number }>();
   /**
    * node-pty 1.1.0 on Windows removes a finished terminal from one shared list on a thread per terminal, without
    * a lock. Two terminals ending at the same moment corrupt it and trip a native assertion ("remove_pty_baton"),
@@ -78,29 +64,25 @@ export class PtyManager {
   }
 
   spawn(req: SpawnRequest): number {
-    if (this.entries.has(req.id)) this.kill(req.id);
+    if (this.entries.has(req.id)) void this.kill(req.id);
     const { file, args } = resolveShell(req.shell, req.env);
-    const size = this.earlySizes.get(req.id) ?? { cols: req.cols, rows: req.rows };
-    this.earlySizes.delete(req.id);
     const proc = pty.spawn(file, args, {
       name: 'xterm-256color',
-      cols: Math.max(2, size.cols),
-      rows: Math.max(1, size.rows),
+      cols: Math.max(2, req.cols),
+      rows: Math.max(1, req.rows),
       cwd: req.cwd,
       env: { ...req.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'unimux' },
       ...(process.platform === 'win32' ? { useConpty: true, useConptyDll: true } : {}),
     });
     let resolveExit!: () => void;
-    const entry: Entry = { proc, buf: '', timer: null, history: new TailBuffer(PTY_REPLAY_CHARS), gate: new FlowGate(), watchdog: null, lastWrite: -Infinity, exiting: false, exited: new Promise((r) => (resolveExit = r)) };
+    const out = new OutputChannel(req.id, () => this.sink, { pause: () => proc.pause(), resume: () => proc.resume() }, () => this.flowControl);
+    const entry: Entry = { proc, out, exited: new Promise((r) => (resolveExit = r)) };
     this.entries.set(req.id, entry);
 
     let pendingCommand = req.command;
     proc.onData((data) => {
       if (this.entries.get(req.id) !== entry) return;
-      entry.history.push(data);
-      entry.buf += data;
-      if (entry.buf.length >= FLUSH_NOW_CHARS) this.flush(req.id, entry);
-      else if (!entry.timer) entry.timer = setTimeout(() => this.flush(req.id, entry), coalesceDelay(Date.now(), entry.lastWrite));
+      out.push(data);
       if (pendingCommand) {
         const cmd = pendingCommand;
         pendingCommand = undefined;
@@ -113,89 +95,42 @@ export class PtyManager {
         resolveExit();
         return;
       }
-      const finish = () => {
+      // A paused pty still holds unread output: it is drained before the exit is reported.
+      out.drain(() => {
         if (this.entries.get(req.id) === entry) {
-          this.flush(req.id, entry);
+          out.flush();
+          out.dispose();
           this.entries.delete(req.id);
           this.sink.exit(req.id, exitCode);
         }
         resolveExit();
-      };
-      if (entry.gate.paused || entry.watchdog) {
-        // A paused pty still holds unread output: let it drain before reporting the exit.
-        entry.exiting = true;
-        this.resume(entry);
-        setTimeout(finish, EXIT_DRAIN_MS);
-      } else {
-        finish();
-      }
+      });
     });
     return proc.pid;
   }
 
-  private flush(id: string, entry: Entry): void {
-    if (entry.timer) clearTimeout(entry.timer);
-    entry.timer = null;
-    if (!entry.buf) return;
-    const out = entry.buf;
-    entry.buf = '';
-    const delivered = this.sink.data(id, out) !== false;
-    if (delivered && this.flowControl && !entry.exiting && entry.gate.sent(out.length)) this.pause(entry);
-  }
-
-  private pause(entry: Entry): void {
-    try {
-      entry.proc.pause();
-    } catch {
-      // the pty is going away
-    }
-    if (entry.watchdog) clearTimeout(entry.watchdog);
-    entry.watchdog = setTimeout(() => this.resume(entry, true), PAUSE_WATCHDOG_MS);
-  }
-
-  private resume(entry: Entry, force = false): void {
-    if (entry.watchdog) clearTimeout(entry.watchdog);
-    entry.watchdog = null;
-    if (force) entry.gate.release();
-    try {
-      entry.proc.resume();
-    } catch {
-      // the pty is going away
-    }
-  }
-
   /** The renderer parsed `chars` characters of this terminal's output. */
   ack(id: string, chars: number): void {
-    const e = this.entries.get(id);
-    if (!e) return;
-    if (e.gate.acked(chars)) this.resume(e);
-    else if (e.watchdog) {
-      // Slow but alive: progress renews the watchdog.
-      clearTimeout(e.watchdog);
-      e.watchdog = setTimeout(() => this.resume(e, true), PAUSE_WATCHDOG_MS);
-    }
+    this.entries.get(id)?.out.ack(chars);
   }
 
   /** Enables back-pressure for a freshly connected renderer; anything counted for the old one is forgotten. */
   setFlowControl(on: boolean): void {
     this.flowControl = on;
-    for (const e of this.entries.values()) if (e.gate.reset() || e.watchdog) this.resume(e);
+    for (const e of this.entries.values()) e.out.resetFlow();
   }
 
   write(id: string, data: string): void {
     const e = this.entries.get(id);
     if (!e) return;
-    e.lastWrite = Date.now();
+    e.out.wrote();
     e.proc.write(data);
   }
 
+  /** Resizes a live terminal; sizes for terminals that do not exist yet are kept by the HostRouter. */
   resize(id: string, cols: number, rows: number): void {
     const e = this.entries.get(id);
-    if (!e) {
-      this.earlySizes.set(id, { cols, rows });
-      if (this.earlySizes.size > 200) this.earlySizes.delete(this.earlySizes.keys().next().value!);
-      return;
-    }
+    if (!e) return;
     try {
       e.proc.resize(Math.max(2, cols), Math.max(1, rows));
     } catch {
@@ -205,7 +140,7 @@ export class PtyManager {
 
   /** Output history of every live terminal (for a reconnecting renderer). */
   histories(): Array<{ id: string; data: string }> {
-    return [...this.entries].map(([id, e]) => ({ id, data: e.history.toString() }));
+    return [...this.entries].map(([id, e]) => ({ id, data: e.out.history() }));
   }
 
   /** Kills a terminal; resolves once it exited (bounded), so its cwd can be deleted afterwards. */
@@ -213,8 +148,7 @@ export class PtyManager {
     const e = this.entries.get(id);
     if (!e) return Promise.resolve();
     this.entries.delete(id);
-    if (e.timer) clearTimeout(e.timer);
-    if (e.watchdog) clearTimeout(e.watchdog);
+    e.out.dispose();
     const turn = this.ending.then(() => {
       try {
         e.proc.kill();
