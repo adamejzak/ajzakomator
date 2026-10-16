@@ -8,7 +8,10 @@ export const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 export const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const REQUEST_TIMEOUT_MS = 10_000;
 const WRITE_TRIES = 3;
-const DEAD_ERRORS = /^(invalid_grant|invalid_client|unauthorized_client)$/;
+/** Only these prove a dead login. */
+const DEAD_ERRORS = /^invalid_grant$/;
+/** A client-level rejection is systemic (cswap treats it the same way): the login itself is not proven dead. */
+const CLIENT_ERRORS = /^(invalid_client|unauthorized_client)$/;
 /**
  * The token endpoint answers HTTP 429 to User-Agents it dislikes (public reports: any `claude-code/...` or `Mozilla/...`
  * value, which is also what Electron sends by default) before it even reads the token. claude-swap, which works for the
@@ -98,6 +101,7 @@ async function run(dir: string, deps: RefreshDeps): Promise<RefreshOutcome> {
     let error: unknown;
     try { error = ((await response.json()) as { error?: unknown }).error; } catch { /* no usable body */ }
     const code = typeof error === 'string' ? error : isRecord(error) && typeof error.type === 'string' ? error.type : '';
+    if ([400, 401, 403].includes(response.status) && CLIENT_ERRORS.test(code)) return transient('invalid-client');
     if ([400, 401, 403].includes(response.status) && DEAD_ERRORS.test(code)) {
       // Another process using this very profile (a Claude session) may have renewed it a moment ago: its newer token is not dead.
       await delay(DEAD_RECHECK_MS);

@@ -1,7 +1,7 @@
 // src/main/usage/sanitize.ts
 import { clampPercent, type ProviderUsage, type UsageStatus, type UsageWindow } from '../../shared/usage';
 
-const STATUSES: UsageStatus[] = ['ok', 'signedOut', 'expired', 'dormant', 'apiKey', 'error'];
+const STATUSES: UsageStatus[] = ['ok', 'signedOut', 'expired', 'dormant', 'apiKey', 'error', 'elsewhere'];
 const SOURCES = ['live', 'log', 'cache'] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -45,6 +45,7 @@ export function sanitizeUsage(raw: unknown): ProviderUsage | null {
     ...(error ? { error } : {}),
     ...(attemptAt !== undefined ? { attemptAt } : {}),
     ...(retryAt !== undefined ? { retryAt } : {}),
-    ...(typeof raw.shared === 'boolean' ? { shared: raw.shared } : {}),
+    ...(raw.active === true ? { active: true } : {}),
+    ...(raw.heldBy === 'live' || raw.heldBy === 'cswap' || raw.heldBy === 'switched-out' ? { heldBy: raw.heldBy } : {}),
   };
 }

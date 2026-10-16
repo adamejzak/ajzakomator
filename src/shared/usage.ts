@@ -1,7 +1,8 @@
 /** Limits of the user's Claude and Codex accounts: types and pure helpers shared by main process and window. */
 export type UsageProvider = 'claude' | 'codex';
-export type UsageStatus = 'ok' | 'signedOut' | 'expired' | 'dormant' | 'apiKey' | 'error';
+export type UsageStatus = 'ok' | 'signedOut' | 'expired' | 'dormant' | 'apiKey' | 'error' | 'elsewhere';
 /* `dormant`: the main Claude login's access token is past its expiry but a refresh token exists; Claude Code renews it on next use. Not an error. */
+/* `elsewhere`: a saved account whose tokens this app must not renew (R6) and whose access token ran out. */
 export type UsageSource = 'live' | 'log' | 'cache';
 
 export interface UsageWindow {
@@ -12,11 +13,17 @@ export interface UsageWindow {
   resetsAt: number;
 }
 
-/** One account whose limits are tracked; `configDir` is set for a managed Claude profile and absent for the main login. */
+/** One account whose limits are tracked; `configDir` is set for a saved Claude profile and absent for the live login. */
 export interface AccountRef {
   id: string;
   provider: UsageProvider;
   configDir?: string;
+  /** Identity key (shared/accounts identityKey): cache, backoff and read spacing follow the account, never the card slot. */
+  key?: string;
+  /** The account signed in to Claude Code. */
+  active?: boolean;
+  /** Saved Claude account: whether this app may renew its tokens, and why not (R6). */
+  renew?: 'allowed' | 'held-by-live' | 'held-by-cswap' | 'switched-out';
 }
 
 export const MAIN_ACCOUNTS: AccountRef[] = [
@@ -43,8 +50,17 @@ export interface ProviderUsage {
   attemptAt?: number;
   /** Epoch milliseconds before which the service will not try again after a failure. */
   retryAt?: number;
-  /** A saved account that holds the very same login as the main one: its limits are read through the main login and its tokens are never renewed here. */
-  shared?: boolean;
+  /** The account signed in to Claude Code (the "main" badge). */
+  active?: boolean;
+  /** Why this saved account's tokens are not renewed here: the live login, cswap or an outside switch holds the newest copy. */
+  heldBy?: 'live' | 'cswap' | 'switched-out';
+}
+
+const HELD_BY = { 'held-by-live': 'live', 'held-by-cswap': 'cswap', 'switched-out': 'switched-out' } as const;
+
+/** Why a saved account's tokens are not renewed (the card's `heldBy`), from its renewal rule; undefined when renewal is allowed. */
+export function heldByOf(renew: AccountRef['renew']): ProviderUsage['heldBy'] {
+  return renew && renew !== 'allowed' ? HELD_BY[renew] : undefined;
 }
 
 export interface UsageState { providers: ProviderUsage[] }
@@ -165,7 +181,8 @@ export function usageDiagnostics(usage: ProviderUsage, nowMs: number, label: str
     `state: ${usage.status}`,
     `reason: ${usage.error ?? 'none'}`,
     `http status: ${status ?? 'n/a'}`,
-    `shared with main login: ${usage.shared ? 'yes' : 'no'}`,
+    `active login: ${usage.active ? 'yes' : 'no'}`,
+    `renewal: ${usage.heldBy ? `held (${usage.heldBy})` : 'allowed'}`,
     `data source: ${usage.source}, last good data ${age(usage.fetchedAt)}`,
     `last attempt: ${age(usage.attemptAt)}`,
     `next attempt: ${usage.retryAt === undefined ? 'n/a' : usage.retryAt <= nowMs ? 'due' : `in ${formatDuration((usage.retryAt - nowMs) / 1000)}`}`,

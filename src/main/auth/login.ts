@@ -231,10 +231,11 @@ export class LoginManager {
         this.finish(session, { sessionId: session.id, status: 'duplicate', email }, true);
         return;
       }
-      this.deps.store.commit({ id: session.pendingId as string, email, ...(org ? { org } : {}), addedAt: Date.now() });
+      this.deps.store.commit({ id: session.pendingId as string, email, ...(org ? { org } : {}), addedAt: Date.now(), custody: 'app', family: 'own' });
       session.pendingId = undefined;
     } else if (target.type === 'account' && email) {
       this.deps.store.update(target.id, { email, ...(org ? { org } : {}) });
+      this.deps.store.setFamily(target.id, 'own');
     }
     this.finish(session, { sessionId: session.id, status: 'success', ...(email ? { email } : {}) }, false);
     this.deps.onChanged();

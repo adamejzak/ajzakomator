@@ -1,4 +1,4 @@
-import { MAIN_ACCOUNTS, type AccountRef, type ProviderUsage } from '../../shared/usage';
+import { MAIN_ACCOUNTS, heldByOf, type AccountRef, type ProviderUsage } from '../../shared/usage';
 import type { RefreshOutcome } from '../accounts/refresh';
 import { readCodexLog } from './codexLog';
 import { profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, type ClaudeCredentials, type CredentialSource } from './credentials';
@@ -42,51 +42,31 @@ function errorKind(error: unknown): string {
 
 const retryAfterMs = (response: Response, nowMs: number): number | undefined => parseRetryAfter(response.headers.get('retry-after'), nowMs);
 
-/** The main login's read of the current poll, so a saved account holding the same login reuses it instead of asking again. */
-const mainReads = new WeakMap<FetcherDeps, { at: number; read: Promise<FetchResult> }>();
-const MAIN_READ_REUSE_MS = 20_000;
-
 export function fetchClaude(deps: FetcherDeps, ref: AccountRef = MAIN_ACCOUNTS[0]): Promise<FetchResult> {
-  if (ref.configDir) return readClaude(deps, ref);
-  const read = readClaude(deps, ref);
-  mainReads.set(deps, { at: deps.now(), read });
-  return read;
+  return readClaude(deps, ref);
 }
 
 async function readClaude(deps: FetcherDeps, ref: AccountRef): Promise<FetchResult> {
   const now = deps.now();
-  const managedSource = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
-  let source = managedSource;
-  const base: ProviderUsage = { accountId: ref.id, provider: 'claude', status: 'signedOut', windows: [], fetchedAt: now, source: 'live', ...(ref.configDir ? { managed: true } : {}) };
+  const isMain = !ref.configDir;
+  const source = ref.configDir ? profileSource(deps.credentials, ref.configDir) : deps.credentials;
+  const base: ProviderUsage = {
+    accountId: ref.id, provider: 'claude', status: 'signedOut', windows: [], fetchedAt: now, source: 'live',
+    ...(ref.configDir ? { managed: true } : {}), ...(ref.active ? { active: true } : {}),
+  };
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  // The main login belongs to Claude Code, which rewrites the file while renewing; one re-read avoids reporting that moment.
+  // The live login belongs to Claude Code, which rewrites the file while renewing; one re-read avoids reporting that moment.
   const reread = async (): Promise<ClaudeCredentials | null> => { await sleep(REREAD_DELAY_MS); return readClaudeCredentials(source); };
   let credentials: ClaudeCredentials | null = await readClaudeCredentials(source);
-  if (!credentials && !ref.configDir) credentials = await reread();
+  if (!credentials && isMain) credentials = await reread();
   if (!credentials) return { usage: base };
-  // A saved account holding the very refresh token of the main login (a swap by another tool wrote the same login to
-  // both places) is read through the main login: renewing the saved copy would rotate the token under Claude Code.
-  let shared = false;
-  if (ref.configDir && credentials.refreshHash && deps.credentials.platform !== 'darwin') {
-    const main = await readClaudeCredentials(deps.credentials);
-    if (main?.refreshHash === credentials.refreshHash) { shared = true; credentials = main; source = deps.credentials; }
-  }
-  if (shared) {
-    // The same login was just read for the main card in this poll: its answer is this account's answer too (one request, not two).
-    const recent = mainReads.get(deps);
-    if (recent && Math.abs(now - recent.at) <= MAIN_READ_REUSE_MS) {
-      const main = await recent.read.catch(() => undefined);
-      if (main) {
-        const identity = await readClaudeIdentity(managedSource);
-        return { ...main, usage: { ...main.usage, accountId: ref.id, managed: true, shared: true, email: identity.email, org: identity.org } };
-      }
-    }
-  }
-  const isMain = !ref.configDir || shared;
-  const identity = await readClaudeIdentity(managedSource);
-  const known: ProviderUsage = { ...base, plan: credentials.plan, email: identity.email, org: identity.org, ...(shared ? { shared: true } : {}) };
-  // Only profiles owned by the app are renewed; the main login belongs to Claude Code.
-  const refresh = isMain ? undefined : deps.refreshClaude;
+  const identity = await readClaudeIdentity(source);
+  const heldBy = isMain ? undefined : heldByOf(ref.renew);
+  const known: ProviderUsage = { ...base, plan: credentials.plan, email: identity.email, org: identity.org, ...(heldBy ? { heldBy } : {}) };
+  // Only saved accounts whose token family lives nowhere else are renewed here (R6): the live login belongs to Claude Code,
+  // and renewing a family another tool also holds invalidates one of the two copies.
+  const refresh = isMain || heldBy ? undefined : deps.refreshClaude;
+  const held: FetchResult = { usage: { ...known, status: 'elsewhere' } };
   const configDir = ref.configDir ?? '';
   /** Renews the profile and re-reads its credentials; returns the failure result instead when that did not work. */
   const renew = async (): Promise<FetchResult | undefined> => {
@@ -104,8 +84,9 @@ async function readClaude(deps: FetcherDeps, ref: AccountRef): Promise<FetchResu
   const expired = (): boolean => credentials!.expiresAt !== undefined && credentials!.expiresAt <= now + EXPIRY_MARGIN_MS;
   const dormant: FetchResult = { usage: { ...known, status: 'dormant' } };
   if (expired()) {
+    if (heldBy) return held;
     if (!refresh) {
-      // Main login: with a refresh token Claude Code renews the access token on its next use, which is not an error.
+      // Live login: with a refresh token Claude Code renews the access token on its next use, which is not an error.
       if (credentials.hasRefresh) return dormant;
       const again = await reread();
       if (again) credentials = again;
@@ -132,6 +113,7 @@ async function readClaude(deps: FetcherDeps, ref: AccountRef): Promise<FetchResu
       if (failure) return failure;
       response = await request();
     }
+    if (heldBy && response.status === 401) return held;
     if (isMain && (response.status === 401 || response.status === 403)) {
       // Claude Code may have just renewed the token: look at the file once more before calling the login dead.
       const again = await reread();

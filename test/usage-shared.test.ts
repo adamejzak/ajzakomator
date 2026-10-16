@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { sanitizeUsage } from '../src/main/usage/sanitize';
-import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, usageBand, usageDiagnostics, usageErrorKind, usageHttpStatus, worstPercent, type ProviderUsage } from '../src/shared/usage';
+import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, heldByOf, usageBand, usageDiagnostics, usageErrorKind, usageHttpStatus, worstPercent, type ProviderUsage } from '../src/shared/usage';
 import { usageErrorKey, usageMessages } from '../src/shared/usageMessages';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
@@ -129,7 +129,7 @@ describe('failure reasons', () => {
 
   it('builds a diagnostics text with reason, status and ages but no secrets', () => {
     const usage: ProviderUsage = {
-      accountId: 'claude:abc', provider: 'claude', status: 'error', plan: 'Team 5x', managed: true, shared: false, error: 'http-429',
+      accountId: 'claude:abc', provider: 'claude', status: 'error', plan: 'Team 5x', managed: true, heldBy: 'cswap', error: 'http-429',
       windows: [{ id: '5h', usedPercent: 0, resetsAt: 0 }, { id: '7d', usedPercent: 100, resetsAt: 1 }],
       fetchedAt: NOW - 15 * 60_000, source: 'cache', attemptAt: NOW - 60_000, retryAt: NOW + 9 * 60_000, email: 'x@example.com',
     };
@@ -142,15 +142,27 @@ describe('failure reasons', () => {
     expect(text).toContain('next attempt: in 9 min');
     expect(text).toContain('7d 100%');
     expect(text).not.toContain('example.com');
-    expect(usageDiagnostics({ ...usage, error: undefined, retryAt: undefined, attemptAt: undefined, shared: true }, NOW, 'a')).toContain('shared with main login: yes');
+    expect(text).toContain('renewal: held (cswap)');
+    expect(usageDiagnostics({ ...usage, heldBy: undefined, active: true }, NOW, 'a')).toContain('active login: yes');
   });
 
   it('keeps the new fields through sanitizing and drops bad ones', () => {
     const base = { accountId: 'claude:abc', provider: 'claude', status: 'error', windows: [], fetchedAt: NOW, source: 'live' };
-    expect(sanitizeUsage({ ...base, attemptAt: NOW, retryAt: NOW + 5, shared: true })).toMatchObject({ attemptAt: NOW, retryAt: NOW + 5, shared: true });
-    const bad = sanitizeUsage({ ...base, attemptAt: 'x', retryAt: -1, shared: 'yes' });
+    expect(sanitizeUsage({ ...base, attemptAt: NOW, retryAt: NOW + 5, active: true, heldBy: 'live' })).toMatchObject({ attemptAt: NOW, retryAt: NOW + 5, active: true, heldBy: 'live' });
+    const bad = sanitizeUsage({ ...base, attemptAt: 'x', retryAt: -1, active: 'yes', heldBy: 'nobody', shared: true });
     expect(bad).not.toHaveProperty('attemptAt');
     expect(bad).not.toHaveProperty('retryAt');
+    expect(bad).not.toHaveProperty('active');
+    expect(bad).not.toHaveProperty('heldBy');
     expect(bad).not.toHaveProperty('shared');
+    expect(sanitizeUsage({ ...base, status: 'elsewhere' })?.status).toBe('elsewhere');
+  });
+
+  it('names who holds a saved account whose tokens are not renewed', () => {
+    expect(heldByOf(undefined)).toBeUndefined();
+    expect(heldByOf('allowed')).toBeUndefined();
+    expect(heldByOf('held-by-live')).toBe('live');
+    expect(heldByOf('held-by-cswap')).toBe('cswap');
+    expect(heldByOf('switched-out')).toBe('switched-out');
   });
 });

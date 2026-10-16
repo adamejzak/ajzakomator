@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compareIdentity, custodyOf, type AccountIdentity } from '../src/shared/accounts';
+import type { CswapRoster } from '../src/main/accounts/cswap';
 import { gateFamilyRefresh } from '../src/main/accounts/guards';
+import { renewRule } from '../src/main/accounts/refs';
 import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
 import { resyncActiveBackup } from '../src/main/accounts/resync';
 import { AccountsStore } from '../src/main/accounts/store';
@@ -188,25 +190,46 @@ describe('reconcileWhenIdle', () => {
   });
 });
 
-describe('gateFamilyRefresh', () => {
-  it('renews only app-owned profiles with their own token family', async () => {
+describe('gateFamilyRefresh (one renewal rule: renewRule)', () => {
+  it('renews a profile exactly when renewRule allows it, never a quarantined record or a dir no record names', async () => {
     const own = add(A);
     store.setFamily(own, 'own');
-    const legacy = add({ email: 'b@x.com' });
+    const legacy = add({ email: 'b@x.com' }); // 0.9.0 record: family defaults to live
     const copy = add({ email: 'c@x.com' }, 'live');
     store.setFamily(copy, 'own');
     const foreign = add({ email: 'd@x.com' });
-    store.setFamily(foreign, 'live');
+    store.setFamily(foreign, 'own');
     store.setCustody(foreign, 'foreign');
     const parked = add({ email: 'e@x.com' });
     store.setFamily(parked, 'own');
     store.setCustody(parked, 'quarantined', own);
+    // Same identity as the live login, but a family of its own (P and main, investigation test 5).
+    const twin = add(G);
+    store.setFamily(twin, 'own');
+    store.setLive({ ...G, recordId: copy });
+    let roster: CswapRoster = { present: false };
     const refresh = vi.fn(async () => 'renewed');
-    const gated = gateFamilyRefresh(store, refresh, 'blocked');
-    expect(await gated(store.dirOf(own))).toBe('renewed');
-    for (const id of [legacy, copy, foreign, parked]) expect(await gated(store.dirOf(id))).toBe('blocked');
+    const gated = gateFamilyRefresh(store, () => roster, refresh, 'blocked');
+    const renewed = async () => {
+      const out: string[] = [];
+      for (const id of [own, legacy, copy, foreign, parked, twin]) {
+        const result = await gated(store.dirOf(id));
+        const record = store.get(id)!;
+        // The gate and the card (claudeRefs) never disagree: both come from renewRule.
+        if (custodyOf(record) !== 'quarantined') expect(result === 'renewed').toBe(renewRule(record, store.live(), roster) === 'allowed');
+        if (result === 'renewed') out.push(id);
+      }
+      return out;
+    };
+    // Without cswap a legacy record is the app's only copy and may be renewed.
+    expect(await renewed()).toEqual([own, legacy]);
+    // cswap lists it: its copy of that family must not be rotated away. An own family is never cswap's.
+    roster = { present: true, accounts: [{ email: 'b@x.com' }, { email: 'a@x.com', accountUuid: 'ua' }] };
+    expect(await renewed()).toEqual([own]);
+    // An unreadable roster holds every live-family record.
+    roster = { present: true, accounts: null };
+    expect(await renewed()).toEqual([own]);
     expect(await gated(join(root, 'elsewhere'))).toBe('blocked');
-    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
 

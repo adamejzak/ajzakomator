@@ -13,6 +13,11 @@ import { ProviderIcon } from './ProviderIcons';
 import { RefreshIcon, useHoldBusy } from './Spinner';
 
 const DORMANT_NOTE = 'Token dostępu wygasł - Claude Code odświeży go przy najbliższym użyciu. Uruchom sesję Claude (albo wyślij wiadomość), a limity wrócą.';
+const HELD_NOTE = {
+  live: 'To konto jest teraz zalogowane w Claude Code - jego limity pokazuje karta oznaczona jako główna.',
+  cswap: 'To konto zarządza też cswap. Aplikacja nie odnawia jego logowania, żeby nie unieważnić kopii cswap - limity wrócą, gdy będzie aktywne w Claude Code albo po ponownym zalogowaniu tutaj.',
+  'switched-out': 'To konto zostało przełączone poza aplikacją (cswap lub /login). Kopia logowania w aplikacji może być nieaktualna, więc nie jest odnawiana. Przełącz je tam, gdzie jest aktywne, albo zaloguj się tu ponownie.',
+} as const;
 const NAMES: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
 
 function Bar({ percent, label }: { percent: number; label: string }) {
@@ -45,7 +50,7 @@ const openAuth = (provider: UsageProvider, target: LoginTarget) => setUi({ modal
 
 /** The login target that renews this account. */
 function reloginTarget(usage: ProviderUsage): LoginTarget {
-  return usage.managed && usage.provider === 'claude' ? { type: 'account', id: usage.accountId.replace(/^claude:/, '') } : { type: 'main' };
+  return usage.managed && !usage.active && usage.provider === 'claude' ? { type: 'account', id: usage.accountId.replace(/^claude:/, '') } : { type: 'main' };
 }
 
 function KebabIcon() {
@@ -63,7 +68,7 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
   const busy = swapping !== null;
   // On macOS Claude keeps its tokens in the Keychain, so the main login cannot be exchanged there.
   // A saved copy that already is the main login cannot become it again.
-  const canMakeMain = usage.managed && !usage.shared && usage.provider === 'claude' && claudeLoginActions(window.mc.platform, true).managedAccounts;
+  const canMakeMain = usage.managed && !usage.active && !usage.heldBy && usage.provider === 'claude' && claudeLoginActions(window.mc.platform, true).managedAccounts;
   const providerName = NAMES[usage.provider];
   const name = usage.email || providerName;
   const age = formatDuration((now - usage.fetchedAt) / 1000);
@@ -92,9 +97,8 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
   const calm = kind !== 'other' && kind !== 'parse';
   const retry = usage.retryAt !== undefined && usage.retryAt > now ? tr('za {time}', { time: formatDuration((usage.retryAt - now) / 1000) }) : tr('wkrótce');
   // A saved Claude account whose sign-in cannot be renewed (server limits, rejected renewal) must never leave the user stuck: signing in again is always offered.
-  const canRelogin = usage.managed && !usage.shared && usage.provider === 'claude' && !expired && (kind === 'refreshLimited' || kind === 'refresh') && claudeLoginActions(window.mc.platform, true).managedAccounts;
+  const canRelogin = usage.managed && !usage.active && usage.provider === 'claude' && !expired && (kind === 'refreshLimited' || kind === 'refresh') && claudeLoginActions(window.mc.platform, true).managedAccounts;
   const failureText = tr(usageErrorKey(kind, usage.provider), { name: providerName, retry });
-  const sharedNote = usage.shared ? <p className="usage-note">{tr('To konto jest teraz głównym logowaniem - limity czytam z głównego logowania.')}</p> : null;
 
   let body;
   if (expired) {
@@ -104,6 +108,15 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         <button className="btn small primary" onClick={() => openAuth(usage.provider, reloginTarget(usage))}>{tr('Zaloguj ponownie')}</button>
       </div>
     );
+  } else if (usage.status === 'elsewhere') {
+    body = (
+      <>
+        {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
+        {usage.windows.length > 0 && <p className="usage-note">{tr('dane sprzed {age}', { age })}</p>}
+        <p className="usage-note">{tr(HELD_NOTE[usage.heldBy ?? 'switched-out'])}</p>
+        {usage.heldBy !== 'live' && <button className="btn small" onClick={() => openAuth(usage.provider, reloginTarget(usage))}>{tr('Zaloguj ponownie')}</button>}
+      </>
+    );
   } else if (dormant) {
     // Calm state: the numbers are the last known ones, Claude Code renews the token itself.
     body = (
@@ -111,7 +124,6 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
         {usage.windows.length > 0 && <p className="usage-note">{tr('dane sprzed {age}', { age })}</p>}
         <p className="usage-note">{tr(DORMANT_NOTE)}</p>
-        {sharedNote}
       </>
     );
   } else if (usage.status === 'apiKey') {
@@ -120,7 +132,6 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
     body = (
       <>
         <p className={`usage-note ${calm ? '' : 'warn'}`} title={reasonTitle}>{failureText}</p>
-        {sharedNote}
       </>
     );
   } else {
@@ -132,7 +143,6 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
       <>
         {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
         {hint && <p className={`usage-note ${failed && !calm ? 'warn' : ''}`} title={failed ? reasonTitle : undefined}>{failed && ageNote ? `${hint} (${ageNote})` : hint}</p>}
-        {sharedNote}
       </>
     );
   }
@@ -143,7 +153,7 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         <ProviderIcon provider={usage.provider} />
         <span className="usage-account" title={name}>{name}</span>
         {usage.plan && <span className="usage-chip">{usage.plan}</span>}
-        {showMain && usage.accountId === 'claude:main' && <span className="usage-chip main">{tr('główne')}</span>}
+        {showMain && usage.active && <span className="usage-chip main">{tr('główne')}</span>}
         {swapping === usage.accountId && (
           <span className="usage-swapping" role="status" aria-live="polite">
             <span className="usage-spinner" aria-hidden="true" />
@@ -214,7 +224,7 @@ export function UsagePanel() {
   };
   const makeMain = async (target: ProviderUsage) => {
     if (swapping !== null) return;
-    const current = providers.find((usage) => usage.accountId === 'claude:main')?.email || tr('obecne konto główne');
+    const current = providers.find((usage) => usage.active)?.email || tr('obecne konto główne');
     const name = target.email || NAMES.claude;
     const exhausted = target.windows.some((window) => effectivePercent(window, Date.now()) >= 100);
     const body = tr('Obecne konto główne ({current}) zostanie zachowane jako zapisane konto, a wybrane stanie się głównym logowaniem Claude Code. Token wybranego konta jest przed zamianą odświeżany w Anthropic, a pliki logowania są wymieniane na tym komputerze. Otwarte sesje Claude zwykle przejmują nowe logowanie przy następnej wiadomości, ale zależy to od wersji Claude Code - sesję, która tego nie zrobi, wystarczy zrestartować lub wznowić.', { current })
@@ -242,7 +252,7 @@ export function UsagePanel() {
   const claudeCount = visible.filter((usage) => usage.provider === 'claude').length;
   const hasCodex = visible.some((usage) => usage.provider === 'codex');
   // On macOS Claude keeps its tokens in the Keychain, so isolated profiles cannot work there.
-  const claudeLogin = claudeLoginActions(window.mc.platform, visible.some((usage) => usage.accountId === 'claude:main'));
+  const claudeLogin = claudeLoginActions(window.mc.platform, visible.some((usage) => usage.provider === 'claude' && usage.active));
 
   if (rail) {
     if (!shown.length) return null;

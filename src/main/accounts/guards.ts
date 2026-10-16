@@ -1,5 +1,7 @@
 // src/main/accounts/guards.ts
-import { custodyOf, familyOf, isAccountId, type ManagedAccount, type SwapError } from '../../shared/accounts';
+import { custodyOf, isAccountId, type LiveIdentity, type ManagedAccount, type SwapError } from '../../shared/accounts';
+import type { CswapRoster } from './cswap';
+import { renewRule } from './refs';
 
 export interface GuardDeps {
   swapRunning(): boolean;
@@ -49,14 +51,20 @@ export function gateProfileRefresh<R>(deps: GuardDeps, refresh: (dir: string) =>
 }
 
 /**
- * Only a profile the app owns outright is renewed: custody `app` and a token family of its own. A record that is or was the
- * live login (`live`, `foreign`), a set-aside copy (`quarantined`) or one whose tokens are a copy of the live family (`family:
- * live`, also the default of a 0.9.0 record) shares its refresh token with Claude Code or cswap; renewing it would rotate that
- * token out from under them. A dir no record names is never renewed either.
+ * Background renewals follow the one family rule of `renewRule` (R6), the same rule the limits cards show: a profile is
+ * renewed only when its token family lives nowhere else - not the live login (`live` custody or the live identity), not a
+ * record switched out by another tool (`foreign`), not a copy of the live family that cswap may hold too. A set-aside copy
+ * (`quarantined`) and a dir no record names are never renewed either.
  */
-export function gateFamilyRefresh<R>(store: { list(): ManagedAccount[]; dirOf(id: string): string }, refresh: (dir: string) => Promise<R>, blocked: R): (dir: string) => Promise<R> {
+export function gateFamilyRefresh<R>(
+  store: { list(): ManagedAccount[]; dirOf(id: string): string; live(): LiveIdentity | null },
+  cswap: () => CswapRoster,
+  refresh: (dir: string) => Promise<R>,
+  blocked: R,
+): (dir: string) => Promise<R> {
   return (dir) => {
     const record = store.list().find((a) => store.dirOf(a.id) === dir);
-    return record && custodyOf(record) === 'app' && familyOf(record) !== 'live' ? refresh(dir) : Promise.resolve(blocked);
+    if (!record || custodyOf(record) === 'quarantined') return Promise.resolve(blocked);
+    return renewRule(record, store.live(), cswap()) === 'allowed' ? refresh(dir) : Promise.resolve(blocked);
   };
 }

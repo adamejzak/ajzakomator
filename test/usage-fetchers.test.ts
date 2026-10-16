@@ -362,59 +362,33 @@ describe('why a saved account fails to read', () => {
     expect((await fetchClaude(withRefresh((async () => reply(403, {})) as never, refresh), ref())).usage).toMatchObject({ status: 'expired', error: 'http-403' });
   });
 
-  describe('a saved account holding the main login', () => {
-    const mainLogin = (refreshToken: string, extra: Record<string, unknown> = {}) => claudeLogin({ refreshToken, ...extra });
+  describe('a saved account whose family lives elsewhere (R6)', () => {
+    const held = (renew: 'held-by-live' | 'held-by-cswap' | 'switched-out') => ({ ...ref(), renew });
 
-    it('is read through the main login and is never renewed', async () => {
-      mainLogin('same-refresh', { accessToken: 'main-tok' });
-      profileLogin({ refreshToken: 'same-refresh', accessToken: 'copy-tok', expiresAt: NOW - 1000 });
-      const refresh = vi.fn();
-      const fetchSpy = vi.fn(async () => reply(200, claudeBody));
-      const { usage } = await fetchClaude(withRefresh(fetchSpy as never, refresh), ref());
-      expect(usage).toMatchObject({ accountId: 'claude:abc', status: 'ok', managed: true, shared: true });
-      expect(refresh).not.toHaveBeenCalled();
-      expect((fetchSpy.mock.calls[0] as unknown as [string, RequestInit])[1].headers).toMatchObject({ Authorization: 'Bearer main-tok' });
-      expect(JSON.stringify(usage)).not.toContain('same-refresh');
-    });
-
-    it('reuses the main card read of the same poll instead of asking a second time', async () => {
-      mainLogin('same-refresh', { accessToken: 'main-tok' });
-      profileLogin({ refreshToken: 'same-refresh', accessToken: 'copy-tok' });
-      const fetchSpy = vi.fn(async () => reply(200, claudeBody));
-      const d = withRefresh(fetchSpy as never, vi.fn());
-      const [main, saved] = await Promise.all([fetchClaude(d), fetchClaude(d, ref())]);
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(main.usage).toMatchObject({ accountId: 'claude:main', status: 'ok' });
-      expect(saved.usage).toMatchObject({ accountId: 'claude:abc', status: 'ok', managed: true, shared: true });
-      expect(saved.usage.windows).toEqual(main.usage.windows);
-    });
-
-    it('asks for itself when no main read happened in this poll', async () => {
-      mainLogin('same-refresh', { accessToken: 'main-tok' });
-      profileLogin({ refreshToken: 'same-refresh', accessToken: 'copy-tok' });
-      const fetchSpy = vi.fn(async () => reply(200, claudeBody));
-      await fetchClaude(withRefresh(fetchSpy as never, vi.fn()), ref());
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('treats an expired shared token like the main one: dormant, no renewal, no request', async () => {
-      mainLogin('same-refresh', { expiresAt: NOW - 1000 });
-      profileLogin({ refreshToken: 'same-refresh', expiresAt: NOW - 1000 });
+    it('is never renewed: no token request, status elsewhere when its token ran out (investigation test 5)', async () => {
+      profileLogin({ expiresAt: NOW - 1000 });
       const refresh = vi.fn();
       const fetchSpy = vi.fn();
-      expect((await fetchClaude(withRefresh(fetchSpy, refresh), ref())).usage).toMatchObject({ status: 'dormant', shared: true });
+      for (const renew of ['held-by-live', 'held-by-cswap', 'switched-out'] as const) {
+        const { usage } = await fetchClaude(withRefresh(fetchSpy, refresh), held(renew));
+        expect(usage).toMatchObject({ status: 'elsewhere', managed: true, heldBy: renew === 'held-by-live' ? 'live' : renew === 'held-by-cswap' ? 'cswap' : 'switched-out' });
+      }
       expect(refresh).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
-    it('keeps renewing a saved account whose refresh token differs from the main one, even for the same person', async () => {
-      mainLogin('main-refresh');
-      profileLogin({ refreshToken: 'other-refresh', expiresAt: NOW - 1000 });
-      const refresh = vi.fn(async () => { put('profiles/abc/.credentials.json', JSON.stringify({ claudeAiOauth: { accessToken: 'new-tok', refreshToken: 'other-refresh-2', expiresAt: NOW + 3_600_000 } })); return { kind: 'ok' as const }; });
-      const { usage } = await fetchClaude(withRefresh((async () => reply(200, claudeBody)) as never, refresh), ref());
-      expect(refresh).toHaveBeenCalledTimes(1);
-      expect(usage.status).toBe('ok');
-      expect(usage.shared).toBeUndefined();
+    it('still reads its limits with a valid access token and turns a 401 into elsewhere without renewing', async () => {
+      profileLogin();
+      const refresh = vi.fn();
+      expect((await fetchClaude(withRefresh((async () => reply(200, claudeBody)) as never, refresh), held('held-by-cswap'))).usage.status).toBe('ok');
+      expect((await fetchClaude(withRefresh((async () => reply(401, {})) as never, refresh), held('held-by-cswap'))).usage.status).toBe('elsewhere');
+      expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('marks the live card as active', async () => {
+      claudeLogin();
+      const { usage } = await fetchClaude(deps((async () => reply(200, claudeBody)) as never), { id: 'claude:main', provider: 'claude', active: true });
+      expect(usage.active).toBe(true);
     });
   });
 });

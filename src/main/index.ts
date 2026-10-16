@@ -40,6 +40,8 @@ import { gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock 
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapMainAccount, swapPaths, type SwapDeps } from './accounts/swap';
 import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
+import { claudeRefs } from './accounts/refs';
+import { cswapRosterPath, readCswapRoster, type CswapRoster } from './accounts/cswap';
 import { readManagedIdentity } from './accounts/identity';
 import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
 import { LoginManager } from './auth/login';
@@ -133,10 +135,11 @@ const refreshLimits = createRefreshLimits(join(DATA_DIR, 'refresh-limits.json'))
 const tokenFetch = createTokenFetch(usageDeps.fetch);
 const renewProfile = (dir: string) => refreshClaudeProfile(dir, { fetch: tokenFetch, now: usageDeps.now, limits: refreshLimits, userAgent: `unimux/${app.getVersion()}`, tokenUrl: app.isPackaged ? undefined : process.env.MC_USAGE_CLAUDE_TOKEN_URL });
 const accounts = new AccountsStore(join(DATA_DIR, 'accounts'));
+/** cswap's roster, read before every poll (R6); `{ present: false }` without cswap. */
+let cswapRoster: CswapRoster = { present: false };
 const usage = new UsageService({
   accounts: () => [
-    MAIN_ACCOUNTS[0],
-    ...accounts.list().filter((a) => custodyOf(a) !== 'quarantined').map((a) => ({ id: `claude:${a.id}`, provider: 'claude' as const, configDir: accounts.dirOf(a.id) })),
+    ...claudeRefs({ records: accounts.list(), dirOf: (id) => accounts.dirOf(id), live: accounts.live(), cswap: cswapRoster, platform: process.platform }),
     MAIN_ACCOUNTS[1],
   ],
   fetchAccount: (ref) => (ref.provider === 'claude' ? fetchClaude(usageDeps, ref) : fetchCodex(usageDeps)),
@@ -146,7 +149,10 @@ const usage = new UsageService({
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
   // Every poll first looks at who is signed in to Claude Code (cswap switch, /login); never while a swap or a login runs.
   // The swap slot is held meanwhile, so a "Set as main" or a recovery can never interleave with the role changes.
-  beforeRun: async () => { await reconcileWhenIdle({ swapUnresolved: isSwapUnresolved, loginActive: () => login.isActive() }, () => reconcileLive(reconcileDeps())); },
+  beforeRun: async () => {
+    cswapRoster = await readCswapRoster(cswapRosterPath(homedir(), process.env, process.platform));
+    await reconcileWhenIdle({ swapUnresolved: isSwapUnresolved, loginActive: () => login.isActive() }, () => reconcileLive(reconcileDeps()));
+  },
   watchLive: true,
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
@@ -248,9 +254,10 @@ async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
 }
 // Background refreshes never write into a managed profile while a swap runs or is unresolved.
-// Only profiles with their own token family are renewed; a copy of the live family (resyncActiveBackup) never is.
+// Only profiles whose token family lives nowhere else are renewed (renewRule, R6): never the live login, a switched-out
+// record or a copy of the live family that cswap also holds.
 const refreshBlocked: RefreshOutcome = { kind: 'transient', detail: { reason: 'blocked' } };
-usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, gateFamilyRefresh(accounts, (dir) => renewProfile(dir), refreshBlocked), refreshBlocked);
+usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, gateFamilyRefresh(accounts, () => cswapRoster, (dir) => renewProfile(dir), refreshBlocked), refreshBlocked);
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();

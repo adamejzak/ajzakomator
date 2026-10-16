@@ -22,7 +22,7 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   const [state, setState] = useState<LoginState | null>(null);
   // A first main Claude login (nothing detected when the window opened) gets "sign in" instead of "sign in again".
   const { providers } = useUsage();
-  const [hadMain] = useState(() => providers.some((usage) => usage.accountId === 'claude:main' && usage.status !== 'signedOut'));
+  const [hadMain] = useState(() => providers.some((usage) => usage.provider === 'claude' && usage.active && usage.status !== 'signedOut'));
   const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

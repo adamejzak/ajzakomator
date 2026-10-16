@@ -67,8 +67,8 @@ describe('refreshClaudeProfile', () => {
     write(profile());
     const dead = (status: number, error: string) => refreshClaudeProfile(dir, { fetch: (async () => reply(status, { error })) as never, now: () => NOW });
     expect(await dead(400, 'invalid_grant')).toEqual({ kind: 'dead' });
-    expect(await dead(401, 'invalid_client')).toEqual({ kind: 'dead' });
-    expect(await dead(403, 'unauthorized_client')).toEqual({ kind: 'dead' });
+    expect(await dead(401, 'invalid_client')).toEqual({ kind: 'transient', detail: { reason: 'invalid-client' } });
+    expect(await dead(403, 'unauthorized_client')).toEqual({ kind: 'transient', detail: { reason: 'invalid-client' } });
     expect(await dead(400, 'something_else')).toEqual({ kind: 'transient', detail: { reason: 'http-400' } });
     expect(await dead(500, 'invalid_grant')).toEqual({ kind: 'transient', detail: { reason: 'http-500' } });
     expect(read().claudeAiOauth.accessToken).toBe('old-access');

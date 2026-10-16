@@ -92,6 +92,7 @@ describe('LoginManager', () => {
     expect(accounts).toHaveLength(1);
     expect(accounts[0].email).toBe('New@Example.com');
     expect(accounts[0].org).toBe('Org');
+    expect(accounts[0]).toMatchObject({ custody: 'app', family: 'own' });
     expect(h.mock.onChanged).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
     noSecret(h.states); noSecret(res);
@@ -164,7 +165,7 @@ describe('LoginManager', () => {
       command: 'claude auth login --claudeai',
     });
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'success']);
-    expect(store.list()).toEqual([{ id: prepared.id, email: 'New@Example.com', org: 'Org', addedAt: 1 }]);
+    expect(store.list()).toEqual([{ id: prepared.id, email: 'New@Example.com', org: 'Org', addedAt: 1, family: 'own' }]);
     expect(h.mock.onChanged).toHaveBeenCalledTimes(1);
     expect(existsSync(prepared.dir)).toBe(true);
   });
