@@ -134,6 +134,7 @@ export const sshMessages = {
   'Nie udało się zapisać zmian': ['Could not save the changes', 'Änderungen konnten nicht gespeichert werden', 'No se pudieron guardar los cambios', 'Impossible d’enregistrer les modifications', 'Não foi possível guardar as alterações'],
   'Nie udało się zapisać pliku': ['Could not save the file', 'Datei konnte nicht gespeichert werden', 'No se pudo guardar el archivo', 'Impossible d’enregistrer le fichier', 'Não foi possível guardar o ficheiro'],
   'Hosty': ['Hosts', 'Hosts', 'Hosts', 'Hôtes', 'Anfitriões'],
+  'Hosty SSH': ['SSH hosts', 'SSH-Hosts', 'Hosts SSH', 'Hôtes SSH', 'Anfitriões SSH'],
   'Klucze': ['Keys', 'Schlüssel', 'Claves', 'Clés', 'Chaves'],
   'Szukaj hostów...': ['Search hosts...', 'Hosts suchen...', 'Buscar hosts...', 'Rechercher des hôtes...', 'Pesquisar anfitriões...'],
   'Brak hostów. Dodaj pierwszy host.': ['No hosts yet. Add your first host.', 'Noch keine Hosts. Füge deinen ersten Host hinzu.', 'Aún no hay hosts. Añade el primero.', 'Aucun hôte pour l’instant. Ajoutez votre premier hôte.', 'Ainda não há anfitriões. Adicione o primeiro.'],

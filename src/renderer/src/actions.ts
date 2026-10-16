@@ -5,7 +5,7 @@ import { normalizeProjectPath } from '../../shared/platform';
 import { layoutForCount } from '../../shared/layout';
 import { cellBodyBox, chooseGridSize, type Size } from '../../shared/cellBox';
 import {
-  activeProject, activeTab, addCell, addProject, addTab, closeTab as closeTabState, findCell, getProfile,
+  activeProject, activeTab, addCell, addProject, addTab, closeTab as closeTabState, ensureShellProfile, findCell, getProfile,
   removeCell as removeCellState, removeProject as removeProjectState, restoreTab, setActiveProject, setActiveTab,
   swapCells as swapCellsState, uid, updateCell, updateSettings,
 } from '../../shared/state';
@@ -487,11 +487,14 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
     return [];
   }
   const tabName = name ?? undefined;
+  // A preset can outlive the shell profile it names; SSH cells always get a present one.
+  let sshProfileId: string | undefined;
+  if (cells.some((cell) => cell.sshHostId)) update((s) => { const r = ensureShellProfile(s); sshProfileId = r.profileId; return r.s; });
   const specs: Array<{ model?: string; color?: string; profileId: string; role?: import('../../shared/automation').AgentRole; name?: string; startupPrompt?: string; worktree?: Worktree; session?: CellSession; ssh?: { hostId: string } }> = [];
   for (let i = 0; i < layout.areas.length; i++) {
     const spec = cells[i] ?? cells[cells.length - 1] ?? { profileId: getS().settings.lastProfileId, worktree: false };
     let worktree: Worktree | undefined;
-    if (spec.worktree) {
+    if (spec.worktree && !spec.sshHostId) {
       try {
         worktree = await window.mc.createWorktree(project.path, `${tabName ?? 'grid'}-${i + 1}`);
       } catch (e) {
@@ -499,7 +502,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
       }
     }
     const host = spec.sshHostId ? getS().sshHosts.find((h) => h.id === spec.sshHostId) : undefined;
-    specs.push({ profileId: spec.profileId, model: spec.model, color: spec.color, role: host ? undefined : spec.role, name: spec.name, startupPrompt: host ? undefined : spec.prompt, worktree, session: spec.session, ...(host ? { ssh: { hostId: host.id } } : {}) });
+    specs.push({ profileId: host && sshProfileId ? sshProfileId : spec.profileId, model: spec.model, color: spec.color, role: host ? undefined : spec.role, name: spec.name, startupPrompt: host ? undefined : spec.prompt, worktree, session: spec.session, ...(host ? { ssh: { hostId: host.id } } : {}) });
   }
   update((s) => setActiveProject(addTab(s, projectId, { name: tabName, layout, cells: specs }), projectId));
   const tab = activeTab(getS().projects.find((p) => p.id === projectId) ?? null);

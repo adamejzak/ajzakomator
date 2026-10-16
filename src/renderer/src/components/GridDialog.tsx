@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 import {
   createLayout, describeLayout, layoutForCount, layoutFromRows, MAX_COLS, MAX_ROWS, mergeRect, rowCountsOf, unmergeAll, type GridLayout,
 } from '../../../shared/layout';
-import { getProfile, removePreset, uid, upsertPreset } from '../../../shared/state';
+import { ensureShellProfile, getProfile, removePreset, uid, upsertPreset } from '../../../shared/state';
+import { cellSourceValue, parseCellSource, type SshHost } from '../../../shared/ssh';
 import { CLI_NAMES, missingCli, missingClis, type CliStatusMap } from '../../../shared/cliStatus';
 import { profileOptionLabel } from '../cliUi';
 import type { PresetCell } from '../../../shared/types';
@@ -22,6 +23,8 @@ export function GridDialog({ projectId }: { projectId: string }) {
   const s = useStore((st) => st.s);
   const project = s.projects.find((p) => p.id === projectId);
   const defaultProfile = s.settings.lastProfileId;
+  const hosts = s.sshHosts;
+  const shellProfileId = ensureShellProfile(s).profileId;
   const [layout, setLayout] = useState<GridLayout>(createLayout(2, 2));
   const [cells, setCells] = useState<PresetCell[]>(() => Array.from({ length: 20 }, () => ({ profileId: defaultProfile, worktree: false })));
   const [hover, setHover] = useState<{ c: number; r: number } | null>(null);
@@ -51,6 +54,17 @@ export function GridDialog({ projectId }: { projectId: string }) {
   };
   const setCell = (i: number, patch: Partial<PresetCell>) => setCells((cs) => cs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const setAll = (patch: Partial<PresetCell>) => setCells((cs) => cs.map((x) => ({ ...x, ...patch })));
+  /** Prompt and worktree do not apply to SSH cells (spec 10.4), so bulk changes of them skip those cells. */
+  const setAllAgents = (patch: Partial<PresetCell>) => setCells((cs) => cs.map((x) => (x.sshHostId ? x : { ...x, ...patch })));
+  const sourcePatch = (value: string, previous?: PresetCell): Partial<PresetCell> => {
+    const source = parseCellSource(value);
+    const previousHost = previous?.sshHostId ? hosts.find((h) => h.id === previous.sshHostId) : undefined;
+    // A name that only echoes the host label goes away with the host.
+    const clearedName = previousHost && previous?.name === previousHost.label ? { name: undefined } : {};
+    if (source.kind === 'profile') return { profileId: source.profileId, sshHostId: undefined, ...clearedName };
+    const host = hosts.find((h) => h.id === source.hostId);
+    return { profileId: shellProfileId, sshHostId: source.hostId, role: undefined, prompt: undefined, worktree: false, ...(host ? { name: host.label } : {}) };
+  };
 
   const merge = () => {
     const areas = [...selected].map((i) => layout.areas[i]);
@@ -68,11 +82,12 @@ export function GridDialog({ projectId }: { projectId: string }) {
   const open = () => {
     if (lackingCells > 0 && !armed) { setArmed(true); return; }
     closeModal();
+    if (cells.slice(0, n).some((c) => c.sshHostId)) update((st) => ensureShellProfile(st).s);
     void openTab(projectId, layout, cells.slice(0, n), name.trim() || undefined);
   };
 
   const savePreset = async () => {
-    const presetName = await askText(tr("Nazwa presetu"), name || `${describeLayout(layout)} ${getProfile(s, cells[0].profileId).name}`);
+    const presetName = await askText(tr("Nazwa presetu"), name || `${describeLayout(layout)} ${cells[0].sshHostId ? tr('SSH') : getProfile(s, cells[0].profileId).name}`);
     if (!presetName?.trim()) return;
     const scope = await askChoice(tr("Gdzie zapisać preset?"), tr("Preset globalny jest dostępny we wszystkich projektach."), [
       { label: tr("Tylko ten projekt"), value: 'project' },
@@ -87,7 +102,9 @@ export function GridDialog({ projectId }: { projectId: string }) {
     const p = s.presets.find((x) => x.id === id);
     if (!p) return;
     setLayout(p.layout);
-    setCells((cs) => cs.map((x, i) => p.cells[i] ?? { ...x, name: undefined, prompt: undefined }));
+    // A preset can name a host that was deleted since: that cell becomes a plain shell cell here.
+    const known = (c: PresetCell): PresetCell => (c.sshHostId && !hosts.some((h) => h.id === c.sshHostId) ? { ...c, sshHostId: undefined } : c);
+    setCells((cs) => cs.map((x, i) => (p.cells[i] ? known(p.cells[i]) : { ...x, name: undefined, prompt: undefined })));
     setSelected(new Set());
   };
 
@@ -168,6 +185,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
           <div className="preview" style={{ gridTemplateColumns: `repeat(${layout.cols}, minmax(0,1fr))`, gridTemplateRows: `repeat(${layout.rows}, minmax(0,1fr))` }}>
             {layout.areas.map((a, i) => {
               const prof = getProfile(s, cells[i].profileId);
+              const sshHost = cells[i].sshHostId ? hosts.find((h) => h.id === cells[i].sshHostId) : undefined;
               return (
                 <div
                   key={i}
@@ -181,11 +199,11 @@ export function GridDialog({ projectId }: { projectId: string }) {
                 >
                   <div className="pc-head">
                     <span className="n">{i + 1}</span>
-                    <span className="nm">{cells[i].name || tr('Komórka {number}', { number: i + 1 })}</span>
-                    <span className="pill" style={{ color: prof.color, background: prof.color + '1f' }}>{prof.name}</span>
+                    <span className="nm">{cells[i].name || sshHost?.label || tr('Komórka {number}', { number: i + 1 })}</span>
+                    <span className="pill" style={{ color: prof.color, background: prof.color + '1f' }}>{cells[i].sshHostId ? tr('SSH') : prof.name}</span>
                   </div>
                   <div className="pc-body">
-                    {cells[i].prompt && prof.cli !== 'shell' ? (
+                    {cells[i].prompt && prof.cli !== 'shell' && !cells[i].sshHostId ? (
                       <span className="pc-prompt">› {cells[i].prompt}</span>
                     ) : (
                       <>
@@ -193,7 +211,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
                         <span className="ln" style={{ width: '40%' }} />
                       </>
                     )}
-                    {cells[i].worktree && <span className="pc-wt">⎇ worktree</span>}
+                    {cells[i].worktree && !cells[i].sshHostId && <span className="pc-wt">⎇ worktree</span>}
                   </div>
                 </div>
               );
@@ -203,21 +221,23 @@ export function GridDialog({ projectId }: { projectId: string }) {
 
         <div className="row" style={{ gap: 8 }}>
           <span className="section-title" style={{ margin: 0, flex: 1 }}>{tr("Komórki")}</span>
-          <Select className="select" value="" onChange={(e) => e.target.value && setAll({ profileId: e.target.value })}>
+          <Select className="select" value="" onChange={(e) => e.target.value && setCells((cs) => cs.map((x) => ({ ...x, ...sourcePatch(e.target.value, x) })))}>
             <option value="">{tr("profil dla wszystkich…")}</option>
             {s.profiles.map((p) => <option key={p.id} value={p.id}>{profileOptionLabel(p, cliStatus, tr)}</option>)}
+            {hosts.length > 0 && <option value="#ssh" disabled>{tr('Hosty SSH')}</option>}
+            {hosts.map((h) => <option key={h.id} value={`ssh:${h.id}`}>{h.label}</option>)}
           </Select>
           {snippets.length > 0 && (
             <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, [
               { header: tr("Prompt startowy dla wszystkich") },
-              ...snippets.map((sn) => ({ label: sn.name, onClick: () => setAll({ prompt: sn.text }) })),
+              ...snippets.map((sn) => ({ label: sn.name, onClick: () => setAllAgents({ prompt: sn.text }) })),
               { sep: true as const },
-              { label: tr("Wyczyść prompty"), onClick: () => setAll({ prompt: undefined }) },
+              { label: tr("Wyczyść prompty"), onClick: () => setAllAgents({ prompt: undefined }) },
             ])}>
               <ISnippet />  {tr("Prompt dla wszystkich")} <IChevron />
             </button>
           )}
-          {isRepo && <label className="check"><input type="checkbox" onChange={(e) => setAll({ worktree: e.target.checked })} />  {tr("worktree dla wszystkich")}</label>}
+          {isRepo && <label className="check"><input type="checkbox" onChange={(e) => setAllAgents({ worktree: e.target.checked })} />  {tr("worktree dla wszystkich")}</label>}
         </div>
 
         <div className="cell-table">
@@ -236,7 +256,9 @@ export function GridDialog({ projectId }: { projectId: string }) {
               cliStatus={cliStatus}
               snippets={snippets}
               isRepo={!!isRepo}
+              hosts={hosts}
               onChange={(patch) => setCell(i, patch)}
+              onSource={(value) => setCells((cs) => cs.map((x, j) => (j === i ? { ...x, ...sourcePatch(value, x) } : x)))}
             />
           ))}
         </div>
@@ -268,44 +290,51 @@ export function GridDialog({ projectId }: { projectId: string }) {
   );
 }
 
-function CellRow({ index, cell, profiles, cliStatus, snippets, isRepo, onChange }: {
+function CellRow({ index, cell, profiles, hosts, cliStatus, snippets, isRepo, onChange, onSource }: {
   index: number;
   cell: PresetCell;
   profiles: Array<{ id: string; name: string; cli: 'claude' | 'codex' | 'shell' }>;
+  hosts: SshHost[];
   cliStatus: CliStatusMap;
   snippets: Array<{ id: string; name: string; text: string }>;
   isRepo: boolean;
   onChange: (patch: Partial<PresetCell>) => void;
+  onSource: (value: string) => void;
 }) {
   const { tr } = useI18n();
-  const isShell = profiles.find((p) => p.id === cell.profileId)?.cli === 'shell';
+  const isSsh = !!cell.sshHostId;
+  const isShell = isSsh || profiles.find((p) => p.id === cell.profileId)?.cli === 'shell';
   return (
     <>
       <span className="num">{index + 1}</span>
       <input className="input" placeholder={tr("np. backend")} value={cell.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} />
-      <Select className="select" value={cell.profileId} onChange={(e) => onChange({ profileId: e.target.value })}>
+      <Select className="select" value={cellSourceValue(cell)} onChange={(e) => onSource(e.target.value)}>
         {profiles.map((p) => <option key={p.id} value={p.id}>{profileOptionLabel(p, cliStatus, tr)}</option>)}
+        {hosts.length > 0 && <option value="#ssh" disabled>{tr('Hosty SSH')}</option>}
+        {hosts.map((h) => <option key={h.id} value={`ssh:${h.id}`}>{h.label}</option>)}
       </Select>
-      <RoleSelect value={cell.role} disabled={isShell} onChange={(role) => onChange({ role })} />
-      <span className="prompt-wrap">
-        <input
-          className="input"
-          disabled={isShell}
-          placeholder={isShell ? tr("nie dotyczy PowerShella") : tr("pierwsza wiadomość dla agenta (opcjonalnie)")}
-          value={isShell ? '' : (cell.prompt ?? '')}
-          title={cell.prompt}
-          onChange={(e) => onChange({ prompt: e.target.value })}
-        />
-        {!isShell && snippets.length > 0 && (
-          <button className="btn snip-btn" title={tr("Wstaw snippet")} onClick={(e) => openMenuAt(e.currentTarget, [
-            { header: tr("Wstaw snippet") },
-            ...snippets.map((sn) => ({ label: sn.name, onClick: () => onChange({ prompt: sn.text }) })),
-          ])}>
-            <ISnippet />  {tr("Snippet")} <IChevron />
-          </button>
-        )}
-      </span>
-      <span className="wt">{isRepo && <input type="checkbox" checked={cell.worktree} onChange={(e) => onChange({ worktree: e.target.checked })} />}</span>
+      {isSsh ? <span /> : <RoleSelect value={cell.role} disabled={isShell} onChange={(role) => onChange({ role })} />}
+      {isSsh ? <span /> : (
+        <span className="prompt-wrap">
+          <input
+            className="input"
+            disabled={isShell}
+            placeholder={isShell ? tr("nie dotyczy PowerShella") : tr("pierwsza wiadomość dla agenta (opcjonalnie)")}
+            value={isShell ? '' : (cell.prompt ?? '')}
+            title={cell.prompt}
+            onChange={(e) => onChange({ prompt: e.target.value })}
+          />
+          {!isShell && snippets.length > 0 && (
+            <button className="btn snip-btn" title={tr("Wstaw snippet")} onClick={(e) => openMenuAt(e.currentTarget, [
+              { header: tr("Wstaw snippet") },
+              ...snippets.map((sn) => ({ label: sn.name, onClick: () => onChange({ prompt: sn.text }) })),
+            ])}>
+              <ISnippet />  {tr("Snippet")} <IChevron />
+            </button>
+          )}
+        </span>
+      )}
+      <span className="wt">{isRepo && !isSsh && <input type="checkbox" checked={cell.worktree} onChange={(e) => onChange({ worktree: e.target.checked })} />}</span>
     </>
   );
 }

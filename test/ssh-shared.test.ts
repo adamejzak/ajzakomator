@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
-  sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
+  cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
 
@@ -237,5 +237,20 @@ describe('panel helpers', () => {
     expect(parseFoldedGroups('{"x":1}')).toEqual([]);
     expect(parseFoldedGroups('not json')).toEqual([]);
     expect(parseFoldedGroups(null)).toEqual([]);
+  });
+  it('drops selected ids of hosts that no longer exist', () => {
+    expect(existingSelection([ID(1), ID(9), ID(2)], [host(1), host(2)])).toEqual([ID(1), ID(2)]);
+    expect(existingSelection([ID(9)], [host(1)])).toEqual([]);
+    expect(existingSelection([], [host(1)])).toEqual([]);
+  });
+});
+
+describe('grid dialog cell sources', () => {
+  it('round trips profiles and hosts through the select value', () => {
+    expect(cellSourceValue({ profileId: 'claude' })).toBe('claude');
+    expect(cellSourceValue({ profileId: 'shell', sshHostId: ID(1) })).toBe(`ssh:${ID(1)}`);
+    expect(parseCellSource(`ssh:${ID(1)}`)).toEqual({ kind: 'ssh', hostId: ID(1) });
+    expect(parseCellSource('codex')).toEqual({ kind: 'profile', profileId: 'codex' });
+    expect(parseCellSource('ssh:')).toEqual({ kind: 'profile', profileId: 'ssh:' });
   });
 });

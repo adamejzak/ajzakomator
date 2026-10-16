@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
 import { describeLaunch, groupTerminalSources, listTerminalSources, type TerminalSource } from '../../../shared/terminalSources';
+import { existingSelection } from '../../../shared/ssh';
 import { addAgent, quickTab } from '../actions';
 import { useStore } from '../store';
 import { useSshStore } from '../sshStore';
@@ -18,7 +19,9 @@ export function TerminalPanel() {
   const profiles = useStore((st) => st.s.profiles);
   const shell = useStore((st) => st.s.settings.shell);
   const storage = useSshStore((st) => st.vault?.storage);
-  const selected = useSshStore((st) => st.selectedHosts);
+  const hosts = useStore((st) => st.s.sshHosts);
+  const selectedIds = useSshStore((st) => st.selectedHosts);
+  const selected = useMemo(() => existingSelection(selectedIds, hosts), [selectedIds, hosts]);
   const [query, setQuery] = useState('');
   const local = useMemo(() => groupTerminalSources(listTerminalSources({ profiles, platform: window.mc.platform, shell })).local, [profiles, shell]);
   const openLocal = (source: TerminalSource, target: 'cell' | 'tab') => {

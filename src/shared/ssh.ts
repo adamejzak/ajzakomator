@@ -287,6 +287,19 @@ export function sshGridName(hosts: readonly SshHost[]): { group: string } | { co
 
 export const toggleSelection = (list: readonly string[], id: string): string[] => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
 
+/** The selected host ids that still belong to a saved host (a deleted host must not inflate the grid count). */
+export const existingSelection = (selected: readonly string[], hosts: readonly Pick<SshHost, 'id'>[]): string[] => {
+  const ids = new Set(hosts.map((h) => h.id));
+  return selected.filter((id) => ids.has(id));
+};
+
+/** The value of a grid dialog cell select: a profile id, or `ssh:<hostId>` for a saved host (spec 10.4). */
+export const cellSourceValue = (cell: { profileId: string; sshHostId?: string }): string => (cell.sshHostId ? `ssh:${cell.sshHostId}` : cell.profileId);
+
+export function parseCellSource(value: string): { kind: 'ssh'; hostId: string } | { kind: 'profile'; profileId: string } {
+  return value.startsWith('ssh:') && value.length > 4 ? { kind: 'ssh', hostId: value.slice(4) } : { kind: 'profile', profileId: value };
+}
+
 /** The folded group names kept in localStorage (`''` is "Bez grupy"); anything unexpected reads as none. */
 export function parseFoldedGroups(raw: string | null): string[] {
   try {

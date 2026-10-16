@@ -224,6 +224,32 @@ const PARTS = {
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },
+  /** Task 11: a saved preset with three SSH cells opens from the palette and connects; the grid dialog lists hosts. */
+  async grid() {
+    const server = await startTestServer(['--no-auth']);
+    const root = scratchRoot('ssh-grid');
+    try {
+      const host = testHost(server.port, { label: 'lab' });
+      const state = sshState({ projectPath: join(root, 'project'), hosts: [host] });
+      state.presets = [{ id: 'preset-ssh', name: 'SSH lab x3', layout: { cols: 3, rows: 1, areas: [0, 1, 2].map((i) => ({ col: i, row: 0, colSpan: 1, rowSpan: 1 })) },
+        cells: [0, 1, 2].map(() => ({ profileId: 'shell', worktree: false, sshHostId: host.id })) }];
+      writeState(root, state);
+      const app = await launchApp(root);
+      try {
+        await app.click('button[aria-label="Szukaj wszędzie"]');
+        await app.setValue('.palette input', 'SSH lab x3');
+        await app.press('Enter');
+        await app.until(`document.querySelectorAll('.cell .ssh-fingerprint').length === 3`, 'one shared host key card in three cells');
+        await app.click('.ssh-card button', 'Zaufaj i zapisz');
+        await app.until(`document.querySelectorAll('.cell .ssh-card').length === 0`, 'all three connected');
+        await app.screenshot('ssh-grid-preset.png');
+        await app.click('button[title^="Nowy grid"]');
+        await app.until(`!!document.querySelector('.grid-dialog')`, 'grid dialog');
+        await app.click('.cell-table .select');
+        await app.screenshot('ssh-grid-dialog.png');
+      } finally { await app.close(); }
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
 };
 
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(PARTS);
