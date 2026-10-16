@@ -3,8 +3,6 @@
 
 Choose from the assets attached to this release. The version number in the file name changes with each release; a Windows-only release may not include Mac packages. Portable Windows builds are no longer published: use the installer.
 
-Older releases use `ajzakomator` instead of `unimux` in package names; the platform and architecture suffixes are the same.
-
 | Your computer | Download | How to use it |
 | --- | --- | --- |
 | **Windows 10 / 11 (x64)** | `unimux-Setup-<version>.exe` | **Recommended installer.** Installs the app and creates shortcuts. Installed builds support automatic updates. |
