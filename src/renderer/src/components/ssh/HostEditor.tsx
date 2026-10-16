@@ -8,11 +8,11 @@ import { showTerminalTabs } from '../../files';
 import { useI18n } from '../../i18n';
 import { toast, update, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
-import { closeSshEditor, confirmRemoveSshHost, openHostInCell, openSshEditor, retargetSshEditor } from '../../ssh';
+import { confirmRemoveSshHost, openHostInCell, showSshDetail } from '../../ssh';
 import { ColorPicker } from '../ColorPicker';
 import { Select } from '../Select';
 
-export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: string }) {
+export function HostEditor({ paneId, hostId }: { paneId: string; hostId?: string }) {
   const { tr } = useI18n();
   const host = useStore((st) => st.s.sshHosts.find((h) => h.id === hostId));
   const allHosts = useStore((st) => st.s.sshHosts);
@@ -39,18 +39,18 @@ export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: st
       id = uid();
       const created = { id, ...r.value, createdAt: now, updatedAt: now };
       update((s) => addSshHost(s, created));
-      retargetSshEditor(editorId, 'host', id);
+      showSshDetail({ kind: 'host', hostId: id });
     }
     if (connect && id) {
-      // The new cell asks for the host key and the password in the grid: show the grid (the editor tab stays open).
+      // The new cell asks for the host key and the password in the grid: show the grid (the SSH tab stays open).
       showTerminalTabs();
       void openHostInCell(id, 'cell');
     }
   };
 
   const remove = async () => {
-    if (!host) { closeSshEditor(editorId); return; }
-    if (await confirmRemoveSshHost(host.id)) closeSshEditor(editorId);
+    if (!host) { showSshDetail(null); return; }
+    if (await confirmRemoveSshHost(host.id)) showSshDetail(null);
   };
 
   const setPw = async () => {
@@ -85,7 +85,7 @@ export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: st
       </div>
       <div className="ssh-section">
         <label className="ssh-field"><span>{tr('Klucz')}</span>
-          <Select className="select" value={draft.keyId ?? ''} onChange={(e) => (e.target.value === '__new' ? openSshEditor('newKey') : set({ keyId: e.target.value || undefined }))}>
+          <Select className="select" value={draft.keyId ?? ''} onChange={(e) => (e.target.value === '__new' ? showSshDetail({ kind: 'newKey' }) : set({ keyId: e.target.value || undefined }))}>
             <option value="">{tr('Brak')}</option>
             {(vault?.keys ?? []).map((k) => <option key={k.id} value={k.id}>{`${k.label} (${k.type.replace('ecdsa-sha2-', '')})`}</option>)}
             {!readOnly && <option value="__new">{tr('Nowy klucz...')}</option>}
@@ -107,8 +107,8 @@ export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: st
       </div>
       <div className="ssh-section">
         <label className="ssh-field"><span>{tr('Grupa')}</span>
-          <input className="input" list={`${editorId}-groups`} value={draft.group} maxLength={60} onChange={(e) => set({ group: e.target.value })} />
-          <datalist id={`${editorId}-groups`}>{groups.map((g) => <option key={g} value={g} />)}</datalist>
+          <input className="input" list={`${paneId}-groups`} value={draft.group} maxLength={60} onChange={(e) => set({ group: e.target.value })} />
+          <datalist id={`${paneId}-groups`}>{groups.map((g) => <option key={g} value={g} />)}</datalist>
         </label>
         <div className="ssh-field"><span>{tr('Tagi')}</span>
           <div className="ssh-tags">

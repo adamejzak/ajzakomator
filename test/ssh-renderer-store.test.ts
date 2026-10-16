@@ -42,3 +42,14 @@ describe('createInitGate (M7)', () => {
     expect(useSshStore.getState().sessions.m7.phase).toBe('closed');
   });
 });
+
+describe('SSH view state (W3)', () => {
+  it('starts closed, with no detail and no selection', () => {
+    const { useSshStore } = store;
+    const st = useSshStore.getState();
+    expect(st.viewOpen).toBe(false);
+    expect(st.viewActive).toBe(false);
+    expect(st.detail).toBeNull();
+    expect(st.selectedHosts).toEqual([]);
+  });
+});

@@ -10,7 +10,7 @@ import {
   sendSnippet, switchProject, toggleMaximize,
 } from '../actions';
 import { openSidebarPanel } from '../panelActions';
-import { openSshEditor } from '../ssh';
+import { openSshView } from '../ssh';
 import { getS, getUi, setUi, toast, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
 import { statusLog, terminals } from '../terminals/TerminalManager';
@@ -53,8 +53,9 @@ function PaletteInner() {
     out.push({ kind: tr('Akcja'), title: tr("Nowy projekt") + '…', run: () => void createProject() });
     // SSH editors need no project: after "Nowy terminal (zakładka)" with a project (L16), right here without one.
     const ssh: Item[] = [
-      { kind: tr('Akcja'), title: tr('SSH: nowy host'), run: () => openSshEditor('host') },
-      { kind: tr('Akcja'), title: tr('SSH: nowy klucz'), run: () => openSshEditor('newKey') },
+      { kind: tr('Akcja'), title: tr('SSH: hosty i klucze'), run: () => openSshView() },
+      { kind: tr('Akcja'), title: tr('SSH: nowy host'), run: () => openSshView({ kind: 'host' }) },
+      { kind: tr('Akcja'), title: tr('SSH: nowy klucz'), run: () => openSshView({ kind: 'newKey' }) },
     ];
     if (!project) out.push(...ssh);
     if (project) {

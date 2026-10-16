@@ -19,7 +19,7 @@ import { fullProjectPath } from '../../../shared/platform';
 import { tabsToClose } from '../../../shared/fileOps';
 import { revealScroll, scrollEdges, stepScroll, wheelScroll } from '../../../shared/tabStrip';
 import { useSshStore } from '../sshStore';
-import { activateSshEditor, closeSshEditor, sshEditorTitleText } from '../ssh';
+import { activateSshView, closeSshView } from '../ssh';
 
 export function TitleBar() {
   const { tr } = useI18n();
@@ -57,9 +57,8 @@ export function WorkspaceTabs() {
   const activeFileId = documents.some((doc) => doc.id === selectedFile && doc.projectId === project?.id) ? selectedFile : null;
   const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
   const settingsActive = useStore((st) => st.ui.settingsActive);
-  const editors = useSshStore((st) => st.editors);
-  const activeEditorId = useSshStore((st) => st.activeEditorId);
-  const vault = useSshStore((st) => st.vault);
+  const sshOpen = useSshStore((st) => st.viewOpen);
+  const sshActive = useSshStore((st) => st.viewActive);
   const [editing, setEditing] = useState<string | null>(null);
   const [orders, setOrders] = useState<Record<string, string[]>>(() => {
     try {
@@ -72,7 +71,7 @@ export function WorkspaceTabs() {
   const projectKey = project?.id ?? 'no-project';
   const order = workspaceOrder(orders[projectKey] ?? [], [
     ...(settingsTabOpen ? ['settings'] : []),
-    ...editors.map((e) => `ssh:${e.id}`),
+    ...(sshOpen ? ['ssh'] : []),
     ...(project?.tabs.map((t) => `grid:${t.id}`) ?? []),
     ...documents.filter((doc) => doc.projectId === project?.id).map((doc) => `file:${doc.id}`),
   ]);
@@ -142,16 +141,15 @@ export function WorkspaceTabs() {
     el.addEventListener('wheel', wheel, { passive: false });
     return () => { observer.disconnect(); el.removeEventListener('wheel', wheel); };
   }, []);
-  const activeKey = activeWorkspaceKey({ settingsActive, sshActive: activeEditorId !== null, fileId: activeFileId, gridId: project?.activeTabId ?? null });
+  const activeKey = activeWorkspaceKey({ settingsActive, sshActive, fileId: activeFileId, gridId: project?.activeTabId ?? null });
   useEffect(() => {
     const el = stripRef.current;
     if (!el || !activeKey) return;
-    const tabKey = activeKey === 'ssh' && activeEditorId ? `ssh:${activeEditorId}` : activeKey;
-    const tab = Array.from(el.children).find((child) => (child as HTMLElement).dataset.workspaceId === tabKey) as HTMLElement | undefined;
+    const tab = Array.from(el.children).find((child) => (child as HTMLElement).dataset.workspaceId === activeKey) as HTMLElement | undefined;
     if (!tab) return;
     const next = revealScroll({ scrollLeft: el.scrollLeft, width: el.clientWidth, scrollWidth: el.scrollWidth }, { left: tab.offsetLeft, width: tab.offsetWidth });
     if (next !== el.scrollLeft) el.scrollLeft = next;
-  }, [activeKey, activeEditorId, order.length]);
+  }, [activeKey, order.length]);
   const scrollStrip = (direction: -1 | 1) => {
     const el = stripRef.current;
     if (el) el.scrollBy({ left: stepScroll(direction, el.clientWidth), behavior: 'smooth' });
@@ -161,12 +159,9 @@ export function WorkspaceTabs() {
     openMenuAt(el, [
       { header: tr('Wszystkie karty') },
       ...order.flatMap((key) => {
-        const hint = key === activeKey || (activeKey === 'ssh' && key === `ssh:${activeEditorId}`) ? '✓' : undefined;
+        const hint = key === activeKey ? '✓' : undefined;
         if (key === 'settings') return [{ label: tr('Ustawienia'), hint, onClick: () => setUi({ settingsActive: true }) }];
-        if (key.startsWith('ssh:')) {
-          const e = editors.find((x) => `ssh:${x.id}` === key);
-          return e ? [{ label: sshEditorTitleText(e, s, vault, tr), hint, onClick: () => activateSshEditor(e.id) }] : [];
-        }
+        if (key === 'ssh') return [{ label: tr('SSH'), hint, onClick: activateSshView }];
         if (key.startsWith('grid:')) {
           const t = project.tabs.find((tab) => `grid:${tab.id}` === key);
           return t ? [{ label: t.name, hint, onClick: () => selectTab(project.id, t) }] : [];
@@ -210,13 +205,13 @@ export function WorkspaceTabs() {
         <span className="tab-type-icon"><TSettings /></span><span className="label">{tr('Ustawienia')}</span>
         <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); setUi({ settingsTabOpen: false, settingsActive: false }); }}><IX /></button>
       </div>}
-      {editors.map((e) => (
-        <div key={e.id} {...dragProps(`ssh:${e.id}`)} style={{ order: order.indexOf(`ssh:${e.id}`) }} className={`tab ssh-tab ${activeKey === 'ssh' && activeEditorId === e.id ? 'active' : ''}`}
-          onClick={() => activateSshEditor(e.id)} onAuxClick={(ev) => { if (ev.button === 1) closeSshEditor(e.id); }}>
-          <span className="tab-type-icon" aria-hidden="true"><TTerminal /></span><span className="label">{sshEditorTitleText(e, s, vault, tr)}</span>
-          <button className="x" aria-label={tr('Zamknij')} onClick={(ev) => { ev.stopPropagation(); closeSshEditor(e.id); }}><IX /></button>
+      {sshOpen && (
+        <div {...dragProps('ssh')} style={{ order: order.indexOf('ssh') }} className={`tab ssh-tab ${activeKey === 'ssh' ? 'active' : ''}`}
+          onClick={activateSshView} onAuxClick={(ev) => { if (ev.button === 1) closeSshView(); }}>
+          <span className="tab-type-icon" aria-hidden="true"><TTerminal /></span><span className="label">{tr('SSH')}</span>
+          <button className="x" aria-label={tr('Zamknij')} onClick={(ev) => { ev.stopPropagation(); closeSshView(); }}><IX /></button>
         </div>
-      ))}
+      )}
       {project && (
         <>
           {project.tabs.map((t) => {

@@ -81,13 +81,13 @@ export function holdTreeFocus(): void { treeOpen.hold = true; setTimeout(() => {
 export const isFileDirty = (d: FileDocument): boolean => d.text !== d.savedText;
 export function activateFile(id: string): void {
   setUi({ settingsActive: false });
-  useSshStore.setState({ activeEditorId: null });
+  useSshStore.setState({ viewActive: false });
   if (useFileStore.getState().documents.some((d) => d.id === id)) useFileStore.setState({ activeFileId: id });
 }
-export function showTerminalTabs(): void { setUi({ settingsActive: false }); useSshStore.setState({ activeEditorId: null }); useFileStore.setState({ activeFileId: null }); }
+export function showTerminalTabs(): void { setUi({ settingsActive: false }); useSshStore.setState({ viewActive: false }); useFileStore.setState({ activeFileId: null }); }
 export async function openFile(projectId: string, relativePath: string): Promise<void> {
   setUi({ settingsActive: false });
-  useSshStore.setState({ activeEditorId: null });
+  useSshStore.setState({ viewActive: false });
   const path = relativePath.replace(/\\/g, '/');
   const id = documentId(projectId, path);
   const existing = useFileStore.getState().documents.find((d) => d.id === id);

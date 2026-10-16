@@ -6,12 +6,12 @@ import type { MessageKey } from '../../../../shared/i18n';
 import { useI18n } from '../../i18n';
 import { askChoice, toast, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
-import { closeSshEditor, openSshEditor } from '../../ssh';
+import { showSshDetail } from '../../ssh';
 
 /** A failed change of a stored key is a write failure, not a failed generation. */
 const changeErrorKey = (error: KeyError): MessageKey | null => (error === 'failed' ? 'Nie udało się zapisać zmian' : draftErrorKey(error));
 
-export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string }) {
+export function KeyEditor({ keyId }: { keyId: string }) {
   const { tr } = useI18n();
   const key = useSshStore((st) => st.vault?.keys.find((k) => k.id === keyId));
   const readOnly = useSshStore((st) => !!st.vault?.readOnly);
@@ -47,7 +47,7 @@ export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string
   const remove = async () => {
     const title = hosts.length ? tr('Klucz jest używany przez {count} hostów. Usunąć go?', { count: hosts.length }) : tr('Usunąć klucz {name}?', { name: key.label });
     if (await askChoice(title, '', [{ label: tr('Usuń klucz'), value: 'yes', danger: true }]) !== 'yes') return;
-    if ((await window.mc.ssh.removeKey(key.id)).ok) closeSshEditor(editorId);
+    if ((await window.mc.ssh.removeKey(key.id)).ok) showSshDetail(null);
     else setError(tr('Nie udało się zapisać zmian'));
   };
   const copyPublic = () => { window.mc.clipboardWrite(key.publicKey); toast(tr('Skopiowano klucz publiczny')); };
@@ -96,7 +96,7 @@ export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string
                 <button type="button" className="btn" disabled={!passphrase || key.locked} onClick={() => { const value = passphrase; setPassphrase(''); void change(window.mc.ssh.updateKey({ id: key.id, passphrase: { save: value } })); }}>{tr('Zapisz hasło klucza')}</button></div>}
         </div>}
         <div className="ssh-field"><span>{tr('Hosty używające klucza')}</span>
-          {hosts.length ? <ul className="ssh-list">{hosts.map((h) => <li key={h.id}><button type="button" className="btn small ghost" onClick={() => openSshEditor('host', h.id)}>{h.label}</button></li>)}</ul> : <span className="ssh-card-hint">-</span>}
+          {hosts.length ? <ul className="ssh-list">{hosts.map((h) => <li key={h.id}><button type="button" className="btn small ghost" onClick={() => showSshDetail({ kind: 'host', hostId: h.id })}>{h.label}</button></li>)}</ul> : <span className="ssh-card-hint">-</span>}
         </div>
       </div>
       <div className="ssh-actions">

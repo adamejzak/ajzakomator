@@ -4,6 +4,7 @@ import { activeProject } from '../../../shared/state';
 import { useGitProbe, useGitProbeSync } from '../git/gitProbe';
 import { panelOpenable, railClick, railFocusTarget, resolvePanelId, visiblePanels } from '../../../shared/sidebarPanels';
 import { SIDEBAR_PANELS } from '../panelRegistry';
+import { useSshStore } from '../sshStore';
 import { setUi, update, useStore } from '../store';
 import { PanelResizeHandle, type PanelResizeProps } from './PanelResizeHandle';
 import { UsagePanel } from './UsagePanel';
@@ -19,14 +20,16 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
   const hasProject = useStore((st) => !!activeProject(st.s));
   const projectId = useStore((st) => activeProject(st.s)?.id);
   const projectPath = useStore((st) => activeProject(st.s)?.path);
+  const sshActive = useSshStore((st) => st.viewActive);
   useGitProbeSync(projectId, projectPath);
   const git = useGitProbe(projectId);
   const rail = useRef<HTMLDivElement>(null);
   const ctx = { hasProject, platform: window.mc.platform, git };
   const panels = visiblePanels(SIDEBAR_PANELS, ctx);
+  const contentPanels = panels.filter((panel) => !panel.opensView);
   const view = resolvePanelId(panels, wanted, ctx);
-  const active = panels.find((panel) => panel.id === view) ?? panels[0];
-  const Content = active.component;
+  const active = contentPanels.find((panel) => panel.id === view) ?? contentPanels[0];
+  const Content = active.component ?? (() => null);
 
   const choose = (id: string) => {
     const next = railClick({ collapsed, view }, id);
@@ -47,7 +50,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
         <div ref={rail} className="rail-tiles" role="tablist" aria-orientation="vertical" aria-label={tr("Panele boczne")} onKeyDown={onKeyDown}>
           {panels.map((panel) => {
             const reason = panel.unavailableReason?.(ctx) ?? null;
-            const shown = !collapsed && panel.id === active.id;
+            const shown = panel.opensView ? sshActive : !collapsed && panel.id === active.id;
             const Icon = panel.icon;
             const label = tr(panel.label);
             return (
@@ -58,12 +61,16 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
                 role="tab"
                 className={`rail-tile ${shown ? 'on' : ''}`}
                 aria-selected={shown}
-                aria-controls={shown ? `sidebar-${panel.id}` : undefined}
+                aria-controls={shown && !panel.opensView ? `sidebar-${panel.id}` : undefined}
                 aria-disabled={reason ? true : undefined}
                 aria-label={label}
                 tabIndex={panel.id === active.id ? 0 : -1}
-                title={reason ? tr(reason) : shown ? `${label} · ${tr("Kliknij ponownie, aby zwinąć panel")}` : label}
-                onClick={() => { if (panelOpenable(panel, ctx)) choose(panel.id); }}
+                title={reason ? tr(reason) : shown && !panel.opensView ? `${label} · ${tr("Kliknij ponownie, aby zwinąć panel")}` : label}
+                onClick={() => {
+                  if (!panelOpenable(panel, ctx)) return;
+                  if (panel.opensView) { panel.onActivate?.(); return; }
+                  choose(panel.id);
+                }}
               ><Icon /></button>
             );
           })}

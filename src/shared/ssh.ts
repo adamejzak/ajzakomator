@@ -543,24 +543,7 @@ export function sshCellStart(input: { alive: boolean; connectOnMount: boolean })
   return input.alive ? 'attach' : input.connectOnMount ? 'connect' : 'idle';
 }
 
-// ── editor tabs ──────────────────────────────────────────────────────────────
-
-export interface SshEditorRef { id: string; kind: 'host' | 'key' | 'newKey'; targetId?: string }
-
-/** A host or key that already has a tab is focused, never opened twice; `newKey` and a new host always open a new tab. */
-export function openEditorTab(list: readonly SshEditorRef[], kind: SshEditorRef['kind'], targetId: string | undefined, newId: string): { list: SshEditorRef[]; id: string } {
-  const existing = targetId ? list.find((e) => e.kind === kind && e.targetId === targetId) : undefined;
-  if (existing) return { list: [...list], id: existing.id };
-  return { list: [...list, { id: newId, kind, ...(targetId ? { targetId } : {}) }], id: newId };
-}
-
-/** Closing the active tab activates its neighbour (the next one, else the previous one). */
-export function closeEditorTab(list: readonly SshEditorRef[], activeId: string | null, id: string): { list: SshEditorRef[]; activeId: string | null } {
-  const index = list.findIndex((e) => e.id === id);
-  const rest = list.filter((e) => e.id !== id);
-  if (activeId !== id) return { list: rest, activeId };
-  return { list: rest, activeId: rest[Math.min(index, rest.length - 1)]?.id ?? null };
-}
+// ── key editors ──────────────────────────────────────────────────────────────
 
 export function draftErrorKey(error: DraftError | KeyError | 'cancelled'): MessageKey | null {
   switch (error) {

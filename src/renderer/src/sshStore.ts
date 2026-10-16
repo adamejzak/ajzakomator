@@ -1,16 +1,19 @@
-// Renderer SSH state (R1): vault info, session states and open prompts per cell, editor tabs. No imports of actions, files or terminals.
+// Renderer SSH state (R1): vault info, session states and open prompts per cell, the SSH view (W3). No imports of actions, files or terminals.
 import { create } from 'zustand';
-import { applySshSnapshot, type SshEditorRef, type SshPrompt, type SshSessionState, type SshSessionsSnapshot, type SshVaultInfo } from '../../shared/ssh';
-
-export type SshEditorTab = SshEditorRef;
+import { applySshSnapshot, type SshPrompt, type SshSessionState, type SshSessionsSnapshot, type SshVaultInfo } from '../../shared/ssh';
+import type { SshDetail } from '../../shared/sshView';
 
 interface SshStore {
   vault: SshVaultInfo | null;
   sessions: Record<string, SshSessionState>;
   prompts: Record<string, SshPrompt>;
-  editors: SshEditorTab[];
-  activeEditorId: string | null;
-  /** Ctrl/Cmd+click selection in the host list (Task 9). */
+  /** The SSH workspace tab exists (W3); it stays mounted while open, also when another tab is in front. */
+  viewOpen: boolean;
+  /** The SSH view is the workspace on screen (Settings still wins, see activeWorkspaceKey). */
+  viewActive: boolean;
+  /** What its details pane shows. */
+  detail: SshDetail | null;
+  /** Ctrl/Cmd+click selection of host tiles. */
   selectedHosts: string[];
   setVault(vault: SshVaultInfo): void;
   setSession(state: SshSessionState): void;
@@ -20,7 +23,7 @@ interface SshStore {
 }
 
 export const useSshStore = create<SshStore>((set) => ({
-  vault: null, sessions: {}, prompts: {}, editors: [], activeEditorId: null, selectedHosts: [],
+  vault: null, sessions: {}, prompts: {}, viewOpen: false, viewActive: false, detail: null, selectedHosts: [],
   setVault: (vault) => set({ vault }),
   setSession: (state) => set((st) => ({ sessions: { ...st.sessions, [state.cellId]: state } })),
   setPrompt: (cellId, prompt) => set((st) => {

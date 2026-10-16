@@ -7,7 +7,7 @@ import { getProfile, PROJECT_COLORS, updateCell } from '../../../shared/state';
 import { missingCardCli } from '../../../shared/cliStatus';
 import { sshHeaderName, sshPhaseLabel, userAtEndpoint } from '../../../shared/ssh';
 import { useSshStore } from '../sshStore';
-import { disconnectCell, openSshEditor, reconnectCell, sshContext } from '../ssh';
+import { disconnectCell, openSshView, reconnectCell, sshContext } from '../ssh';
 import { SshCellCard } from './ssh/SshCellCard';
 import { profileOptionLabel } from '../cliUi';
 import { CliMissingCard } from './CliMissingCard';
@@ -85,7 +85,7 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
   const sshItems = (): MenuItem[] => [
     { label: tr('Połącz ponownie'), onClick: () => void reconnectCell(cell.id) },
     { label: tr('Rozłącz'), onClick: () => disconnectCell(cell.id) },
-    ...(host ? [{ label: tr('Edytuj host'), onClick: () => openSshEditor('host', host.id) }] : []),
+    ...(host ? [{ label: tr('Edytuj host'), onClick: () => openSshView({ kind: 'host', hostId: host.id }) }] : []),
     ...(host ? [{ label: tr('Kopiuj adres'), onClick: () => window.mc.clipboardWrite(userAtEndpoint(host)) }] : []),
   ];
 

@@ -3,9 +3,8 @@
 // the other at load time (only inside functions).
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell, removeSshHost } from '../../shared/state';
-import { closeEditorTab, connectingNotice, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
-import type { MessageKey, MessageParams } from '../../shared/i18n';
-import type { AppState } from '../../shared/types';
+import { connectingNotice, hostEndpoint, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshPrompt, type SshSessionState } from '../../shared/ssh';
+import type { SshDetail } from '../../shared/sshView';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
 import { tr } from './i18n';
@@ -33,7 +32,7 @@ const cellVisible = (cellId: string): boolean => {
   return sshCellVisible({
     cellId,
     inActiveTab: !!tab?.cells.some((c) => c.id === cellId),
-    covered: getUi().settingsActive || !!useSshStore.getState().activeEditorId || !!useFileStore.getState().activeFileId,
+    covered: getUi().settingsActive || useSshStore.getState().viewActive || !!useFileStore.getState().activeFileId,
     maximizedCellId: max && tab?.cells.some((c) => c.id === max) ? max : null,
   });
 };
@@ -156,35 +155,23 @@ export async function confirmRemoveSshHost(hostId: string): Promise<boolean> {
   return true;
 }
 
-// ── editor tabs (spec 10.2) ──────────────────────────────────────────────────
+// ── the SSH view (W3) ────────────────────────────────────────────────────────
 
-/** The title of an editor tab, as plain text (used by the tab strip and the all-tabs menu). */
-export function sshEditorTitleText(editor: SshEditorRef, state: AppState, vault: SshVaultInfo | null, t: (key: MessageKey, params?: MessageParams) => string): string {
-  if (editor.kind === 'newKey') return t('Nowy klucz');
-  if (editor.kind === 'host') return state.sshHosts.find((h) => h.id === editor.targetId)?.label ?? t('Nowy host');
-  return vault?.keys.find((k) => k.id === editor.targetId)?.label ?? t('Klucz');
-}
-
-export function openSshEditor(kind: SshEditorRef['kind'], targetId?: string): void {
-  const { editors } = useSshStore.getState();
-  const r = openEditorTab(editors, kind, targetId, crypto.randomUUID());
-  useSshStore.setState({ editors: r.list, activeEditorId: r.id });
+/** Opens the SSH workspace tab and brings it to the front; with a detail, the pane shows that host or key. */
+export function openSshView(detail?: SshDetail): void {
+  useSshStore.setState(detail ? { viewOpen: true, viewActive: true, detail } : { viewOpen: true, viewActive: true });
   setUi({ settingsActive: false });
 }
 
-export function activateSshEditor(id: string): void {
-  if (!useSshStore.getState().editors.some((e) => e.id === id)) return;
-  useSshStore.setState({ activeEditorId: id });
+export function activateSshView(): void {
+  useSshStore.setState({ viewActive: true });
   setUi({ settingsActive: false });
 }
 
-export function closeSshEditor(id: string): void {
-  const { editors, activeEditorId } = useSshStore.getState();
-  const r = closeEditorTab(editors, activeEditorId, id);
-  useSshStore.setState({ editors: r.list, activeEditorId: r.activeId });
+export function closeSshView(): void {
+  useSshStore.setState({ viewOpen: false, viewActive: false, detail: null, selectedHosts: [] });
 }
 
-/** "Nowy host" saved, or a new key stored: the same tab now edits that host or key. */
-export function retargetSshEditor(id: string, kind: 'host' | 'key', targetId: string): void {
-  useSshStore.setState((st) => ({ editors: st.editors.map((e) => (e.id === id ? { id, kind, targetId } : e)) }));
+export function showSshDetail(detail: SshDetail | null): void {
+  useSshStore.setState({ detail });
 }

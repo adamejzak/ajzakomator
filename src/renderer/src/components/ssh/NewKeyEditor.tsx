@@ -1,11 +1,11 @@
 // A new key (spec 7.1, 7.2, 10.2): generate, import a file (picker or drop) or paste. Imports are drafts held in main;
 // the pasted private text is cleared right after it was sent and when the paste mode is left, passphrases on submit.
-// The editor stays mounted while its tab is open (SshEditorScreen); a draft that was never stored is discarded when the tab closes.
+// The editor stays mounted while the SSH view is open; a draft that was never stored is discarded when the pane shows something else or the view closes.
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { DEFAULT_KEY_BITS, draftErrorKey, KEY_SIZES, READ_ONLY_VAULT_HINT, newKeyProblem, type DraftResult, type SshKeyType } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { toast } from '../../store';
-import { activateSshEditor, retargetSshEditor } from '../../ssh';
+import { showSshDetail } from '../../ssh';
 import { useSshStore } from '../../sshStore';
 import { Select } from '../Select';
 import { useClearWhenHidden } from './paneVisibility';
@@ -13,7 +13,7 @@ import { useClearWhenHidden } from './paneVisibility';
 type Mode = 'generate' | 'file' | 'paste';
 type Draft = Extract<DraftResult, { ok: true }>;
 
-export function NewKeyEditor({ editorId, initialMode }: { editorId: string; initialMode?: Mode }) {
+export function NewKeyEditor({ initialMode }: { initialMode?: Mode }) {
   const { tr } = useI18n();
   const storage = useSshStore((st) => st.vault?.storage);
   const readOnly = useSshStore((st) => !!st.vault?.readOnly);
@@ -32,14 +32,14 @@ export function NewKeyEditor({ editorId, initialMode }: { editorId: string; init
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  // D4: a hidden tab keeps the label, comment and draft, never a typed passphrase or a pasted private key.
+  // D4: a hidden pane keeps the label, comment and draft, never a typed passphrase or a pasted private key.
   useClearWhenHidden(() => { setPassphrase(''); setRepeat(''); setPrivateText(''); });
   const draftRef = useRef<string | null>(null);
   draftRef.current = draft?.draftId ?? null;
-  // Unmount = the tab closed (or became the stored key's tab, then draftRef is already null): drop the draft in main.
+  // Unmount = the pane shows another item or the view closed (after a stored key draftRef is already null): drop the draft in main.
   useEffect(() => () => { if (draftRef.current) window.mc.ssh.discardDraft(draftRef.current); }, []);
 
-  const done = (keyId: string) => { draftRef.current = null; setDraft(null); retargetSshEditor(editorId, 'key', keyId); activateSshEditor(editorId); };
+  const done = (keyId: string) => { draftRef.current = null; setDraft(null); showSshDetail({ kind: 'key', keyId }); };
   const takeDraft = (r: DraftResult | { ok: false; error: 'cancelled' }) => {
     if (!r.ok) { const key = draftErrorKey(r.error); setError(key ? tr(key) : null); return; }
     setError(null);

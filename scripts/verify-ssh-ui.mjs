@@ -81,7 +81,7 @@ const PARTS = {
       if (!existsSync(join(root, 'data', 'ssh', 'known_hosts.json'))) throw new Error('host key was not saved');
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },
-  /** Task 9: new host from the palette, save and connect; generate a key and copy its public key; import by drop and by paste. */
+  /** Task 9, W3: new host from the palette in the SSH view's details pane, save and connect; generate a key and copy its public key; import by drop and by paste. */
   async editors() {
     const server = await startTestServer();
     const root = scratchRoot('editors');
@@ -101,81 +101,73 @@ const PARTS = {
           await app.until(`document.querySelector('.palette-item.sel .ptitle')?.textContent === ${JSON.stringify(title)}`, `palette entry ${title}`);
           await app.press('Enter');
         };
-        // Every open editor stays mounted (hidden when not active): selectors are scoped to the visible one.
-        const A = '.ssh-editor-screen.active';
-        const fieldValues = () => app.evaluate(`[...document.querySelectorAll('${A} [data-field]')].map((e) => e.value).join('|')`);
+        const D = '.ssh-view-detail';
+        const fieldValues = () => app.evaluate(`[...document.querySelectorAll('${D} [data-field]')].map((e) => e.value).join('|')`);
+        const hidden = `getComputedStyle(document.querySelector('.ssh-workspace')).display === 'none'`;
+        const showGrid = () => app.evaluate(`document.querySelector('.workspace-tabs .grid-tab').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
         await palette('SSH: nowy host');
-        await app.until(`!!document.querySelector('${A} [data-field=address]')`, 'host editor');
-        await app.until(`document.querySelector('.workspace-tabs .ssh-tab.active .label')?.textContent === 'Nowy host'`, 'active editor tab');
-        await app.setValue(`${A} [data-field=label]`, 'local test');
-        await app.setValue(`${A} [data-field=address]`, '127.0.0.1');
-        // A half-filled host editor survives switching to another editor tab and to Settings.
-        await palette('SSH: nowy klucz');
-        await app.until(`!!document.querySelector('${A} .ssh-segmented')`, 'new key tab in front');
-        // D4: a hidden editor keeps its label but forgets a typed passphrase.
-        await app.setValue(`${A} [data-field=newKeyLabel]`, 'kept label');
-        await app.setValue(`${A} input[type=password]`, 'typed-secret');
-        await app.click('.workspace-tabs .ssh-tab', 'Nowy host');
-        await app.until(`!!document.querySelector('${A} [data-field=address]')`, 'host editor in front');
-        if (await app.evaluate(`[...document.querySelectorAll('.ssh-editor-screen input[type=password]')].some((e) => e.value)`)) throw new Error('a hidden editor still holds a typed secret');
-        await app.click('.workspace-tabs .ssh-tab', 'Nowy klucz');
-        await app.until(`document.querySelector('${A} [data-field=newKeyLabel]')?.value === 'kept label'`, 'new key label kept');
-        await app.click('.workspace-tabs .ssh-tab', 'Nowy host');
-        await app.until(`!!document.querySelector('${A} [data-field=address]')`, 'host editor again');
-        if (await fieldValues() !== 'local test|127.0.0.1|22|') throw new Error(`host editor lost its input: ${await fieldValues()}`);
+        await app.until(`!!document.querySelector('${D} [data-field=address]') && !!document.querySelector('.workspace-tabs .ssh-tab.active')`, 'host form in the SSH view');
+        await app.setValue(`${D} [data-field=label]`, 'local test');
+        await app.setValue(`${D} [data-field=address]`, '127.0.0.1');
+        // A half-filled host form survives Settings in front (the view stays mounted).
         await app.click('button[aria-label="Ustawienia"]');
-        await app.until(`!document.querySelector('${A}')`, 'settings in front');
-        await app.click('.workspace-tabs .ssh-tab', 'Nowy host');
-        await app.until(`!!document.querySelector('${A} [data-field=address]')`, 'host editor after settings');
-        if (await fieldValues() !== 'local test|127.0.0.1|22|') throw new Error(`host editor lost its input after Settings: ${await fieldValues()}`);
-        await app.setValue(`${A} [data-field=port]`, String(server.port));
-        await app.setValue(`${A} [data-field=username]`, 'alice');
+        await app.until(hidden, 'settings in front');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`!!document.querySelector('${D} [data-field=address]') && !(${hidden})`, 'host form after settings');
+        if (await fieldValues() !== 'local test|127.0.0.1|22|') throw new Error(`host form lost its input: ${await fieldValues()}`);
+        await app.setValue(`${D} [data-field=port]`, String(server.port));
+        await app.setValue(`${D} [data-field=username]`, 'alice');
         await app.screenshot('ssh-host-editor.png');
-        await app.click(`${A} .ssh-editor button`, 'Zapisz i połącz');
+        await app.click(`${D} .ssh-editor button`, 'Zapisz i połącz');
         await app.until(`!!document.querySelector('.cell .ssh-fingerprint')`, 'host key prompt in the new cell');
-        // The same tab now edits the saved host.
-        await app.until(`document.querySelector('.workspace-tabs .ssh-tab .label')?.textContent === 'local test'`, 'retargeted editor tab');
         await app.click('.ssh-card button', 'Zaufaj i zapisz');
         await connectWithPassword(app, server.password);
         await connected(app, 1);
-        // The "new key" tab opened above is still there: generate in it.
-        await app.click('.workspace-tabs .ssh-tab', 'Nowy klucz');
-        await app.until(`!!document.querySelector('${A} .ssh-segmented')`, 'new key editor');
-        await app.setValue(`${A} [data-field=newKeyLabel]`, 'check key');
+        // Back in the view: the pane edits the saved host and its tile shows it connected.
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`document.querySelector('${D} h2')?.textContent === 'local test' && !!document.querySelector('.ssh-tile .ssh-state.connected')`, 'saved host with a connected tile');
+        await app.screenshot('ssh-view-host.png');
+        // D4: a typed passphrase does not survive the view going to the background; the label does.
+        await app.click('.ssh-view-head button', 'Nowy klucz');
+        await app.click('.menu [role=menuitem]', 'Wygeneruj klucz');
+        await app.until(`!!document.querySelector('${D} .ssh-segmented')`, 'new key form');
+        await app.setValue(`${D} [data-field=newKeyLabel]`, 'check key');
+        await app.setValue(`${D} input[type=password]`, 'typed-secret');
+        await showGrid();
+        await app.until(hidden, 'grid in front');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`document.querySelector('${D} [data-field=newKeyLabel]')?.value === 'check key'`, 'label kept');
+        if (await app.evaluate(`[...document.querySelectorAll('${D} input[type=password]')].some((e) => e.value)`)) throw new Error('a hidden pane still held a typed secret');
         await app.screenshot('ssh-newkey-editor.png');
-        await app.click(`${A} .ssh-editor button.primary`, 'Wygeneruj klucz');
-        await app.until(`!!document.querySelector('${A} .ssh-public')`, 'key editor with public key', 60000);
-        const pub = await app.evaluate(`document.querySelector('${A} .ssh-public').textContent`);
+        await app.click(`${D} .ssh-editor button.primary`, 'Wygeneruj klucz');
+        await app.until(`!!document.querySelector('${D} .ssh-public')`, 'key with its public key', 60000);
+        const pub = await app.evaluate(`document.querySelector('${D} .ssh-public').textContent`);
         if (!/^ssh-ed25519 \S+ unimux@/.test(pub)) throw new Error(`unexpected public key: ${pub}`);
-        await app.click(`${A} .ssh-editor button`, 'Kopiuj klucz publiczny');
+        await app.click(`${D} .ssh-editor button`, 'Kopiuj klucz publiczny');
         await app.screenshot('ssh-key-editor.png');
-        // Drag and drop of a private key file onto the drop zone.
+        // Drag and drop of a private key file onto the drop zone; the draft survives a grid in front.
         await palette('SSH: nowy klucz');
-        await app.until(`document.querySelectorAll('.workspace-tabs .ssh-tab').length === 3`, 'second new key tab');
-        await app.click(`${A} .ssh-segmented button`, 'Importuj z pliku');
-        await app.until(`!!document.querySelector('${A} .ssh-drop')`, 'drop zone');
-        const box = await app.evaluate(`(() => { const r = document.querySelector('${A} .ssh-drop').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+        await app.click(`${D} .ssh-segmented button`, 'Importuj z pliku');
+        await app.until(`!!document.querySelector('${D} .ssh-drop')`, 'drop zone');
+        const box = await app.evaluate(`(() => { const r = document.querySelector('${D} .ssh-drop').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
         const data = { items: [], files: [keyFile], dragOperationsMask: 1 };
         for (const type of ['dragEnter', 'dragOver', 'drop']) await app.cdp('Input.dispatchDragEvent', { type, x: box.x, y: box.y, data });
-        await app.until(`document.querySelector('${A} .ssh-facts dd')?.textContent === 'ssh-ed25519'`, 'dropped key draft');
-        await app.screenshot('ssh-newkey-dropped.png');
-        // The uncommitted draft survives a switch to the grid and back.
-        // Grid tabs select on mousedown.
-        await app.evaluate(`document.querySelector('.workspace-tabs .grid-tab').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
-        await app.until(`!document.querySelector('${A}')`, 'grid in front');
-        await app.click('.workspace-tabs .ssh-tab', 'Nowy klucz');
-        await app.until(`document.querySelector('${A} .ssh-public')?.textContent.includes('dropped@check')`, 'draft kept after the grid');
-        await app.click(`${A} .ssh-editor button.primary`, 'Zapisz');
-        await app.until(`document.querySelector('${A} .ssh-public')?.textContent.includes('dropped@check') && !document.querySelector('${A} .ssh-segmented')`, 'dropped key stored');
+        await app.until(`document.querySelector('${D} .ssh-facts dd')?.textContent === 'ssh-ed25519'`, 'dropped key draft');
+        await showGrid();
+        await app.until(hidden, 'grid in front again');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`document.querySelector('${D} .ssh-public')?.textContent.includes('dropped@check')`, 'draft kept after the grid');
+        await app.click(`${D} .ssh-editor button.primary`, 'Zapisz');
+        await app.until(`document.querySelector('${D} .ssh-public')?.textContent.includes('dropped@check') && !document.querySelector('${D} .ssh-segmented')`, 'dropped key stored');
         // Pasted private key text.
         await palette('SSH: nowy klucz');
-        await app.click(`${A} .ssh-segmented button`, 'Wklej klucz');
-        await app.until(`!!document.querySelector('${A} .ssh-editor textarea')`, 'paste form');
-        await app.setValue(`${A} .ssh-editor textarea`, pasted.private);
-        await app.click(`${A} .ssh-editor button.primary`, 'Dalej');
-        await app.until(`document.querySelector('${A} .ssh-facts dd')?.textContent === 'ecdsa-sha2-nistp256'`, 'pasted key draft');
-        await app.click(`${A} .ssh-editor button.primary`, 'Zapisz');
-        await app.until(`document.querySelector('${A} .ssh-public')?.textContent.includes('pasted@check') && !document.querySelector('${A} .ssh-segmented')`, 'pasted key stored');
+        await app.click(`${D} .ssh-segmented button`, 'Wklej klucz');
+        await app.until(`!!document.querySelector('${D} .ssh-editor textarea')`, 'paste form');
+        await app.setValue(`${D} .ssh-editor textarea`, pasted.private);
+        await app.click(`${D} .ssh-editor button.primary`, 'Dalej');
+        await app.until(`document.querySelector('${D} .ssh-facts dd')?.textContent === 'ecdsa-sha2-nistp256'`, 'pasted key draft');
+        await app.click(`${D} .ssh-editor button.primary`, 'Zapisz');
+        await app.until(`document.querySelector('${D} .ssh-public')?.textContent.includes('pasted@check') && !document.querySelector('${D} .ssh-segmented')`, 'pasted key stored');
         const keys = await app.evaluate(`window.mc.ssh.vaultInfo().then((v) => v.keys.map((k) => k.label))`);
         if (keys.length !== 3) throw new Error(`expected 3 keys in the vault, found ${JSON.stringify(keys)}`);
       } finally { await app.close(); }
@@ -185,14 +177,14 @@ const PARTS = {
       if (!state.includes('"local test"') || state.includes('PRIVATE KEY') || state.includes(server.password)) throw new Error('state.json: host missing or a secret leaked');
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },
-  /** Task 9 fix: with no project at all, the palette still opens the SSH editors and a host can be saved. */
+  /** Task 9 fix: with no project at all, the palette still opens the SSH view and a host can be saved. */
   async editorsNoProject() {
     const root = scratchRoot('editors-noproject');
     try {
       writeState(root, { version: 1, settings: { language: 'pl' }, sshHosts: [], projects: [], activeProjectId: null });
       const app = await launchApp(root);
       try {
-        const A = '.ssh-editor-screen.active';
+        const A = '.ssh-view-detail';
         for (const title of ['SSH: nowy klucz', 'SSH: nowy host']) {
           await app.click('button[aria-label="Szukaj wszędzie"]');
           await app.until(`!!document.querySelector('.palette input')`, 'palette');
@@ -204,14 +196,14 @@ const PARTS = {
         await app.setValue(`${A} [data-field=address]`, 'example.invalid');
         await app.setValue(`${A} [data-field=username]`, 'bob');
         await app.click(`${A} .ssh-editor button.primary`, 'Zapisz');
-        await app.until(`document.querySelector('.workspace-tabs .ssh-tab.active .label')?.textContent === 'example.invalid'`, 'host saved without a project');
+        await app.until(`document.querySelector('${A} h2')?.textContent === 'example.invalid'`, 'host saved without a project');
         await app.screenshot('ssh-editor-no-project.png');
         await sleep(2500); // state.json is written debounced
       } finally { await app.close(); }
       if (!readFileSync(join(root, 'data', 'state.json'), 'utf8').includes('"example.invalid"')) throw new Error('host not stored');
     } finally { rmSync(root, { recursive: true, force: true }); }
   },
-  /** Task 10: the SSH tile opens, hosts are grouped and searchable, folding and multi-select work, a group opens as a 3-cell grid. */
+  /** Task 10, W3: the SSH tile opens the SSH view, hosts are tiles by group and searchable, folding, details and multi-select work, a group opens as a 3-cell grid. */
   async panel() {
     const server = await startTestServer();
     const root = scratchRoot('ssh-panel');
@@ -221,35 +213,38 @@ const PARTS = {
       const app = await launchApp(root);
       try {
         await app.click('.rail-tiles [aria-label="SSH"]');
-        await app.until(`!!document.querySelector('.ssh-hosts')`, 'host list');
+        await app.until(`!!document.querySelector('.ssh-view') && !!document.querySelector('.workspace-tabs .ssh-tab.active')`, 'SSH view in the main area');
+        if (await app.evaluate(`!!document.querySelector('.side-panel .ssh-tile')`)) throw new Error('hosts are still listed in the left panel');
         const heads = await app.evaluate(`[...document.querySelectorAll('.ssh-group-head .grow')].map((e) => e.textContent)`);
         if (JSON.stringify(heads) !== JSON.stringify(['lab', 'Bez grupy'])) throw new Error(`groups: ${heads}`);
-        const sections = await app.evaluate(`[...document.querySelectorAll('.terminal-heading')].map((e) => e.textContent)`);
+        const sections = await app.evaluate(`[...document.querySelectorAll('.ssh-view-heading')].map((e) => e.textContent)`);
         if (JSON.stringify(sections) !== JSON.stringify(['Hosty', 'Klucze', 'Lokalne powłoki'])) throw new Error(`sections: ${sections}`);
-        await app.screenshot('ssh-panel.png');
-        // Search narrows the list.
-        await app.setValue('.ssh-search', 'pi');
-        await app.until(`document.querySelectorAll('.ssh-host-row').length === 1`, 'search narrows the list');
-        await app.setValue('.ssh-search', '');
-        await app.until(`document.querySelectorAll('.ssh-host-row').length === 4`, 'all hosts back');
-        // Folding a group hides its hosts and is remembered.
+        await app.screenshot('ssh-view.png');
+        // Search narrows the tiles.
+        await app.setValue('.ssh-view-head .ssh-search', 'pi');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 1`, 'search narrows the tiles');
+        await app.setValue('.ssh-view-head .ssh-search', '');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 4`, 'all hosts back');
+        // Folding a group hides its tiles and is remembered.
         await app.click('.ssh-group-head', 'lab');
-        await app.until(`document.querySelectorAll('.ssh-host-row').length === 1 && !!document.querySelector('.ssh-group-head .chev-right')`, 'folded group');
-        await app.screenshot('ssh-panel-folded.png');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 1 && !!document.querySelector('.ssh-group-head .chev-right')`, 'folded group');
         if (await app.evaluate(`localStorage.getItem('mc-ssh-groups-v1')`) !== '["lab"]') throw new Error('fold state not stored');
         await app.click('.ssh-group-head', 'lab');
-        await app.until(`document.querySelectorAll('.ssh-host-row').length === 4`, 'expanded group');
-        // Ctrl+click selects; the grid button counts the selection.
-        await app.evaluate(`(() => { for (const row of [...document.querySelectorAll('.ssh-host-row')].filter((r) => /web-1|pi/.test(r.textContent))) row.querySelector('.terminal-source-main').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return true; })()`);
-        await app.until(`document.querySelectorAll('.ssh-host-row.selected').length === 2 && document.querySelector('.ssh-open-grid')?.textContent === 'Otwórz jako siatkę (2)'`, 'two hosts selected');
-        await app.screenshot('ssh-panel-selected.png');
-        await app.evaluate(`(() => { for (const row of document.querySelectorAll('.ssh-host-row.selected')) row.querySelector('.terminal-source-main').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return true; })()`);
-        await app.until(`!document.querySelector('.ssh-open-grid') && !document.querySelector('.ssh-host-row.selected')`, 'selection cleared');
-        // A group opens as a grid named after it.
-        await app.evaluate(`(() => { const head = [...document.querySelectorAll('.ssh-group-head')].find((e) => e.textContent.includes('lab')); head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 })); return true; })()`);
-        await app.click('.menu [role=menuitem]', 'Otwórz jako siatkę');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 4`, 'expanded group');
+        // A click shows the host in the details pane with its two actions.
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1' && [...document.querySelectorAll('.ssh-detail-actions button')].map((b) => b.textContent).join('|') === 'Połącz|Otwórz w nowym gridzie'`, 'host details');
+        await app.screenshot('ssh-view-details.png');
+        // Ctrl+click selects; the bar counts the selection and clears it.
+        await app.evaluate(`(() => { for (const tile of [...document.querySelectorAll('.ssh-tile[data-host-id]')].filter((t) => /web-1|pi/.test(t.textContent))) tile.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return true; })()`);
+        await app.until(`document.querySelectorAll('.ssh-tile.selected').length === 2 && document.querySelector('.ssh-open-grid')?.textContent === 'Otwórz jako siatkę (2)'`, 'two hosts selected');
+        await app.screenshot('ssh-view-selected.png');
+        await app.click('.ssh-view-selection button', 'Wyczyść zaznaczenie');
+        await app.until(`!document.querySelector('.ssh-open-grid') && !document.querySelector('.ssh-tile.selected')`, 'selection cleared');
+        // A group opens as an SSH-only grid named after it; the SSH tab stays open.
+        await app.evaluate(`(() => { const group = [...document.querySelectorAll('.ssh-view-group')].find((g) => g.querySelector('.ssh-group-head')?.textContent.includes('lab')); group.querySelector('.ssh-group-open').click(); return true; })()`);
         await app.until(`document.querySelectorAll('.cell .ssh-fingerprint').length === 3`, 'host key prompt in all three cells');
-        await app.until(`document.querySelector('.workspace-tabs .grid-tab.active .label')?.textContent === 'lab'`, 'tab named after the group');
+        await app.until(`document.querySelector('.workspace-tabs .grid-tab.active .label')?.textContent === 'lab' && !!document.querySelector('.workspace-tabs .ssh-tab')`, 'tab named after the group, SSH tab kept');
         await app.screenshot('ssh-group-grid.png');
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
@@ -313,12 +308,14 @@ const PARTS = {
       const app = await launchApp(root);
       try {
         await app.click('.rail-tiles [aria-label="SSH"]');
-        await app.until(`!!document.querySelector('.ssh-hosts')`, 'host list');
-        await app.evaluate(`(() => { const head = [...document.querySelectorAll('.ssh-group-head')].find((e) => e.textContent.includes('lab')); head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 })); return true; })()`);
-        await app.click('.menu [role=menuitem]', 'Otwórz jako siatkę');
+        await app.until(`!!document.querySelector('.ssh-view .ssh-tile[data-host-id]')`, 'host tiles');
+        await app.click('.ssh-view-group .ssh-group-open');
         await connected(app, 3);
         await app.until(`${CELL_BUFFERS}.length === 3 && ${CELL_BUFFERS}.every((t) => t.includes('połączono') && t.includes('$'))`, 'three cells with a prompt');
-        await app.click('.terminal-panel button', 'Wyślij do wszystkich (3)');
+        // "Wyślij do wszystkich" in the SSH view's header targets the active grid.
+        const showGrid = () => app.evaluate(`[...document.querySelectorAll('.workspace-tabs .grid-tab')].find((t) => t.textContent.includes('lab')).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.click('.ssh-view-head .ssh-broadcast-open', 'Wyślij do wszystkich (3)');
         await app.until(`!!document.querySelector('.ssh-broadcast textarea')`, 'broadcast dialog');
         await app.until(`document.querySelectorAll('.ssh-targets li').length === 3 && document.querySelectorAll('.ssh-targets li.disabled').length === 0 && [...document.querySelectorAll('.ssh-targets input')].every((i) => i.checked)`, 'three connected cells, all checked');
         if (await app.evaluate(`document.querySelector('.ssh-broadcast .modal-foot .btn.white').disabled`) !== true) throw new Error('send button is enabled for an empty command');
@@ -340,10 +337,13 @@ const PARTS = {
         await app.press('Escape');
         await app.until(`!document.querySelector('.ssh-broadcast')`, 'dialog closed by Escape');
         // Disconnect the first cell through its host chip menu.
+        await showGrid();
+        await app.until(`getComputedStyle(document.querySelector('.ssh-workspace')).display === 'none'`, 'grid in front');
         await app.click('.cell-head .ssh-host');
         await app.click('.menu .menu-item', 'Rozłącz');
         await app.until(`document.querySelectorAll('.cell .ssh-bar').length === 1`, 'first cell disconnected');
-        await app.click('.terminal-panel button', 'Wyślij do wszystkich');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.click('.ssh-view-head .ssh-broadcast-open', 'Wyślij do wszystkich');
         await app.until(`document.querySelectorAll('.ssh-targets li').length === 3 && document.querySelectorAll('.ssh-targets li.disabled').length === 1`, 'disconnected cell disabled in the dialog');
         const reason = await app.evaluate(`document.querySelector('.ssh-targets li.disabled .ssh-target-state').textContent`);
         if (reason !== 'rozłączono') throw new Error(`disabled row reason: ${reason}`);
@@ -467,8 +467,11 @@ const PARTS = {
       const app = await launchApp(root, { MC_SSH_NO_SAFESTORAGE: '1' });
       try {
         await app.click('.rail-tiles [aria-label="SSH"]');
-        await app.until(`!!document.querySelector('.ssh-banner-warn')`, 'unavailable banner');
+        await app.until(`!!document.querySelector('.ssh-view .ssh-banner-warn')`, 'unavailable banner');
         await app.screenshot('ssh-no-safestorage.png');
+        // Back to the grid with the SSH cell (grid tabs select on mousedown).
+        await app.evaluate(`document.querySelector('.workspace-tabs .grid-tab').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
+        await app.until(`getComputedStyle(document.querySelector('.ssh-workspace')).display === 'none'`, 'grid in front');
         await app.click('.ssh-card button', 'Połącz');
         await app.until(`!!document.querySelector('.ssh-fingerprint')`, 'host key');
         await app.click('.ssh-card button', 'Zaufaj i zapisz');

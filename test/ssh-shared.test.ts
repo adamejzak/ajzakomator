@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  storageLabel, readOnlyStoreNote, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, closeEditorTab, connectingNotice, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
+  storageLabel, readOnlyStoreNote, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, connectingNotice, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
   broadcastProblem, broadcastRowState, broadcastSend, ptyHostRestartToast, pushHistory, resumesConversation, sshCellsOfTab, cellSourcePatch, cellSourceValue, currentBroadcastResult, connectingBanner, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshModeReset, sshPhaseLabel, sshSpecName, sshSessionEnded, stampBroadcastResults, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -192,24 +192,7 @@ describe('renderer helpers (fix round 1)', () => {
   });
 });
 
-describe('editor tabs', () => {
-  it('focuses the tab of a host or key that is already open, opens new ones otherwise', () => {
-    let r = openEditorTab([], 'host', 'h1', 'e1');
-    expect(r).toEqual({ list: [{ id: 'e1', kind: 'host', targetId: 'h1' }], id: 'e1' });
-    r = openEditorTab(r.list, 'host', 'h1', 'e2');
-    expect(r.id).toBe('e1');
-    r = openEditorTab(r.list, 'newKey', undefined, 'e3');
-    r = openEditorTab(r.list, 'newKey', undefined, 'e4');
-    r = openEditorTab(r.list, 'host', undefined, 'e5');
-    expect(r.list.map((e) => e.id)).toEqual(['e1', 'e3', 'e4', 'e5']);
-  });
-  it('activates a neighbour when the active tab closes', () => {
-    const list = [{ id: 'a', kind: 'newKey' as const }, { id: 'b', kind: 'newKey' as const }, { id: 'c', kind: 'newKey' as const }];
-    expect(closeEditorTab(list, 'b', 'b')).toEqual({ list: [list[0], list[2]], activeId: 'c' });
-    expect(closeEditorTab(list, 'c', 'c').activeId).toBe('b');
-    expect(closeEditorTab(list, 'a', 'b').activeId).toBe('a');
-    expect(closeEditorTab([list[0]], 'a', 'a')).toEqual({ list: [], activeId: null });
-  });
+describe('key editors', () => {
   it('maps import errors and new key form problems to messages', () => {
     expect(draftErrorKey('ppkV3')).toBe('Klucz PuTTY w wersji 3 nie jest obsługiwany. Zapisz go w PuTTYgen jako OpenSSH.');
     expect(draftErrorKey('badPassphrase')).toBe('Nieprawidłowe hasło klucza');
