@@ -14,6 +14,7 @@ import { closeInstall, InstallModal } from './InstallModal';
 import { ChangelogModal } from './Changelog';
 import { FindReplaceModal } from './FindReplace';
 import { GridDialog } from './GridDialog';
+import { BroadcastDialog } from './ssh/BroadcastDialog';
 import { IEdit, IGrip, IX } from './icons';
 import { ProjectIconView } from './ProjectIcon';
 import { FilePreview } from './FilePreview';
@@ -49,6 +50,7 @@ export function Modals() {
           {modal.kind === 'snippet' && <SnippetEditor key={modal.snippetId ?? modal.projectId ?? 'new'} snippetId={modal.snippetId} projectId={modal.projectId} />}
           {modal.kind === 'project' && <ProjectEditor key={modal.projectId} projectId={modal.projectId} />}
           {modal.kind === 'file' && <FilePreview projectId={modal.projectId} relativePath={modal.relativePath} />}
+          {modal.kind === 'broadcast' && <BroadcastDialog key={modal.tabId} projectId={modal.projectId} tabId={modal.tabId} />}
           {modal.kind === 'auth' && <AuthModal key={`${modal.provider}:${JSON.stringify(modal.target)}`} provider={modal.provider} target={modal.target} />}
         </div>
       )}

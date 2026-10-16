@@ -2,9 +2,10 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../i18n';
 import { describeLaunch, groupTerminalSources, listTerminalSources, type TerminalSource } from '../../../shared/terminalSources';
+import { activeProject, activeTab } from '../../../shared/state';
 import { existingSelection } from '../../../shared/ssh';
 import { addAgent, quickTab } from '../actions';
-import { useStore } from '../store';
+import { getS, setUi, useStore } from '../store';
 import { useSshStore } from '../sshStore';
 import { openHostsAsGrid, openSshEditor } from '../ssh';
 import { IChevron, IPlus, ITerminalTab } from './icons';
@@ -22,6 +23,8 @@ export function TerminalPanel() {
   const hosts = useStore((st) => st.s.sshHosts);
   const selectedIds = useSshStore((st) => st.selectedHosts);
   const selected = useMemo(() => existingSelection(selectedIds, hosts), [selectedIds, hosts]);
+  const activeGrid = useStore((st) => activeTab(activeProject(st.s)));
+  const sshInGrid = activeGrid?.cells.filter((c) => c.ssh).length ?? 0;
   const [query, setQuery] = useState('');
   const local = useMemo(() => groupTerminalSources(listTerminalSources({ profiles, platform: window.mc.platform, shell })).local, [profiles, shell]);
   const openLocal = (source: TerminalSource, target: 'cell' | 'tab') => {
@@ -42,6 +45,11 @@ export function TerminalPanel() {
       <input className="input ssh-search" placeholder={tr('Szukaj hostów...')} aria-label={tr('Szukaj hostów...')} value={query} onChange={(e) => setQuery(e.target.value)} />
       {selected.length > 0 && (
         <button className="btn small ssh-open-grid" onClick={() => { void openHostsAsGrid(selected); useSshStore.setState({ selectedHosts: [] }); }}>{tr('Otwórz jako siatkę ({count})', { count: selected.length })}</button>
+      )}
+      {sshInGrid > 0 && activeGrid && (
+        <button className="btn small ssh-broadcast-open" onClick={() => setUi({ modal: { kind: 'broadcast', projectId: activeProject(getS())!.id, tabId: activeGrid.id } })}>
+          {tr('Wyślij do wszystkich ({count})', { count: sshInGrid })}
+        </button>
       )}
       <div className="terminal-sections">
         <section aria-label={tr('Hosty')}>

@@ -237,6 +237,7 @@ export function WorkspaceTabs() {
                     { colors: PROJECT_COLORS, onPick: (color) => update((st) => ({ ...st, projects: st.projects.map((p) => p.id === project.id ? { ...p, tabs: p.tabs.map((tab) => tab.id === t.id ? { ...tab, color } : tab) } : p) })) },
                     ...(t.color ? [{ label: tr('Usuń kolor'), onClick: () => update((st) => ({ ...st, projects: st.projects.map((p) => p.id === project.id ? { ...p, tabs: p.tabs.map((tab) => tab.id === t.id ? { ...tab, color: undefined } : tab) } : p) })) }] : []),
                     { label: tr("Nowy grid") + '…', onClick: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) },
+                    ...(t.cells.some((c) => c.ssh) ? [{ label: tr('Wyślij do wszystkich'), onClick: () => setUi({ modal: { kind: 'broadcast', projectId: project.id, tabId: t.id } }) }] : []),
                     { sep: true },
                     { label: tr("Zamknij (do historii)"), danger: true, onClick: () => closeTab(project.id, t.id), hint: shortcutText('tab.close') || undefined },
                   ]);

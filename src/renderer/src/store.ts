@@ -18,7 +18,8 @@ export type Modal =
   | { kind: 'snippet'; snippetId: string | null; projectId?: string }
   | { kind: 'project'; projectId: string }
   | { kind: 'file'; projectId: string; relativePath: string }
-  | { kind: 'auth'; provider: 'claude' | 'codex'; target: LoginTarget };
+  | { kind: 'auth'; provider: 'claude' | 'codex'; target: LoginTarget }
+  | { kind: 'broadcast'; projectId: string; tabId: string };
 
 export type Dialog =
   | { kind: 'prompt'; title: string; value: string; placeholder?: string; onSubmit: (value: string) => void }

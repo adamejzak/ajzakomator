@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
-  cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
+  broadcastProblem, pushHistory, sshCellsOfTab, cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
 
@@ -252,5 +252,30 @@ describe('grid dialog cell sources', () => {
     expect(parseCellSource(`ssh:${ID(1)}`)).toEqual({ kind: 'ssh', hostId: ID(1) });
     expect(parseCellSource('codex')).toEqual({ kind: 'profile', profileId: 'codex' });
     expect(parseCellSource('ssh:')).toEqual({ kind: 'profile', profileId: 'ssh:' });
+  });
+});
+
+describe('broadcast helpers', () => {
+  it('refuses ESC and oversize text', () => {
+    expect(broadcastProblem('uptime')).toBeNull();
+    expect(broadcastProblem('line1\nline2\ttab')).toBeNull();
+    expect(broadcastProblem('ls\u001b[A')).toBe('Polecenie zawiera znaki sterujące');
+    expect(broadcastProblem('x'.repeat(64 * 1024 + 1))).toBe('Polecenie jest za długie');
+  });
+  it('keeps a short history without consecutive duplicates', () => {
+    let h: string[] = [];
+    for (const t of ['a', 'b', 'b', 'c']) h = pushHistory(h, t);
+    expect(h).toEqual(['a', 'b', 'c']);
+    for (let i = 0; i < 30; i++) h = pushHistory(h, `x${i}`);
+    expect(h).toHaveLength(20);
+    expect(h.at(-1)).toBe('x29');
+    expect(pushHistory(h, '   ')).toBe(h);
+  });
+  it('lists the SSH cells of a tab with their host', () => {
+    const tab = { id: 't', name: 'g', layout: { cols: 2, rows: 1, areas: [] }, cells: [{ id: 'a', profileId: 'shell', ssh: { hostId: ID(1) } }, { id: 'b', profileId: 'shell' }, { id: 'c', profileId: 'shell', name: 'mine', ssh: { hostId: ID(9) } }] };
+    expect(sshCellsOfTab(tab as never, [host(1, { port: 2200 })])).toEqual([
+      { cellId: 'a', label: 'h1', endpoint: 'deploy@h1.example:2200' },
+      { cellId: 'c', label: 'mine', endpoint: '' },
+    ]);
   });
 });

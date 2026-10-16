@@ -4,9 +4,13 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import ssh2 from 'ssh2';
 import { join } from 'node:path';
-import { childPids, connected, connectWithPassword, killTree, launchApp, sleep, scratchRoot, sshState, startTestServer, testHost, writeState } from './ssh-ui-lib.mjs';
+import { childPids, connected, connectWithPassword, killTree, launchApp, sleep, scratchRoot, sshState, startTestServer, testHost, writeKnownHost, writeState } from './ssh-ui-lib.mjs';
 
 if (!existsSync('out/main/index.js')) throw new Error('Build first: npm run build');
+/** Expression: the xterm buffer text of every cell of the active tab, in cell order (what the terminal really shows, not a screenshot). */
+const CELL_BUFFERS = `(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId);
+  return t.cells.map((c) => { const b = window.__mc.terminals.entries.get(c.id)?.term.buffer.active; if (!b) return ''; let text = ''; for (let i = 0; i < b.length; i++) text += (b.getLine(i)?.translateToString(true) ?? '') + '\\n'; return text; }); })()`;
+const hasLine = (index, line) => `${CELL_BUFFERS}[${index}].split('\\n').some((l) => l.trim() === ${JSON.stringify(line)})`;
 const PARTS = {
   /** Task 8: a prepared SSH cell shows "Połącz", the host key card, the password prompt, then the session. */
   async cell() {
@@ -243,8 +247,7 @@ const PARTS = {
         await app.click('.ssh-card button', 'Zaufaj i zapisz');
         await app.until(`document.querySelectorAll('.cell .ssh-card').length === 0`, 'all three connected');
         // Every cell's terminal buffer holds the connected notice and the server greeting (nothing lost to the shared prompt or an early write).
-        const buffers = `(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId);
-          return t.cells.map((c) => { const b = window.__mc.terminals.entries.get(c.id)?.term.buffer.active; if (!b) return ''; let text = ''; for (let i = 0; i < b.length; i++) text += (b.getLine(i)?.translateToString(true) ?? '') + '\\n'; return text; }); })()`;
+        const buffers = CELL_BUFFERS;
         await app.until(`${buffers}.length === 3 && ${buffers}.every((t) => t.includes('połączono') && t.includes('unimux test server') && t.includes('$'))`, 'every cell shows the connected notice and the server greeting');
         await app.screenshot('ssh-grid-preset.png');
         // Typing into each cell reaches its own session and the echo comes back.
@@ -259,6 +262,62 @@ const PARTS = {
         await app.until(`!!document.querySelector('.grid-dialog')`, 'grid dialog');
         await app.click('.cell-table .select');
         await app.screenshot('ssh-grid-dialog.png');
+      } finally { await app.close(); }
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
+  /** Task 12: a 3-cell grid opened from the 'lab' group, one command broadcast to all three (read from each terminal buffer), then one disconnected cell is disabled and skipped. */
+  async broadcast() {
+    const server = await startTestServer(['--no-auth']);
+    const root = scratchRoot('ssh-broadcast');
+    try {
+      const hosts = ['web-1', 'web-2', 'web-3'].map((label) => testHost(server.port, { label, group: 'lab' }));
+      writeState(root, sshState({ projectPath: join(root, 'project'), hosts }));
+      writeKnownHost(root, server);
+      const app = await launchApp(root);
+      try {
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`!!document.querySelector('.ssh-hosts')`, 'host list');
+        await app.evaluate(`(() => { const head = [...document.querySelectorAll('.ssh-group-head')].find((e) => e.textContent.includes('lab')); head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 })); return true; })()`);
+        await app.click('.menu [role=menuitem]', 'Otwórz jako siatkę');
+        await connected(app, 3);
+        await app.until(`${CELL_BUFFERS}.length === 3 && ${CELL_BUFFERS}.every((t) => t.includes('połączono') && t.includes('$'))`, 'three cells with a prompt');
+        await app.click('.terminal-panel button', 'Wyślij do wszystkich (3)');
+        await app.until(`!!document.querySelector('.ssh-broadcast textarea')`, 'broadcast dialog');
+        await app.until(`document.querySelectorAll('.ssh-targets li').length === 3 && document.querySelectorAll('.ssh-targets li.disabled').length === 0 && [...document.querySelectorAll('.ssh-targets input')].every((i) => i.checked)`, 'three connected cells, all checked');
+        if (await app.evaluate(`document.querySelector('.ssh-broadcast .modal-foot .btn.white').disabled`) !== true) throw new Error('send button is enabled for an empty command');
+        await app.setValue('.ssh-broadcast textarea', 'echo hi');
+        await app.until(`document.querySelector('.ssh-broadcast .modal-foot .btn.white').textContent === 'Wyślij do 3' && !document.querySelector('.ssh-broadcast .modal-foot .btn.white').disabled`, 'send button counts three');
+        await app.click('.ssh-broadcast .modal-foot .btn.white');
+        await app.until(`[...document.querySelectorAll('.ssh-target-state')].filter((e) => e.textContent === 'wysłano').length === 3`, 'sent to three');
+        // The terminals themselves print the output (L23): "hi" on its own line in every cell.
+        for (let i = 0; i < 3; i++) await app.until(hasLine(i, 'hi'), `cell ${i + 1} printed hi`);
+        if (await app.evaluate(`document.querySelector('.ssh-broadcast textarea').value`) !== '') throw new Error('the text was not cleared after sending');
+        await app.screenshot('ssh-broadcast-sent.png');
+        // The dialog stays open; Arrow Up in the empty field recalls the command.
+        await app.evaluate(`document.querySelector('.ssh-broadcast textarea').focus()`);
+        await app.press('ArrowUp');
+        await app.until(`document.querySelector('.ssh-broadcast textarea').value === 'echo hi'`, 'history recall');
+        // An escape sequence is refused and disables sending.
+        await app.setValue('.ssh-broadcast textarea', 'ls \u001b[A');
+        await app.until(`!!document.querySelector('.ssh-broadcast [role=alert]') && document.querySelector('.ssh-broadcast .modal-foot .btn.white').disabled`, 'control characters refused');
+        await app.press('Escape');
+        await app.until(`!document.querySelector('.ssh-broadcast')`, 'dialog closed by Escape');
+        // Disconnect the first cell through its host chip menu.
+        await app.click('.cell-head .ssh-host');
+        await app.click('.menu .menu-item', 'Rozłącz');
+        await app.until(`document.querySelectorAll('.cell .ssh-bar').length === 1`, 'first cell disconnected');
+        await app.click('.terminal-panel button', 'Wyślij do wszystkich');
+        await app.until(`document.querySelectorAll('.ssh-targets li').length === 3 && document.querySelectorAll('.ssh-targets li.disabled').length === 1`, 'disconnected cell disabled in the dialog');
+        const reason = await app.evaluate(`document.querySelector('.ssh-targets li.disabled .ssh-target-state').textContent`);
+        if (reason !== 'rozłączono') throw new Error(`disabled row reason: ${reason}`);
+        await app.setValue('.ssh-broadcast textarea', 'echo again');
+        await app.until(`document.querySelector('.ssh-broadcast .modal-foot .btn.white').textContent === 'Wyślij do 2'`, 'send button counts two');
+        await app.screenshot('ssh-broadcast-disabled.png');
+        await app.press('Enter', 2); // Ctrl+Enter sends
+        await app.until(`[...document.querySelectorAll('.ssh-target-state')].filter((e) => e.textContent === 'wysłano').length === 2`, 'sent to the two connected cells');
+        await app.until(`${hasLine(1, 'again')} && ${hasLine(2, 'again')}`, 'cells 2 and 3 printed again');
+        if (await app.evaluate(hasLine(0, 'again'))) throw new Error('the disconnected cell received the command');
+        await app.press('Escape');
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },

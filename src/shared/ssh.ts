@@ -2,6 +2,7 @@
 // No Node or DOM imports: this file is compiled for both sides.
 import { fuzzyFilter } from './fuzzy';
 import type { MessageKey, MessageParams } from './i18n';
+import type { Tab } from './types';
 
 export const SSH_LIMITS = {
   startup: 8 * 1024, broadcast: 64 * 1024, privateKey: 64 * 1024, password: 1024, passphrase: 1024,
@@ -377,6 +378,27 @@ export function broadcastTargets(
     if (phase === 'connected') return { ...cell, enabled: true, checked: true };
     if (isLivePhase(phase)) return { ...cell, enabled: false, checked: false, reason: 'łączenie…' };
     return { ...cell, enabled: false, checked: false, reason: 'rozłączono' };
+  });
+}
+
+export function broadcastProblem(text: string): MessageKey | null {
+  if (text.length > SSH_LIMITS.broadcast) return 'Polecenie jest za długie';
+  return text.includes('') ? 'Polecenie zawiera znaki sterujące' : null;
+}
+
+/** Newest last, no consecutive duplicate, at most `max` entries; blank text changes nothing. */
+export function pushHistory(list: readonly string[], text: string, max: number = SSH_LIMITS.history): string[] {
+  if (!text.trim()) return list as string[];
+  if (list[list.length - 1] === text) return [...list];
+  return [...list, text].slice(-max);
+}
+
+/** The SSH cells of a grid as broadcast targets: a custom cell name wins over the host label. */
+export function sshCellsOfTab(tab: Tab, hosts: readonly SshHost[]): BroadcastCell[] {
+  return tab.cells.flatMap((cell) => {
+    if (!cell.ssh) return [];
+    const host = hosts.find((h) => h.id === cell.ssh!.hostId);
+    return [{ cellId: cell.id, label: cell.name ?? host?.label ?? cell.id.slice(0, 8), endpoint: host ? userAtEndpoint(host) : '' }];
   });
 }
 

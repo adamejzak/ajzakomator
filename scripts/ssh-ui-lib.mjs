@@ -1,7 +1,7 @@
 // Helpers for real-app SSH checks: scratch data dirs and homes, the local test SSH server, the built app over CDP.
 // Never uses the user's data dir, home, ~/.ssh or real hosts. Kills only the PIDs it started.
 import { execFileSync, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
@@ -41,6 +41,15 @@ export function sshState({ projectPath, hosts = [], cells = [] }) {
   const tabs = cells.length ? [{ id: randomUUID(), name: 'SSH', color: '#60a5fa', layout: rowLayout(cells.length), cells: cells.map((hostId) => ({ id: randomUUID(), profileId: 'shell', ssh: { hostId } })) }] : [];
   return { version: 1, settings: { language: 'pl' }, sshHosts: hosts, activeProjectId: projectId,
     projects: [{ id: projectId, name: 'ssh-check', path: projectPath, color: '#3b82f6', tabs, archive: [], activeTabId: tabs[0]?.id ?? null }] };
+}
+
+/** Pre-trusts the test server's host key in a scratch data dir (format of src/main/ssh/knownHosts.ts), so a grid connects without the host key card. */
+export function writeKnownHost(root, server) {
+  const blob = Buffer.from(server.hostKey, 'base64');
+  const keyType = blob.subarray(4, 4 + blob.readUInt32BE(0)).toString('latin1');
+  const fingerprint = `SHA256:${createHash('sha256').update(blob).digest('base64').replace(/=+$/, '')}`;
+  mkdirSync(join(root, 'data', 'ssh'), { recursive: true });
+  writeFileSync(join(root, 'data', 'ssh', 'known_hosts.json'), JSON.stringify({ version: 1, entries: [{ id: randomUUID(), host: '127.0.0.1', port: server.port, keyType, key: server.hostKey, fingerprint, addedAt: 0 }] }));
 }
 
 export const testHost = (port, patch = {}) => ({ id: randomUUID(), label: 'test-server', address: '127.0.0.1', port, username: 'alice', createdAt: 0, updatedAt: 0, ...patch });
