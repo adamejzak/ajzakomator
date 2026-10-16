@@ -13,7 +13,15 @@ export const TOUCH_MS = 3_000;
 /** Per lock; Claude Code holds its credential lock for one token round trip. */
 export const LOCK_TIMEOUT_MS = 9_000;
 
-export interface LockDeps { timeoutMs?: number; touchMs?: number; now?(): number; sleep?(ms: number): Promise<void> }
+export interface LockDeps {
+  timeoutMs?: number; touchMs?: number; now?(): number; sleep?(ms: number): Promise<void>;
+  /** Removes a lock directory (tests replace it to simulate a busy one). */
+  rmdir?(path: string): Promise<void>;
+}
+
+/** Tries of the release: on Windows an antivirus or indexer may hold the empty lock dir for a moment (EPERM, EBUSY). */
+export const RELEASE_TRIES = 5;
+const RELEASE_GAP_MS = 100;
 
 export class LockTimeout extends Error {
   constructor(readonly lock: string) { super(`lock held: ${lock}`); this.name = 'LockTimeout'; }
@@ -26,6 +34,7 @@ export async function acquireDirLock(path: string, staleMs: number, deps: LockDe
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const timeout = deps.timeoutMs ?? LOCK_TIMEOUT_MS;
+  const remove = deps.rmdir ?? ((dir: string) => rmdir(dir));
   const start = now();
   for (;;) {
     try { await mkdir(path); break; } catch (error) { if (code(error) !== 'EEXIST') throw error; }
@@ -34,7 +43,7 @@ export async function acquireDirLock(path: string, staleMs: number, deps: LockDe
     try { mtime = (await stat(path)).mtimeMs; } catch (error) { if (code(error) === 'ENOENT') continue; throw error; }
     if (Date.now() - mtime > staleMs) {
       // A dead holder (the protocol's rule): remove and retake; losing the race to another waiter just loops again.
-      await rmdir(path).catch(() => sleep(50));
+      await remove(path).catch(() => sleep(50));
       continue;
     }
     await sleep(250 + Math.floor(Math.random() * 250));
@@ -46,7 +55,15 @@ export async function acquireDirLock(path: string, staleMs: number, deps: LockDe
     if (released) return;
     released = true;
     clearInterval(timer);
-    await rmdir(path).catch((error) => { if (code(error) !== 'ENOENT') throw error; });
+    // A lock left behind would make Claude Code wait for it to go stale (60 s) before it can renew its login.
+    for (let attempt = 1; ; attempt++) {
+      try { await remove(path); return; } catch (error) {
+        const reason = code(error);
+        if (reason === 'ENOENT') return;
+        if ((reason !== 'EPERM' && reason !== 'EBUSY') || attempt >= RELEASE_TRIES) throw error;
+      }
+      await sleep(RELEASE_GAP_MS);
+    }
   };
 }
 

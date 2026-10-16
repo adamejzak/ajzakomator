@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { claudeLockPaths, LockTimeout, withClaudeLocks } from '../src/main/accounts/claudeLocks';
+import { acquireDirLock, claudeLockPaths, LockTimeout, RELEASE_TRIES, withClaudeLocks } from '../src/main/accounts/claudeLocks';
 
 let home: string;
 let paths: { credentials: string; claudeJson: string };
@@ -88,5 +88,26 @@ describe('withClaudeLocks', () => {
     rmSync(join(home, '.claude'), { recursive: true });
     await expect(withClaudeLocks(paths, async () => undefined, fast)).rejects.toThrow();
     expect(existsSync(join(home, '.claude'))).toBe(false);
+  });
+
+  it('retries the release while the lock dir is briefly busy (EPERM, EBUSY), so no lock is left behind', async () => {
+    let failures = 0;
+    const rmdir = async (dir: string) => {
+      if (failures < 2) { failures++; throw Object.assign(new Error('busy'), { code: failures === 1 ? 'EPERM' : 'EBUSY' }); }
+      rmdirSync(dir);
+    };
+    const release = await acquireDirLock(primary(), 60_000, { ...fast, rmdir, sleep: async () => undefined });
+    await release();
+    expect(failures).toBe(2);
+    expect(existsSync(primary())).toBe(false);
+  });
+
+  it('gives up after a few tries and reports it', async () => {
+    let calls = 0;
+    const rmdir = async () => { calls++; throw Object.assign(new Error('busy'), { code: 'EPERM' }); };
+    const release = await acquireDirLock(primary(), 60_000, { ...fast, rmdir, sleep: async () => undefined });
+    await expect(release()).rejects.toThrow('busy');
+    expect(calls).toBe(RELEASE_TRIES);
+    rmdirSync(primary());
   });
 });
