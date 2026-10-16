@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isAccountId } from '../src/shared/accounts';
-import { AccountsStore } from '../src/main/accounts/store';
+import { AccountsReadOnlyError, AccountsStore } from '../src/main/accounts/store';
 
 let base: string;
 let root: string;
@@ -62,20 +62,27 @@ describe('AccountsStore', () => {
     expect(store.list()).toEqual([{ id, email: 'ok@x.com', addedAt: 1 }]);
   });
 
-  it('keeps a corrupt accounts.json as .bak before overwriting it', () => {
+  it('keeps a corrupt accounts.json as a timestamped backup and starts empty, never over an earlier backup', () => {
     const store = new AccountsStore(root);
     mkdirSync(root, { recursive: true });
     writeFileSync(join(root, 'accounts.json'), '{not json');
     const { id } = store.prepare();
     store.commit({ id, addedAt: 1 });
-    expect(readFileSync(join(root, 'accounts.json.bak'), 'utf8')).toBe('{not json');
+    expect(store.readOnly()).toBe(false);
     expect(store.list()).toEqual([{ id, addedAt: 1 }]);
+    writeFileSync(join(root, 'accounts.json'), '{broken again');
+    expect(store.list()).toEqual([]);
+    const backups = readdirSync(root).filter((name) => name.startsWith('accounts.json.bak-')).sort();
+    expect(backups).toHaveLength(2);
+    expect(backups.map((name) => readFileSync(join(root, name), 'utf8')).sort()).toEqual(['{broken again', '{not json']);
+    expect(existsSync(join(root, 'accounts.json.bak'))).toBe(false);
   });
 
   it('removes the temp file when the write cannot be completed', () => {
     const store = new AccountsStore(root);
     const { id } = store.prepare();
     mkdirSync(join(root, 'accounts.json'));
+    expect(store.readOnly()).toBe(true);
     expect(() => store.commit({ id, addedAt: 1 })).toThrow();
     expect(readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
@@ -190,6 +197,31 @@ describe('AccountsStore v2', () => {
     store.commit({ id: ID, addedAt: 1, email: 'a@x.com', org: 'Acme', accountUuid: 'u1', organizationUuid: 'o1', custody: 'live' });
     store.updateIdentity(ID, { email: 'b@x.com', accountUuid: 'u2' }, { replace: true });
     expect(store.get(ID)).toEqual({ id: ID, addedAt: 1, email: 'b@x.com', accountUuid: 'u2', custody: 'live' });
+  });
+  it.each([
+    ['wrong shape', JSON.stringify({ claude: 'x' })],
+    ['not an object', '[1,2]'],
+    ['bad version', JSON.stringify({ version: '2', claude: [] })],
+    ['bad notices', JSON.stringify({ version: 2, claude: [], notices: {} })],
+    ['newer version', JSON.stringify({ version: 3, claude: [{ id: ID, addedAt: 1, email: 'a@x.com' }] })],
+  ])('opens a file it cannot read safely (%s) read-only and never writes over it', (_name, text) => {
+    mkdirSync(join(root, 'claude', ID), { recursive: true });
+    writeFileSync(join(root, 'accounts.json'), text);
+    const store = new AccountsStore(root);
+    expect(store.readOnly()).toBe(true);
+    expect(() => store.markMigrated()).toThrow(AccountsReadOnlyError);
+    expect(() => store.commit({ id: OTHER, addedAt: 2 })).toThrow(AccountsReadOnlyError);
+    expect(() => store.addNotice({ kind: 'migrated', at: 1 })).toThrow(AccountsReadOnlyError);
+    expect(() => store.setLive(null)).toThrow(AccountsReadOnlyError);
+    expect(() => store.remove(ID)).toThrow(AccountsReadOnlyError);
+    expect(existsSync(store.dirOf(ID))).toBe(true);
+    expect(readFileSync(join(root, 'accounts.json'), 'utf8')).toBe(text);
+    expect(readdirSync(root).filter((name) => name !== 'accounts.json' && name !== 'claude')).toEqual([]);
+  });
+  it('lists the records of a newer file without changing it', () => {
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'accounts.json'), JSON.stringify({ version: 3, claude: [{ id: ID, addedAt: 1, email: 'a@x.com' }] }));
+    expect(new AccountsStore(root).list()).toEqual([{ id: ID, addedAt: 1, email: 'a@x.com' }]);
   });
   it('reports version 1 for a 0.9.0 file and 2 after the migration mark', () => {
     mkdirSync(root, { recursive: true });

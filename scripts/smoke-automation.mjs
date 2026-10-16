@@ -8,9 +8,11 @@ import { delimiter, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import electron from 'electron';
-import { removeScratchHome, scratchHome, scrubAppEnv } from './app-env.mjs';
+import { removeScratch, scratchHome, scrubAppEnv } from './app-env.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'unimux-automation-'));
+/** Screenshots are kept; the scratch root (data, home, fake agents) is deleted at the end. */
+const shots = mkdtempSync(join(tmpdir(), 'unimux-automation-shots-'));
 const data = join(root, 'data'), agents = join(root, 'fake-agents'), tokens = join(root, 'tokens');
 for (const dir of [data, agents, tokens]) mkdirSync(dir);
 for (const name of ['claude', 'codex']) {
@@ -86,7 +88,7 @@ async function call(client, name, args = {}) {
 }
 async function screenshot(name) {
   const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
-  writeFileSync(join(root, `${name}.png`), Buffer.from(data, 'base64'));
+  writeFileSync(join(shots, `${name}.png`), Buffer.from(data, 'base64'));
 }
 try {
   const target = await until(async () => {
@@ -223,7 +225,7 @@ try {
   await screenshot('shell-dropdown');
   await evaluate('document.querySelector(".select-popup").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
   assert.deepEqual(exceptions, []);
-  console.log(`Automation Electron smoke passed. Screenshots: ${root}`);
+  console.log(`Automation Electron smoke passed. Screenshots: ${shots}`);
 } catch (error) {
   process.exitCode = 1;
   console.error(error);
@@ -237,5 +239,5 @@ try {
     else child.kill('SIGTERM');
   }
   for (let i = 0; i < 50 && !exited; i++) await sleep(100);
-  removeScratchHome(home.home);
+  removeScratch(root);
 }

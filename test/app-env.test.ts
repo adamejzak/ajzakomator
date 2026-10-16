@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error plain ESM script without type declarations
-import { LOGIN_ENV_KEYS, removeScratchHome, scratchHome, scrubAppEnv } from '../scripts/app-env.mjs';
+import { LOGIN_ENV_KEYS, removeScratch, scratchHome, scrubAppEnv } from '../scripts/app-env.mjs';
 
 describe('scrubAppEnv', () => {
   it('drops the login folders and tokens and the Electron dev variables, keeps the rest', () => {
@@ -26,7 +26,7 @@ describe('scratchHome', () => {
       expect(home).toBe(join(root, 'home'));
       expect(env).toEqual({ USERPROFILE: home, HOME: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local') });
       expect(existsSync(env.APPDATA) && existsSync(env.LOCALAPPDATA)).toBe(true);
-      removeScratchHome(home);
+      removeScratch(home);
       expect(existsSync(home)).toBe(false);
       expect(existsSync(root)).toBe(true);
     } finally { rmSync(root, { recursive: true, force: true }); }

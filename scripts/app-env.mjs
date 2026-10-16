@@ -24,7 +24,7 @@ export function scratchHome(root) {
   return { home, env: { USERPROFILE: home, HOME: home, APPDATA: roaming, LOCALAPPDATA: local } };
 }
 
-/** Removes a scratch home after the app has exited (retries while Windows still holds its files). */
-export function removeScratchHome(home) {
-  try { rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); } catch (error) { console.error(`scratch home not removed: ${home}: ${error.message}`); }
+/** Removes a scratch directory (root or home) after the app has exited (retries while Windows still holds its files). */
+export function removeScratch(dir) {
+  try { rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); } catch (error) { console.error(`scratch dir not removed: ${dir}: ${error.message}`); }
 }

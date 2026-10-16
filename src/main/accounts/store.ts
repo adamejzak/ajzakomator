@@ -1,11 +1,12 @@
 // src/main/accounts/store.ts
 import { randomUUID } from 'crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import {
   identityFields, isAccountId, type AccountCustody, type AccountIdentity, type AccountNotice, type AccountNoticeKind,
   type LiveIdentity, type ManagedAccount, type TokenFamily,
 } from '../../shared/accounts';
+import { readJsonFile } from '../ssh/files';
 
 const MAX_TEXT = 120;
 const MAX_NOTICES = 20;
@@ -14,7 +15,16 @@ export const STORE_VERSION = 2;
 const CUSTODY: readonly string[] = ['app', 'live', 'foreign', 'quarantined'] satisfies AccountCustody[];
 const NOTICE_KINDS: readonly string[] = ['switchedOut', 'loggedOut', 'adopted', 'migrated', 'quarantined'] satisfies AccountNoticeKind[];
 
-interface StoreFile { version: number; claude: ManagedAccount[]; live?: LiveIdentity; notices: AccountNotice[] }
+interface StoreFile {
+  version: number; claude: ManagedAccount[]; live?: LiveIdentity; notices: AccountNotice[];
+  /** The file exists but could not be read, has the wrong shape or a newer version: nothing is ever written over it. */
+  readOnly: boolean;
+}
+
+/** A write was refused because accounts.json could not be read safely (see `AccountsStore.readOnly`). */
+export class AccountsReadOnlyError extends Error {
+  constructor() { super('accounts.json cannot be read safely; not writing over it'); this.name = 'AccountsReadOnlyError'; }
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const short = (value: unknown): string | undefined => (typeof value === 'string' && value.length <= MAX_TEXT ? value : undefined);
@@ -63,25 +73,40 @@ export class AccountsStore {
     this.file = join(root, 'accounts.json');
   }
 
+  /**
+   * Missing: empty and writable. Unparsable: moved to a timestamped `accounts.json.bak-<time>` (never over an earlier backup),
+   * then empty and writable. Unreadable (locked, a directory), of the wrong shape or of a newer version: read-only, so the
+   * records in it are never lost (the same rule as the SSH vault).
+   */
   private read(): StoreFile {
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(this.file, 'utf8'));
-      if (!isRecord(parsed) || !Array.isArray(parsed.claude)) return { version: 1, claude: [], notices: [] };
-      const live = parseLive(parsed.live);
-      return {
-        version: typeof parsed.version === 'number' && Number.isInteger(parsed.version) ? parsed.version : 1,
-        claude: parsed.claude.map(parseAccount).filter((account): account is ManagedAccount => account !== null),
-        ...(live ? { live } : {}),
-        notices: Array.isArray(parsed.notices) ? parsed.notices.map(parseNotice).filter((n): n is AccountNotice => n !== null) : [],
-      };
-    } catch { return { version: 1, claude: [], notices: [] }; }
+    const empty = (readOnly: boolean): StoreFile => ({ version: 1, claude: [], notices: [], readOnly });
+    const result = readJsonFile(this.file);
+    if (!result.ok) return empty(!result.missing && existsSync(this.file));
+    const parsed = result.value;
+    if (!isRecord(parsed) || !Array.isArray(parsed.claude)) return empty(true);
+    if (parsed.version !== undefined && !(typeof parsed.version === 'number' && Number.isInteger(parsed.version) && parsed.version >= 1)) return empty(true);
+    if (parsed.notices !== undefined && !Array.isArray(parsed.notices)) return empty(true);
+    if (parsed.live !== undefined && !isRecord(parsed.live)) return empty(true);
+    const version = typeof parsed.version === 'number' ? parsed.version : 1;
+    const live = parseLive(parsed.live);
+    return {
+      version,
+      claude: parsed.claude.map(parseAccount).filter((account): account is ManagedAccount => account !== null),
+      ...(live ? { live } : {}),
+      notices: Array.isArray(parsed.notices) ? parsed.notices.map(parseNotice).filter((n): n is AccountNotice => n !== null) : [],
+      readOnly: version > STORE_VERSION,
+    };
   }
 
   private change(edit: (file: StoreFile) => void): void {
     const file = this.read();
+    if (file.readOnly) throw new AccountsReadOnlyError();
     edit(file);
     this.write(file);
   }
+
+  /** accounts.json exists but cannot be read safely (unreadable, wrong shape, newer version): every write is refused. */
+  readOnly(): boolean { return this.read().readOnly; }
 
   /** Every record, quarantined ones included (callers filter with `custodyOf`). */
   list(): ManagedAccount[] { return this.read().claude; }
@@ -137,14 +162,15 @@ export class AccountsStore {
 
   remove(id: string): void {
     if (!isAccountId(id)) return;
-    rmSync(this.dirOf(id), { recursive: true, force: true });
     const file = this.read();
+    if (file.readOnly) throw new AccountsReadOnlyError();
+    rmSync(this.dirOf(id), { recursive: true, force: true });
     const claude = file.claude.filter((entry) => entry.id !== id);
     const notices = file.notices.filter((n) => n.recordId !== id);
     let live = file.live;
     if (live?.recordId === id) { const { recordId: _drop, ...rest } = live; live = rest; }
     if (claude.length === file.claude.length && notices.length === file.notices.length && live === file.live) return;
-    this.write({ version: file.version, claude, notices, ...(live ? { live } : {}) });
+    this.write({ version: file.version, claude, notices, readOnly: false, ...(live ? { live } : {}) });
   }
 
   /** `undefined` in the patch removes the field; the record is validated again, so a bad value never reaches the file. */
@@ -161,7 +187,6 @@ export class AccountsStore {
 
   private write(file: StoreFile): void {
     mkdirSync(this.root, { recursive: true });
-    this.backUpCorrupt();
     const temp = `${this.file}.${process.pid}.tmp`;
     const body = { version: file.version, claude: file.claude, ...(file.live ? { live: file.live } : {}), ...(file.notices.length ? { notices: file.notices } : {}) };
     try {
@@ -171,14 +196,4 @@ export class AccountsStore {
       rmSync(temp, { force: true });
       throw error;
     }
-  }
-
-  /** An unparsable accounts.json is kept as accounts.json.bak instead of being silently overwritten. */
-  private backUpCorrupt(): void {
-    let text: string;
-    try { text = readFileSync(this.file, 'utf8'); } catch { return; }
-    try { JSON.parse(text); } catch {
-      try { renameSync(this.file, `${this.file}.bak`); } catch { /* best effort */ }
-    }
-  }
-}
+  }}

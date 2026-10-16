@@ -7,7 +7,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import electron from 'electron';
-import { removeScratchHome, scratchHome, scrubAppEnv } from './app-env.mjs';
+import { removeScratch, scratchHome, scrubAppEnv } from './app-env.mjs';
 
 const repo = process.cwd();
 const label = process.argv[2] ?? 'run';
@@ -62,8 +62,9 @@ try {
   console.log(JSON.stringify({ label, bootToTerminalsMs: bootMs, nav: JSON.parse(nav), renderer: JSON.parse(mem), idleCpuActiveMsOf8000: Math.round((total - idle) / 1000), processTree: ps }, null, 1));
   console.log('top idle self-time:\n' + top.join('\n'));
 } finally {
-  child.kill();
+  // The whole process tree goes first (as in smoke-automation), so no child keeps the scratch home locked.
+  if (process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* already gone */ } }
+  else child.kill();
   for (let i = 0; i < 50 && !exited; i++) await sleep(100);
-  if (!exited && process.platform === 'win32') { try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* already gone */ } }
-  removeScratchHome(home.home);
+  removeScratch(root);
 }

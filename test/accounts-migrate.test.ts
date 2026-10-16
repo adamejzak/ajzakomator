@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -76,5 +76,32 @@ describe('migrateAccounts (0.9.0 -> 0.9.1)', () => {
     store.update(A, { org: 'Guybot' });
     await migrateAccounts(deps(null));
     expect(store.get(A)).toEqual({ id: A, addedAt: 1, email: 'app@x.com', accountUuid: 'uapp' });
+  });
+
+  it('never marks or writes over an accounts.json it cannot read safely, and retries at the next start', async () => {
+    legacy(A, 1, 'a@x.com', { email: 'a@x.com', uuid: 'ua' });
+    const file = join(root, 'accounts', 'accounts.json');
+    const original = JSON.stringify({ claude: { broken: true } });
+    writeFileSync(file, original);
+    expect(await migrateAccounts(deps(null))).toEqual({ migrated: false, filled: 0, quarantined: [] });
+    expect(readFileSync(file, 'utf8')).toBe(original);
+    rmSync(file);
+    mkdirSync(file);
+    expect((await migrateAccounts(deps(null))).migrated).toBe(false);
+    expect(readdirSync(file)).toEqual([]);
+    rmSync(file, { recursive: true });
+    legacy(A, 1, 'a@x.com', { email: 'a@x.com', uuid: 'ua' });
+    expect((await migrateAccounts(deps(null))).migrated).toBe(true);
+    expect(store.get(A)).toMatchObject({ accountUuid: 'ua' });
+  });
+
+  it('moves an unparsable accounts.json to a timestamped backup, then starts an empty v2 list', async () => {
+    const file = join(root, 'accounts', 'accounts.json');
+    writeFileSync(file, '{not json');
+    expect((await migrateAccounts(deps(null))).migrated).toBe(true);
+    const backups = readdirSync(join(root, 'accounts')).filter((name) => name.startsWith('accounts.json.bak-'));
+    expect(backups.map((name) => readFileSync(join(root, 'accounts', name), 'utf8'))).toEqual(['{not json']);
+    expect(store.version()).toBe(2);
+    expect(store.list()).toEqual([]);
   });
 });

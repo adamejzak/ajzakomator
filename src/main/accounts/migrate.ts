@@ -19,7 +19,8 @@ export interface MigrationReport { migrated: boolean; filled: number; quarantine
 export async function migrateAccounts(deps: MigrationDeps): Promise<MigrationReport> {
   const report: MigrationReport = { migrated: false, filled: 0, quarantined: [] };
   const { store } = deps;
-  if (store.version() >= STORE_VERSION) return report;
+  // A file that cannot be read safely is never written over: the migration waits for a start that can read it.
+  if (store.readOnly() || store.version() >= STORE_VERSION) return report;
   for (const record of store.list()) {
     let found: AccountIdentity = {};
     try { found = identityFields(await deps.readProfileIdentity(store.dirOf(record.id))); } catch { /* no identity file */ }
