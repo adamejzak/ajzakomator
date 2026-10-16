@@ -122,13 +122,25 @@ async function perform(deps: ActivateDeps, fs: SwapFs, targetId: string): Promis
     if (!validOauth(oauthOf(snap))) throw new Fail('noTarget', target.email);
     if (outcome.kind === 'transient' && expiry(oauthOf(snap)) <= deps.now() + MIN_VALID_MS) throw new Fail('transient', target.email);
   }
-  // The profile lock first: a background renewal of the target that is still in flight ends before Claude Code's locks are taken.
-  return withProfileLock(dir, () => withClaudeLocks(paths, () => exchange(deps, fs, paths, roster, targetId, dir), deps.locks));
+  // Profile locks first (the target and every record that may receive the outgoing login): a renewal still in flight ends
+  // before Claude Code's locks are taken, and none can overwrite the copy saved under them.
+  const live = store.live();
+  const outgoingIds = store.list()
+    .filter((r) => r.id !== targetId && custodyOf(r) !== 'quarantined' && (r.id === live?.recordId || (!!live && compareIdentity(r, live) === 'same')))
+    .map((r) => r.id);
+  const dirs = [dir, ...outgoingIds.map((id) => store.dirOf(id))];
+  return withProfileLocks(dirs, () => withClaudeLocks(paths, () => exchange(deps, fs, paths, roster, targetId, dir, new Set(outgoingIds)), deps.locks));
 }
 
-interface Originals { liveCreds: Snap; liveJson: Snap; liveAccount: Rec; outCreds: Snap | null; outJson: Snap | null; outDir: string }
+/** Nested `withProfileLock`s, one per distinct directory. Only one activation runs at a time, so the order cannot deadlock. */
+function withProfileLocks<T>(dirs: string[], fn: () => Promise<T>): Promise<T> {
+  const [first, ...rest] = [...new Set(dirs)];
+  return first === undefined ? fn() : withProfileLock(first, () => withProfileLocks(rest, fn));
+}
 
-async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: CswapRoster, targetId: string, dir: string): Promise<SwapResult> {
+interface Originals { liveCreds: Snap; liveJson: Snap; liveAccount: Rec; outCreds: Snap | null; outJson: Snap | null; outDir: string; writtenCreds: string; targetIdentity: AccountIdentity }
+
+async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: CswapRoster, targetId: string, dir: string, locked: Set<string>): Promise<SwapResult> {
   const { store } = deps;
   const liveCreds = await readSnap(fs, paths.credentials);
   const liveJson = await readSnap(fs, paths.claudeJson);
@@ -150,17 +162,15 @@ async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: Cs
   // gets one, so a login is never dropped.
   const same = store.list().filter((r) => custodyOf(r) !== 'quarantined' && compareIdentity(r, liveIdentity) === 'same');
   const named = store.live()?.recordId;
-  let outgoing = same.find((r) => r.id === named) ?? same.find((r) => custodyOf(r) === 'live') ?? same[0];
-  const created = !outgoing;
-  if (!outgoing) {
-    const { id } = store.prepare();
-    store.commit({ id, addedAt: deps.now(), ...identityFields(liveIdentity), custody: 'live', family: 'live' });
-    outgoing = store.get(id)!;
-  }
-  const outDir = store.dirOf(outgoing.id);
+  const existing = same.find((r) => r.id === named) ?? same.find((r) => custodyOf(r) === 'live') ?? same[0];
+  // The live login changed after the profile locks were chosen: its record is not locked, so try again later.
+  if (existing && !locked.has(existing.id)) throw new Fail('busy');
+  const created = !existing;
+  const outgoingId = existing?.id ?? store.prepare().id;
+  const outDir = store.dirOf(outgoingId);
   const outCreds = await readSnap(fs, join(outDir, '.credentials.json'));
   const outJson = await readSnap(fs, join(outDir, '.claude.json'));
-  const journal: Journal = { version: 2, phase: 'backed-up', outgoingId: outgoing.id, targetId: target.id, created, outCredsExisted: !!outCreds, outJsonExisted: !!outJson, startedAt: deps.now() };
+  const journal: Journal = { version: 2, phase: 'backed-up', outgoingId, targetId: target.id, created, outCredsExisted: !!outCreds, outJsonExisted: !!outJson, startedAt: deps.now() };
   const write = (path: string, data: string) => atomicWrite(deps, fs, path, data);
   // The phase is advanced BEFORE each step, so it says how far the swap may have got.
   const advance = async (phase: Phase) => { journal.phase = phase; await write(join(deps.backupDir, JOURNAL), JSON.stringify(journal)); };
@@ -173,6 +183,9 @@ async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: Cs
     if (outCreds) await write(join(deps.backupDir, BACKUP.outCreds), outCreds.text);
     if (outJson) await write(join(deps.backupDir, BACKUP.outJson), outJson.text);
     await advance('backed-up');
+    // A record for an account the app did not know is committed only once the journal names it, so a crash never leaves
+    // a record without files that the recovery does not know about.
+    if (created) store.commit({ id: outgoingId, addedAt: deps.now(), ...identityFields(liveIdentity), custody: 'live', family: 'live' });
     await advance('outgoing-saved');
     await fs.mkdir(outDir);
     await write(join(outDir, '.credentials.json'), JSON.stringify({ ...(outCreds?.data ?? {}), claudeAiOauth: liveOauth }));
@@ -188,13 +201,15 @@ async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: Cs
     if (vCreds?.text !== writtenCreds || !vJson || compareIdentity(identityFromOauthAccount(vJson.data.oauthAccount), identityFromOauthAccount(targetAccount)) !== 'same') throw new Fail('write');
     await advance('verified');
   } catch (error) {
-    const clean = await rollback(deps, fs, paths, journal, { liveCreds, liveJson, liveAccount, outCreds, outJson, outDir });
+    const targetIdentity = identityFromOauthAccount(targetAccount);
+    const clean = await rollback(deps, fs, paths, journal, { liveCreds, liveJson, liveAccount, outCreds, outJson, outDir, writtenCreds, targetIdentity });
     if (!clean) throw new Fail('manual');
+    // The record goes before the journal: a crash in between is repaired by the recovery, which removes it again.
+    if (created) store.remove(outgoingId);
     await removeBackups(deps, fs);
-    if (created) store.remove(outgoing.id);
     throw error instanceof Fail ? error : new Fail('write');
   }
-  finishRoles(store, outgoing.id, target.id, identityFromOauthAccount(targetAccount));
+  finishRoles(store, outgoingId, target.id, identityFromOauthAccount(targetAccount));
   try { await removeBackups(deps, fs); } catch { /* removed at the next start */ }
   return { ok: true, ...(str(targetAccount.emailAddress) ? { email: str(targetAccount.emailAddress) } : {}) };
 }
@@ -207,18 +222,42 @@ function finishRoles(store: AccountsStore, outgoingId: string, targetId: string,
   store.setLive({ ...identityFields(identity), recordId: targetId });
 }
 
-/** Still under the locks: every step that may have started is undone from the backups taken in this run. */
+/**
+ * Still under the locks: every step that may have started is undone from the backups taken in this run - but only what
+ * this swap wrote. A login someone else wrote meanwhile (a /login that ignores the locks, a holder that broke them as
+ * stale) may be the only copy of that login: then nothing is touched, the outgoing copy stays, and the swap is 'manual'
+ * with its journal and backups kept.
+ */
 async function rollback(deps: ActivateDeps, fs: SwapFs, paths: Paths, journal: Journal, o: Originals): Promise<boolean> {
   const reached = (phase: Phase) => ORDER.indexOf(journal.phase) >= ORDER.indexOf(phase);
+  const liveId = identityFromOauthAccount(o.liveAccount);
+  let creds: Snap | null = null;
+  let json: Snap | null = null;
+  try {
+    if (reached('live-creds-written')) {
+      creds = await readSnap(fs, paths.credentials);
+      if (!creds || (creds.text !== o.writtenCreds && creds.text !== o.liveCreds.text)) return false;
+    }
+    if (reached('live-json-written')) {
+      json = await readSnap(fs, paths.claudeJson);
+      const now = identityFromOauthAccount(json?.data.oauthAccount);
+      if (!json || (compareIdentity(now, o.targetIdentity) !== 'same' && compareIdentity(now, liveId) !== 'same')) return false;
+    }
+  } catch { return false; }
   let clean = true;
   const step = async (fn: () => Promise<unknown>) => { try { await fn(); } catch { clean = false; } };
-  if (reached('live-creds-written')) await step(() => atomicWrite(deps, fs, paths.credentials, o.liveCreds.text));
-  if (reached('live-json-written')) {
-    await step(async () => {
-      const now = await readSnap(fs, paths.claudeJson);
-      await atomicWrite(deps, fs, paths.claudeJson, JSON.stringify({ ...(now?.data ?? o.liveJson.data), oauthAccount: o.liveAccount }, null, 2));
-    });
+  // Each restore is guarded: the file must still be exactly what was inspected above.
+  const still = (path: string, text: string) => async () => (await fs.readFile(path)) === text;
+  const credsNow = creds;
+  if (credsNow && credsNow.text !== o.liveCreds.text) {
+    await step(() => atomicWrite(deps, fs, paths.credentials, o.liveCreds.text, still(paths.credentials, credsNow.text)));
   }
+  const jsonNow = json;
+  if (jsonNow && compareIdentity(identityFromOauthAccount(jsonNow.data.oauthAccount), liveId) !== 'same') {
+    await step(() => atomicWrite(deps, fs, paths.claudeJson, JSON.stringify({ ...jsonNow.data, oauthAccount: o.liveAccount }, null, 2), still(paths.claudeJson, jsonNow.text)));
+  }
+  // The outgoing record's new copy is the only one of its login until the live files are restored.
+  if (!clean) return false;
   if (reached('outgoing-saved')) {
     await step(() => (o.outCreds ? atomicWrite(deps, fs, join(o.outDir, '.credentials.json'), o.outCreds.text) : fs.rm(join(o.outDir, '.credentials.json'))));
     await step(() => (o.outJson ? atomicWrite(deps, fs, join(o.outDir, '.claude.json'), o.outJson.text) : fs.rm(join(o.outDir, '.claude.json'))));
@@ -236,12 +275,40 @@ async function removeBackups(deps: ActivateDeps, fs: SwapFs): Promise<void> {
   await fs.rmdir(deps.backupDir).catch(() => undefined);
 }
 
+/** 'legacy': no version-2 journal (the 0.9.0 recovery decides); 'locked': Claude Code's locks were busy, retry later. */
+export type ActivationRecovery = SwapRecovery | 'legacy' | 'locked';
+
+/** True while a version-2 recovery waits for Claude Code's locks: its journal stays, nothing reads or renews meanwhile. */
+let retryPending = false;
+export function isActivationRecoveryPending(): boolean { return retryPending; }
+
+/**
+ * True while a version-2 journal exists (or the journal cannot be read): the live files may be half written, so the live
+ * login must not be reconciled (resync would copy the target's tokens over the outgoing record's only copy).
+ */
+export async function activationJournalPending(deps: Pick<ActivateDeps, 'backupDir' | 'fs'>): Promise<boolean> {
+  let text: string | null;
+  try { text = await (deps.fs ?? nodeSwapFs).readFile(join(deps.backupDir, JOURNAL)); } catch { return true; }
+  if (text === null) return false;
+  try { const info: unknown = JSON.parse(text); return !isRecord(info) || info.version === 2; } catch { return true; }
+}
+
+/** The start-up recovery: a few tries while Claude Code holds its locks; after that the polls retry (`isActivationRecoveryPending`). */
+export async function recoverActivationWithRetry(deps: ActivateDeps, attempts = 3, waitMs = 1_000): Promise<ActivationRecovery> {
+  for (let i = 1; ; i++) {
+    const result = await recoverInterruptedActivation(deps);
+    if (result !== 'locked' || i >= attempts) return result;
+    await deps.delay(waitMs);
+  }
+}
+
 /**
  * Call at app start, before the 0.9.0 recovery; 'legacy' means there is no version-2 journal and recoverInterruptedSwap
  * decides. Version-2 backups without any journal (a crash before the first journal write) are deleted first: no live file
- * was modified before that write.
+ * was modified before that write. Busy Claude Code locks give 'locked': the journal stays and the swap is NOT marked
+ * unresolved, so nobody is invited to clear a state the next try can still repair.
  */
-export async function recoverInterruptedActivation(deps: ActivateDeps): Promise<SwapRecovery | 'legacy'> {
+export async function recoverInterruptedActivation(deps: ActivateDeps): Promise<ActivationRecovery> {
   const fs = deps.fs ?? nodeSwapFs;
   let text: string | null;
   // An unreadable journal is not a missing one: nothing is deleted then.
@@ -265,9 +332,11 @@ export async function recoverInterruptedActivation(deps: ActivateDeps): Promise<
   if (!claimSwap()) return 'none';
   try {
     const result = await recoverV2(deps, fs, info);
-    setSwapUnresolved(result === 'manual');
+    retryPending = result === 'locked';
+    if (result !== 'locked') setSwapUnresolved(result === 'manual');
     return result;
   } catch {
+    retryPending = false;
     setSwapUnresolved(true);
     return 'manual';
   } finally {
@@ -275,22 +344,29 @@ export async function recoverInterruptedActivation(deps: ActivateDeps): Promise<
   }
 }
 
-async function recoverV2(deps: ActivateDeps, fs: SwapFs, info: Rec): Promise<SwapRecovery> {
+async function recoverV2(deps: ActivateDeps, fs: SwapFs, info: Rec): Promise<SwapRecovery | 'locked'> {
   const { store } = deps;
   const phase = info.phase as Phase;
   const { outgoingId, targetId } = info;
   if (!ORDER.includes(phase) || !isAccountId(outgoingId) || !isAccountId(targetId)) return 'manual';
+  const paths = swapPaths(deps);
   if (phase === 'verified') {
-    finishRoles(store, outgoingId, targetId, store.get(targetId) ?? {});
+    // The outgoing record holds the live family it received either way. The other roles only when the target is still
+    // the one signed in; otherwise the login changed since and reconcile assigns them from what is signed in now.
+    const target = store.get(targetId);
+    const liveJson = paths ? await readSnap(fs, paths.claudeJson) : null;
+    const liveId = identityFromOauthAccount(liveJson?.data.oauthAccount);
+    if (target && custodyOf(target) !== 'quarantined' && compareIdentity(liveId, target) === 'same') finishRoles(store, outgoingId, targetId, liveId);
+    else if (store.get(outgoingId)) store.setFamily(outgoingId, 'live');
     await removeBackups(deps, fs);
     return 'none';
   }
   if (phase === 'backed-up') {
-    await removeBackups(deps, fs);
+    // The record before the journal: a crash in between leaves the journal, and the next start removes it again.
     if (info.created === true) store.remove(outgoingId);
+    await removeBackups(deps, fs);
     return 'none';
   }
-  const paths = swapPaths(deps);
   if (!paths) return 'manual';
   const read = (name: string) => fs.readFile(join(deps.backupDir, name));
   const liveB = await read(BACKUP.liveCreds);
@@ -303,6 +379,7 @@ async function recoverV2(deps: ActivateDeps, fs: SwapFs, info: Rec): Promise<Swa
   try { liveAccountB = (JSON.parse(liveJsonB) as Rec).oauthAccount; } catch { return 'manual'; }
   if (!isRecord(liveAccountB)) return 'manual';
   try {
+    const targetRecord = store.get(targetId);
     return await withClaudeLocks(paths, async (): Promise<SwapRecovery> => {
       const live = await readSnap(fs, paths.credentials);
       const targetCreds = await readSnap(fs, join(store.dirOf(targetId), '.credentials.json'));
@@ -311,19 +388,23 @@ async function recoverV2(deps: ActivateDeps, fs: SwapFs, info: Rec): Promise<Swa
       const liveRefresh = str(oauthOf(live)?.refreshToken);
       const ours = !!liveRefresh && liveRefresh === str(oauthOf(targetCreds)?.refreshToken);
       if (!untouched && !ours) return 'manual';
-      if (!untouched) await atomicWrite(deps, fs, paths.credentials, liveB);
+      // The identity too must be the old one or the target's; anything else was written by someone else and is kept.
       const nowJson = await readSnap(fs, paths.claudeJson);
-      if (nowJson && compareIdentity(identityFromOauthAccount(nowJson.data.oauthAccount), identityFromOauthAccount(liveAccountB)) !== 'same') {
+      const nowId = identityFromOauthAccount(nowJson?.data.oauthAccount);
+      const oldJson = !!nowJson && compareIdentity(nowId, identityFromOauthAccount(liveAccountB)) === 'same';
+      if (nowJson && !oldJson && !(targetRecord && compareIdentity(nowId, targetRecord) === 'same')) return 'manual';
+      if (!untouched) await atomicWrite(deps, fs, paths.credentials, liveB);
+      if (nowJson && !oldJson) {
         await atomicWrite(deps, fs, paths.claudeJson, JSON.stringify({ ...nowJson.data, oauthAccount: liveAccountB }, null, 2));
       }
       const outDir = store.dirOf(outgoingId);
       if (outCredsB !== null) await atomicWrite(deps, fs, join(outDir, '.credentials.json'), outCredsB); else await fs.rm(join(outDir, '.credentials.json'));
       if (outJsonB !== null) await atomicWrite(deps, fs, join(outDir, '.claude.json'), outJsonB); else await fs.rm(join(outDir, '.claude.json'));
-      await removeBackups(deps, fs);
       if (info.created === true) store.remove(outgoingId);
+      await removeBackups(deps, fs);
       return 'recovered';
     }, deps.locks);
-  } catch {
-    return 'manual';
+  } catch (error) {
+    return error instanceof LockTimeout ? 'locked' : 'manual';
   }
 }

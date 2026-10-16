@@ -38,7 +38,7 @@ import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
 import { gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
-import { activateAccount, checkActivationTarget, recoverInterruptedActivation, type ActivateDeps } from './accounts/activate';
+import { activateAccount, activationJournalPending, checkActivationTarget, isActivationRecoveryPending, recoverActivationWithRetry, recoverInterruptedActivation, type ActivateDeps } from './accounts/activate';
 import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
 import { claudeRefs } from './accounts/refs';
@@ -152,7 +152,17 @@ const usage = new UsageService({
   // The swap slot is held meanwhile, so a "Set as main" or a recovery can never interleave with the role changes.
   beforeRun: async () => {
     cswapRoster = await readCswapRoster(cswapRosterPath(homedir(), process.env, process.platform));
-    await reconcileWhenIdle({ swapUnresolved: isSwapUnresolved, loginActive: () => login.isActive() }, () => reconcileLive(reconcileDeps()));
+    // An activation whose recovery found Claude Code's locks busy is retried first; the live login is not reconciled while
+    // its journal exists (the live files may be half written).
+    if (isActivationRecoveryPending()) {
+      const recovered = await recoverInterruptedActivation(activateDeps()).catch(() => 'manual' as const);
+      if (recovered !== 'locked') void pushSwapPending();
+    }
+    await reconcileWhenIdle({
+      swapUnresolved: isSwapUnresolved,
+      loginActive: () => login.isActive(),
+      journalPending: () => activationJournalPending(activateDeps()),
+    }, () => reconcileLive(reconcileDeps()));
   },
   watchLive: true,
 });
@@ -236,7 +246,7 @@ const activateDeps = (): ActivateDeps => ({
   delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   cswap: () => readCswapRoster(cswapRosterPath(homedir(), process.env, process.platform)),
 });
-const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: isSwapUnresolved };
+const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: () => isSwapUnresolved() || isActivationRecoveryPending() };
 /** The live Claude login's identity (`~/.claude.json`), null when nobody is signed in. */
 const readLiveIdentity = async () => { const id = await readClaudeIdentity(usageDeps.credentials); return id.email || id.accountUuid ? id : null; };
 const migrationDeps = (): MigrationDeps => ({
@@ -795,6 +805,8 @@ ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
 ipcMain.handle('accounts:swapPending', () => hasPendingSwap(swapDeps()).catch(() => true));
 /** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
 ipcMain.handle('accounts:clearSwapPending', async () => {
+  // A recovery still waiting for Claude Code's locks can repair the state itself: its backups are not deleted meanwhile.
+  if (isActivationRecoveryPending()) return { ok: false };
   const cleared = await clearPendingSwap(swapDeps());
   void pushSwapPending();
   return { ok: cleared };
@@ -966,7 +978,8 @@ async function startMainApp(): Promise<void> {
   // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another:
   // first a 0.9.1 (version 2) journal, otherwise the 0.9.0 recovery decides.
   try {
-    if ((await recoverInterruptedActivation(activateDeps())) === 'legacy') await recoverInterruptedSwap(swapDeps());
+    // Shorter lock waits here: the window waits for this; a recovery still 'locked' is retried by the polls.
+    if ((await recoverActivationWithRetry({ ...activateDeps(), locks: { timeoutMs: 3_000 } })) === 'legacy') await recoverInterruptedSwap(swapDeps());
   } catch { /* the journal stays and the next start retries */ }
   // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
   try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }

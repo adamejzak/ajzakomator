@@ -3,12 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compareIdentity, custodyOf } from '../src/shared/accounts';
-import { activateAccount, checkActivationTarget, recoverInterruptedActivation, type ActivateDeps } from '../src/main/accounts/activate';
+import {
+  activateAccount, activationJournalPending, checkActivationTarget, isActivationRecoveryPending, recoverActivationWithRetry, recoverInterruptedActivation,
+  type ActivateDeps,
+} from '../src/main/accounts/activate';
 import type { CswapRoster } from '../src/main/accounts/cswap';
-import { reconcileLive } from '../src/main/accounts/reconcile';
+import { reconcileLive, reconcileWhenIdle } from '../src/main/accounts/reconcile';
+import { withProfileLock } from '../src/main/accounts/refresh';
 import { claudeRefs } from '../src/main/accounts/refs';
 import { AccountsStore } from '../src/main/accounts/store';
-import { claimSwap, nodeSwapFs, releaseSwap, type SwapFs } from '../src/main/accounts/swap';
+import { claimSwap, isSwapUnresolved, nodeSwapFs, releaseSwap, setSwapUnresolved, type SwapFs } from '../src/main/accounts/swap';
 import { fetchClaude, type FetcherDeps } from '../src/main/usage/fetchers';
 
 const NOW = Date.parse('2026-10-16T12:00:00Z');
@@ -183,6 +187,64 @@ describe('activateAccount', () => {
     put(join(backupDir(), 'swap-journal.json'), { version: 1 });
     expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'pending' });
   });
+
+  const loginCreds = { claudeAiOauth: { accessToken: 'fake-acc-login', refreshToken: 'fake-ref-login', expiresAt: FUTURE } };
+  /** A writer that ignores the locks (a /login, a holder that broke them as stale) right after the swap wrote the identity. */
+  const foreignWriteAfterSwap = (write: () => void): SwapFs => {
+    let done = false;
+    return { ...nodeSwapFs, rename: async (from, to) => { await nodeSwapFs.rename(from, to); if (to === liveJson() && !done) { done = true; write(); } } };
+  };
+
+  it('never rolls back over a login someone else wrote before the verification (manual, backups kept)', async () => {
+    setSwapUnresolved(false);
+    fs = foreignWriteAfterSwap(() => put(liveCreds(), loginCreds));
+    expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'manual' });
+    expect(json(liveCreds())).toEqual(loginCreds);
+    expect(json(join(store.dirOf(A), '.credentials.json')).claudeAiOauth.refreshToken).toBe('fake-ref-A'); // the outgoing copy stays
+    expect(readdirSync(backupDir())).toEqual(expect.arrayContaining(['swap-journal.json', 'live-credentials.json', 'live-claude.json']));
+    expect(isSwapUnresolved()).toBe(true);
+    setSwapUnresolved(false);
+  });
+
+  it('never rolls back over an identity someone else wrote either', async () => {
+    fs = foreignWriteAfterSwap(() => put(liveJson(), { oauthAccount: account('Z', 'z@x.com') }));
+    expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'manual' });
+    expect(json(liveJson()).oauthAccount).toEqual(account('Z', 'z@x.com'));
+    expect(json(join(store.dirOf(A), '.credentials.json')).claudeAiOauth.refreshToken).toBe('fake-ref-A');
+    expect(existsSync(join(backupDir(), 'swap-journal.json'))).toBe(true);
+    setSwapUnresolved(false);
+  });
+
+  it('waits for a renewal of the outgoing record still in flight before taking the Claude Code locks', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const renewal = withProfileLock(store.dirOf(A), async () => { await gate; put(join(store.dirOf(A), '.credentials.json'), creds('renewed')); });
+    const running = activateAccount(deps(), T);
+    const state = await Promise.race([running.then(() => 'done'), new Promise((resolve) => setTimeout(() => resolve('waiting'), 400))]);
+    expect(state).toBe('waiting');
+    expect(lockDirs().map(existsSync)).toEqual([false, false, false]);
+    release();
+    await renewal;
+    expect((await running).ok).toBe(true);
+    expect(json(join(store.dirOf(A), '.credentials.json')).claudeAiOauth.refreshToken).toBe('fake-ref-A');
+  });
+
+  it('commits a record for an unknown outgoing account only once the journal names it', async () => {
+    store.remove(A);
+    const counts: number[] = [];
+    fs = { ...nodeSwapFs, rename: async (from, to) => { if (to.endsWith('swap-journal.json')) counts.push(store.list().length); return nodeSwapFs.rename(from, to); } };
+    expect((await activateAccount(deps(), T)).ok).toBe(true);
+    expect(counts[0]).toBe(1);
+    expect(counts.at(-1)).toBe(2);
+  });
+
+  it('leaves neither a record nor a profile dir behind when an unknown outgoing account cannot be saved', async () => {
+    store.remove(A);
+    fs = { ...nodeSwapFs, rename: async (from, to) => { if (to.endsWith('swap-journal.json')) throw Object.assign(new Error('boom'), { code: 'EIO' }); return nodeSwapFs.rename(from, to); } };
+    expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'write' });
+    expect(store.list().map((r) => r.id)).toEqual([T]);
+    expect(readdirSync(join(root, 'accounts', 'claude'))).toEqual([T]);
+  });
 });
 
 describe('checkActivationTarget (the makeMain IPC check)', () => {
@@ -250,9 +312,72 @@ describe('recoverInterruptedActivation', () => {
 
   it('finishes the roles of a verified swap', async () => {
     put(join(backupDir(), 'swap-journal.json'), { version: 2, phase: 'verified', outgoingId: A, targetId: T, created: false, outCredsExisted: false, outJsonExisted: false, startedAt: NOW });
+    put(liveJson(), { oauthAccount: account('X', 'x@x.com') });
     expect(await recoverInterruptedActivation(deps())).toBe('none');
     expect(store.get(T)?.custody).toBe('live');
     expect(store.get(A)?.custody).toBe('app');
+    expect(store.live()?.recordId).toBe(T);
+  });
+
+  it('leaves the roles of a verified swap to reconcile when the target is no longer signed in', async () => {
+    put(join(backupDir(), 'swap-journal.json'), { version: 2, phase: 'verified', outgoingId: A, targetId: T, created: false, outCredsExisted: false, outJsonExisted: false, startedAt: NOW });
+    expect(await recoverInterruptedActivation(deps())).toBe('none'); // the live identity is still A
+    expect(store.get(T)?.custody).toBe('app');
+    expect(store.get(A)?.custody).toBe('live');
+    expect(store.live()?.recordId).toBe(A);
+    expect(existsSync(backupDir()) ? readdirSync(backupDir()) : []).toEqual([]);
+  });
+
+  it('removes a record created for the outgoing account when the swap stopped right after the journal', async () => {
+    const created = store.prepare().id;
+    store.commit({ id: created, addedAt: 5, email: 'b@x.com', accountUuid: 'uuid-B', custody: 'live', family: 'live' });
+    mkdirSync(backupDir(), { recursive: true });
+    writeFileSync(join(backupDir(), 'live-credentials.json'), readFileSync(liveCreds(), 'utf8'));
+    put(join(backupDir(), 'swap-journal.json'), { version: 2, phase: 'backed-up', outgoingId: created, targetId: T, created: true, outCredsExisted: false, outJsonExisted: false, startedAt: NOW });
+    expect(await recoverInterruptedActivation(deps())).toBe('none');
+    expect(store.get(created)).toBeUndefined();
+    expect(existsSync(store.dirOf(created))).toBe(false);
+    expect(existsSync(backupDir()) ? readdirSync(backupDir()) : []).toEqual([]);
+  });
+
+  it('keeps an identity someone else wrote since (manual)', async () => {
+    crashedAfterLiveWrites();
+    put(liveJson(), { oauthAccount: account('Z', 'z@x.com') });
+    const after = snapshot();
+    expect(await recoverInterruptedActivation(deps())).toBe('manual');
+    expect(snapshot()).toEqual(after);
+    setSwapUnresolved(false);
+  });
+
+  it('keeps the journal while Claude Code holds its locks, never marks the swap unresolved, and blocks reconcile until it recovers', async () => {
+    setSwapUnresolved(false);
+    crashedAfterLiveWrites();
+    mkdirSync(join(home, '.claude.lock'));
+    expect(await recoverInterruptedActivation(deps())).toBe('locked');
+    expect(isSwapUnresolved()).toBe(false);
+    expect(isActivationRecoveryPending()).toBe(true);
+    expect(existsSync(join(backupDir(), 'swap-journal.json'))).toBe(true);
+    const reconcile = vi.fn(async () => undefined);
+    const guard = { swapUnresolved: isSwapUnresolved, loginActive: () => false, journalPending: () => activationJournalPending(deps()) };
+    expect(await reconcileWhenIdle(guard, reconcile)).toBe(false);
+    expect(reconcile).not.toHaveBeenCalled();
+    rmSync(join(home, '.claude.lock'), { recursive: true });
+    expect(await recoverInterruptedActivation(deps())).toBe('recovered');
+    expect(isActivationRecoveryPending()).toBe(false);
+    expect(isSwapUnresolved()).toBe(false);
+    expect(await reconcileWhenIdle(guard, reconcile)).toBe(true);
+    expect(reconcile).toHaveBeenCalledOnce();
+  });
+
+  it('retries at start-up while the locks are busy', async () => {
+    crashedAfterLiveWrites();
+    const lock = join(home, '.claude.lock');
+    mkdirSync(lock);
+    const waits: number[] = [];
+    const d: ActivateDeps = { ...deps(), delay: async (ms) => { waits.push(ms); rmSync(lock, { recursive: true }); } };
+    expect(await recoverActivationWithRetry(d, 3, 1000)).toBe('recovered');
+    expect(waits).toEqual([1000]);
+    expect(isActivationRecoveryPending()).toBe(false);
   });
 });
 

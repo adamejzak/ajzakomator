@@ -81,8 +81,19 @@ export async function reconcileLive(deps: ReconcileDeps, opts: { ownChange?: boo
  * Runs `reconcile` holding the swap slot, so it never interleaves with an activation, a recovery or a re-login; skipped
  * (resolves false) while a swap runs or is unresolved or a login is in progress.
  */
-export async function reconcileWhenIdle(guard: { swapUnresolved(): boolean; loginActive(): boolean }, reconcile: () => Promise<unknown>): Promise<boolean> {
+export async function reconcileWhenIdle(
+  guard: { swapUnresolved(): boolean; loginActive(): boolean; journalPending?(): Promise<boolean> },
+  reconcile: () => Promise<unknown>,
+): Promise<boolean> {
   if (guard.swapUnresolved() || guard.loginActive() || !claimSwap()) return false;
-  try { await reconcile(); } finally { releaseSwap(); }
+  try {
+    // An interrupted activation's journal: the live files may be half written, so they are not read until it is recovered.
+    if (guard.journalPending) {
+      let pending = true;
+      try { pending = await guard.journalPending(); } catch { /* unknown counts as pending */ }
+      if (pending) return false;
+    }
+    await reconcile();
+  } finally { releaseSwap(); }
   return true;
 }
