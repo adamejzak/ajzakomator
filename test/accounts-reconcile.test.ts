@@ -7,7 +7,7 @@ import { compareIdentity, custodyOf, type AccountIdentity } from '../src/shared/
 import type { CswapRoster } from '../src/main/accounts/cswap';
 import { gateFamilyRefresh } from '../src/main/accounts/guards';
 import { renewRule } from '../src/main/accounts/refs';
-import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
+import { backupLiveBeforeLogin, LiveBackupFailed, reconcileLive, reconcileWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
 import { resyncActiveBackup } from '../src/main/accounts/resync';
 import { AccountsStore } from '../src/main/accounts/store';
 import { claimSwap, isSwapRunning, nodeSwapFs, releaseSwap, type SwapFs } from '../src/main/accounts/swap';
@@ -322,5 +322,100 @@ describe('resyncActiveBackup', () => {
   it('reports a missing live login', async () => {
     const p = add(A, 'live');
     expect(await resyncActiveBackup(rdeps(), p, A)).toBe('missing');
+  });
+});
+
+describe('backupLiveBeforeLogin (main re-login, preflight F10)', () => {
+  const paths = () => ({ credentials: join(home, '.claude', '.credentials.json'), claudeJson: join(home, '.claude.json') });
+  const putLive = (n: string) => {
+    writeFileSync(paths().credentials, JSON.stringify({ claudeAiOauth: { accessToken: `fake-acc-${n}`, refreshToken: `fake-ref-${n}`, expiresAt: 5 } }));
+    writeFileSync(paths().claudeJson, JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com', accountUuid: 'ua' } }));
+  };
+  const guard = { swapUnresolved: () => false };
+  const opts = { delay: async () => undefined };
+  const withResync = (resync: ReconcileDeps['resync']) => deps(resync);
+
+  it('backs the live login up into its record before resolving, retrying while the live files settle (real resync)', async () => {
+    const p = add(A, 'live');
+    store.setLive({ ...A, recordId: p });
+    live = A;
+    putLive('1');
+    const seen = new Map<string, string>();
+    const results: string[] = [];
+    const resync = async (id: string, identity: AccountIdentity) => {
+      const r = await resyncActiveBackup({ paths: paths(), store, seen, delay: async () => undefined, locks: { timeoutMs: 300 } }, id, identity);
+      results.push(r);
+      return r;
+    };
+    await backupLiveBeforeLogin(guard, withResync(resync), opts);
+    expect(results).toEqual(['settling', 'copied']);
+    expect(JSON.parse(readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8')).claudeAiOauth.refreshToken).toBe('fake-ref-1');
+    expect(isSwapRunning()).toBe(false);
+  });
+
+  it('applies a pending own change of an earlier app login: the record that left becomes app, without a notice', async () => {
+    const g = add(G, 'live');
+    store.setLive({ ...G, recordId: g });
+    add(A);
+    live = A;
+    await backupLiveBeforeLogin(guard, withResync(async () => 'copied' as const), { ...opts, ownChange: true });
+    expect(store.get(g)?.custody).toBe('app');
+    expect(store.notices().filter((n) => n.kind === 'switchedOut')).toEqual([]);
+  });
+
+  it('resolves at once when the backup is already current', async () => {
+    add(A, 'live');
+    live = A;
+    const resync = vi.fn(async () => 'unchanged' as const);
+    await backupLiveBeforeLogin(guard, withResync(resync), opts);
+    expect(resync).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['settling', 'locked', 'mismatch'] as const)('refuses when every try ends %s (never proceeds as if backed up)', async (result) => {
+    add(A, 'live');
+    live = A;
+    const resync = vi.fn(async () => result);
+    await expect(backupLiveBeforeLogin(guard, withResync(resync), { ...opts, tries: 3 })).rejects.toThrow(LiveBackupFailed);
+    expect(resync).toHaveBeenCalledTimes(3);
+    expect(isSwapRunning()).toBe(false);
+  });
+
+  it('refuses when the copy throws', async () => {
+    add(A, 'live');
+    live = A;
+    await expect(backupLiveBeforeLogin(guard, withResync(async () => { throw new Error('disk'); }), opts)).rejects.toThrow(LiveBackupFailed);
+  });
+
+  it('refuses while a swap holds the slot, a swap is unresolved or an activation journal is pending', async () => {
+    add(A, 'live');
+    live = A;
+    const resync = vi.fn(async () => 'copied' as const);
+    expect(claimSwap()).toBe(true);
+    try { await expect(backupLiveBeforeLogin(guard, withResync(resync), opts)).rejects.toThrow(LiveBackupFailed); } finally { releaseSwap(); }
+    await expect(backupLiveBeforeLogin({ swapUnresolved: () => true }, withResync(resync), opts)).rejects.toThrow(LiveBackupFailed);
+    await expect(backupLiveBeforeLogin({ ...guard, journalPending: async () => true }, withResync(resync), opts)).rejects.toThrow(LiveBackupFailed);
+    expect(resync).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the live identity cannot be read or accounts.json is read-only', async () => {
+    add(A, 'live');
+    const resync = vi.fn(async () => 'copied' as const);
+    await expect(backupLiveBeforeLogin(guard, { ...withResync(resync), readLiveIdentity: async () => { throw new Error('io'); } }, opts)).rejects.toThrow(LiveBackupFailed);
+    live = A;
+    const file = join(root, 'accounts', 'accounts.json');
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), version: 99 }));
+    expect(store.readOnly()).toBe(true);
+    await expect(backupLiveBeforeLogin(guard, withResync(resync), opts)).rejects.toThrow(LiveBackupFailed);
+    expect(resync).not.toHaveBeenCalled();
+  });
+
+  it('proceeds when nobody is signed in, when the live login holds no refresh token, or where there is no file login (macOS)', async () => {
+    live = null;
+    const resync = vi.fn(async () => 'copied' as const);
+    await backupLiveBeforeLogin(guard, withResync(resync), opts);
+    expect(resync).not.toHaveBeenCalled();
+    live = A;
+    await backupLiveBeforeLogin(guard, withResync(async () => 'missing' as const), opts);
+    await backupLiveBeforeLogin(guard, deps(), opts);
   });
 });

@@ -96,12 +96,14 @@ export interface LoginRequest {
   target: LoginTarget;
 }
 
-export type LoginStatus = 'waiting' | 'success' | 'failed' | 'duplicate';
+export type LoginStatus = 'waiting' | 'success' | 'failed' | 'duplicate' | 'mismatch';
 
 export interface LoginState {
   sessionId: string;
   status: LoginStatus;
   email?: string;
+  /** `mismatch`: the account the card belongs to (the login signed in `email` instead; nothing was changed). */
+  expected?: string;
   error?: 'timeout' | 'spawn' | 'identity';
 }
 

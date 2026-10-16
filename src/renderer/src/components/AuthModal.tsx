@@ -3,7 +3,7 @@ import type { LoginState, LoginTarget } from '../../../shared/accounts';
 import { swapErrorKey } from '../../../shared/swapMessages';
 import { useI18n } from '../i18n';
 import { useUsage } from '../usage';
-import { closeModal } from '../store';
+import { closeModal, setUi } from '../store';
 import { terminals } from '../terminals/TerminalManager';
 import { IX } from './icons';
 import { RefreshIcon } from './Spinner';
@@ -85,8 +85,9 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   let line: string;
   if (status === 'success') line = email ? tr('Zalogowano jako {email}', { email }) : tr('Zalogowano.');
   else if (status === 'duplicate' && email) line = tr('To konto jest już dodane ({email}).', { email });
+  else if (status === 'mismatch' && email) line = tr('Zalogowano jako {email}, a ta karta należy do {expected}. Nic nie zmieniono.', { email, expected: current?.expected ?? '' });
   else if (startFailed && refusal) line = tr(swapErrorKey(refusal));
-  else if (status === 'failed' || status === 'duplicate') {
+  else if (status === 'failed' || status === 'duplicate' || status === 'mismatch') {
     line = current?.error === 'timeout' ? tr('Upłynął czas na logowanie.')
       : current?.error === 'identity' ? tr('Nie udało się odczytać konta po zalogowaniu.')
         : tr('Logowanie nie powiodło się.');
@@ -105,6 +106,7 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
         <span>{line}</span>
       </div>
       <div className="modal-foot">
+        {status === 'mismatch' && <button className="btn primary" onClick={() => setUi({ modal: { kind: 'auth', provider: 'claude', target: { type: 'new' } } })}>{tr('Dodaj jako nowe konto')}</button>}
         <button className="btn" onClick={closeModal}>{waiting ? tr('Anuluj') : tr('Zamknij')}</button>
       </div>
     </div>

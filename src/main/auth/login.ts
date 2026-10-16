@@ -1,7 +1,13 @@
 // src/main/auth/login.ts
 import { randomUUID } from 'crypto';
-import { isAccountId, type LoginRequest, type LoginState } from '../../shared/accounts';
+import { compareIdentity, identityFields, isAccountId, type AccountIdentity, type LoginRequest, type LoginState } from '../../shared/accounts';
 import type { AccountsStore } from '../accounts/store';
+import type { ProfileSnapshot } from './profileSnapshot';
+
+/** An account the app knows: the live login (`live`) or a saved record. */
+export interface KnownIdentity extends AccountIdentity { recordId?: string; live?: boolean }
+/** What a finished login changed, so the usage panel reads exactly that account at once. */
+export interface LoginChange { provider: 'claude' | 'codex'; recordId?: string; ownChange?: boolean }
 
 export interface LoginDeps {
   store: AccountsStore;
@@ -12,12 +18,21 @@ export interface LoginDeps {
   fingerprint(provider: 'claude' | 'codex', configDir: string | undefined): Promise<string | null>;
   /** Drops cached failed credential reads (macOS Keychain) so the login sees fresh credentials. Called before each fingerprint read. */
   resetCredentialCache?(): void;
-  identity(provider: 'claude' | 'codex', configDir: string | undefined): Promise<{ email?: string; org?: string }>;
-  /** Lower-cased e-mails of the machine's own Claude login and of every managed account. */
-  knownEmails(): Promise<string[]>;
+  identity(provider: 'claude' | 'codex', configDir: string | undefined): Promise<AccountIdentity>;
+  /** The live Claude login and every saved account that is not set aside. */
+  knownIdentities(): Promise<KnownIdentity[]>;
+  /** Login files of a saved profile, taken before it is signed in again (memory only). */
+  snapshotProfile(dir: string): Promise<ProfileSnapshot>;
+  /** Puts a snapshot back: the re-login signed in a different account, or one the app already has. */
+  restoreProfile(dir: string, snapshot: ProfileSnapshot): Promise<void>;
+  /**
+   * Before a main Claude login: the outgoing live login is backed up into its record. Rejects when it could not be backed
+   * up (or is not current), and the login is then refused with `busy`, so a live login is never replaced unsaved.
+   */
+  beforeMainLogin?(): Promise<void>;
   emit(state: LoginState): void;
-  /** Called after a login succeeded so the usage service can refresh. */
-  onChanged(): void;
+  /** Called after a login succeeded. */
+  onChanged(change: LoginChange): void;
   /** False where isolated Claude profiles cannot work (macOS keeps Claude tokens in the Keychain). Defaults to true. */
   profilesSupported?: boolean;
   /** True while the main account is being swapped; a login must not touch the same files meanwhile. */
@@ -36,6 +51,7 @@ interface Session {
   target: LoginRequest['target'];
   configDir: string | undefined;
   pendingId?: string;
+  snapshot?: ProfileSnapshot;
   initial: string | null;
   settled: boolean;
   ended: boolean;
@@ -100,6 +116,17 @@ export class LoginManager {
     this.current = session;
 
     try {
+      // The card's current login is kept so a wrong account can be undone; the outgoing live login is backed up first.
+      if (provider === 'claude' && target.type === 'account') session.snapshot = await this.deps.snapshotProfile(session.configDir as string);
+      if (provider === 'claude' && target.type === 'main') await this.deps.beforeMainLogin?.();
+    } catch {
+      // No snapshot: a wrong account could not be undone. No backup: the live login would be lost. Either way, nothing starts.
+      this.end(session);
+      return { ok: false, error: target.type === 'main' ? 'busy' : 'spawn' };
+    }
+    if (session.ended) return { ok: false, error: 'cancelled' };
+
+    try {
       this.deps.resetCredentialCache?.();
       session.initial = await this.deps.fingerprint(provider, session.configDir);
     } catch {
@@ -134,8 +161,10 @@ export class LoginManager {
   cancel(sessionId: string): void {
     const session = this.current;
     if (!session || session.id !== sessionId) return;
+    const written = this.loginWritten(session);
     this.end(session);
     this.kill(session);
+    this.undo(session, written);
     this.discard(session);
   }
 
@@ -143,8 +172,10 @@ export class LoginManager {
   failActive(error: 'spawn'): void {
     const session = this.current;
     if (!session) return;
+    const written = this.loginWritten(session);
     this.end(session);
     this.kill(session);
+    this.undo(session, written);
     this.discard(session);
     this.deps.emit({ sessionId: session.id, status: 'failed', error });
   }
@@ -152,7 +183,10 @@ export class LoginManager {
   /** Cancels the active session when it targets this managed account. */
   cancelFor(accountId: string): void {
     const session = this.current;
-    if (session && session.target.type === 'account' && session.target.id === accountId) this.cancel(session.id);
+    if (!session || session.target.type !== 'account' || session.target.id !== accountId) return;
+    // The account is being removed: its profile goes away, nothing is put back.
+    session.snapshot = undefined;
+    this.cancel(session.id);
   }
 
   dispose(): void {
@@ -178,9 +212,11 @@ export class LoginManager {
 
   private onTimeout(session: Session): void {
     if (session.ended || session.settled) return;
+    const written = this.loginWritten(session);
     session.settled = true;
     this.end(session);
     this.kill(session);
+    this.undo(session, written);
     this.discard(session);
     this.deps.emit({ sessionId: session.id, status: 'failed', error: 'timeout' });
   }
@@ -200,7 +236,7 @@ export class LoginManager {
     this.clearTimers(session);
     this.kill(session);
 
-    let identity: { email?: string; org?: string } = {};
+    let identity: AccountIdentity = {};
     for (let attempt = 0; attempt < IDENTITY_TRIES; attempt++) {
       try {
         identity = await this.deps.identity(session.provider, session.configDir);
@@ -208,40 +244,76 @@ export class LoginManager {
         identity = {};
       }
       if (session.ended) return;
-      if (identity.email || attempt === IDENTITY_TRIES - 1) break;
+      if (identity.email || identity.accountUuid || attempt === IDENTITY_TRIES - 1) break;
       await this.sleep(session, IDENTITY_GAP_MS);
       if (session.ended) return;
     }
-    const { email, org } = identity;
+    const { email } = identity;
     const target = session.target;
-
-    if (target.type === 'new') {
-      if (!email) {
-        this.finish(session, { sessionId: session.id, status: 'failed', error: 'identity' }, true);
-        return;
-      }
-      let known: string[] = [];
-      try {
-        known = await this.deps.knownEmails();
-      } catch {
-        known = [];
-      }
-      if (session.ended) return;
-      if (known.includes(email.toLowerCase())) {
-        this.finish(session, { sessionId: session.id, status: 'duplicate', email }, true);
-        return;
-      }
-      this.deps.store.commit({ id: session.pendingId as string, email, ...(org ? { org } : {}), addedAt: Date.now(), custody: 'app', family: 'own' });
-      session.pendingId = undefined;
-    } else if (target.type === 'account' && email) {
-      this.deps.store.update(target.id, { email, ...(org ? { org } : {}) });
-      this.deps.store.setFamily(target.id, 'own');
+    if (session.provider === 'codex' || target.type === 'main') {
+      this.finish(session, { sessionId: session.id, status: 'success', ...(email ? { email } : {}) }, false);
+      this.deps.onChanged({ provider: session.provider, ...(session.provider === 'claude' ? { ownChange: true } : {}) });
+      return;
     }
+    if (!email && !identity.accountUuid) {
+      await this.restore(session);
+      this.finish(session, { sessionId: session.id, status: 'failed', error: 'identity' }, true);
+      return;
+    }
+    let known: KnownIdentity[] = [];
+    try { known = await this.deps.knownIdentities(); } catch { known = []; }
+    if (session.ended) return;
+    const self = target.type === 'account' ? target.id : undefined;
+    if (known.some((k) => k.recordId !== self && compareIdentity(k, identity) === 'same')) {
+      await this.restore(session);
+      this.finish(session, { sessionId: session.id, status: 'duplicate', ...(email ? { email } : {}) }, true);
+      return;
+    }
+    if (target.type === 'new') {
+      const recordId = session.pendingId as string;
+      this.deps.store.commit({ id: recordId, addedAt: Date.now(), ...identityFields(identity), custody: 'app', family: 'own' });
+      session.pendingId = undefined;
+      this.finish(session, { sessionId: session.id, status: 'success', ...(email ? { email } : {}) }, false);
+      this.deps.onChanged({ provider: 'claude', recordId });
+      return;
+    }
+    // A card is signed in again only as the account it belongs to; another account never relabels it (R10).
+    const record = this.deps.store.get(target.id);
+    if (!record || compareIdentity(identity, record) !== 'same') {
+      await this.restore(session);
+      this.finish(session, { sessionId: session.id, status: 'mismatch', ...(email ? { email } : {}), ...(record?.email ? { expected: record.email } : {}) }, true);
+      return;
+    }
+    // A fresh token family of the card's own account: the app holds it alone (custody app, family own), also for a card
+    // that another tool had switched out (foreign).
+    this.deps.store.updateIdentity(target.id, identity);
+    this.deps.store.setCustody(target.id, 'app');
+    this.deps.store.setFamily(target.id, 'own');
     this.finish(session, { sessionId: session.id, status: 'success', ...(email ? { email } : {}) }, false);
-    this.deps.onChanged();
+    this.deps.onChanged({ provider: 'claude', recordId: target.id });
+  }
+
+  /** Puts the card's previous login back; a failure leaves the new login, which the next poll shows under its real identity. */
+  private async restore(session: Session): Promise<void> {
+    const { snapshot, configDir } = session;
+    session.snapshot = undefined;
+    if (!snapshot || !configDir) return;
+    try { await this.deps.restoreProfile(configDir, snapshot); } catch { /* see above */ }
+  }
+
+  /** The login has already written new files into the card's profile (its identity is checked only when it settles). */
+  private loginWritten(session: Session): boolean {
+    return session.settled || session.settle !== undefined;
+  }
+
+  /** A session that ends without a verdict puts the card's previous login back once the login wrote new files. */
+  private undo(session: Session, written: boolean): void {
+    if (written) void this.restore(session);
+    else session.snapshot = undefined;
   }
 
   private finish(session: Session, state: LoginState, discard: boolean): void {
+    session.snapshot = undefined;
     this.end(session);
     if (discard) this.discard(session);
     this.deps.emit(state);

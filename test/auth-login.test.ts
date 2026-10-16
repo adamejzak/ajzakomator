@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoginState } from '../src/shared/accounts';
 import { AccountsStore } from '../src/main/accounts/store';
-import { LoginManager, type LoginDeps } from '../src/main/auth/login';
+import { LoginManager, type KnownIdentity, type LoginDeps } from '../src/main/auth/login';
 
 const SECRET = 'fp-secret-123';
 let base: string;
@@ -30,7 +30,9 @@ function setup(over: Partial<LoginDeps> = {}) {
     killPty: vi.fn(),
     fingerprint: vi.fn(async () => { fp.calls++; return fp.value; }),
     identity: vi.fn(async () => ({ email: 'New@Example.com', org: 'Org' })),
-    knownEmails: vi.fn(async () => [] as string[]),
+    knownIdentities: vi.fn(async () => [] as KnownIdentity[]),
+    snapshotProfile: vi.fn(async () => ({ credentials: 'fake-old-creds', claudeJson: null })),
+    restoreProfile: vi.fn(async () => undefined),
     emit: vi.fn((state: LoginState) => { states.push(state); }),
     onChanged: vi.fn(),
   } satisfies LoginDeps;
@@ -99,7 +101,7 @@ describe('LoginManager', () => {
   });
 
   it('reports a duplicate e-mail and removes the profile', async () => {
-    const h = setup({ knownEmails: vi.fn(async () => ['new@example.com']) });
+    const h = setup({ knownIdentities: vi.fn(async () => [{ email: 'new@example.com', recordId: 'x' }]) });
     const res = await runSuccess(h, { provider: 'claude', target: { type: 'new' } });
     expect(res.ok).toBe(true);
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'duplicate']);
@@ -154,9 +156,9 @@ describe('LoginManager', () => {
     expect(h.mock.onChanged).toHaveBeenCalledTimes(1);
   });
 
-  it('re-logs a managed account and updates its stored email', async () => {
+  it('re-logs a managed account of the same identity and keeps it renewable (own family)', async () => {
     const prepared = store.prepare();
-    store.commit({ id: prepared.id, email: 'old@example.com', addedAt: 1 });
+    store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1, custody: 'foreign' });
     const h = setup();
     await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
     expect(h.mock.spawnPty).toHaveBeenCalledWith({
@@ -164,10 +166,114 @@ describe('LoginManager', () => {
       env: { CLAUDE_CONFIG_DIR: prepared.dir, CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '' },
       command: 'claude auth login --claudeai',
     });
+    expect(h.mock.snapshotProfile).toHaveBeenCalledWith(prepared.dir);
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'success']);
-    expect(store.list()).toEqual([{ id: prepared.id, email: 'New@Example.com', org: 'Org', addedAt: 1, family: 'own' }]);
-    expect(h.mock.onChanged).toHaveBeenCalledTimes(1);
-    expect(existsSync(prepared.dir)).toBe(true);
+    expect(store.list()).toEqual([{ id: prepared.id, email: 'New@Example.com', org: 'Org', addedAt: 1, custody: 'app', family: 'own' }]);
+    expect(h.mock.restoreProfile).not.toHaveBeenCalled();
+    expect(h.mock.onChanged).toHaveBeenCalledWith({ provider: 'claude', recordId: prepared.id });
+  });
+
+  it('re-login with a different account restores the old login and reports mismatch (investigation test 1)', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'support@guybot.xyz', accountUuid: 'u-guybot', addedAt: 1 });
+    const h = setup({ identity: vi.fn(async () => ({ email: 'app@x.com', accountUuid: 'u-app' })) });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'mismatch']);
+    expect(h.states[1]).toMatchObject({ email: 'app@x.com', expected: 'support@guybot.xyz' });
+    expect(h.mock.restoreProfile).toHaveBeenCalledWith(prepared.dir, { credentials: 'fake-old-creds', claudeJson: null });
+    expect(store.get(prepared.id)).toMatchObject({ email: 'support@guybot.xyz', accountUuid: 'u-guybot' });
+    expect(h.mock.onChanged).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.states)).not.toContain('fake-old');
+  });
+
+  it('a mismatch leaves a foreign record foreign with its family unchanged', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'support@guybot.xyz', addedAt: 1, custody: 'foreign', family: 'live' });
+    const h = setup({ identity: vi.fn(async () => ({ email: 'app@x.com' })) });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'mismatch']);
+    expect(store.get(prepared.id)).toMatchObject({ custody: 'foreign', family: 'live' });
+  });
+
+  it('re-login that signs in the live account or another saved one reports duplicate and restores', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1 });
+    const h = setup({ knownIdentities: vi.fn(async () => [{ email: 'new@example.com', recordId: 'live-record', live: true }, { email: 'new@example.com', recordId: prepared.id }]) });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'duplicate']);
+    expect(h.mock.restoreProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('a main re-login backs up the outgoing live login first and reports an own change (investigation test 2)', async () => {
+    const order: string[] = [];
+    const h = setup({
+      beforeMainLogin: vi.fn(async () => { order.push('backup'); }),
+      spawnPty: vi.fn(() => { order.push('spawn'); }),
+    });
+    await runSuccess(h, { provider: 'claude', target: { type: 'main' } });
+    expect(order).toEqual(['backup', 'spawn']);
+    expect(h.mock.onChanged).toHaveBeenCalledWith({ provider: 'claude', ownChange: true });
+  });
+
+  it('refuses a main re-login (busy) when the outgoing live login could not be backed up', async () => {
+    const h = setup({ beforeMainLogin: vi.fn(async () => { throw new Error('locked'); }) });
+    expect(await h.manager.start({ provider: 'claude', target: { type: 'main' } })).toEqual({ ok: false, error: 'busy' });
+    expect(h.mock.spawnPty).not.toHaveBeenCalled();
+    expect(h.mock.fingerprint).not.toHaveBeenCalled();
+    expect(h.states).toEqual([]);
+    expect(h.manager.isActive()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a Codex login never runs the Claude backup', async () => {
+    const beforeMainLogin = vi.fn(async () => undefined);
+    const h = setup({ beforeMainLogin });
+    await runSuccess(h, { provider: 'codex', target: { type: 'main' } });
+    expect(beforeMainLogin).not.toHaveBeenCalled();
+    expect(h.mock.onChanged).toHaveBeenCalledWith({ provider: 'codex' });
+  });
+
+  it('cancelling a re-login after it wrote new files puts the card back; cancelling before leaves it alone', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1 });
+    const h = setup({ identity: vi.fn(async () => ({})) });
+    const early = await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    if (!early.ok) throw new Error('unreachable');
+    await advance(1500);
+    h.manager.cancel(early.sessionId);
+    expect(h.mock.restoreProfile).not.toHaveBeenCalled();
+    const late = await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    if (!late.ok) throw new Error('unreachable');
+    h.fp.value = SECRET;
+    await advance(1500 + 1500 + 10 + 1500);
+    h.manager.cancel(late.sessionId);
+    await advance(0);
+    expect(h.mock.restoreProfile).toHaveBeenCalledTimes(1);
+    expect(h.mock.restoreProfile).toHaveBeenCalledWith(prepared.dir, { credentials: 'fake-old-creds', claudeJson: null });
+    await advance(10000);
+    expect(h.mock.restoreProfile).toHaveBeenCalledTimes(1);
+    expect(h.states.filter((s) => s.sessionId === late.sessionId).map((s) => s.status)).toEqual(['waiting']);
+  });
+
+  it('removing the account during its re-login never writes into its profile', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1 });
+    const h = setup({ identity: vi.fn(async () => ({})) });
+    await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    h.fp.value = SECRET;
+    await advance(1500 + 1500 + 10 + 1500);
+    h.manager.cancelFor(prepared.id);
+    await advance(10000);
+    expect(h.mock.restoreProfile).not.toHaveBeenCalled();
+  });
+
+  it('returns spawn and never starts when the saved profile cannot be snapshotted', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1 });
+    const h = setup({ snapshotProfile: vi.fn(async () => { throw new Error('EACCES'); }) });
+    expect(await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } })).toEqual({ ok: false, error: 'spawn' });
+    expect(h.mock.spawnPty).not.toHaveBeenCalled();
+    expect(h.manager.isActive()).toBe(false);
   });
 
   it('times out, kills the pty and discards the pending profile', async () => {
@@ -288,9 +394,9 @@ describe('LoginManager', () => {
 
   it('fails the session when the store cannot update an account', async () => {
     const prepared = store.prepare();
-    store.commit({ id: prepared.id, email: 'old@example.com', addedAt: 1 });
+    store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1 });
     const failing = Object.create(store) as AccountsStore;
-    failing.update = () => { throw new Error('disk full'); };
+    failing.updateIdentity = () => { throw new Error('disk full'); };
     const h = setup({ store: failing });
     await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);

@@ -97,3 +97,56 @@ export async function reconcileWhenIdle(
   } finally { releaseSwap(); }
   return true;
 }
+
+/** The live login could not be backed up (or not proven current); `reason` is the last resync result or `busy`. */
+export class LiveBackupFailed extends Error {
+  constructor(readonly reason: string) { super(`live login not backed up: ${reason}`); this.name = 'LiveBackupFailed'; }
+}
+
+/**
+ * Before `claude auth login` replaces the live login (main re-login): reconciles holding the swap slot and resolves only
+ * when the live login is backed up into its record - resync `copied` or `unchanged` - or there is nothing to back up
+ * (nobody signed in, live credentials without a refresh token (`missing`), or no file login at all: no `resync`, macOS
+ * Keychain). `settling` (not yet backed up), `locked`, `mismatch` and a failed copy are tried again `tries` times, then it
+ * throws. A swap holding the slot, an unresolved swap or a pending activation journal refuse it too. The login being
+ * started is the caller itself, so a login in progress does not count here. `ownChange`: an earlier login of the app
+ * changed the live account and was not reconciled yet (see reconcileLive).
+ */
+export async function backupLiveBeforeLogin(
+  guard: { swapUnresolved(): boolean; journalPending?(): Promise<boolean> },
+  deps: ReconcileDeps,
+  opts: { delay(ms: number): Promise<void>; tries?: number; gapMs?: number; ownChange?: boolean },
+): Promise<void> {
+  const tries = Math.max(1, opts.tries ?? 3);
+  let reason = 'busy';
+  for (let attempt = 0; attempt < tries; attempt++) {
+    if (attempt > 0) await opts.delay(opts.gapMs ?? 1_000);
+    const look: { live: 'unknown' | 'none' | 'present'; backup: ResyncResult | 'none' | 'failed' } = { live: 'unknown', backup: 'none' };
+    const { resync } = deps;
+    const watched: ReconcileDeps = {
+      ...deps,
+      readLiveIdentity: async () => {
+        const identity = await deps.readLiveIdentity();
+        look.live = identity && (identity.email || identity.accountUuid) ? 'present' : 'none';
+        return identity;
+      },
+      ...(resync ? {
+        resync: async (recordId: string, identity: AccountIdentity) => {
+          look.backup = 'failed';
+          look.backup = await resync(recordId, identity);
+          return look.backup;
+        },
+      } : {}),
+    };
+    let ran = false;
+    try {
+      ran = await reconcileWhenIdle({ ...guard, loginActive: () => false }, () => reconcileLive(watched, opts.ownChange ? { ownChange: true } : {}));
+    } catch { look.backup = 'failed'; }
+    if (!ran) { reason = look.backup === 'failed' ? 'failed' : 'busy'; continue; }
+    if (look.backup === 'copied' || look.backup === 'unchanged' || look.backup === 'missing') return;
+    if (look.live === 'none' && look.backup === 'none') return;
+    if (!resync && look.live === 'present') return;
+    reason = look.backup === 'none' ? 'unread' : look.backup;
+  }
+  throw new LiveBackupFailed(reason);
+}

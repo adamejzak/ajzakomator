@@ -39,14 +39,15 @@ import { AccountsStore } from './accounts/store';
 import { gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
 import { activateAccount, activationJournalPending, checkActivationTarget, isActivationRecoveryPending, recoverActivationWithRetry, recoverInterruptedActivation, type ActivateDeps } from './accounts/activate';
-import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from './accounts/reconcile';
+import { backupLiveBeforeLogin, reconcileLive, reconcileWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
 import { claudeRefs } from './accounts/refs';
 import { cswapRosterPath, readCswapRoster, type CswapRoster } from './accounts/cswap';
 import { readManagedIdentity } from './accounts/identity';
 import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
 import { LoginManager } from './auth/login';
-import { custodyOf, isAccountId, type AccountIdentity, type LoginRequest } from '../shared/accounts';
+import { restoreProfile, snapshotProfile } from './auth/profileSnapshot';
+import { custodyOf, identityFields, isAccountId, type AccountIdentity, type LoginRequest } from '../shared/accounts';
 import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
@@ -158,11 +159,7 @@ const usage = new UsageService({
       const recovered = await recoverInterruptedActivation(activateDeps()).catch(() => 'manual' as const);
       if (recovered !== 'locked') void pushSwapPending();
     }
-    await reconcileWhenIdle({
-      swapUnresolved: isSwapUnresolved,
-      loginActive: () => login.isActive(),
-      journalPending: () => activationJournalPending(activateDeps()),
-    }, () => reconcileLive(reconcileDeps()));
+    await reconcileIdle();
   },
   watchLive: true,
 });
@@ -215,14 +212,35 @@ const login = new LoginManager({
     if (configDir) return readManagedIdentity(configDir, { source: usageDeps.credentials, exec: execText });
     return readClaudeIdentity(usageDeps.credentials);
   },
-  knownEmails: async () => {
-    const main = await readClaudeIdentity(usageDeps.credentials);
-    return [main.email, ...accounts.list().map((a) => a.email)]
-      .filter((email): email is string => typeof email === 'string' && email !== '')
-      .map((email) => email.toLowerCase());
+  knownIdentities: async () => {
+    // An unreadable live login must not hide the saved accounts from the duplicate check.
+    const live = await readLiveIdentity().catch(() => null);
+    return [
+      ...(live ? [{ ...live, live: true }] : []),
+      ...accounts.list().filter((a) => custodyOf(a) !== 'quarantined').map((a) => ({ ...identityFields(a), recordId: a.id })),
+    ];
+  },
+  snapshotProfile,
+  restoreProfile,
+  // The live login is backed up into its record before `claude auth login` replaces it (nothing is dropped); refused
+  // (the login does not start) unless that backup is current.
+  beforeMainLogin: async () => {
+    const ownChange = ownLoginChange;
+    await backupLiveBeforeLogin(
+      { swapUnresolved: isSwapUnresolved, journalPending: () => activationJournalPending(activateDeps()) },
+      reconcileDeps(),
+      { delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), ownChange },
+    );
+    if (ownChange) ownLoginChange = false;
   },
   emit: (s) => send('auth:state', s),
-  onChanged: () => void usage.refresh(true, true),
+  onChanged: (change) => {
+    if (change.ownChange) ownLoginChange = true;
+    void (async () => {
+      if (change.ownChange) await reconcileIdle().catch(() => false);
+      void usage.refresh(true, true);
+    })();
+  },
   profilesSupported: process.platform !== 'darwin',
   swapRunning: isSwapRunning,
 });
@@ -270,6 +288,24 @@ const reconcileDeps = (): ReconcileDeps => {
     now: () => Date.now(),
   };
 };
+/**
+ * Set by a finished main Claude login until a reconcile has run: the record that left the live login was backed up by the
+ * app (beforeMainLogin), so it becomes `app`, not `foreign` with a "switched out" notice. Kept until a reconcile actually
+ * runs, so a poll that wins the swap slot first applies it too.
+ */
+let ownLoginChange = false;
+/** Reconciles the live login holding the swap slot; skipped while a swap, a login or an activation journal is pending. */
+function reconcileIdle(): Promise<boolean> {
+  return reconcileWhenIdle({
+    swapUnresolved: isSwapUnresolved,
+    loginActive: () => login.isActive(),
+    journalPending: () => activationJournalPending(activateDeps()),
+  }, async () => {
+    const ownChange = ownLoginChange;
+    await reconcileLive(reconcileDeps(), ownChange ? { ownChange } : {});
+    if (ownChange) ownLoginChange = false;
+  });
+}
 /** Tells the renderer whether an unresolved swap blocks further swaps. */
 async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
