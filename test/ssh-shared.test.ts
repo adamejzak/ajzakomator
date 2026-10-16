@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   storageLabel, readOnlyStoreNote, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
-  broadcastProblem, broadcastRowState, broadcastSend, pushHistory, sshCellsOfTab, cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
+  broadcastProblem, broadcastRowState, broadcastSend, ptyHostRestartToast, pushHistory, resumesConversation, sshCellsOfTab, cellSourcePatch, cellSourceValue, currentBroadcastResult, connectingBanner, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshModeReset, sshPhaseLabel, sshSpecName, sshSessionEnded, stampBroadcastResults, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
 
@@ -338,5 +338,89 @@ describe('settings helpers', () => {
     expect(knownHostsDescription(undefined)).not.toContain('{file}');
     expect(knownHostsDescription('')).not.toContain('{file}');
     expect(knownHostsDescription(undefined)).toMatch(/Zaufaj i zapisz/);
+  });
+
+  it('agrees with the read-only note: read-only accepts for this connection, an unexpected write failure refuses (M6)', () => {
+    for (const text of [knownHostsDescription('k.json'), knownHostsDescription(undefined)]) {
+      expect(text).toMatch(/tylko do odczytu, zaakceptowany klucz obowiązuje tylko dla tego jednego połączenia/);
+      expect(text).toMatch(/nieoczekiwanie się nie uda.*odrzucane z ogólnym błędem/);
+      expect(text).not.toMatch(/plik tylko do odczytu\)/);
+    }
+    expect(readOnlyStoreNote('knownHosts', true, 'k.json')).toMatch(/tylko dla tego jednego połączenia/);
+  });
+});
+
+describe('SSH terminal mode reset (I2)', () => {
+  it('switches off mouse, focus, paste and application cursor modes and leaves the alternate screen only when in it', () => {
+    const inAlt = sshModeReset(true);
+    expect(inAlt).toContain('\x1b[?1000;1002;1003;1005;1006;1015;1004;2004l');
+    expect(inAlt).toContain('\x1b[?1l');
+    expect(inAlt.endsWith('\x1b[?1049l')).toBe(true);
+    expect(sshModeReset(false)).not.toContain('1049');
+  });
+
+  it('marks the end of a live session, not a phase change inside one', () => {
+    expect(sshSessionEnded('connected', 'error')).toBe(true);
+    expect(sshSessionEnded('authenticating', 'closed')).toBe(true);
+    expect(sshSessionEnded('connecting', 'connected')).toBe(false);
+    expect(sshSessionEnded('error', 'error')).toBe(false);
+    expect(sshSessionEnded(undefined, 'idle')).toBe(false);
+  });
+});
+
+describe('connectingBanner (M3)', () => {
+  it('shows the sanitized banner while the session is being set up, never once connected or ended', () => {
+    const banner = 'Authorized use only\x1b[31m!';
+    for (const phase of ['connecting', 'verifying', 'authenticating'] as const) expect(connectingBanner({ phase, serverBanner: banner })).toBe(sanitizeServerText(banner));
+    for (const phase of ['idle', 'connected', 'closed', 'error'] as const) expect(connectingBanner({ phase, serverBanner: banner })).toBeNull();
+    expect(connectingBanner({ phase: 'connecting' })).toBeNull();
+    expect(connectingBanner(undefined)).toBeNull();
+  });
+});
+
+describe('cellSourcePatch and sshSpecName (M4)', () => {
+  const hosts = [{ id: 'h1', label: 'web' }, { id: 'h2', label: 'db' }];
+  it('choosing a host never copies its label into the name, a typed name stays', () => {
+    expect(cellSourcePatch('ssh:h1', { profileId: 'claude', worktree: true, prompt: 'go', role: 'reviewer' } as never, hosts, 'shell'))
+      .toEqual({ profileId: 'shell', sshHostId: 'h1', role: undefined, prompt: undefined, worktree: false });
+    expect(cellSourcePatch('ssh:h1', { profileId: 'claude', worktree: false, name: 'backend' }, hosts, 'shell')).not.toHaveProperty('name');
+  });
+
+  it('a name that only echoed the previous host label goes away, also when switching to another host', () => {
+    expect(cellSourcePatch('ssh:h2', { profileId: 'shell', worktree: false, sshHostId: 'h1', name: 'web' }, hosts, 'shell')).toMatchObject({ sshHostId: 'h2', name: undefined });
+    expect(cellSourcePatch('claude', { profileId: 'shell', worktree: false, sshHostId: 'h1', name: 'web' }, hosts, 'shell')).toEqual({ profileId: 'claude', sshHostId: undefined, name: undefined });
+    expect(cellSourcePatch('claude', { profileId: 'shell', worktree: false, sshHostId: 'h1', name: 'mine' }, hosts, 'shell')).toEqual({ profileId: 'claude', sshHostId: undefined });
+  });
+
+  it('openTab drops a name that only repeats the host label (older presets) and keeps a custom one', () => {
+    expect(sshSpecName('web', { label: 'web' })).toBeUndefined();
+    expect(sshSpecName('backend', { label: 'web' })).toBe('backend');
+    expect(sshSpecName('web', undefined)).toBe('web');
+    expect(sshSpecName(undefined, { label: 'web' })).toBeUndefined();
+  });
+});
+
+describe('Pty Host restart toast (D1)', () => {
+  it('promises resumed conversations only when a Claude or Codex cell was running', () => {
+    expect(resumesConversation([{ ssh: true, cli: 'shell' }, { ssh: true, cli: 'shell' }])).toBe(false);
+    expect(resumesConversation([{ ssh: false, cli: 'shell' }, undefined])).toBe(false);
+    expect(resumesConversation([])).toBe(false);
+    expect(resumesConversation([{ ssh: true, cli: 'shell' }, { ssh: false, cli: 'codex' }])).toBe(true);
+    expect(resumesConversation([{ ssh: false, cli: 'claude' }])).toBe(true);
+    expect(ptyHostRestartToast(true)).toBe('Proces terminali się zrestartował, wznawiam rozmowy');
+    expect(ptyHostRestartToast(false)).toBe('Proces terminali się zrestartował');
+  });
+});
+
+describe('broadcast results follow the session (D2)', () => {
+  it('keeps a result while the session is unchanged and clears it once the phase changes', () => {
+    const at = (phase: SshSessionState['phase'], since: number): SshSessionState => ({ cellId: 'a', hostId: 'h', phase, since });
+    const stamped = stampBroadcastResults({ a: 'sent', b: 'skipped' }, { a: at('connected', 5) });
+    expect(currentBroadcastResult(stamped.a, at('connected', 5))).toBe('sent');
+    expect(currentBroadcastResult(stamped.a, at('closed', 9))).toBeUndefined();
+    expect(currentBroadcastResult(stamped.a, at('connected', 12))).toBeUndefined(); // reconnected
+    expect(currentBroadcastResult(stamped.b, undefined)).toBe('skipped');
+    expect(currentBroadcastResult(stamped.b, { ...at('connecting', 3), cellId: 'b' })).toBeUndefined();
+    expect(currentBroadcastResult(undefined, at('connected', 5))).toBeUndefined();
   });
 });

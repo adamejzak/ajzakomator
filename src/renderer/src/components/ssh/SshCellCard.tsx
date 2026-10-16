@@ -1,6 +1,6 @@
-// Overlay of an SSH cell (spec 6.3, R11): full card while idle or a prompt is open, a bottom bar after the session ended
-// (the last output stays readable above it).
-import { sanitizeServerText, sshErrorText, userAtEndpoint, type SshHost, type SshPrompt, type SshSessionState } from '../../../../shared/ssh';
+// Overlay of an SSH cell (spec 6.3, R11): full card while idle, a prompt is open or a server banner arrived while connecting,
+// a bottom bar after the session ended (the last output stays readable above it).
+import { connectingBanner, sanitizeServerText, sshErrorText, userAtEndpoint, type SshHost, type SshPrompt, type SshSessionState } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { connectCell, reconnectCell, sshContext } from '../../ssh';
 import { useSshStore } from '../../sshStore';
@@ -37,6 +37,18 @@ export function SshCellCard({ cellId, host, session, prompt }: { cellId: string;
           <div className="ssh-actions">
             <button className="btn small primary" autoFocus onClick={() => void connectCell(cellId)}>{tr('Połącz')}</button>
           </div>
+        </div>
+      </div>
+    );
+  }
+  const banner = connectingBanner(session);
+  if (banner) {
+    return (
+      <div className="ssh-card" role="status" aria-label={host.label}>
+        <div className="ssh-card-inner">
+          <div className="ssh-card-title">{host.label}</div>
+          <div className="ssh-card-text">{userAtEndpoint(host)}</div>
+          <pre className="ssh-banner">{banner}</pre>
         </div>
       </div>
     );

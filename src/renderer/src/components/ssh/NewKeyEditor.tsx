@@ -8,6 +8,7 @@ import { toast } from '../../store';
 import { activateSshEditor, retargetSshEditor } from '../../ssh';
 import { useSshStore } from '../../sshStore';
 import { Select } from '../Select';
+import { useClearWhenHidden } from './paneVisibility';
 
 type Mode = 'generate' | 'file' | 'paste';
 type Draft = Extract<DraftResult, { ok: true }>;
@@ -31,6 +32,8 @@ export function NewKeyEditor({ editorId, initialMode }: { editorId: string; init
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // D4: a hidden tab keeps the label, comment and draft, never a typed passphrase or a pasted private key.
+  useClearWhenHidden(() => { setPassphrase(''); setRepeat(''); setPrivateText(''); });
   const draftRef = useRef<string | null>(null);
   draftRef.current = draft?.draftId ?? null;
   // Unmount = the tab closed (or became the stored key's tab, then draftRef is already null): drop the draft in main.

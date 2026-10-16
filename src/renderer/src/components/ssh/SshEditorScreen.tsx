@@ -1,6 +1,7 @@
 // The SSH editor view in the main area (spec 10.2): one tab per host or key, plus "new key" tabs.
 // Every open editor tab stays mounted (hidden when not active, like the Settings page), so unsaved input and a new-key
 // draft survive switching to a grid, a file or another tab; an editor unmounts only when its tab closes or is retargeted.
+// Typed secrets do not survive: a hidden pane clears its password, passphrase and pasted private key fields (D4).
 // The tab title text lives in ../../ssh.ts (sshEditorTitleText), so the tab strip does not load this lazy screen (L11).
 import { useI18n } from '../../i18n';
 import { useStore } from '../../store';
@@ -9,6 +10,7 @@ import type { SshEditorRef } from '../../../../shared/ssh';
 import { HostEditor } from './HostEditor';
 import { KeyEditor } from './KeyEditor';
 import { NewKeyEditor } from './NewKeyEditor';
+import { PaneActive } from './paneVisibility';
 import './ssh.css';
 
 export function SshEditorScreen() {
@@ -19,7 +21,7 @@ export function SshEditorScreen() {
     <>
       {editors.map((editor) => (
         <div key={editor.id} className={`ssh-editor-screen ${visible && editor.id === activeEditorId ? 'active' : ''}`} data-editor-id={editor.id}>
-          <EditorPane editor={editor} />
+          <PaneActive.Provider value={visible && editor.id === activeEditorId}><EditorPane editor={editor} /></PaneActive.Provider>
         </div>
       ))}
     </>

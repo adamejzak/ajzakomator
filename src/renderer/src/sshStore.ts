@@ -34,3 +34,15 @@ export const useSshStore = create<SshStore>((set) => ({
     return { sessions, prompts };
   }),
 }));
+
+/**
+ * M7: events that arrive while the first snapshot is being fetched are held and applied after load(), in order, so a newer
+ * session or prompt event is never overwritten by the older snapshot. `wrap` the handlers, call `open` after load().
+ */
+export function createInitGate(): { wrap<A extends unknown[]>(fn: (...args: A) => void): (...args: A) => void; open(): void } {
+  let held: Array<() => void> | null = [];
+  return {
+    wrap: (fn) => (...args) => { if (held) held.push(() => fn(...args)); else fn(...args); },
+    open: () => { const queue = held ?? []; held = null; for (const run of queue) run(); },
+  };
+}

@@ -24,3 +24,21 @@ describe('useSshStore', () => {
     expect(useSshStore.getState().vault.storage).toBe('dpapi');
   });
 });
+
+describe('createInitGate (M7)', () => {
+  it('holds events that arrive while the snapshot loads and applies them after load, in order', () => {
+    const { useSshStore, createInitGate } = store;
+    const gate = createInitGate();
+    const onSession = gate.wrap((st: ReturnType<typeof s>) => useSshStore.getState().setSession(st));
+    const vault = { storage: 'dpapi', keys: [], savedPasswords: [], lockedPasswords: [], readOnly: false };
+    onSession(s('m7', 'authenticating'));
+    onSession(s('m7', 'connected'));
+    expect(useSshStore.getState().sessions.m7).toBeUndefined();
+    useSshStore.getState().load(vault, { sessions: [s('m7', 'connecting')], prompts: [] });
+    expect(useSshStore.getState().sessions.m7.phase).toBe('connecting');
+    gate.open();
+    expect(useSshStore.getState().sessions.m7.phase).toBe('connected');
+    onSession(s('m7', 'closed'));
+    expect(useSshStore.getState().sessions.m7.phase).toBe('closed');
+  });
+});

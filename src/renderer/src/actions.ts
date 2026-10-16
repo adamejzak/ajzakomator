@@ -13,6 +13,7 @@ import { canSwapCells, neighborSlot } from '../../shared/gridDrag';
 import { CLI_NAMES, profileAvailable, type CliId, type CliStatusMap } from '../../shared/cliStatus';
 import { snapshotCellRects } from './gridMotion';
 import { sessionSearchPaths } from '../../shared/sessionTrack';
+import { sshSpecName } from '../../shared/ssh';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
 import { showTerminalTabs } from './files';
@@ -502,7 +503,7 @@ export async function openTab(projectId: string, layout: GridLayout, cells: TabS
       }
     }
     const host = spec.sshHostId ? getS().sshHosts.find((h) => h.id === spec.sshHostId) : undefined;
-    specs.push({ profileId: host && sshProfileId ? sshProfileId : spec.profileId, model: spec.model, color: spec.color, role: host ? undefined : spec.role, name: spec.name, startupPrompt: host ? undefined : spec.prompt, worktree, session: spec.session, ...(host ? { ssh: { hostId: host.id } } : {}) });
+    specs.push({ profileId: host && sshProfileId ? sshProfileId : spec.profileId, model: spec.model, color: spec.color, role: host ? undefined : spec.role, name: sshSpecName(spec.name, host), startupPrompt: host ? undefined : spec.prompt, worktree, session: spec.session, ...(host ? { ssh: { hostId: host.id } } : {}) });
   }
   update((s) => setActiveProject(addTab(s, projectId, { name: tabName, layout, cells: specs }), projectId));
   const tab = activeTab(getS().projects.find((p) => p.id === projectId) ?? null);

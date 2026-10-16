@@ -11,6 +11,7 @@ import { AgentInference, keySequence, type InferredAgent, type ScreenLine, type 
 import { FailureScanner } from '../../../shared/outputFailure';
 import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
 import { hookDetail, StatusLog, type StatusTrigger } from '../../../shared/statusLog';
+import { sshModeReset } from '../../../shared/ssh';
 import { inputModesOff, isMouseReport, MouseFloodGuard, terminalModeReset } from '../../../shared/termReset';
 import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
@@ -568,6 +569,12 @@ class TerminalManager {
     this.entries.get(cellId)?.term.write(`\r\n\x1b[90m${text}\x1b[0m\r\n`);
   }
 
+  /** An SSH session ended: the modes its remote programs switched on are switched off, the alternate screen is left (I2). */
+  resetSshModes(cellId: string): void {
+    const e = this.entries.get(cellId);
+    if (e) e.term.write(sshModeReset(this.inAlternate(e)));
+  }
+
   /** Before an SSH reconnect: like prepareSpawn, but the screen and scrollback stay (spec 6.1 step 9). */
   prepareReconnect(cellId: string): void {
     const e = this.entries.get(cellId);
@@ -575,6 +582,8 @@ class TerminalManager {
     if (!e) return;
     e.win32 = false;
     e.guard.reset();
+    // I2: a TUI that ran when the old session went away must not leave its modes in the new one.
+    e.term.write(sshModeReset(this.inAlternate(e)));
     e.scanner.reset();
     e.infer.exited();
     this.setStatus(e, () => e.tracker.reset(), 'restore');

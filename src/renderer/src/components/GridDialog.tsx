@@ -6,7 +6,7 @@ import {
   createLayout, describeLayout, layoutForCount, layoutFromRows, MAX_COLS, MAX_ROWS, mergeRect, rowCountsOf, unmergeAll, type GridLayout,
 } from '../../../shared/layout';
 import { ensureShellProfile, getProfile, removePreset, uid, upsertPreset } from '../../../shared/state';
-import { cellSourceValue, parseCellSource, type SshHost } from '../../../shared/ssh';
+import { cellSourcePatch, cellSourceValue, type SshHost } from '../../../shared/ssh';
 import { CLI_NAMES, missingCli, missingClis, type CliStatusMap } from '../../../shared/cliStatus';
 import { profileOptionLabel } from '../cliUi';
 import type { PresetCell } from '../../../shared/types';
@@ -56,15 +56,7 @@ export function GridDialog({ projectId }: { projectId: string }) {
   const setAll = (patch: Partial<PresetCell>) => setCells((cs) => cs.map((x) => ({ ...x, ...patch })));
   /** Prompt and worktree do not apply to SSH cells (spec 10.4), so bulk changes of them skip those cells. */
   const setAllAgents = (patch: Partial<PresetCell>) => setCells((cs) => cs.map((x) => (x.sshHostId ? x : { ...x, ...patch })));
-  const sourcePatch = (value: string, previous?: PresetCell): Partial<PresetCell> => {
-    const source = parseCellSource(value);
-    const previousHost = previous?.sshHostId ? hosts.find((h) => h.id === previous.sshHostId) : undefined;
-    // A name that only echoes the host label goes away with the host.
-    const clearedName = previousHost && previous?.name === previousHost.label ? { name: undefined } : {};
-    if (source.kind === 'profile') return { profileId: source.profileId, sshHostId: undefined, ...clearedName };
-    const host = hosts.find((h) => h.id === source.hostId);
-    return { profileId: shellProfileId, sshHostId: source.hostId, role: undefined, prompt: undefined, worktree: false, ...(host ? { name: host.label } : {}) };
-  };
+  const sourcePatch = (value: string, previous?: PresetCell): Partial<PresetCell> => cellSourcePatch(value, previous, hosts, shellProfileId);
 
   const merge = () => {
     const areas = [...selected].map((i) => layout.areas[i]);

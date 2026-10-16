@@ -1,6 +1,6 @@
 // "Wyślij do wszystkich" (spec 10.5, D10): one command to the checked SSH cells of a grid, over the existing data port.
 import { useMemo, useRef, useState } from 'react';
-import { broadcastProblem, broadcastRowState, broadcastSend, broadcastTargets, pushHistory, sshCellsOfTab, type BroadcastResult } from '../../../../shared/ssh';
+import { broadcastProblem, broadcastRowState, broadcastSend, broadcastTargets, currentBroadcastResult, pushHistory, sshCellsOfTab, stampBroadcastResults, type StampedBroadcastResult } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { closeModal, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
@@ -20,7 +20,7 @@ export function BroadcastDialog({ projectId, tabId }: { projectId: string; tabId
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
   const [enter, setEnter] = useState(true);
   const [text, setText] = useState('');
-  const [results, setResults] = useState<Record<string, BroadcastResult>>({});
+  const [results, setResults] = useState<Record<string, StampedBroadcastResult>>({});
   const [recall, setRecall] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const checked = rows.filter((r) => r.enabled && !unchecked.has(r.cellId));
@@ -30,7 +30,7 @@ export function BroadcastDialog({ projectId, tabId }: { projectId: string; tabId
     if (!text.trim() || problem || !checked.length) return;
     // Connected is decided at send time, not when the dialog was opened.
     const next = broadcastSend(checked.map((r) => r.cellId), useSshStore.getState().sessions, text, enter, (cellId, t, submit) => terminals.paste(cellId, t, submit, { focus: false }));
-    setResults(next);
+    setResults(stampBroadcastResults(next, useSshStore.getState().sessions));
     history = pushHistory(history, text);
     setText('');
     setRecall(null);
@@ -68,7 +68,7 @@ export function BroadcastDialog({ projectId, tabId }: { projectId: string; tabId
                     onChange={(e) => setUnchecked((u) => { const n = new Set(u); if (e.target.checked) n.delete(r.cellId); else n.add(r.cellId); return n; })} />
                   <span className="grow">{r.label}</span><span className="muted">{r.endpoint}</span>
                 </label>
-                <span className="ssh-target-state">{(() => { const key = broadcastRowState(r, results[r.cellId]); return key ? tr(key) : ''; })()}</span>
+                <span className="ssh-target-state">{(() => { const key = broadcastRowState(r, currentBroadcastResult(results[r.cellId], sessions[r.cellId])); return key ? tr(key) : ''; })()}</span>
               </li>
             ))}
           </ul>

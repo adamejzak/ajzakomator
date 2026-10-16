@@ -3,14 +3,14 @@
 // the other at load time (only inside functions).
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell, removeSshHost } from '../../shared/state';
-import { closeEditorTab, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
+import { closeEditorTab, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
 import type { MessageKey, MessageParams } from '../../shared/i18n';
 import type { AppState } from '../../shared/types';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
 import { tr } from './i18n';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
-import { useSshStore } from './sshStore';
+import { createInitGate, useSshStore } from './sshStore';
 import { terminals } from './terminals/TerminalManager';
 
 /** SSH cells created by the user in this renderer session: they connect when their view mounts (spec 6.1 step 1). */
@@ -43,6 +43,8 @@ const announcePrompt = (cellId: string): void => toast(tr('SSH: {name} czeka na 
 function onSession(state: SshSessionState): void {
   const previous = useSshStore.getState().sessions[state.cellId]?.phase;
   useSshStore.getState().setSession(state);
+  // I2: a network drop or a close while vim or htop ran leaves the alternate screen, so the notice below stays readable.
+  if (sshSessionEnded(previous, state.phase)) terminals.resetSshModes(state.cellId);
   const notice = sshNotice(previous, state, sshContext(state.hostId));
   if (!notice) return;
   const text = notice.key === '[SSH · błąd: {reason}]'
@@ -58,13 +60,17 @@ function onPrompt(cellId: string, prompt: SshPrompt | null): void {
 }
 
 export async function initSsh(): Promise<void> {
-  window.mc.on('ssh:session', onSession);
-  window.mc.on('ssh:prompt', onPrompt);
-  window.mc.on('ssh:vault:changed', (vault) => useSshStore.getState().setVault(vault));
-  const [vault, snapshot] = await Promise.all([window.mc.ssh.vaultInfo(), window.mc.ssh.sessions()]);
-  useSshStore.getState().load(vault, snapshot);
-  // A reload keeps the prompts open in main (R7): a hidden cell that waits is announced again (Review Focus 2 and 3).
-  for (const cellId of restoredPromptToasts(useSshStore.getState().prompts, cellVisible)) announcePrompt(cellId);
+  const gate = createInitGate();
+  window.mc.on('ssh:session', gate.wrap(onSession));
+  window.mc.on('ssh:prompt', gate.wrap(onPrompt));
+  window.mc.on('ssh:vault:changed', gate.wrap((vault) => useSshStore.getState().setVault(vault)));
+  try {
+    const [vault, snapshot] = await Promise.all([window.mc.ssh.vaultInfo(), window.mc.ssh.sessions()]);
+    useSshStore.getState().load(vault, snapshot);
+    // A reload keeps the prompts open in main (R7): a hidden cell that waits is announced again (Review Focus 2 and 3).
+    // Before the held events run (M7): a prompt that arrived meanwhile announces itself through onPrompt.
+    for (const cellId of restoredPromptToasts(useSshStore.getState().prompts, cellVisible)) announcePrompt(cellId);
+  } finally { gate.open(); }
 }
 
 /** Called by startOnce for SSH cells (D5: never a connect without the user's intent). */

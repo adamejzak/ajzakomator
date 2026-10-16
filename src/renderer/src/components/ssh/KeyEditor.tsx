@@ -1,5 +1,6 @@
 // One key of the vault (spec 10.2, 7.4, D6, D9). Public parts are shown and copied; the private key only goes to a file, through main.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useClearWhenHidden } from './paneVisibility';
 import { draftErrorKey, READ_ONLY_VAULT_HINT, hostsUsingKey, labelFieldValue, type KeyError } from '../../../../shared/ssh';
 import type { MessageKey } from '../../../../shared/i18n';
 import { useI18n } from '../../i18n';
@@ -23,6 +24,7 @@ export function KeyEditor({ editorId, keyId }: { editorId: string; keyId: string
   useEffect(() => { setLabel((field) => labelFieldValue({ field, stored: storedLabel, focused: labelFocused.current })); }, [storedLabel]);
   const [certificate, setCertificate] = useState('');
   const [passphrase, setPassphrase] = useState('');
+  useClearWhenHidden(() => setPassphrase(''));
   const [error, setError] = useState<string | null>(null);
   if (!key) return <div className="ssh-editor"><p className="ssh-card-hint">{tr('Klucz przypisany do hosta nie istnieje')}</p></div>;
 

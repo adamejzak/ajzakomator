@@ -67,6 +67,7 @@ import { automationSchemas, type AutomationOperation, type McpInfo } from '../sh
 import type { StateEdit } from '../shared/stateEdits';
 import { stateChange } from '../shared/statePatch';
 import { findCell, getProfile } from '../shared/state';
+import { resumesConversation } from '../shared/ssh';
 import { automationHintForHook, automationStatusFor } from '../shared/runtimeStatus';
 import { followedSession, shouldUpdateCellSession } from '../shared/sessionTrack';
 import type { CodexNotice } from '../shared/codexHooks';
@@ -432,8 +433,12 @@ ptyHost.on('crashed', () => {
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
   verifiedCodex.clear();
   ssh?.hostCrashed();
+  const resumes = resumesConversation([...alive].map((id) => {
+    const found = findCell(state, id);
+    return found ? { ssh: !!found.cell.ssh, cli: getProfile(state, found.cell.profileId).cli } : undefined;
+  }));
   alive.clear();
-  send('ptyhost:crashed');
+  send('ptyhost:crashed', resumes);
 });
 ptyHost.on('fatal', () => {
   alive.clear();

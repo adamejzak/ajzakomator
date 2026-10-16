@@ -2,7 +2,8 @@
 // No Node or DOM imports: this file is compiled for both sides.
 import { fuzzyFilter } from './fuzzy';
 import type { MessageKey, MessageParams } from './i18n';
-import type { Tab } from './types';
+import { terminalModeReset } from './termReset';
+import type { PresetCell, Tab } from './types';
 
 export const SSH_LIMITS = {
   startup: 8 * 1024, broadcast: 64 * 1024, privateKey: 64 * 1024, password: 1024, passphrase: 1024,
@@ -305,6 +306,22 @@ export function parseCellSource(value: string): { kind: 'ssh'; hostId: string } 
   return value.startsWith('ssh:') && value.length > 4 ? { kind: 'ssh', hostId: value.slice(4) } : { kind: 'profile', profileId: value };
 }
 
+/**
+ * The New grid dialog's source choice for one cell (M4). Choosing a host never copies its label into the name: the cell header
+ * already shows the label and follows renames. A name that only echoed the previous host's label goes away; a typed one stays.
+ */
+export function cellSourcePatch(value: string, previous: PresetCell | undefined, hosts: readonly Pick<SshHost, 'id' | 'label'>[], shellProfileId: string): Partial<PresetCell> {
+  const source = parseCellSource(value);
+  const previousHost = previous?.sshHostId ? hosts.find((h) => h.id === previous.sshHostId) : undefined;
+  const clearedName = previousHost && previous?.name === previousHost.label ? { name: undefined } : {};
+  if (source.kind === 'profile') return { profileId: source.profileId, sshHostId: undefined, ...clearedName };
+  return { profileId: shellProfileId, sshHostId: source.hostId, role: undefined, prompt: undefined, worktree: false, ...clearedName };
+}
+
+/** The name an SSH cell gets from a grid spec (M4): one that only repeats the host label (older presets) is left out. */
+export const sshSpecName = (name: string | undefined, host: Pick<SshHost, 'label'> | undefined): string | undefined =>
+  host && name?.trim() === host.label ? undefined : name;
+
 /** The folded group names kept in localStorage (`''` is "Bez grupy"); anything unexpected reads as none. */
 export function parseFoldedGroups(raw: string | null): string[] {
   try {
@@ -368,6 +385,29 @@ export function sshNotice(prev: SshPhase | undefined, next: SshSessionState, ctx
   }
 }
 
+/**
+ * I2: what a remote TUI (vim, htop) switched on - mouse tracking, application cursor keys, bracketed paste, the alternate
+ * screen - must not leak into the next session. Written when a session ends and before a reconnect; never ConPTY.
+ */
+export const sshModeReset = (inAlternateScreen: boolean): string => terminalModeReset(inAlternateScreen, false);
+
+/** A live session just ended (closed, error, network drop): the terminal modes are reset before the notice line. */
+export const sshSessionEnded = (prev: SshPhase | undefined, next: SshPhase): boolean => isLivePhase(prev) && !isLivePhase(next);
+
+/** M3: the pre-auth banner shown in the cell card while connecting, verifying or authenticating (spec 5); null otherwise. */
+export function connectingBanner(session: Pick<SshSessionState, 'phase' | 'serverBanner'> | undefined): string | null {
+  if (!session?.serverBanner || !['connecting', 'verifying', 'authenticating'].includes(session.phase)) return null;
+  return sanitizeServerText(session.serverBanner) || null;
+}
+
+/** D1: a cell that was running when the Pty Host crashed; only Claude and Codex cells resume a conversation (SSH cells never do, D5). */
+export const resumesConversation = (cells: ReadonlyArray<{ ssh: boolean; cli: string } | undefined>): boolean =>
+  cells.some((c) => !!c && !c.ssh && (c.cli === 'claude' || c.cli === 'codex'));
+
+/** D1: the toast after a Pty Host restart. */
+export const ptyHostRestartToast = (resumes: boolean): MessageKey =>
+  resumes ? 'Proces terminali się zrestartował, wznawiam rozmowy' : 'Proces terminali się zrestartował';
+
 export interface BroadcastCell { cellId: string; label: string; endpoint: string }
 export interface BroadcastRow extends BroadcastCell { enabled: boolean; checked: boolean; reason?: MessageKey }
 
@@ -415,6 +455,19 @@ export function broadcastRowState(row: Pick<BroadcastRow, 'enabled' | 'reason'>,
   if (result === 'skipped') return 'pominięto: rozłączono';
   if (result === 'sent' && row.enabled) return 'wysłano';
   return row.reason ?? null;
+}
+
+/** A broadcast result with the session it was sent to (D2). */
+export interface StampedBroadcastResult { result: BroadcastResult; phase?: SshPhase; since?: number }
+
+export function stampBroadcastResults(results: Readonly<Record<string, BroadcastResult>>, sessions: Readonly<Record<string, SshSessionState | undefined>>): Record<string, StampedBroadcastResult> {
+  return Object.fromEntries(Object.entries(results).map(([cellId, result]) => [cellId, { result, phase: sessions[cellId]?.phase, since: sessions[cellId]?.since }]));
+}
+
+/** D2: a row shows its result only while its session is still the one it was sent to; any phase change (a reconnect) clears it. */
+export function currentBroadcastResult(stamped: StampedBroadcastResult | undefined, session: SshSessionState | undefined): BroadcastResult | undefined {
+  if (!stamped) return undefined;
+  return session?.phase === stamped.phase && session?.since === stamped.since ? stamped.result : undefined;
 }
 
 /** Newest last, no consecutive duplicate, at most `max` entries; blank text changes nothing. */
@@ -537,8 +590,8 @@ export const readOnlyStoreNote = (store: 'vault' | 'knownHosts', readOnly: boole
 /** Description of Settings > SSH > Known hosts: with the file path ({file}) once known, a generic text before that. */
 export const knownHostsDescription = (file: string | undefined): MessageKey =>
   file
-    ? 'Klucze hostów zaakceptowane z opcją „Zaufaj i zapisz”. Gdy zapis do pliku {file} się nie uda (brak uprawnień, brak miejsca albo plik tylko do odczytu), połączenie jest odrzucane z ogólnym błędem - sprawdź wtedy ten plik i spróbuj ponownie.'
-    : 'Klucze hostów zaakceptowane z opcją „Zaufaj i zapisz”. Gdy zapis do pliku znanych hostów się nie uda (brak uprawnień, brak miejsca albo plik tylko do odczytu), połączenie jest odrzucane z ogólnym błędem - sprawdź wtedy ten plik i spróbuj ponownie.';
+    ? 'Klucze hostów zaakceptowane z opcją „Zaufaj i zapisz”. Gdy lista jest tylko do odczytu, zaakceptowany klucz obowiązuje tylko dla tego jednego połączenia. Gdy zapis do pliku {file} nieoczekiwanie się nie uda (np. brak uprawnień albo miejsca na dysku), połączenie jest odrzucane z ogólnym błędem - sprawdź wtedy ten plik i spróbuj ponownie.'
+    : 'Klucze hostów zaakceptowane z opcją „Zaufaj i zapisz”. Gdy lista jest tylko do odczytu, zaakceptowany klucz obowiązuje tylko dla tego jednego połączenia. Gdy zapis do pliku znanych hostów nieoczekiwanie się nie uda (np. brak uprawnień albo miejsca na dysku), połączenie jest odrzucane z ogólnym błędem - sprawdź wtedy ten plik i spróbuj ponownie.';
 
 export function newKeyProblem(p: { label: string; passphrase: string; repeat: string }): MessageKey | null {
   if (!p.label.trim()) return 'Podaj etykietę';

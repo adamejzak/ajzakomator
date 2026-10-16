@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, RAIL_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { isAuxPtyId } from '../../shared/cliInstall';
+import { ptyHostRestartToast } from '../../shared/ssh';
 import { alertForStatus } from './alerts';
 import { initBackgroundLoader } from './backgroundLoader';
 import { applyCliStatus, flushPendingSaves, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
@@ -92,8 +93,9 @@ async function boot(): Promise<void> {
   });
   window.mc.on('cell:spawnError', (cellId, message) => setUi((ui) => ({ cellErrors: { ...ui.cellErrors, [cellId]: message } })));
   window.mc.on('focus-cell', (cellId) => focusCell(cellId));
-  window.mc.on('ptyhost:crashed', () => {
-    toast(tr("Proces terminali się zrestartował, wznawiam rozmowy"), 'error');
+  window.mc.on('ptyhost:crashed', (resumes) => {
+    // D1: SSH cells do not resume (D5), so the toast promises conversations only when a Claude or Codex cell was running.
+    toast(tr(ptyHostRestartToast(resumes !== false)), 'error');
     resetStarted();
   });
 
