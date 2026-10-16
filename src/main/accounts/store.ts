@@ -2,39 +2,60 @@
 import { randomUUID } from 'crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { isAccountId, type ManagedAccount } from '../../shared/accounts';
+import {
+  identityFields, isAccountId, type AccountCustody, type AccountIdentity, type AccountNotice, type AccountNoticeKind,
+  type LiveIdentity, type ManagedAccount, type TokenFamily,
+} from '../../shared/accounts';
 
 const MAX_TEXT = 120;
+const MAX_NOTICES = 20;
+/** accounts.json format: 1 = 0.9.0 (records only), 2 = identities, roles, the live login and notices (0.9.1). */
+export const STORE_VERSION = 2;
+const CUSTODY: readonly string[] = ['app', 'live', 'foreign', 'quarantined'] satisfies AccountCustody[];
+const NOTICE_KINDS: readonly string[] = ['switchedOut', 'loggedOut', 'adopted', 'migrated', 'quarantined'] satisfies AccountNoticeKind[];
+
+interface StoreFile { version: number; claude: ManagedAccount[]; live?: LiveIdentity; notices: AccountNotice[] }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const short = (value: unknown): string | undefined => (typeof value === 'string' && value.length <= MAX_TEXT ? value : undefined);
 
-function optionalText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length <= MAX_TEXT ? value : undefined;
-}
-
-/** The same field rules `list` applies, so a stored entry always survives a reload. */
-function sanitize(account: ManagedAccount): ManagedAccount {
-  const { email, org, ...rest } = account;
-  const clean: ManagedAccount = { ...rest };
-  const e = optionalText(email);
-  const o = optionalText(org);
-  if (e !== undefined) clean.email = e;
-  if (o !== undefined) clean.org = o;
-  return clean;
+/** Identity fields within the length limit (a longer value is dropped, as 0.9.0 did for e-mail and organisation). */
+function boundedIdentity(value: Record<string, unknown>): AccountIdentity {
+  return identityFields({ email: short(value.email), org: short(value.org), accountUuid: short(value.accountUuid), organizationUuid: short(value.organizationUuid) });
 }
 
 function parseAccount(value: unknown): ManagedAccount | null {
   if (!isRecord(value) || !isAccountId(value.id)) return null;
   if (typeof value.addedAt !== 'number' || !Number.isFinite(value.addedAt)) return null;
-  const account: ManagedAccount = { id: value.id, addedAt: value.addedAt };
-  const email = optionalText(value.email);
-  const org = optionalText(value.org);
-  if (email !== undefined) account.email = email;
-  if (org !== undefined) account.org = org;
+  const account: ManagedAccount = { id: value.id, addedAt: value.addedAt, ...boundedIdentity(value) };
+  if (typeof value.custody === 'string' && CUSTODY.includes(value.custody)) account.custody = value.custody as AccountCustody;
+  if (value.family === 'own' || value.family === 'live') account.family = value.family as TokenFamily;
+  if (isAccountId(value.duplicateOf)) account.duplicateOf = value.duplicateOf;
   return account;
 }
 
-/** Claude accounts added in the app; each lives in `<root>/claude/<uuid>` and is listed in `<root>/accounts.json`. */
+function parseLive(value: unknown): LiveIdentity | undefined {
+  if (!isRecord(value)) return undefined;
+  const live: LiveIdentity = boundedIdentity(value);
+  if (isAccountId(value.recordId)) live.recordId = value.recordId;
+  return live;
+}
+
+function parseNotice(value: unknown): AccountNotice | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || !value.id || value.id.length > 64) return null;
+  if (typeof value.kind !== 'string' || !NOTICE_KINDS.includes(value.kind) || typeof value.at !== 'number' || !Number.isFinite(value.at)) return null;
+  const notice: AccountNotice = { id: value.id, kind: value.kind as AccountNoticeKind, at: value.at };
+  const email = short(value.email);
+  if (email) notice.email = email;
+  if (isAccountId(value.recordId)) notice.recordId = value.recordId;
+  if (Number.isInteger(value.count) && (value.count as number) >= 0) notice.count = value.count as number;
+  return notice;
+}
+
+/**
+ * Every Claude account the app knows, including the one signed in to Claude Code; each lives in `<root>/claude/<uuid>` and is
+ * listed in `<root>/accounts.json` with the last seen live identity and pending notices. Never holds a token.
+ */
 export class AccountsStore {
   private readonly file: string;
 
@@ -42,13 +63,40 @@ export class AccountsStore {
     this.file = join(root, 'accounts.json');
   }
 
-  list(): ManagedAccount[] {
+  private read(): StoreFile {
     try {
       const parsed: unknown = JSON.parse(readFileSync(this.file, 'utf8'));
-      if (!isRecord(parsed) || !Array.isArray(parsed.claude)) return [];
-      return parsed.claude.map(parseAccount).filter((account): account is ManagedAccount => account !== null);
-    } catch { return []; }
+      if (!isRecord(parsed) || !Array.isArray(parsed.claude)) return { version: 1, claude: [], notices: [] };
+      const live = parseLive(parsed.live);
+      return {
+        version: typeof parsed.version === 'number' && Number.isInteger(parsed.version) ? parsed.version : 1,
+        claude: parsed.claude.map(parseAccount).filter((account): account is ManagedAccount => account !== null),
+        ...(live ? { live } : {}),
+        notices: Array.isArray(parsed.notices) ? parsed.notices.map(parseNotice).filter((n): n is AccountNotice => n !== null) : [],
+      };
+    } catch { return { version: 1, claude: [], notices: [] }; }
   }
+
+  private change(edit: (file: StoreFile) => void): void {
+    const file = this.read();
+    edit(file);
+    this.write(file);
+  }
+
+  /** Every record, quarantined ones included (callers filter with `custodyOf`). */
+  list(): ManagedAccount[] { return this.read().claude; }
+  get(id: string): ManagedAccount | undefined { return this.list().find((a) => a.id === id); }
+  version(): number { return this.read().version; }
+  markMigrated(): void { this.change((f) => { f.version = STORE_VERSION; }); }
+  live(): LiveIdentity | null { return this.read().live ?? null; }
+  setLive(live: LiveIdentity | null): void {
+    this.change((f) => { const parsed = live ? parseLive(live) : undefined; if (parsed) f.live = parsed; else delete f.live; });
+  }
+  notices(): AccountNotice[] { return this.read().notices; }
+  addNotice(notice: Omit<AccountNotice, 'id'>): void {
+    this.change((f) => { const parsed = parseNotice({ ...notice, id: randomUUID() }); if (parsed) f.notices = [...f.notices, parsed].slice(-MAX_NOTICES); });
+  }
+  dismissNotice(id: string): void { this.change((f) => { f.notices = f.notices.filter((n) => n.id !== id); }); }
 
   dirOf(id: string): string {
     if (!isAccountId(id)) throw new Error('invalid account id');
@@ -64,44 +112,60 @@ export class AccountsStore {
   }
 
   commit(account: ManagedAccount): void {
-    const accounts = this.list();
-    const clean = sanitize(account);
-    const index = accounts.findIndex((entry) => entry.id === clean.id);
-    if (index >= 0) accounts[index] = clean;
-    else accounts.push(clean);
-    this.write(accounts);
+    const clean = parseAccount(account);
+    if (!clean) throw new Error('invalid account');
+    this.change((f) => {
+      const index = f.claude.findIndex((entry) => entry.id === clean.id);
+      if (index >= 0) f.claude[index] = clean; else f.claude.push(clean);
+    });
   }
 
-  update(id: string, patch: Partial<Pick<ManagedAccount, 'email' | 'org'>>): void {
-    const accounts = this.list();
-    const index = accounts.findIndex((entry) => entry.id === id);
-    if (index < 0) return;
-    // Fields are changed in place so the key order in accounts.json stays stable.
-    const next: ManagedAccount = { ...accounts[index] };
-    for (const key of ['email', 'org'] as const) {
-      if (!(key in patch)) continue;
-      const value = optionalText(patch[key]);
-      if (value === undefined) delete next[key];
-      else next[key] = value;
-    }
-    accounts[index] = next;
-    this.write(accounts);
+  update(id: string, patch: Partial<Pick<ManagedAccount, 'email' | 'org'>>): void { this.patch(id, patch); }
+  /**
+   * Sets the identity fields that are given; an absent key stays, so a partial identity never erases a known uuid.
+   * With `replace` the record takes exactly this identity: absent fields are removed (the login belongs to someone else).
+   */
+  updateIdentity(id: string, identity: AccountIdentity, options: { replace?: boolean } = {}): void {
+    const given = identityFields(identity);
+    if (!options.replace) { this.patch(id, { ...given }); return; }
+    this.patch(id, { email: given.email, org: given.org, accountUuid: given.accountUuid, organizationUuid: given.organizationUuid });
   }
+  setCustody(id: string, custody: AccountCustody, duplicateOf?: string): void {
+    this.patch(id, { custody, duplicateOf: custody === 'quarantined' ? duplicateOf : undefined });
+  }
+  setFamily(id: string, family: TokenFamily): void { this.patch(id, { family }); }
 
   remove(id: string): void {
     if (!isAccountId(id)) return;
     rmSync(this.dirOf(id), { recursive: true, force: true });
-    const accounts = this.list();
-    const rest = accounts.filter((entry) => entry.id !== id);
-    if (rest.length !== accounts.length) this.write(rest);
+    const file = this.read();
+    const claude = file.claude.filter((entry) => entry.id !== id);
+    const notices = file.notices.filter((n) => n.recordId !== id);
+    let live = file.live;
+    if (live?.recordId === id) { const { recordId: _drop, ...rest } = live; live = rest; }
+    if (claude.length === file.claude.length && notices.length === file.notices.length && live === file.live) return;
+    this.write({ version: file.version, claude, notices, ...(live ? { live } : {}) });
   }
 
-  private write(accounts: ManagedAccount[]): void {
+  /** `undefined` in the patch removes the field; the record is validated again, so a bad value never reaches the file. */
+  private patch(id: string, fields: Record<string, string | undefined>): void {
+    this.change((f) => {
+      const index = f.claude.findIndex((entry) => entry.id === id);
+      if (index < 0) return;
+      const next: Record<string, unknown> = { ...f.claude[index] };
+      for (const [key, value] of Object.entries(fields)) { if (value === undefined) delete next[key]; else next[key] = value; }
+      const clean = parseAccount(next);
+      if (clean) f.claude[index] = clean;
+    });
+  }
+
+  private write(file: StoreFile): void {
     mkdirSync(this.root, { recursive: true });
     this.backUpCorrupt();
     const temp = `${this.file}.${process.pid}.tmp`;
+    const body = { version: file.version, claude: file.claude, ...(file.live ? { live: file.live } : {}), ...(file.notices.length ? { notices: file.notices } : {}) };
     try {
-      writeFileSync(temp, JSON.stringify({ claude: accounts }, null, 2));
+      writeFileSync(temp, JSON.stringify(body, null, 2));
       renameSync(temp, this.file);
     } catch (error) {
       rmSync(temp, { force: true });

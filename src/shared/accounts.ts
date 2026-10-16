@@ -1,11 +1,92 @@
 // src/shared/accounts.ts
 
-/** A Claude account added inside the app, kept in its own isolated profile directory. */
-export interface ManagedAccount {
-  id: string;
+/** Who a Claude login belongs to. accountUuid (with organizationUuid) identifies the account; e-mail and organisation name are labels and the fallback. */
+export interface AccountIdentity {
+  accountUuid?: string;
+  organizationUuid?: string;
   email?: string;
   org?: string;
+}
+
+/**
+ * Role of a saved account (0.9.1): `app` - the app holds the only copy and may renew it; `live` - the account signed in to
+ * Claude Code (its profile dir is a backup that is never sent to the token endpoint); `foreign` - it left the live login
+ * through another tool (cswap, /login), our copy may be outdated and is never renewed; `quarantined` - a duplicate set aside.
+ */
+export type AccountCustody = 'app' | 'live' | 'foreign' | 'quarantined';
+/** Where the tokens in a profile dir came from: an app login (`own`) or a copy of the live login (`live`, another tool may hold the same family). */
+export type TokenFamily = 'own' | 'live';
+
+/** One Claude account known to the app (also the one signed in to Claude Code), with its own profile directory. */
+export interface ManagedAccount extends AccountIdentity {
+  id: string;
   addedAt: number;
+  /** Absent in 0.9.0 records: `app`. */
+  custody?: AccountCustody;
+  /** Absent in 0.9.0 records: `live` (unknown provenance, the conservative reading). */
+  family?: TokenFamily;
+  /** For `quarantined`: the record that holds the account now. */
+  duplicateOf?: string;
+}
+
+/** The identity last seen in the live Claude Code login and the record it belongs to. */
+export interface LiveIdentity extends AccountIdentity { recordId?: string }
+
+export type AccountNoticeKind = 'switchedOut' | 'loggedOut' | 'adopted' | 'migrated' | 'quarantined';
+/** Something the app did to the saved accounts on its own, shown in the limits panel until dismissed. Never holds a token. */
+export interface AccountNotice { id: string; kind: AccountNoticeKind; at: number; email?: string; recordId?: string; count?: number }
+
+export type IdentityMatch = 'same' | 'different' | 'unknown';
+
+export const custodyOf = (a: Pick<ManagedAccount, 'custody'>): AccountCustody => a.custody ?? 'app';
+export const familyOf = (a: Pick<ManagedAccount, 'family'>): TokenFamily => a.family ?? 'live';
+
+const norm = (value?: string): string | undefined => value?.trim().toLowerCase() || undefined;
+const nonEmpty = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() ? value : undefined);
+
+/** The four identity fields of any object, only those that are non-empty strings. */
+export function identityFields(value: Partial<Record<keyof AccountIdentity, unknown>>): AccountIdentity {
+  const out: AccountIdentity = {};
+  for (const key of ['email', 'org', 'accountUuid', 'organizationUuid'] as const) {
+    const v = nonEmpty(value[key]);
+    if (v !== undefined) out[key] = v;
+  }
+  return out;
+}
+
+/** Identity of an `oauthAccount` object as Claude Code writes it into `.claude.json`. */
+export function identityFromOauthAccount(value: unknown): AccountIdentity {
+  const a = typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return identityFields({ email: a.emailAddress, org: a.organizationName, accountUuid: a.accountUuid, organizationUuid: a.organizationUuid });
+}
+
+/** accountUuid decides when both sides know it; otherwise the e-mail; the organisation (uuid, else name) tells two orgs of one person apart. */
+export function compareIdentity(a: AccountIdentity, b: AccountIdentity): IdentityMatch {
+  const orgDiffers = (): boolean => {
+    if (a.organizationUuid && b.organizationUuid) return a.organizationUuid !== b.organizationUuid;
+    const ao = norm(a.org);
+    const bo = norm(b.org);
+    return !!ao && !!bo && ao !== bo;
+  };
+  if (a.accountUuid && b.accountUuid) return a.accountUuid === b.accountUuid && !orgDiffers() ? 'same' : 'different';
+  const ae = norm(a.email);
+  const be = norm(b.email);
+  if (ae && be) return ae === be && !orgDiffers() ? 'same' : 'different';
+  return 'unknown';
+}
+
+/** Stable key of an account for caches and backoff (never the slot it sits in); undefined when nothing identifies it. */
+export function identityKey(i: AccountIdentity): string | undefined {
+  if (i.accountUuid) return `uuid:${i.accountUuid}:${i.organizationUuid ?? '-'}`;
+  const email = norm(i.email);
+  return email ? `email:${email}:${i.organizationUuid ?? norm(i.org) ?? '-'}` : undefined;
+}
+
+/** The identity fields `found` knows and `record` lacks (a known value is never overwritten). */
+export function fillMissingIdentity(record: AccountIdentity, found: AccountIdentity): AccountIdentity {
+  const patch: AccountIdentity = {};
+  for (const key of ['accountUuid', 'organizationUuid', 'email', 'org'] as const) if (!record[key] && found[key]) patch[key] = found[key];
+  return patch;
 }
 
 export type LoginTarget = { type: 'new' } | { type: 'main' } | { type: 'account'; id: string };

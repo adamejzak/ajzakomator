@@ -168,3 +168,60 @@ describe('AccountsStore.update', () => {
     expect(store.list()[0]).toEqual({ id, email: 'b@x.com', addedAt: 5 });
   });
 });
+
+describe('AccountsStore v2', () => {
+  const ID = '123e4567-e89b-42d3-a456-426614174000';
+  const OTHER = '223e4567-e89b-42d3-a456-426614174000';
+  it('keeps identity, custody, family and duplicateOf and drops bad values', () => {
+    const store = new AccountsStore(root);
+    store.commit({ id: ID, addedAt: 1, email: 'a@x.com', accountUuid: 'u1', organizationUuid: 'o1', custody: 'live', family: 'own' });
+    store.commit({ id: OTHER, addedAt: 2, custody: 'weird' as never, family: 'x' as never, duplicateOf: '../x' });
+    expect(store.list()).toEqual([
+      { id: ID, addedAt: 1, email: 'a@x.com', accountUuid: 'u1', organizationUuid: 'o1', custody: 'live', family: 'own' },
+      { id: OTHER, addedAt: 2 },
+    ]);
+    store.setCustody(OTHER, 'quarantined', ID);
+    store.setFamily(OTHER, 'live');
+    store.updateIdentity(OTHER, { email: 'b@x.com', accountUuid: 'u2' });
+    expect(store.get(OTHER)).toEqual({ id: OTHER, addedAt: 2, email: 'b@x.com', accountUuid: 'u2', custody: 'quarantined', family: 'live', duplicateOf: ID });
+  });
+  it('updateIdentity with replace takes exactly the given identity', () => {
+    const store = new AccountsStore(root);
+    store.commit({ id: ID, addedAt: 1, email: 'a@x.com', org: 'Acme', accountUuid: 'u1', organizationUuid: 'o1', custody: 'live' });
+    store.updateIdentity(ID, { email: 'b@x.com', accountUuid: 'u2' }, { replace: true });
+    expect(store.get(ID)).toEqual({ id: ID, addedAt: 1, email: 'b@x.com', accountUuid: 'u2', custody: 'live' });
+  });
+  it('reports version 1 for a 0.9.0 file and 2 after the migration mark', () => {
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'accounts.json'), JSON.stringify({ claude: [{ id: ID, addedAt: 1, email: 'a@x.com' }] }));
+    const store = new AccountsStore(root);
+    expect(store.version()).toBe(1);
+    store.markMigrated();
+    expect(store.version()).toBe(2);
+    expect(store.list()).toEqual([{ id: ID, addedAt: 1, email: 'a@x.com' }]);
+  });
+  it('keeps the live identity and the notices across record writes, at most 20 notices', () => {
+    const store = new AccountsStore(root);
+    store.setLive({ email: 'a@x.com', accountUuid: 'u1', recordId: ID });
+    for (let i = 0; i < 25; i++) store.addNotice({ kind: 'switchedOut', at: i, email: `n${i}@x.com` });
+    store.commit({ id: ID, addedAt: 1 });
+    expect(store.live()).toEqual({ email: 'a@x.com', accountUuid: 'u1', recordId: ID });
+    const notices = store.notices();
+    expect(notices).toHaveLength(20);
+    expect(notices[0].email).toBe('n5@x.com');
+    store.dismissNotice(notices[0].id);
+    expect(store.notices()).toHaveLength(19);
+    store.setLive(null);
+    expect(store.live()).toBeNull();
+  });
+  it('remove drops the notices and the live record id that point to the record', () => {
+    const store = new AccountsStore(root);
+    const { id } = store.prepare();
+    store.commit({ id, addedAt: 1 });
+    store.setLive({ email: 'a@x.com', recordId: id });
+    store.addNotice({ kind: 'quarantined', at: 1, recordId: id });
+    store.remove(id);
+    expect(store.notices()).toEqual([]);
+    expect(store.live()).toEqual({ email: 'a@x.com' });
+  });
+});

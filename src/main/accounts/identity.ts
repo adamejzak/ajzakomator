@@ -1,4 +1,5 @@
 // src/main/accounts/identity.ts
+import type { AccountIdentity } from '../../shared/accounts';
 import { profileSource, readClaudeIdentity, type CredentialSource } from '../usage/credentials';
 
 export interface IdentityDeps {
@@ -9,7 +10,7 @@ export interface IdentityDeps {
 const text = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
 
 /** Who is logged in to a managed profile: the profile's `.claude.json` first, then `claude auth status`. */
-export async function readManagedIdentity(dir: string, deps: IdentityDeps): Promise<{ email?: string; org?: string; plan?: string }> {
+export async function readManagedIdentity(dir: string, deps: IdentityDeps): Promise<AccountIdentity & { plan?: string }> {
   const fromFile = await readClaudeIdentity(profileSource(deps.source, dir));
   if (fromFile.email) return fromFile;
   try {

@@ -39,8 +39,9 @@ import { AccountsStore } from './accounts/store';
 import { gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapMainAccount, type SwapDeps } from './accounts/swap';
 import { readManagedIdentity } from './accounts/identity';
+import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
 import { LoginManager } from './auth/login';
-import { isAccountId, type LoginRequest } from '../shared/accounts';
+import { custodyOf, isAccountId, type LoginRequest } from '../shared/accounts';
 import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
@@ -133,7 +134,7 @@ const accounts = new AccountsStore(join(DATA_DIR, 'accounts'));
 const usage = new UsageService({
   accounts: () => [
     MAIN_ACCOUNTS[0],
-    ...accounts.list().map((a) => ({ id: `claude:${a.id}`, provider: 'claude' as const, configDir: accounts.dirOf(a.id) })),
+    ...accounts.list().filter((a) => custodyOf(a) !== 'quarantined').map((a) => ({ id: `claude:${a.id}`, provider: 'claude' as const, configDir: accounts.dirOf(a.id) })),
     MAIN_ACCOUNTS[1],
   ],
   fetchAccount: (ref) => (ref.provider === 'claude' ? fetchClaude(usageDeps, ref) : fetchCodex(usageDeps)),
@@ -213,6 +214,15 @@ const swapDeps = (): SwapDeps => ({
   delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 });
 const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: isSwapUnresolved };
+/** The live Claude login's identity (`~/.claude.json`), null when nobody is signed in. */
+const readLiveIdentity = async () => { const id = await readClaudeIdentity(usageDeps.credentials); return id.email || id.accountUuid ? id : null; };
+const migrationDeps = (): MigrationDeps => ({
+  store: accounts,
+  readProfileIdentity: (dir) => readClaudeIdentity(profileSource(usageDeps.credentials, dir)),
+  readLiveIdentity,
+  readExpiry: async (dir) => (await readClaudeCredentials(profileSource(usageDeps.credentials, dir)))?.expiresAt,
+  now: () => Date.now(),
+});
 /** Tells the renderer whether an unresolved swap blocks further swaps. */
 async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
@@ -913,6 +923,8 @@ async function startMainApp(): Promise<void> {
   startSsh();
   // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another.
   try { await recoverInterruptedSwap(swapDeps()); } catch { /* the journal stays and the next start retries */ }
+  // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
+  try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }
   createWindow();
   void cliDetector.refreshAll(); // async: the window does not wait for it, spawns wait only for their own CLI
   usage.start();

@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import { readFile, stat } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
+import { identityFromOauthAccount, type AccountIdentity } from '../../shared/accounts';
 import { decodeJwtClaims } from './parse';
 
 /** Where credentials come from; replaceable in tests. Everything here is read-only. */
@@ -62,17 +63,13 @@ export function profileSource(source: CredentialSource, configDir: string): Cred
 }
 
 /** Who a Claude login belongs to, from the config file Claude Code keeps next to it (read only). */
-export async function readClaudeIdentity(source: CredentialSource): Promise<{ email?: string; org?: string }> {
+export async function readClaudeIdentity(source: CredentialSource): Promise<AccountIdentity> {
   const directory = source.env.CLAUDE_CONFIG_DIR?.trim();
   const raw = await source.readFile(directory ? join(directory, '.claude.json') : join(source.home, '.claude.json'));
   if (!raw) return {};
   try {
     const parsed: unknown = JSON.parse(raw);
-    const account = isRecord(parsed) && isRecord(parsed.oauthAccount) ? parsed.oauthAccount : undefined;
-    return {
-      email: typeof account?.emailAddress === 'string' ? account.emailAddress : undefined,
-      org: typeof account?.organizationName === 'string' ? account.organizationName : undefined,
-    };
+    return identityFromOauthAccount(isRecord(parsed) ? parsed.oauthAccount : undefined);
   } catch { return {}; }
 }
 
