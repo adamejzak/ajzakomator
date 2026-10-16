@@ -1,6 +1,6 @@
 # README screenshots
 
-The PNGs in this folder come from the real Electron application in English. The capture script creates a temporary **Atlas storefront** project, three project entries, reusable snippets and a review-team preset. Four real shell terminals run JavaScript tests, display the demo catalog and inspect its source. The project is also a scratch git repository (a few commits, one merged branch, staged, modified and untracked files), and three demo hosts of the group "production" point at the local test SSH server `scripts/ssh-test-server.mjs` on 127.0.0.1. No AI models are invoked, no real host is contacted and no installed app data is loaded.
+The PNGs in this folder come from the real Electron application in English. The capture script creates a temporary **Atlas storefront** project, three project entries, reusable snippets and a review-team preset. Four real shell terminals run JavaScript tests, display the demo catalog and inspect its source. The project is also a scratch git repository (a few commits, one merged branch, staged, modified and untracked files), and three demo hosts of the group "production" (opened as a grid of three sessions before the shot) point at the local test SSH server `scripts/ssh-test-server.mjs` on 127.0.0.1. No AI models are invoked, no real host is contacted and no installed app data is loaded.
 
 From the repository root, with Node.js 22 or newer and dependencies installed:
 
@@ -19,7 +19,7 @@ An Electron desktop environment is required. The script uses `MC_DATA_DIR` for i
 | `palette.png` | Command palette searching for "new" |
 | `project.png` | Project name, color and icon editor |
 | `git.png` | Git panel: staged, modified and untracked files, history graph and a working-tree diff |
-| `ssh.png` | SSH panel with grouped hosts beside a grid of three connected SSH sessions |
+| `ssh.png` | SSH view: hosts grouped by environment with their connection state, and the details of one host |
 
 To review a capture before replacing the tracked images, pass an output directory:
 

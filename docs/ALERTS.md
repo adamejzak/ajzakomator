@@ -38,12 +38,15 @@ The hook address (a per-run token plus a per-start nonce) is part of the launch 
 
 ## AI account limits
 
-The **AI account limits** panel shows the 5-hour and weekly limits of your main Claude account, extra saved Claude accounts and Codex.
+The **AI account limits** panel shows the 5-hour and weekly limits of every Claude account the app knows and of Codex. Every account has exactly one card; the one signed in to Claude Code is marked **main**. Accounts are identified by their Anthropic account and organization ids, the e-mail is only a label.
 
-From a saved account's "⋮" menu, **Make main account** swaps it with the main Claude login. The previous main account stays saved, and open Claude sessions normally pick up the new login on their next message without being closed (this depends on the Claude Code version; a session that does not can be restarted or resumed). The selected account's token is refreshed with Anthropic first, and the sign-in files are exchanged on your computer.
+- **Signed in somewhere else.** When another tool (for example cswap) or `claude /login` switches the Claude Code sign-in, the app notices it within a few seconds: the new account gets its card (or is added), the account that left keeps its card with a note, and the app never renews a copy of a sign-in that another tool may hold. A second copy of the same account is set aside instead of shown twice, and nothing is deleted without asking.
+- **Make main account** saves the current main sign-in on its card first and then writes the selected account into Claude Code, holding Claude Code's own lock files so neither Claude Code nor cswap can write at the same moment. Open Claude sessions normally pick up the new sign-in on their next message (a session that does not can be restarted or resumed).
+- **Sign in again** only renews the account of that card: if the browser signs in a different account, nothing is changed and you can add that account as a new one.
+- **Access denied (HTTP 403)**, for example a paused subscription, is shown as such; signing in again would not help.
+- The limits of each account are read at most every 3 minutes, with the app's own client name, and a rate limit is always waited out (with a safety margin).
+- Account copies that cswap also lists (including cards created by 0.9.0) are never renewed by the app, because cswap may hold the same sign-in. Sign in to such a card again once to make it app-owned.
 
-If a swap is interrupted, the app keeps an emergency copy, blocks further swaps and asks you to check both accounts. After you clear the warning, sign in again to any account that stopped working (a Claude sign-in is always possible again).
-
-Known limit: if a Claude session writes its login in the very same millisecond as the swap, the app detects most such cases and asks you to check your accounts, but it cannot detect all of them. Keep your own backup of your Claude login.
+If a swap is interrupted, the app keeps an emergency copy, blocks further swaps and asks you to check both accounts. After you clear the warning, sign in again to any account that stopped working (a Claude sign-in is always possible again). When the app cannot finish the recovery itself, the outgoing account stays marked as switched out until you sign in to it again.
 
 Not available on macOS, where Claude keeps its login in the Keychain (saved accounts cannot be added there either).

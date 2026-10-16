@@ -36,7 +36,7 @@ background, tells you which one needs you, and brings any grid or conversation b
 - **Nothing gets lost**: restart the app and every conversation resumes; closed grids go to History
 - **Snippets and `Ctrl+K` palette** to paste prompts into one cell or the whole grid
 - **Files, editor and Git panel** to read and edit source and commit without leaving the workspace
-- **SSH connections**: saved hosts and keys, host-key checks, SSH grids and one command sent to every host
+- **SSH connections**: an SSH view with saved hosts and keys, host-key checks, SSH cells in any grid and one command sent to every host
 - **AI account limits** for Claude and Codex, with switching between saved Claude accounts
 - **Optional MCP** for coordinator / worker teams with tracked tasks and handoffs
 - **Native terminals**: ConPTY on Windows (with hold Space to dictate), login shells on macOS, GPU rendering
@@ -53,11 +53,11 @@ background, tells you which one needs you, and brings any grid or conversation b
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/git.png" alt="Git panel with changed files, a commit box and the commit history" /></td>
-    <td width="50%"><img src="docs/screenshots/ssh.png" alt="SSH panel with hosts grouped by environment beside a grid of three connected SSH sessions" /></td>
+    <td width="50%"><img src="docs/screenshots/ssh.png" alt="SSH view with hosts grouped by environment, their connection state and the details of one host" /></td>
   </tr>
   <tr>
     <td align="center"><sub>Git panel: changes, commit and history</sub></td>
-    <td align="center"><sub>SSH hosts and a grid of SSH sessions</sub></td>
+    <td align="center"><sub>SSH view: hosts, keys and details</sub></td>
   </tr>
 </table>
 

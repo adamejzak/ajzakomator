@@ -30,7 +30,7 @@ potrzebuje, i jednym kliknięciem przywraca każdy grid i każdą rozmowę.
 - **Nic nie ginie**: po restarcie rozmowy same się wznawiają, zamknięte gridy trafiają do Historii
 - **Snippety i paleta `Ctrl+K`** do wklejania promptów do jednej komórki albo całej siatki
 - **Pliki, edytor i panel Git**: przeglądanie i edycja kodu oraz commity bez wychodzenia z aplikacji
-- **Połączenia SSH**: zapisane hosty i klucze, sprawdzanie kluczy hostów, gridy SSH i jedno polecenie wysyłane do każdego hosta
+- **Połączenia SSH**: widok SSH z zapisanymi hostami i kluczami, sprawdzanie kluczy hostów, komórki SSH w każdym gridzie i jedno polecenie wysyłane do każdego hosta
 - **Limity kont AI** dla Claude i Codex oraz przełączanie między zapisanymi kontami Claude
 - **Opcjonalny MCP** dla zespołów koordynator / wykonawcy z zadaniami i przekazywaniem pracy
 - **Natywne terminale**: ConPTY na Windowsie (z dyktowaniem przez przytrzymanie spacji), powłoki logowania na macOS, renderowanie na GPU
@@ -39,8 +39,8 @@ potrzebuje, i jednym kliknięciem przywraca każdy grid i każdą rozmowę.
 | Nowy grid | Pliki i edytor |
 | --- | --- |
 | ![Nowy grid: profile, role MCP i prompty](docs/screenshots/grid-dialog.png) | ![Drzewo plików i edytor kodu](docs/screenshots/editor.png) |
-| **Panel Git** | **Hosty SSH** |
-| ![Panel Git: zmiany, commit i historia](docs/screenshots/git.png) | ![Panel SSH z hostami w grupach i grid sesji SSH](docs/screenshots/ssh.png) |
+| **Panel Git** | **Widok SSH** |
+| ![Panel Git: zmiany, commit i historia](docs/screenshots/git.png) | ![Widok SSH z hostami w grupach, stanem połączenia i szczegółami hosta](docs/screenshots/ssh.png) |
 
 ## Instalacja
 

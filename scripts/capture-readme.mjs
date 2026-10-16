@@ -1,7 +1,7 @@
 // Capture the real built Electron renderer. Never uses an installed app's data or AI models.
 // Run: npm run build && node scripts/capture-readme.mjs
 // Captures main, editor, project, grid-dialog, palette, git (a scratch git repository with history and changes) and ssh
-// (demo hosts and a grid connected to the local test server scripts/ssh-test-server.mjs on 127.0.0.1).
+// (the SSH view with demo hosts connected to the local test server scripts/ssh-test-server.mjs on 127.0.0.1).
 // Requires Node >=22, installed dependencies, and an Electron desktop environment.
 import { spawn, execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -216,6 +216,10 @@ try {
   // Electron does not expose Chrome's Browser window-management CDP methods.
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false });
   await until(() => evaluate('!!window.mc && document.querySelectorAll(".cell").length === 4'), 'four terminals');
+  // The README shows the version the screenshots were taken with (the release bumps package.json later).
+  const version = JSON.parse(readFileSync(join(checkout, 'package.json'), 'utf8')).version;
+  await until(() => evaluate(`document.querySelector('.sb-version')?.textContent.includes(${JSON.stringify(`v${version}`)})`), `status bar shows v${version}`);
+  console.log(`Capturing with version ${version}`);
   if (await evaluate('document.title !== "unimux" || document.querySelector(".bn-base")?.textContent !== "unimux"')) throw new Error('Expected Unimux branding');
   // Observe real PTY output and use its existing MessagePort to enter demo commands.
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `window.__readmeOutput = {}; window.addEventListener('message', e => { if (e.data === 'mc:pty-port' && e.ports[0]) { window.__readmePort = e.ports[0]; e.ports[0].addEventListener('message', e => { if (e.data.t === 'data' || e.data.t === 'replay') window.__readmeOutput[e.data.id] = (window.__readmeOutput[e.data.id] || '') + e.data.data; }); } });` });
@@ -270,23 +274,18 @@ try {
   await click('.git-file[title="src/catalog.mjs"]');
   await until(() => evaluate('document.querySelectorAll(".git-diff-line.add").length > 0'), 'working-tree diff');
   await screenshot('git');
-  // SSH: the group "production" opens as a grid; the three sessions connect to the local test server (its host key is already trusted).
+  // SSH: the SSH view opens in the main area; the group "production" opens as a grid of three sessions on the local test
+  // server (its host key is already trusted), then the view shows the connected tiles and web-1's details.
   await click('#terminal-view');
-  await until(() => evaluate('!!document.querySelector(".ssh-hosts")'), 'SSH host list');
-  await evaluate(`(() => { const head = [...document.querySelectorAll('.ssh-group-head')].find(el => el.textContent.includes('production')); if (!head) throw new Error('Missing production group'); head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 })); })()`);
-  await click('.menu [role=menuitem]', 'Open as grid');
+  await until(() => evaluate('!!document.querySelector(".ssh-view")'), 'SSH view');
+  await evaluate(`(() => { const group = [...document.querySelectorAll('.ssh-view-group')].find((g) => g.querySelector('.ssh-group-head')?.textContent.includes('production')); if (!group) throw new Error('Missing production group'); group.querySelector('.ssh-group-open').click(); })()`);
   await until(() => evaluate(`(() => { const ssh = [...document.querySelectorAll('.cell')].filter(c => c.querySelector('.cell-head .ssh-host')); return ssh.length === 3 && ssh.every(c => !c.querySelector('.ssh-card') && !c.querySelector('.ssh-bar') && !c.querySelector('.status-text.ssh')); })()`), 'three SSH sessions');
-  const sshCellInfo = await evaluate(`(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find(x => x.id === s.activeProjectId); return p.tabs.find(x => x.id === p.activeTabId).cells.map(c => ({ id: c.id, label: s.sshHosts.find(h => h.id === c.ssh.hostId).label })); })()`);
-  const sshIds = sshCellInfo.map(c => c.id), sshNames = sshCellInfo.map(c => c.label);
-  await until(() => evaluate(`${JSON.stringify(sshIds)}.every(id => window.__readmeOutput[id]?.includes('unimux test server'))`), 'SSH greetings');
-  // An empty line makes every session print a fresh prompt, so the cleared screen below starts on it.
-  for (const id of sshIds) await evaluate(`window.__readmePort.postMessage({ t: 'write', id: ${JSON.stringify(id)}, data: '\\r' })`);
-  await sleep(800);
-  // Like typing `clear` in each session: the screen starts at the prompt, without the connection notices and the test server greeting.
-  await evaluate(`${JSON.stringify(sshIds)}.forEach(id => window.__mc.terminals.entries.get(id).term.clear())`);
-  for (let i = 0; i < sshIds.length; i++) await evaluate(`window.__readmePort.postMessage({ t: 'write', id: ${JSON.stringify(sshIds[i])}, data: ${JSON.stringify(`echo ${sshNames[i]}: ready\r`)} })`);
-  await until(() => evaluate(`${JSON.stringify(sshIds)}.every((id, i) => window.__readmeOutput[id]?.includes(${JSON.stringify(sshNames)}[i] + ': ready\\r\\n$'))`), 'SSH commands answered');
+  await click('.workspace-tabs .ssh-tab');
+  await until(() => evaluate('document.querySelectorAll(".ssh-tile .ssh-state.connected").length === 3'), 'connected tiles');
+  await evaluate(`(() => { const tile = [...document.querySelectorAll('.ssh-tile[data-host-id]')].find((t) => t.textContent.includes('web-1')); tile.click(); })()`);
+  await until(() => evaluate(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`), 'web-1 details');
   await screenshot('ssh');
+  await evaluate(`document.querySelector('.workspace-tabs .ssh-tab .x')?.click()`);
   // Back to the Development grid and the project list for the optional checks.
   await evaluate(`(() => { const tab = [...document.querySelectorAll('.workspace-tabs .tab')].find(el => el.textContent.includes('Development')); if (!tab) throw new Error('Missing Development workspace tab'); tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })); })()`);
   await click('#projects-view');
