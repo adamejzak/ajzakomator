@@ -142,15 +142,16 @@ export function WorkspaceTabs() {
     el.addEventListener('wheel', wheel, { passive: false });
     return () => { observer.disconnect(); el.removeEventListener('wheel', wheel); };
   }, []);
-  const activeKey = activeWorkspaceKey({ settingsActive, sshEditorId: activeEditorId, fileId: activeFileId, gridId: project?.activeTabId ?? null });
+  const activeKey = activeWorkspaceKey({ settingsActive, sshActive: activeEditorId !== null, fileId: activeFileId, gridId: project?.activeTabId ?? null });
   useEffect(() => {
     const el = stripRef.current;
     if (!el || !activeKey) return;
-    const tab = Array.from(el.children).find((child) => (child as HTMLElement).dataset.workspaceId === activeKey) as HTMLElement | undefined;
+    const tabKey = activeKey === 'ssh' && activeEditorId ? `ssh:${activeEditorId}` : activeKey;
+    const tab = Array.from(el.children).find((child) => (child as HTMLElement).dataset.workspaceId === tabKey) as HTMLElement | undefined;
     if (!tab) return;
     const next = revealScroll({ scrollLeft: el.scrollLeft, width: el.clientWidth, scrollWidth: el.scrollWidth }, { left: tab.offsetLeft, width: tab.offsetWidth });
     if (next !== el.scrollLeft) el.scrollLeft = next;
-  }, [activeKey, order.length]);
+  }, [activeKey, activeEditorId, order.length]);
   const scrollStrip = (direction: -1 | 1) => {
     const el = stripRef.current;
     if (el) el.scrollBy({ left: stepScroll(direction, el.clientWidth), behavior: 'smooth' });
@@ -160,7 +161,7 @@ export function WorkspaceTabs() {
     openMenuAt(el, [
       { header: tr('Wszystkie karty') },
       ...order.flatMap((key) => {
-        const hint = key === activeKey ? '✓' : undefined;
+        const hint = key === activeKey || (activeKey === 'ssh' && key === `ssh:${activeEditorId}`) ? '✓' : undefined;
         if (key === 'settings') return [{ label: tr('Ustawienia'), hint, onClick: () => setUi({ settingsActive: true }) }];
         if (key.startsWith('ssh:')) {
           const e = editors.find((x) => `ssh:${x.id}` === key);
@@ -210,7 +211,7 @@ export function WorkspaceTabs() {
         <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); setUi({ settingsTabOpen: false, settingsActive: false }); }}><IX /></button>
       </div>}
       {editors.map((e) => (
-        <div key={e.id} {...dragProps(`ssh:${e.id}`)} style={{ order: order.indexOf(`ssh:${e.id}`) }} className={`tab ssh-tab ${activeKey === `ssh:${e.id}` ? 'active' : ''}`}
+        <div key={e.id} {...dragProps(`ssh:${e.id}`)} style={{ order: order.indexOf(`ssh:${e.id}`) }} className={`tab ssh-tab ${activeKey === 'ssh' && activeEditorId === e.id ? 'active' : ''}`}
           onClick={() => activateSshEditor(e.id)} onAuxClick={(ev) => { if (ev.button === 1) closeSshEditor(e.id); }}>
           <span className="tab-type-icon" aria-hidden="true"><TTerminal /></span><span className="label">{sshEditorTitleText(e, s, vault, tr)}</span>
           <button className="x" aria-label={tr('Zamknij')} onClick={(ev) => { ev.stopPropagation(); closeSshEditor(e.id); }}><IX /></button>

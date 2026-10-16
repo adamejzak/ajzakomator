@@ -14,6 +14,8 @@ export interface PanelDef {
   available?: (ctx: PanelContext) => boolean;
   /** A reason (translation key) when the tile is shown but cannot be opened right now; null/absent: it can. */
   unavailableReason?: (ctx: PanelContext) => string | null;
+  /** The tile opens a workspace view in the main area (the SSH view) instead of a panel next to the rail. */
+  opensView?: boolean;
 }
 
 export const DEFAULT_PANEL = 'projects';
@@ -34,7 +36,7 @@ export const panelOpenable = (def: PanelDef, ctx: PanelContext): boolean => !def
  * is visible and can be opened, otherwise the default panel.
  */
 export function resolvePanelId(defs: readonly PanelDef[], wanted: unknown, ctx: PanelContext): string {
-  const found = typeof wanted === 'string' ? visiblePanels(defs, ctx).find((def) => def.id === wanted) : undefined;
+  const found = typeof wanted === 'string' ? visiblePanels(defs, ctx).find((def) => def.id === wanted && !def.opensView) : undefined;
   return found && panelOpenable(found, ctx) ? found.id : DEFAULT_PANEL;
 }
 

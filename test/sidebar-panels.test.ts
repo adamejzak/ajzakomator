@@ -41,6 +41,13 @@ describe('sidebar panel registry helpers', () => {
     expect(railClick({ collapsed: true, view: 'files' }, 'projects')).toEqual({ collapsed: false, view: 'projects' });
   });
 
+  it('a tile that opens a view is never the panel shown on the left (R13)', () => {
+    const ctx: PanelContext = { hasProject: true, platform: 'win32' };
+    const defs = [{ id: 'projects' }, { id: 'terminal', opensView: true }];
+    expect(resolvePanelId(defs, 'terminal', ctx)).toBe(DEFAULT_PANEL);
+    expect(visiblePanels(defs, ctx).map((d) => d.id)).toEqual(['projects', 'terminal']);
+  });
+
   it('moves focus along the rail with wrapping and Home/End', () => {
     expect(railFocusTarget(3, 0, 'ArrowDown')).toBe(1);
     expect(railFocusTarget(3, 2, 'ArrowDown')).toBe(0);
@@ -92,6 +99,7 @@ describe('git and terminal tiles', () => {
     const terminal = entries.find((line) => line.includes("id: 'terminal'"))!;
     expect(terminal).toContain("label: 'SSH'");
     expect(terminal).not.toContain('unavailableReason');
+    expect(terminal).toContain('opensView: true');
     expect(entries.find((line) => line.includes("id: 'git'"))).toContain('unavailableReason: gitPanelReason');
   });
 });

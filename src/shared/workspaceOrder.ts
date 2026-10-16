@@ -11,10 +11,10 @@ export function reorderWorkspace(order: string[], source: string, target: string
   return next;
 }
 
-/** Which workspace tab is shown (R10): Settings above an SSH editor above a file above the grid. */
-export function activeWorkspaceKey(s: { settingsActive: boolean; sshEditorId: string | null; fileId: string | null; gridId: string | null }): string | null {
+/** Which workspace tab is shown: Settings above the SSH view above a file above the grid. */
+export function activeWorkspaceKey(s: { settingsActive: boolean; sshActive: boolean; fileId: string | null; gridId: string | null }): string | null {
   if (s.settingsActive) return 'settings';
-  if (s.sshEditorId) return `ssh:${s.sshEditorId}`;
+  if (s.sshActive) return 'ssh';
   if (s.fileId) return `file:${s.fileId}`;
   return s.gridId ? `grid:${s.gridId}` : null;
 }

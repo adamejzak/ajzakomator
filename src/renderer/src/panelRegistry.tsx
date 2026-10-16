@@ -30,5 +30,5 @@ export const SIDEBAR_PANELS: readonly SidebarPanel[] = [
   { id: 'files', label: 'Pliki', icon: TFiles, component: FilesPanel, unavailableReason: (ctx) => (ctx.hasProject ? null : 'Najpierw dodaj projekt') },
   // Git needs a project that is a repository (the tile is disabled, with the reason as its tooltip, otherwise). SSH: saved hosts, keys and local shells.
   { id: 'git', label: 'Git', icon: TGit, component: GitPanel, unavailableReason: gitPanelReason },
-  { id: 'terminal', label: 'SSH', icon: TTerminal, component: TerminalPanel },
+  { id: 'terminal', label: 'SSH', icon: TTerminal, component: TerminalPanel, opensView: true },
 ];
