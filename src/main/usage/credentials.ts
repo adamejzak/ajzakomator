@@ -73,6 +73,36 @@ export async function readClaudeIdentity(source: CredentialSource): Promise<Acco
   } catch { return {}; }
 }
 
+/** The live Claude Code config exists but cannot be read or parsed (locked, a directory, half written): who is signed in is unknown. */
+export class LiveIdentityUnknown extends Error {
+  constructor() { super('live Claude config unreadable'); this.name = 'LiveIdentityUnknown'; }
+}
+
+/**
+ * Who is signed in to Claude Code, for the account roles: null only when nobody is (no config file, or a config that parses
+ * and has no account). Any other read error or a file that does not parse (Claude Code may be writing it) throws
+ * `LiveIdentityUnknown`, so a busy file is never taken for a sign-out. Never includes a path or system message.
+ */
+export async function readLiveClaudeIdentity(
+  source: Pick<CredentialSource, 'env' | 'home'>,
+  read: (path: string) => Promise<string> = (path) => readFile(path, 'utf8'),
+): Promise<AccountIdentity | null> {
+  const directory = source.env.CLAUDE_CONFIG_DIR?.trim();
+  let raw: string;
+  try {
+    raw = await read(directory ? join(directory, '.claude.json') : join(source.home, '.claude.json'));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw new LiveIdentityUnknown();
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw new LiveIdentityUnknown(); }
+  if (!isRecord(parsed)) throw new LiveIdentityUnknown();
+  const identity = identityFromOauthAccount(parsed.oauthAccount);
+  return identity.email || identity.accountUuid ? identity : null;
+}
+
 export interface ClaudeCredentials {
   accessToken: string;
   expiresAt?: number;

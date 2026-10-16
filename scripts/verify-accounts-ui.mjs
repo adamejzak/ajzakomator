@@ -65,6 +65,72 @@ try {
   removeScratch(root);
 }
 
+// A saved card that a (fake) cswap roster lists: "Make main account" swaps a fresh copy in without any token request and
+// refuses a copy that would need renewing, with the text that says what to do (final review I3).
+const cswapRoot = scratchRoot('accounts-cswap');
+const cswapSeen = [];
+const cswapServer = createServer((req, res) => {
+  cswapSeen.push(req.url);
+  if (req.url !== '/usage') { res.writeHead(404); res.end(); return; }
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ five_hour: { utilization: 11, resets_at: new Date(Date.now() + 3_600_000).toISOString() }, seven_day: { utilization: 3, resets_at: new Date(Date.now() + 86_400_000).toISOString() } }));
+});
+try {
+  await new Promise((resolve) => cswapServer.listen(0, '127.0.0.1', resolve));
+  const home = join(cswapRoot, 'home');
+  const who = (name) => ({ emailAddress: `${name}@example.com`, accountUuid: `fake-uuid-${name}`, organizationUuid: `fake-org-${name}` });
+  const fake = (n, expiresAt) => ({ claudeAiOauth: { accessToken: `fake-access-${n}`, refreshToken: `fake-refresh-${n}`, expiresAt, subscriptionType: 'max' } });
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  writeFileSync(join(home, '.claude', '.credentials.json'), JSON.stringify(fake('live', Date.now() + 3_600_000)));
+  writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: who('main') }));
+  mkdirSync(join(home, '.claude-swap-backup'), { recursive: true });
+  writeFileSync(join(home, '.claude-swap-backup', 'sequence.json'), JSON.stringify({ accounts: { 1: { email: 'fresh@example.com', uuid: 'fake-uuid-fresh' }, 2: { email: 'stale@example.com', uuid: 'fake-uuid-stale' } } }));
+  // 0.9.0 records (no family: a copy of the live family cswap may hold).
+  const saved = [['33333333-3333-4333-8333-333333333333', 'fresh', Date.now() + 3_600_000], ['44444444-4444-4444-8444-444444444444', 'stale', Date.now() + 2 * 60_000]];
+  mkdirSync(join(cswapRoot, 'data', 'accounts'), { recursive: true });
+  writeFileSync(join(cswapRoot, 'data', 'accounts', 'accounts.json'), JSON.stringify({ claude: saved.map(([id, name], i) => ({ id, email: `${name}@example.com`, addedAt: i + 1 })) }));
+  for (const [id, name, expiresAt] of saved) {
+    const dir = join(cswapRoot, 'data', 'accounts', 'claude', id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.credentials.json'), JSON.stringify(fake(name, expiresAt)));
+    writeFileSync(join(dir, '.claude.json'), JSON.stringify({ oauthAccount: who(name) }));
+  }
+  const state = sshState({ projectPath: join(cswapRoot, 'project') });
+  state.settings = { ...state.settings, showAiUsage: true, usageCollapsed: false };
+  writeState(cswapRoot, state);
+  const app = await launchApp(cswapRoot, {
+    MC_USAGE_CLAUDE_URL: `http://127.0.0.1:${cswapServer.address().port}/usage`, MC_USAGE_CLAUDE_TOKEN_URL: `http://127.0.0.1:${cswapServer.address().port}/token`,
+    CLAUDE_CONFIG_DIR: null, CLAUDE_CODE_OAUTH_TOKEN: null, ANTHROPIC_API_KEY: null, CODEX_HOME: null,
+  });
+  const card = (name) => `[...document.querySelectorAll('.usage-card')].find((c) => c.textContent.includes('${name}@example.com'))`;
+  const makeMain = async (name) => {
+    await app.evaluate(`${card(name)}.querySelector('.usage-kebab').click()`);
+    await app.until(`[...document.querySelectorAll('.menu button')].some((b) => b.textContent.includes('Ustaw jako główne'))`, `make main offered for ${name}`);
+    await app.evaluate(`[...document.querySelectorAll('.menu button')].find((b) => b.textContent.includes('Ustaw jako główne')).click()`);
+    await app.until(`[...document.querySelectorAll('.modal-foot button')].some((b) => b.textContent === 'Ustaw jako główne')`, 'confirmation');
+    await app.evaluate(`[...document.querySelectorAll('.modal-foot button')].find((b) => b.textContent === 'Ustaw jako główne').click()`);
+  };
+  try {
+    await app.until(`!!${card('fresh')} && !!${card('stale')} && ${card('fresh')}.textContent.includes('cswap też trzyma kopię')`, 'cswap cards with the hint');
+    await app.screenshot('091-accounts-cswap-hint.png');
+    await makeMain('stale');
+    await app.until(`document.body.textContent.includes('Konto stale@example.com jest zarządzane poza aplikacją')`, 'stale copy refused with the foreign text');
+    await app.screenshot('091-accounts-cswap-stale.png');
+    if (JSON.parse(readFileSync(join(home, '.claude', '.credentials.json'), 'utf8')).claudeAiOauth.accessToken !== 'fake-access-live') throw new Error('a refused swap changed the live login');
+    await makeMain('fresh');
+    await app.until(`document.body.textContent.includes('Konto główne: fresh@example.com')`, 'fresh copy swapped in');
+    await app.until(`${card('fresh')}?.querySelector('.usage-chip.main') !== null`, 'fresh card is main');
+    await app.screenshot('091-accounts-cswap-fresh.png');
+  } finally { await app.close(); }
+  const live = JSON.parse(readFileSync(join(home, '.claude', '.credentials.json'), 'utf8')).claudeAiOauth.accessToken;
+  if (live !== 'fake-access-fresh') throw new Error(`live login after the swap: ${live}`);
+  if (cswapSeen.some((path) => path !== '/usage')) throw new Error(`token request: ${cswapSeen.join(', ')}`);
+  console.log('OK accounts cswap make main');
+} finally {
+  cswapServer.close();
+  removeScratch(cswapRoot);
+}
+
 // An accounts.json of the wrong shape: read-only, explained in the panel, never written over.
 const roRoot = scratchRoot('accounts-ro');
 try {

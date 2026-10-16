@@ -3,14 +3,17 @@
 // one that left becomes `foreign` (kept, never renewed) unless the app made the change itself, and a second record of the
 // live account is set aside. Nothing is deleted. Callers hold the swap slot (claimSwap) so this never interleaves with an
 // activation or a recovery.
-import { compareIdentity, custodyOf, fillMissingIdentity, identityFields, type AccountIdentity, type LiveIdentity, type ManagedAccount } from '../../shared/accounts';
+import { compareIdentity, custodyOf, familyOf, fillMissingIdentity, identityFields, type AccountIdentity, type LiveIdentity, type ManagedAccount } from '../../shared/accounts';
 import type { ResyncResult } from './resync';
 import { AccountsReadOnlyError, type AccountsStore } from './store';
 import { claimSwap, releaseSwap } from './swap';
 
 export interface ReconcileDeps {
   store: AccountsStore;
-  /** Identity in the live Claude Code config (`oauthAccount` of `~/.claude.json`), null when nobody is signed in. */
+  /**
+   * Identity in the live Claude Code config (`oauthAccount` of `~/.claude.json`), null when nobody is signed in (no file, or
+   * a file without an account). Throws when it cannot tell (unreadable or half-written file): then nothing changes.
+   */
   readLiveIdentity(): Promise<AccountIdentity | null>;
   /** Refreshes the active record's backup from the live login; absent where the live login is not a file (macOS Keychain). */
   resync?(recordId: string, identity: AccountIdentity): Promise<ResyncResult>;
@@ -63,6 +66,9 @@ export async function reconcileLive(deps: ReconcileDeps, opts: { ownChange?: boo
         changed = true;
       }
       if (custodyOf(holder) !== 'live') { store.setCustody(holder.id, 'live'); changed = true; }
+      // Its tokens are the live family now (Claude Code renews them, cswap may back them up): once it leaves the live login
+      // it is never renewed by the app while cswap lists it, also when the app itself switched it out.
+      if (familyOf(holder) !== 'live') { store.setFamily(holder.id, 'live'); changed = true; }
       const missing = fillMissingIdentity(holder, current);
       if (Object.keys(missing).length) { store.updateIdentity(holder.id, missing); changed = true; }
       if (deps.resync) { try { await deps.resync(holder.id, current); } catch { /* the next poll tries again */ } }
@@ -106,8 +112,9 @@ export class LiveBackupFailed extends Error {
 /**
  * Before `claude auth login` replaces the live login (main re-login): reconciles holding the swap slot and resolves only
  * when the live login is backed up into its record - resync `copied` or `unchanged` - or there is nothing to back up
- * (nobody signed in, live credentials without a refresh token (`missing`), or no file login at all: no `resync`, macOS
- * Keychain). `settling` (not yet backed up), `locked`, `mismatch` and a failed copy are tried again `tries` times, then it
+ * (nobody signed in, live credentials without a refresh token (`missing`), live tokens held as not the record's own
+ * (`held`), or no file login at all: no `resync`, macOS Keychain). A live config that cannot be read (`readLiveIdentity`
+ * throws) is not "nobody signed in": it refuses with `unread`. `settling` (not yet backed up), `locked`, `mismatch` and a failed copy are tried again `tries` times, then it
  * throws. A swap holding the slot, an unresolved swap or a pending activation journal refuse it too. The login being
  * started is the caller itself, so a login in progress does not count here. `ownChange`: an earlier login of the app
  * changed the live account and was not reconciled yet (see reconcileLive); it is passed to the first reconcile that runs
@@ -150,7 +157,8 @@ export async function backupLiveBeforeLogin(
       });
     } catch { look.backup = 'failed'; }
     if (!ran) { reason = look.backup === 'failed' ? 'failed' : 'busy'; continue; }
-    if (look.backup === 'copied' || look.backup === 'unchanged' || look.backup === 'missing') return;
+    // `held`: the live tokens are not the record's own (see resyncActiveBackup); its saved copy stays and nothing is dropped.
+    if (look.backup === 'copied' || look.backup === 'unchanged' || look.backup === 'missing' || look.backup === 'held') return;
     if (look.live === 'none' && look.backup === 'none') return;
     if (!resync && look.live === 'present') return;
     reason = look.backup === 'none' ? 'unread' : look.backup;

@@ -22,22 +22,27 @@ export async function accountMutationBlock(deps: GuardDeps): Promise<Extract<Swa
 }
 
 export interface RemoveDeps extends GuardDeps {
+  /** True for the record signed in to Claude Code (custody `live` or the live identity's record): it is never removed. */
+  isLive(id: string): boolean;
   cancelLogin(id: string): void;
   remove(id: string): void;
   onRemoved(): void;
 }
 
 /**
- * IPC handler body for `accounts:remove`; refused (in the main process) while a swap runs or is unresolved, and with the
- * fixed code `readOnly` (never a thrown error) while accounts.json cannot be read safely.
+ * IPC handler body for `accounts:remove`; refused (in the main process) while a swap runs or is unresolved, with the
+ * fixed code `readOnly` (never a thrown error) while accounts.json cannot be read safely, and with `live` for the record
+ * signed in to Claude Code (the renderer's choice is never trusted: its profile is the backup of the live login).
  */
-export async function handleRemoveAccount(deps: RemoveDeps, id: unknown): Promise<{ ok: boolean; error?: 'busy' | 'pending' | 'readOnly' }> {
+export async function handleRemoveAccount(deps: RemoveDeps, id: unknown): Promise<{ ok: boolean; error?: 'busy' | 'pending' | 'readOnly' | 'live' }> {
   if (!isAccountId(id)) return { ok: false };
   if (deps.readOnly?.()) return { ok: false, error: 'readOnly' };
+  if (deps.isLive(id)) return { ok: false, error: 'live' };
   const block = await accountMutationBlock(deps);
   if (block) return { ok: false, error: block };
   // Checked again after the wait, right before a parked restore snapshot is dropped: the card must not stay without it.
   if (deps.readOnly?.()) return { ok: false, error: 'readOnly' };
+  if (deps.isLive(id)) return { ok: false, error: 'live' };
   deps.cancelLogin(id);
   try {
     deps.remove(id);

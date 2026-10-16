@@ -13,6 +13,7 @@ import type { CswapRoster } from './cswap';
 import { gateFamilyRefresh } from './guards';
 import { renewRule } from './refs';
 import { withProfileLock, type RefreshOutcome } from './refresh';
+import { heldTokenHash } from './resync';
 import type { AccountsStore } from './store';
 import {
   atomicWrite, claimSwap, hasPendingSwap, isRecord, nodeSwapFs, readSnap, releaseSwap, setSwapUnresolved, str, swapPaths, validOauth,
@@ -60,23 +61,33 @@ class Fail extends Error {
 /** An unreadable roster holds everything (conservative, like `readCswapRoster`). */
 const rosterOf = (deps: Pick<ActivateDeps, 'cswap'>): Promise<CswapRoster> => deps.cswap().catch((): CswapRoster => ({ present: true, accounts: null }));
 
+/** The target's access token is valid for longer than TARGET_FRESH_MS: it can be swapped in without any token request. */
+const freshAt = (snap: Snap | null, now: number): boolean => validOauth(oauthOf(snap)) && expiry(oauthOf(snap)) - now >= TARGET_FRESH_MS;
+
 /**
  * Why `record` may not become the main login, or null. One rule with the renewals (`renewRule`): a record that is or may be
  * the live account is already main, and a family held elsewhere (switched out, or a copy cswap may hold) is refused,
- * because its tokens may be outdated and swapping them in could hand Claude Code a dead login.
+ * because its tokens may be outdated and swapping them in could hand Claude Code a dead login. A copy cswap may hold too
+ * is swapped in while its access token is `fresh` (no token request at all: only files move, under the locks); one that
+ * would need renewing is refused, since the app never renews a family cswap may hold.
  */
-export function activationRefusal(record: ManagedAccount | undefined, live: AccountIdentity | null, roster: CswapRoster): { error: SwapError; email?: string } | null {
+export function activationRefusal(record: ManagedAccount | undefined, live: AccountIdentity | null, roster: CswapRoster, fresh = false): { error: SwapError; email?: string } | null {
   const named = (error: SwapError) => ({ error, ...(record?.email ? { email: record.email } : {}) });
   if (!record || custodyOf(record) === 'quarantined') return named('noTarget');
   const rule = renewRule(record, live, roster);
-  if (rule === 'allowed') return null;
+  if (rule === 'allowed' || (rule === 'held-by-cswap' && fresh)) return null;
   if (custodyOf(record) === 'live' || (rule === 'held-by-live' && live && compareIdentity(record, live) === 'same')) return named('sameAccount');
   return named('foreign');
 }
 
 /** The checks of the `accounts:makeMain` IPC handler: the renderer's choice is never trusted. */
-export async function checkActivationTarget(deps: Pick<ActivateDeps, 'store' | 'cswap'>, targetId: string): Promise<SwapResult | null> {
-  const refusal = activationRefusal(deps.store.get(targetId), deps.store.live(), await rosterOf(deps));
+export async function checkActivationTarget(deps: Pick<ActivateDeps, 'store' | 'cswap' | 'now' | 'fs'>, targetId: string): Promise<SwapResult | null> {
+  const record = deps.store.get(targetId);
+  let fresh = false;
+  if (record && isAccountId(targetId)) {
+    try { fresh = freshAt(await readSnap(deps.fs ?? nodeSwapFs, join(deps.store.dirOf(targetId), '.credentials.json')), deps.now()); } catch { fresh = false; }
+  }
+  const refusal = activationRefusal(record, deps.store.live(), await rosterOf(deps), fresh);
   return refusal ? { ok: false, ...refusal } : null;
 }
 
@@ -105,14 +116,14 @@ async function perform(deps: ActivateDeps, fs: SwapFs, targetId: string): Promis
   if (!paths) throw new Fail('noMain');
   const target = store.get(targetId);
   const roster = await rosterOf(deps);
-  const refusal = activationRefusal(target, store.live(), roster);
-  if (refusal || !target) throw new Fail(refusal?.error ?? 'noTarget', refusal?.email);
   const dir = store.dirOf(targetId);
   const credsPath = join(dir, '.credentials.json');
-  let snap = await readSnap(fs, credsPath);
+  let snap = target ? await readSnap(fs, credsPath) : null;
+  const refusal = activationRefusal(target, store.live(), roster, freshAt(snap, deps.now()));
+  if (refusal || !target) throw new Fail(refusal?.error ?? 'noTarget', refusal?.email);
   if (!validOauth(oauthOf(snap))) throw new Fail('noTarget', target.email);
   // Network only outside the locks, and only through the one family rule (the same gate the background renewals use).
-  if (expiry(oauthOf(snap)) - deps.now() < TARGET_FRESH_MS) {
+  if (!freshAt(snap, deps.now())) {
     const renew = gateFamilyRefresh(store, () => roster, (d) => deps.refresh(d), BLOCKED);
     let outcome: RefreshOutcome;
     try { outcome = await renew(dir); } catch { outcome = { kind: 'transient' }; }
@@ -150,9 +161,10 @@ async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: Cs
   if (!liveCreds || !liveJson || !validOauth(liveOauth) || !liveAccount || (!liveIdentity.email && !liveIdentity.accountUuid)) throw new Fail('noMain');
   // Checked again under the locks against whoever is signed in right now (the stored live identity may lag behind).
   const target = store.get(targetId);
-  const refusal = activationRefusal(target, liveIdentity, roster);
+  const targetSnap = await readSnap(fs, join(dir, '.credentials.json'));
+  const refusal = activationRefusal(target, liveIdentity, roster, freshAt(targetSnap, deps.now()));
   if (refusal || !target) throw new Fail(refusal?.error ?? 'noTarget', refusal?.email);
-  const targetOauth = oauthOf(await readSnap(fs, join(dir, '.credentials.json')));
+  const targetOauth = oauthOf(targetSnap);
   if (!validOauth(targetOauth)) throw new Fail('noTarget', target.email);
   const targetJson = await readSnap(fs, join(dir, '.claude.json'));
   const targetAccount: Rec = targetJson && isRecord(targetJson.data.oauthAccount) && str(targetJson.data.oauthAccount.emailAddress)
@@ -166,6 +178,9 @@ async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: Cs
   // The live login changed after the profile locks were chosen: its record is not locked, so try again later.
   if (existing && !locked.has(existing.id)) throw new Fail('busy');
   const created = !existing;
+  // Live tokens that an interrupted swap may have left under this identity (`heldTokens`) are not this account's: its own
+  // saved copy stays as it is.
+  const keepOutgoing = !!existing?.heldTokens && typeof liveOauth?.refreshToken === 'string' && heldTokenHash(liveOauth.refreshToken) === existing.heldTokens;
   const outgoingId = existing?.id ?? store.prepare().id;
   const outDir = store.dirOf(outgoingId);
   const outCreds = await readSnap(fs, join(outDir, '.credentials.json'));
@@ -187,9 +202,11 @@ async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: Cs
     // a record without files that the recovery does not know about.
     if (created) store.commit({ id: outgoingId, addedAt: deps.now(), ...identityFields(liveIdentity), custody: 'live', family: 'live' });
     await advance('outgoing-saved');
-    await fs.mkdir(outDir);
-    await write(join(outDir, '.credentials.json'), JSON.stringify({ ...(outCreds?.data ?? {}), claudeAiOauth: liveOauth }));
-    await write(join(outDir, '.claude.json'), JSON.stringify({ ...(outJson?.data ?? {}), oauthAccount: liveAccount }, null, 2));
+    if (!keepOutgoing) {
+      await fs.mkdir(outDir);
+      await write(join(outDir, '.credentials.json'), JSON.stringify({ ...(outCreds?.data ?? {}), claudeAiOauth: liveOauth }));
+      await write(join(outDir, '.claude.json'), JSON.stringify({ ...(outJson?.data ?? {}), oauthAccount: liveAccount }, null, 2));
+    }
     await advance('live-creds-written');
     await write(paths.credentials, writtenCreds);
     await advance('live-json-written');
@@ -214,11 +231,18 @@ async function exchange(deps: ActivateDeps, fs: SwapFs, paths: Paths, roster: Cs
   return { ok: true, ...(str(targetAccount.emailAddress) ? { email: str(targetAccount.emailAddress) } : {}) };
 }
 
-/** The roles follow the files: the outgoing record now holds the only copy of its login (the live family), the target is live. */
+/**
+ * The roles follow the files: the outgoing record now holds the only copy of its login (the live family), the target is
+ * live. Its family becomes `live` too: Claude Code renews it from now on and cswap may back it up, so once it leaves the
+ * live login again it is never renewed by the app while cswap lists it. The live login is exactly its saved copy now, so
+ * a hold on its tokens (`heldTokens`) is over.
+ */
 function finishRoles(store: AccountsStore, outgoingId: string, targetId: string, identity: AccountIdentity): void {
   store.setCustody(outgoingId, 'app');
   store.setFamily(outgoingId, 'live');
   store.setCustody(targetId, 'live');
+  store.setFamily(targetId, 'live');
+  store.setHeldTokens(targetId, undefined);
   store.setLive({ ...identityFields(identity), recordId: targetId });
 }
 
@@ -302,6 +326,58 @@ export async function recoverActivationWithRetry(deps: ActivateDeps, attempts = 
   }
 }
 
+/** How often a version-2 recovery that found Claude Code's locks busy is tried again, independent of the limits panel. */
+export const RECOVERY_RETRY_MS = 30_000;
+
+/**
+ * Tries a pending version-2 recovery (`isActivationRecoveryPending`) again every `intervalMs`, also while the limits panel
+ * and its polls are off: until it has run, renewals and logins stay blocked. One try at a time; `retry` runs the recovery
+ * and reports its result. Returns the stop function.
+ */
+export function startActivationRecoveryRetry(retry: () => Promise<unknown>, intervalMs = RECOVERY_RETRY_MS): () => void {
+  let running = false;
+  const timer = setInterval(() => {
+    if (running || !retryPending) return;
+    running = true;
+    void retry().catch(() => undefined).finally(() => { running = false; });
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/**
+ * Clears the warning of an unresolved swap (`clear` deletes the journal and backups; the user confirmed). A version-2 swap
+ * that may have written the live credentials (phase `live-creds-written` or `live-json-written`) can have left the
+ * target's tokens under the outgoing account's identity, so a backup of the live login would copy them over the outgoing
+ * record's only copy: that record is marked switched out (`foreign`) and, when the live tokens are not its own saved
+ * ones, they are held (`heldTokens`): never copied into it until the live login proves to be its own or it is signed in
+ * again.
+ */
+export async function clearPendingActivation(deps: Pick<ActivateDeps, 'backupDir' | 'fs' | 'store' | 'home' | 'env'>, clear: () => Promise<boolean>): Promise<boolean> {
+  const fs = deps.fs ?? nodeSwapFs;
+  let suspect: string | null = null;
+  let held: string | undefined;
+  try {
+    const text = await fs.readFile(join(deps.backupDir, JOURNAL));
+    const info: unknown = text === null ? null : JSON.parse(text);
+    if (isRecord(info) && info.version === 2 && isAccountId(info.outgoingId) && (info.phase === 'live-creds-written' || info.phase === 'live-json-written')) {
+      suspect = info.outgoingId;
+      const paths = swapPaths(deps);
+      const liveRefresh = str(oauthOf(paths ? await readSnap(fs, paths.credentials) : null)?.refreshToken);
+      const ownRefresh = str(oauthOf(await readSnap(fs, join(deps.store.dirOf(suspect), '.credentials.json')))?.refreshToken);
+      if (liveRefresh && liveRefresh !== ownRefresh) held = heldTokenHash(liveRefresh);
+    }
+  } catch { /* an unreadable journal names no record */ }
+  const cleared = await clear();
+  if (cleared && suspect && deps.store.get(suspect)) {
+    try {
+      deps.store.setCustody(suspect, 'foreign');
+      if (held) deps.store.setHeldTokens(suspect, held);
+    } catch { /* accounts.json read-only: nothing reconciles or backs up meanwhile either */ }
+  }
+  return cleared;
+}
+
 /**
  * Call at app start, before the 0.9.0 recovery; 'legacy' means there is no version-2 journal and recoverInterruptedSwap
  * decides. Version-2 backups without any journal (a crash before the first journal write) are deleted first: no live file
@@ -311,9 +387,11 @@ export async function recoverActivationWithRetry(deps: ActivateDeps, attempts = 
 export async function recoverInterruptedActivation(deps: ActivateDeps): Promise<ActivationRecovery> {
   const fs = deps.fs ?? nodeSwapFs;
   let text: string | null;
-  // An unreadable journal is not a missing one: nothing is deleted then.
-  try { text = await fs.readFile(join(deps.backupDir, JOURNAL)); } catch { return 'legacy'; }
+  // An unreadable journal is not a missing one: nothing is deleted then. Without a version-2 journal no version-2 recovery
+  // waits any more, so a pending retry stops (the legacy recovery and the pending warning take over).
+  try { text = await fs.readFile(join(deps.backupDir, JOURNAL)); } catch { retryPending = false; return 'legacy'; }
   if (text === null) {
+    retryPending = false;
     if (claimSwap()) {
       try {
         // Re-checked under the slot: only without a journal are the backups orphans.
@@ -327,8 +405,8 @@ export async function recoverInterruptedActivation(deps: ActivateDeps): Promise<
     return 'legacy';
   }
   let info: unknown;
-  try { info = JSON.parse(text); } catch { return 'legacy'; }
-  if (!isRecord(info) || info.version !== 2) return 'legacy';
+  try { info = JSON.parse(text); } catch { retryPending = false; return 'legacy'; }
+  if (!isRecord(info) || info.version !== 2) { retryPending = false; return 'legacy'; }
   if (!claimSwap()) return 'none';
   try {
     const result = await recoverV2(deps, fs, info);

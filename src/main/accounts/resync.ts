@@ -11,12 +11,19 @@ import { withProfileLock } from './refresh';
 import type { AccountsStore } from './store';
 import { atomicWrite, isRecord, nodeSwapFs, readSnap, type SwapFs } from './swap';
 
-/** `settling`: the live files changed since the previous look; nothing is copied until they read the same twice in a row. */
-export type ResyncResult = 'copied' | 'unchanged' | 'mismatch' | 'missing' | 'locked' | 'settling';
+/**
+ * `settling`: the live files changed since the previous look; nothing is copied until they read the same twice in a row.
+ * `held`: the live tokens are the ones held for this record (`heldTokens`, an interrupted swap may have left another
+ * account's tokens under its identity): nothing is copied, its own saved copy stays.
+ */
+export type ResyncResult = 'copied' | 'unchanged' | 'mismatch' | 'missing' | 'locked' | 'settling' | 'held';
+
+/** SHA-256 (hex) of a refresh token, the only form in which a held token is kept (`ManagedAccount.heldTokens`). */
+export const heldTokenHash = (refreshToken: string): string => createHash('sha256').update(refreshToken).digest('hex');
 
 export interface ResyncDeps {
   paths: { credentials: string; claudeJson: string };
-  store: Pick<AccountsStore, 'dirOf' | 'setFamily'>;
+  store: Pick<AccountsStore, 'dirOf' | 'setFamily' | 'get' | 'setHeldTokens'>;
   delay(ms: number): Promise<void>;
   fs?: SwapFs;
   locks?: LockDeps;
@@ -66,6 +73,12 @@ export async function resyncActiveBackup(deps: ResyncDeps, recordId: string, exp
     const ownJson = await readSnap(fs, join(dir, '.claude.json'));
     const sameTokens = !!ownOauth && ownOauth.refreshToken === oauth.refreshToken && ownOauth.accessToken === oauth.accessToken;
     const sameAccount = !!ownJson && JSON.stringify(ownJson.data.oauthAccount) === JSON.stringify(account);
+    const held = deps.store.get(recordId)?.heldTokens;
+    if (held) {
+      // The hold ends once the live login is a different one (rewritten since) or exactly the record's own saved copy.
+      if (heldTokenHash(String(oauth.refreshToken)) === held && !(ownOauth && ownOauth.refreshToken === oauth.refreshToken)) return 'held';
+      deps.store.setHeldTokens(recordId, undefined);
+    }
     if (sameTokens && sameAccount) return 'unchanged';
     // New tokens wait until both live files are stable; an identity-only change (organisation renamed) is copied at once.
     if (!sameTokens && deps.seen && previous !== sig) return 'settling';

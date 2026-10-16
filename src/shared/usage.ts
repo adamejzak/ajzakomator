@@ -65,6 +65,15 @@ export function heldByOf(renew: AccountRef['renew']): ProviderUsage['heldBy'] {
   return renew && renew !== 'allowed' ? HELD_BY[renew] : undefined;
 }
 
+/**
+ * "Make main account" is offered on a saved Claude card that is not the main one and not held by the live login or an
+ * outside switch. A copy cswap may hold too is offered as well: the main process swaps it in while its access token is
+ * fresh and otherwise refuses with a text that says what to do.
+ */
+export function makeMainOffered(usage: Pick<ProviderUsage, 'provider' | 'managed' | 'active' | 'heldBy'>): boolean {
+  return usage.provider === 'claude' && !!usage.managed && !usage.active && (!usage.heldBy || usage.heldBy === 'cswap');
+}
+
 /** A saved Claude card set aside after a failed restore of its previous sign-in (not renewed, not polled, not deleted). */
 export interface SetAsideAccount {
   recordId: string;

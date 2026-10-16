@@ -257,6 +257,36 @@ describe('LoginManager', () => {
     expect(h.states.filter((s) => s.sessionId === late.sessionId).map((s) => s.status)).toEqual(['waiting']);
   });
 
+  it('a re-login cancelled or timed out between two polls looks once more and puts the card back when its files changed (D2)', async () => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1 });
+    const h = setup({ identity: vi.fn(async () => ({})) });
+    const res = await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    if (!res.ok) throw new Error('unreachable');
+    await advance(1500); // the last poll still saw the old login
+    h.fp.value = SECRET; // the browser login writes right after it
+    h.manager.cancel(res.sessionId);
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(true); // no renewal between the look and the restore
+    await advance(0);
+    expect(h.mock.restoreProfile).toHaveBeenCalledTimes(1);
+    expect(h.mock.restoreProfile).toHaveBeenCalledWith(prepared.dir, { credentials: 'fake-old-creds', claudeJson: null });
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(false);
+
+    const t = setup({ identity: vi.fn(async () => ({})), pollMs: 10_000_000, timeoutMs: 5_000 });
+    t.fp.value = SECRET;
+    await t.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    t.fp.value = 'fp-other-login';
+    await advance(5_000 + 10);
+    expect(t.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
+    expect(t.mock.restoreProfile).toHaveBeenCalledTimes(1);
+    // An unchanged fingerprint leaves the card alone.
+    const u = setup({ identity: vi.fn(async () => ({})), pollMs: 10_000_000, timeoutMs: 5_000 });
+    u.fp.value = SECRET;
+    await u.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(5_000 + 10);
+    expect(u.mock.restoreProfile).not.toHaveBeenCalled();
+  });
+
   it('removing the account during its re-login never writes into its profile', async () => {
     const prepared = store.prepare();
     store.commit({ id: prepared.id, email: 'new@example.com', addedAt: 1 });

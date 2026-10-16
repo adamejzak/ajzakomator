@@ -293,7 +293,7 @@ describe('account mutation guards', () => {
   const base = (running: boolean, pending: boolean) => ({ swapRunning: () => running, swapPending: async () => pending });
   const removeDeps = (running: boolean, pending: boolean) => {
     const calls: string[] = [];
-    return { calls, deps: { ...base(running, pending), cancelLogin: () => calls.push('cancel'), remove: () => calls.push('remove'), onRemoved: () => calls.push('refresh') } };
+    return { calls, deps: { ...base(running, pending), isLive: () => false, cancelLogin: () => calls.push('cancel'), remove: () => calls.push('remove'), onRemoved: () => calls.push('refresh') } };
   };
 
   it('refuses to remove an account while a swap runs or is pending', async () => {
@@ -319,6 +319,15 @@ describe('account mutation guards', () => {
     const thrown = { ...d, remove: () => { throw new AccountsReadOnlyError(); } };
     expect(await handleRemoveAccount(thrown, ID)).toEqual({ ok: false, error: 'readOnly' });
     await expect(handleRemoveAccount({ ...d, remove: () => { throw new Error('io'); } }, ID)).rejects.toThrow('io');
+  });
+
+  it('refuses to remove the live record with the fixed code live, also when it became live while waiting (M2)', async () => {
+    const { calls, deps: d } = removeDeps(false, false);
+    expect(await handleRemoveAccount({ ...d, isLive: (id: string) => id === ID }, ID)).toEqual({ ok: false, error: 'live' });
+    let live = false;
+    const racing = { ...d, isLive: () => live, swapPending: async () => { live = true; return false; } };
+    expect(await handleRemoveAccount(racing, ID)).toEqual({ ok: false, error: 'live' });
+    expect(calls).toEqual([]);
   });
 
   it('checks read-only again after waiting for the swap state, before a parked restore is dropped', async () => {

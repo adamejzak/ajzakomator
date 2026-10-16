@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { sanitizeUsage } from '../src/main/usage/sanitize';
-import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, heldByOf, usageBand, usageDiagnostics, usageErrorKind, usageHttpStatus, worstPercent, type ProviderUsage } from '../src/shared/usage';
+import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, heldByOf, makeMainOffered, usageBand, usageDiagnostics, usageErrorKind, usageHttpStatus, worstPercent, type ProviderUsage } from '../src/shared/usage';
 import { noticeText, setAsideText, usageErrorKey, usageMessages } from '../src/shared/usageMessages';
 import { translate } from '../src/shared/i18n';
 
@@ -199,5 +199,18 @@ describe('account notices', () => {
       for (const lang of ['pl', 'en', 'de', 'es', 'fr', 'pt'] as const) expect(translate(lang, setAsideText(restoring), { email: 'g@x.com' })).toContain('g@x.com');
     }
     expect(translate('en', setAsideText(false), { email: 'g@x.com' })).toMatch(/sign in to it again or remove the account/i);
+  });
+});
+
+describe('makeMainOffered (I3)', () => {
+  it('offers Make main account on a saved card that is not main, also on one cswap may hold, never on a live or switched-out one', () => {
+    const card = { provider: 'claude' as const, managed: true };
+    expect(makeMainOffered(card)).toBe(true);
+    expect(makeMainOffered({ ...card, heldBy: 'cswap' })).toBe(true);
+    expect(makeMainOffered({ ...card, heldBy: 'live' })).toBe(false);
+    expect(makeMainOffered({ ...card, heldBy: 'switched-out' })).toBe(false);
+    expect(makeMainOffered({ ...card, active: true })).toBe(false);
+    expect(makeMainOffered({ provider: 'claude' })).toBe(false);
+    expect(makeMainOffered({ provider: 'codex', managed: true })).toBe(false);
   });
 });

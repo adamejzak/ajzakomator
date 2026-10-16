@@ -8,7 +8,8 @@ import type { CswapRoster } from '../src/main/accounts/cswap';
 import { gateFamilyRefresh } from '../src/main/accounts/guards';
 import { renewRule } from '../src/main/accounts/refs';
 import { backupLiveBeforeLogin, LiveBackupFailed, reconcileLive, reconcileWhenIdle, resyncOutgoingWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
-import { resyncActiveBackup } from '../src/main/accounts/resync';
+import { heldTokenHash, resyncActiveBackup } from '../src/main/accounts/resync';
+import { LiveIdentityUnknown, readLiveClaudeIdentity } from '../src/main/usage/credentials';
 import { AccountsStore } from '../src/main/accounts/store';
 import { claimSwap, isSwapRunning, nodeSwapFs, releaseSwap, type SwapFs } from '../src/main/accounts/swap';
 
@@ -473,5 +474,108 @@ describe('own change and the outgoing backup during a main login (fix round 1)',
     expect(resync).not.toHaveBeenCalled();
     expect(await resyncOutgoingWhenIdle(guard, deps())).toBe(null);
     expect(await resyncOutgoingWhenIdle(guard, deps(resync))).toBe('copied');
+  });
+});
+
+describe('final fix wave: live family, unreadable live config, held tokens', () => {
+  const paths = () => ({ credentials: join(home, '.claude', '.credentials.json'), claudeJson: join(home, '.claude.json') });
+  const putCreds = (n: string) => writeFileSync(paths().credentials, JSON.stringify({ claudeAiOauth: { accessToken: `fake-acc-${n}`, refreshToken: `fake-ref-${n}`, expiresAt: 5 } }));
+  const realDeps = (resync?: ReconcileDeps['resync']): ReconcileDeps => ({
+    store, readLiveIdentity: () => readLiveClaudeIdentity({ env: {}, home }), now: () => 10, ...(resync ? { resync } : {}),
+  });
+  const guard = { swapUnresolved: () => false };
+  const opts = { delay: async () => undefined };
+
+  it('a holder promoted to live takes the live family, so an own change later never makes it renewable while cswap lists it (I1)', async () => {
+    const p = add(A);
+    store.setFamily(p, 'own');
+    live = A;
+    await reconcileLive(deps());
+    expect(store.get(p)).toMatchObject({ custody: 'live', family: 'live' });
+    live = G;
+    await reconcileLive(deps(), { ownChange: true });
+    expect(store.get(p)?.custody).toBe('app');
+    expect(renewRule(store.get(p)!, store.live(), { present: true, accounts: [A] })).toBe('held-by-cswap');
+  });
+
+  it('readLiveClaudeIdentity: missing file or no account is signed out, a corrupt or unreadable file is unknown (I2)', async () => {
+    expect(await readLiveClaudeIdentity({ env: {}, home })).toBeNull();
+    writeFileSync(paths().claudeJson, JSON.stringify({ projects: {} }));
+    expect(await readLiveClaudeIdentity({ env: {}, home })).toBeNull();
+    writeFileSync(paths().claudeJson, '{"oauthAccount": {"emailAddress": "a@x.com", "accou');
+    await expect(readLiveClaudeIdentity({ env: {}, home })).rejects.toBeInstanceOf(LiveIdentityUnknown);
+    writeFileSync(paths().claudeJson, '');
+    await expect(readLiveClaudeIdentity({ env: {}, home })).rejects.toBeInstanceOf(LiveIdentityUnknown);
+    await expect(readLiveClaudeIdentity({ env: {}, home }, async () => { throw Object.assign(new Error('busy'), { code: 'EBUSY' }); })).rejects.toBeInstanceOf(LiveIdentityUnknown);
+    rmSync(paths().claudeJson);
+    mkdirSync(paths().claudeJson); // EISDIR: it exists but cannot be read
+    await expect(readLiveClaudeIdentity({ env: {}, home })).rejects.toBeInstanceOf(LiveIdentityUnknown);
+    rmSync(paths().claudeJson, { recursive: true });
+    writeFileSync(paths().claudeJson, JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com', accountUuid: 'ua' } }));
+    expect(await readLiveClaudeIdentity({ env: {}, home })).toEqual(A);
+  });
+
+  for (const kind of ['corrupt', 'unreadable'] as const) {
+    const spoil = () => {
+      if (kind === 'corrupt') writeFileSync(paths().claudeJson, '{"oauthAccount": {"emailAd');
+      else { rmSync(paths().claudeJson, { force: true }); mkdirSync(paths().claudeJson); }
+    };
+
+    it(`a ${kind} live config changes no role, adds no notice and keeps the live record (I2)`, async () => {
+      const a = add(A, 'live');
+      store.setLive({ ...A, recordId: a });
+      spoil();
+      const resync = vi.fn(async () => 'copied' as const);
+      expect(await reconcileLive(realDeps(resync))).toEqual({ activeId: a, changed: false });
+      expect(store.get(a)?.custody).toBe('live');
+      expect(store.notices()).toEqual([]);
+      expect(store.live()).toEqual({ ...A, recordId: a });
+      expect(store.list()).toHaveLength(1);
+      expect(resync).not.toHaveBeenCalled();
+    });
+
+    it(`a ${kind} live config refuses the main re-login with unread instead of starting it without a backup (I2)`, async () => {
+      const a = add(A, 'live');
+      store.setLive({ ...A, recordId: a });
+      spoil();
+      const resync = vi.fn(async () => 'copied' as const);
+      const error = await backupLiveBeforeLogin(guard, realDeps(resync), opts).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(LiveBackupFailed);
+      expect((error as LiveBackupFailed).reason).toBe('unread');
+      expect(store.live()).toEqual({ ...A, recordId: a });
+      // The outgoing backup during a main login keeps running (the live record was not dropped).
+      expect(await resyncOutgoingWhenIdle(guard, realDeps(resync))).toBe('copied');
+    });
+  }
+
+  it('held tokens are never copied into the record; the hold ends when the live login is rewritten (M1)', async () => {
+    const a = add(A, 'live');
+    mkdirSync(store.dirOf(a), { recursive: true });
+    writeFileSync(join(store.dirOf(a), '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fake-acc-A', refreshToken: 'fake-ref-A' } }));
+    writeFileSync(paths().claudeJson, JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com', accountUuid: 'ua' } }));
+    putCreds('X'); // the target's tokens under A's identity
+    store.setHeldTokens(a, heldTokenHash('fake-ref-X'));
+    const rdeps = { paths: paths(), store, delay: async () => undefined, locks: { timeoutMs: 300 } };
+    expect(await resyncActiveBackup(rdeps, a, A)).toBe('held');
+    expect(JSON.parse(readFileSync(join(store.dirOf(a), '.credentials.json'), 'utf8')).claudeAiOauth.refreshToken).toBe('fake-ref-A');
+    // A main re-login is not blocked by it: nothing of A's would be dropped.
+    await backupLiveBeforeLogin(guard, { ...deps(() => resyncActiveBackup(rdeps, a, A)), readLiveIdentity: async () => A }, opts);
+    expect(store.get(a)?.heldTokens).toBeDefined();
+    putCreds('A2'); // signed in again outside the app: a different login, the hold ends
+    expect(await resyncActiveBackup(rdeps, a, A)).toBe('copied');
+    expect(store.get(a)?.heldTokens).toBeUndefined();
+    expect(JSON.parse(readFileSync(join(store.dirOf(a), '.credentials.json'), 'utf8')).claudeAiOauth.refreshToken).toBe('fake-ref-A2');
+  });
+
+  it("the hold also ends when the live login is exactly the record's own saved copy (M1)", async () => {
+    const a = add(A, 'live');
+    mkdirSync(store.dirOf(a), { recursive: true });
+    writeFileSync(join(store.dirOf(a), '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fake-acc-A', refreshToken: 'fake-ref-A', expiresAt: 5 } }));
+    writeFileSync(join(store.dirOf(a), '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com', accountUuid: 'ua' } }, null, 2));
+    writeFileSync(paths().claudeJson, JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com', accountUuid: 'ua' } }));
+    putCreds('A');
+    store.setHeldTokens(a, heldTokenHash('fake-ref-A'));
+    expect(await resyncActiveBackup({ paths: paths(), store, delay: async () => undefined, locks: { timeoutMs: 300 } }, a, A)).toBe('unchanged');
+    expect(store.get(a)?.heldTokens).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { AccountNotice, LoginTarget } from '../../../shared/accounts';
-import { claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, makeMainOffered, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { noticeText, setAsideText, usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
 import { swapErrorKey, swapErrorText } from '../../../shared/swapMessages';
@@ -18,16 +18,17 @@ const HELD_NOTE = {
   cswap: 'To konto zarządza też cswap. Aplikacja nie odnawia jego logowania, żeby nie unieważnić kopii cswap - limity wrócą, gdy będzie aktywne w Claude Code albo po ponownym zalogowaniu tutaj.',
   'switched-out': 'To konto zostało przełączone poza aplikacją (cswap lub /login). Kopia logowania w aplikacji może być nieaktualna, więc nie jest odnawiana. Przełącz je tam, gdzie jest aktywne, albo zaloguj się tu ponownie.',
 } as const;
-/** A saved card whose tokens cswap may hold too (every 0.9.0 card cswap lists): never renewed here until it is signed in again. */
-const CSWAP_HINT = 'Zarządza nim też cswap, więc aplikacja nie odnawia tego logowania. Zaloguj się tu ponownie raz (menu konta: Zaloguj ponownie to konto), a aplikacja będzie je odnawiać.';
+/** A saved card whose tokens cswap may hold too (every 0.9.0 card cswap lists): never renewed here; swapped in only while fresh. */
+const CSWAP_HINT = 'cswap też trzyma kopię tego logowania, więc aplikacja nigdy jej nie odnawia. Ustawienie jako główne działa, dopóki kopia jest świeża; potem przełącz konto w cswap albo zaloguj się do niego tu ponownie.';
 const NAMES: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
 const READ_ONLY_REMOVE = 'Nie można teraz usuwać kont: pliku kont aplikacji nie da się bezpiecznie odczytać (szczegóły w panelu limitów).';
+const LIVE_REMOVE = 'Konta głównego nie można usunąć. Najpierw ustaw jako główne inne konto.';
 
 /** Removes a saved Claude account (or a set-aside copy of one); refusals are told in a toast. */
 async function removeSaved(id: string, tr: ReturnType<typeof useI18n>['tr']): Promise<void> {
   try {
     const result = await window.mc.removeAccount(id);
-    if (!result.ok && result.error) toast(result.error === 'readOnly' ? tr(READ_ONLY_REMOVE) : tr(swapErrorKey(result.error)), 'error');
+    if (!result.ok && result.error) toast(result.error === 'readOnly' ? tr(READ_ONLY_REMOVE) : result.error === 'live' ? tr(LIVE_REMOVE) : tr(swapErrorKey(result.error)), 'error');
   } catch { /* the next usage refresh shows the real state */ }
 }
 
@@ -79,7 +80,7 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
   const busy = swapping !== null;
   // On macOS Claude keeps its tokens in the Keychain, so the main login cannot be exchanged there.
   // A saved copy that already is the main login cannot become it again.
-  const canMakeMain = usage.managed && !usage.active && !usage.heldBy && usage.provider === 'claude' && claudeLoginActions(window.mc.platform, true).managedAccounts;
+  const canMakeMain = makeMainOffered(usage) && claudeLoginActions(window.mc.platform, true).managedAccounts;
   const providerName = NAMES[usage.provider];
   const name = usage.email || providerName;
   const age = formatDuration((now - usage.fetchedAt) / 1000);

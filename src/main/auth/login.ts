@@ -385,6 +385,7 @@ export class LoginManager {
     this.deps.store.updateIdentity(target.id, identity);
     this.deps.store.setCustody(target.id, 'app');
     this.deps.store.setFamily(target.id, 'own');
+    this.deps.store.setHeldTokens(target.id, undefined);
     this.finish(session, { sessionId: session.id, status: 'success', ...(email ? { email } : {}) }, false);
     this.deps.onChanged({ provider: 'claude', recordId: target.id });
   }
@@ -455,10 +456,29 @@ export class LoginManager {
     return session.settled || session.settle !== undefined;
   }
 
-  /** A session that ends without a verdict puts the card's previous login back once the login wrote new files. */
+  /**
+   * A session that ends without a verdict puts the card's previous login back once the login wrote new files. The polls look
+   * only every 1.5 s, so a card whose login was not seen yet gets one more look: credentials that changed since the start
+   * (or that cannot be read) are another login, and the snapshot goes back. The dir counts as restoring meanwhile, so no
+   * renewal writes into it between the look and the restore.
+   */
   private undo(session: Session, written: boolean): void {
-    if (written) void this.restore(session).catch(() => undefined);
-    else session.snapshot = undefined;
+    if (written) { void this.restore(session).catch(() => undefined); return; }
+    const { snapshot, configDir, target } = session;
+    session.snapshot = undefined;
+    if (!snapshot || !configDir || target.type !== 'account') return;
+    const look: Promise<boolean> = (async () => {
+      let now: string | null | undefined;
+      try {
+        this.deps.resetCredentialCache?.();
+        now = await this.deps.fingerprint(session.provider, configDir);
+      } catch { now = undefined; }
+      if (now === session.initial) return true;
+      const restored = await this.putBack(configDir, snapshot);
+      if (!restored) this.park(target.id, configDir, snapshot);
+      return restored;
+    })().catch(() => false).finally(() => { if (this.restoring.get(configDir) === look) this.restoring.delete(configDir); });
+    this.restoring.set(configDir, look);
   }
 
   private finish(session: Session, state: LoginState, discard: boolean): void {

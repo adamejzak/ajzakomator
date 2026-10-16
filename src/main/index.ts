@@ -38,7 +38,10 @@ import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
 import { dismissAccountNotice, gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
-import { activateAccount, activationJournalPending, checkActivationTarget, isActivationRecoveryPending, recoverActivationWithRetry, recoverInterruptedActivation, type ActivateDeps } from './accounts/activate';
+import {
+  activateAccount, activationJournalPending, checkActivationTarget, clearPendingActivation, isActivationRecoveryPending, recoverActivationWithRetry,
+  recoverInterruptedActivation, startActivationRecoveryRetry, type ActivateDeps,
+} from './accounts/activate';
 import { backupLiveBeforeLogin, reconcileLive, reconcileWhenIdle, resyncOutgoingWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
 import { accountsPanelInfo, claudeRefs } from './accounts/refs';
@@ -48,7 +51,7 @@ import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
 import { LoginManager } from './auth/login';
 import { identityRewritten, restoreProfile, snapshotProfile } from './auth/profileSnapshot';
 import { custodyOf, identityFields, isAccountId, type AccountIdentity, type LoginRequest } from '../shared/accounts';
-import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
+import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, readLiveClaudeIdentity, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';
 import { MAIN_ACCOUNTS } from '../shared/usage';
@@ -159,10 +162,7 @@ const usage = new UsageService({
     cswapRoster = await readCswapRoster(cswapRosterPath(homedir(), process.env, process.platform));
     // An activation whose recovery found Claude Code's locks busy is retried first; the live login is not reconciled while
     // its journal exists (the live files may be half written).
-    if (isActivationRecoveryPending()) {
-      const recovered = await recoverInterruptedActivation(activateDeps()).catch(() => 'manual' as const);
-      if (recovered !== 'locked') void pushSwapPending();
-    }
+    if (isActivationRecoveryPending()) await retryActivationRecovery();
     // A re-login whose restore failed earlier is tried again (the card stays set aside until it works). The poll waits for it
     // briefly only: a restore waiting for Claude Code's locks goes on by itself instead of delaying every account's read.
     await login.retryParkedRestores(PARKED_RESTORE_WAIT_MS).catch(() => undefined);
@@ -279,8 +279,13 @@ const activateDeps = (): ActivateDeps => ({
   cswap: () => readCswapRoster(cswapRosterPath(homedir(), process.env, process.platform)),
 });
 const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: () => isSwapUnresolved() || isActivationRecoveryPending(), readOnly: () => accounts.readOnly() };
-/** The live Claude login's identity (`~/.claude.json`), null when nobody is signed in. */
-const readLiveIdentity = async () => { const id = await readClaudeIdentity(usageDeps.credentials); return id.email || id.accountUuid ? id : null; };
+/** The live Claude login's identity (`~/.claude.json`), null when nobody is signed in; throws when the file cannot be read or parsed. */
+const readLiveIdentity = () => readLiveClaudeIdentity(usageDeps.credentials);
+/** One more try of a version-2 recovery that found Claude Code's locks busy (from the polls and from its own timer). */
+async function retryActivationRecovery(): Promise<void> {
+  const recovered = await recoverInterruptedActivation(activateDeps()).catch(() => 'manual' as const);
+  if (recovered !== 'locked') void pushSwapPending();
+}
 const migrationDeps = (): MigrationDeps => ({
   store: accounts,
   readProfileIdentity: (dir) => readClaudeIdentity(profileSource(usageDeps.credentials, dir)),
@@ -838,6 +843,7 @@ ipcMain.handle('auth:start', (_e, request: unknown) => {
 ipcMain.on('auth:cancel', (_e, id: unknown) => { if (typeof id === 'string') login.cancel(id); });
 ipcMain.handle('accounts:remove', (_e, id: unknown) => handleRemoveAccount({
   ...guardDeps,
+  isLive: (accountId) => accounts.live()?.recordId === accountId || custodyOf(accounts.get(accountId) ?? {}) === 'live',
   cancelLogin: (accountId) => login.cancelFor(accountId),
   remove: (accountId) => accounts.remove(accountId),
   onRemoved: () => { void usage.refresh(true, true); },
@@ -858,7 +864,7 @@ ipcMain.handle('accounts:clearSwapPending', async () => {
   // A recovery still waiting for Claude Code's locks can repair the state itself: its backups are not deleted meanwhile
   // (the panel says so and that the app retries).
   if (isActivationRecoveryPending()) return { ok: false, error: 'locked' as const };
-  const cleared = await clearPendingSwap(swapDeps());
+  const cleared = await clearPendingActivation(activateDeps(), () => clearPendingSwap(swapDeps()));
   void pushSwapPending();
   return { ok: cleared };
 });
@@ -1039,6 +1045,8 @@ async function startMainApp(): Promise<void> {
     // Shorter lock waits here: the window waits for this; a recovery still 'locked' is retried by the polls.
     if ((await recoverActivationWithRetry({ ...activateDeps(), locks: { timeoutMs: 3_000 } })) === 'legacy') await recoverInterruptedSwap(swapDeps());
   } catch { /* the journal stays and the next start retries */ }
+  // A recovery still 'locked' is retried by its own timer too: the polls do not run while the limits panel is off.
+  startActivationRecoveryRetry(retryActivationRecovery);
   // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
   try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }
   createWindow();

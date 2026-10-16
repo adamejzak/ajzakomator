@@ -41,6 +41,7 @@ function parseAccount(value: unknown): ManagedAccount | null {
   if (typeof value.custody === 'string' && CUSTODY.includes(value.custody)) account.custody = value.custody as AccountCustody;
   if (value.family === 'own' || value.family === 'live') account.family = value.family as TokenFamily;
   if (isAccountId(value.duplicateOf)) account.duplicateOf = value.duplicateOf;
+  if (typeof value.heldTokens === 'string' && /^[0-9a-f]{64}$/.test(value.heldTokens)) account.heldTokens = value.heldTokens;
   return account;
 }
 
@@ -159,6 +160,11 @@ export class AccountsStore {
     this.patch(id, { custody, duplicateOf: custody === 'quarantined' ? duplicateOf : undefined });
   }
   setFamily(id: string, family: TokenFamily): void { this.patch(id, { family }); }
+  /** Sets or (undefined) drops `heldTokens`; a record without it is not written again. */
+  setHeldTokens(id: string, hash: string | undefined): void {
+    if (hash === undefined && !this.get(id)?.heldTokens) return;
+    this.patch(id, { heldTokens: hash });
+  }
 
   remove(id: string): void {
     if (!isAccountId(id)) return;

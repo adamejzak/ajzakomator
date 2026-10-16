@@ -110,7 +110,7 @@ export interface McApi {
   startLogin(request: LoginRequest): Promise<{ ok: true; sessionId: string; ptyId: string } | { ok: false; error: string; email?: string }>;
   cancelLogin(sessionId: string): void;
   /** `readOnly`: accounts.json cannot be read safely, nothing was removed. */
-  removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' | 'readOnly' }>;
+  removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' | 'readOnly' | 'live' }>;
   makeMainAccount(id: string): Promise<SwapResult>;
   /** True while an interrupted swap is unresolved (swaps are blocked). Also pushed on the 'accounts:swapPending' channel. */
   swapPending(): Promise<boolean>;

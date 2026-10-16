@@ -2,17 +2,18 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { compareIdentity, custodyOf } from '../src/shared/accounts';
+import { compareIdentity, custodyOf, type AccountIdentity } from '../src/shared/accounts';
 import {
-  activateAccount, activationJournalPending, checkActivationTarget, isActivationRecoveryPending, recoverActivationWithRetry, recoverInterruptedActivation,
-  type ActivateDeps,
+  activateAccount, activationJournalPending, checkActivationTarget, clearPendingActivation, isActivationRecoveryPending, recoverActivationWithRetry,
+  recoverInterruptedActivation, startActivationRecoveryRetry, type ActivateDeps,
 } from '../src/main/accounts/activate';
 import type { CswapRoster } from '../src/main/accounts/cswap';
 import { reconcileLive, reconcileWhenIdle } from '../src/main/accounts/reconcile';
 import { withProfileLock } from '../src/main/accounts/refresh';
+import { resyncActiveBackup } from '../src/main/accounts/resync';
 import { claudeRefs } from '../src/main/accounts/refs';
 import { AccountsStore } from '../src/main/accounts/store';
-import { claimSwap, isSwapUnresolved, nodeSwapFs, releaseSwap, setSwapUnresolved, type SwapFs } from '../src/main/accounts/swap';
+import { claimSwap, clearPendingSwap, isSwapUnresolved, nodeSwapFs, releaseSwap, setSwapUnresolved, type SwapFs } from '../src/main/accounts/swap';
 import { fetchClaude, type FetcherDeps } from '../src/main/usage/fetchers';
 
 const NOW = Date.parse('2026-10-16T12:00:00Z');
@@ -101,15 +102,44 @@ describe('activateAccount', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a switched-out target and a copy cswap also holds, but swaps an own family cswap lists', async () => {
+  it('refuses a switched-out target and a stale copy cswap also holds, but swaps an own family cswap lists', async () => {
     store.setCustody(T, 'foreign');
     expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'foreign', email: 'x@x.com' });
     store.setCustody(T, 'app');
     roster = { present: true, accounts: [{ email: 'x@x.com', accountUuid: 'uuid-X' }] };
     store.setFamily(T, 'live');
+    put(join(store.dirOf(T), '.credentials.json'), creds('X', NOW + 2 * 60_000));
     expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'foreign', email: 'x@x.com' });
     store.setFamily(T, 'own');
     expect((await activateAccount(deps(), T)).ok).toBe(true);
+  });
+
+  it('swaps in a fresh copy cswap also holds without any token request, and refuses a stale one with foreign (I3)', async () => {
+    roster = { present: true, accounts: [{ email: 'x@x.com', accountUuid: 'uuid-X' }] };
+    store.setFamily(T, 'live');
+    put(join(store.dirOf(T), '.credentials.json'), creds('X', NOW + 4 * 60_000)); // would need renewing: refused, no request
+    expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'foreign', email: 'x@x.com' });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(json(liveCreds()).claudeAiOauth.refreshToken).toBe('fake-ref-A');
+    put(join(store.dirOf(T), '.credentials.json'), creds('X')); // valid for an hour: only files move
+    expect(await activateAccount(deps(), T)).toEqual({ ok: true, email: 'x@x.com' });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(json(liveCreds()).claudeAiOauth.refreshToken).toBe('fake-ref-X');
+    expect(store.get(A)).toMatchObject({ custody: 'app', family: 'live' }); // the outgoing copy is the live family
+    expect(store.get(T)).toMatchObject({ custody: 'live', family: 'live' });
+  });
+
+  it('the target takes the live family: switched out again by an own change while cswap lists it, it is never renewable (I1)', async () => {
+    roster = { present: true, accounts: [{ email: 'x@x.com', accountUuid: 'uuid-X' }] };
+    expect((await activateAccount(deps(), T)).ok).toBe(true);
+    expect(store.get(T)?.family).toBe('live');
+    // The app signs in someone else (a main re-login): T leaves the live login as an own change and becomes `app`.
+    const G = { email: 'g@x.com', accountUuid: 'uuid-G', organizationUuid: 'org-G' };
+    await reconcileLive({ store, readLiveIdentity: async () => G, now: () => NOW }, { ownChange: true });
+    expect(store.get(T)?.custody).toBe('app');
+    const refs = claudeRefs({ records: store.list(), dirOf: (id) => store.dirOf(id), live: store.live(), cswap: roster, platform: 'win32' });
+    expect(refs.find((r) => r.id === `claude:${T}`)?.renew).toBe('held-by-cswap');
+    expect(refs.every((r) => r.renew !== 'allowed' || r.id !== `claude:${T}`)).toBe(true);
   });
 
   it("holds Claude Code's locks for every write into Claude Code's files (investigation test 11)", async () => {
@@ -259,8 +289,12 @@ describe('checkActivationTarget (the makeMain IPC check)', () => {
     store.setCustody(T, 'app');
     store.setFamily(T, 'live');
     roster = { present: true, accounts: [{ email: 'x@x.com' }] };
+    // A copy cswap may hold too: accepted while its access token is fresh, refused once it would need renewing (I3).
+    expect(await checkActivationTarget(deps(), T)).toBeNull();
+    put(join(store.dirOf(T), '.credentials.json'), creds('X', NOW + 60_000));
     expect(await checkActivationTarget(deps(), T)).toEqual({ ok: false, error: 'foreign', email: 'x@x.com' });
     expect(await activateAccount(deps(), T)).toEqual({ ok: false, error: 'foreign', email: 'x@x.com' });
+    expect(refresh).not.toHaveBeenCalled();
   });
 });
 
@@ -378,6 +412,94 @@ describe('recoverInterruptedActivation', () => {
     expect(await recoverActivationWithRetry(d, 3, 1000)).toBe('recovered');
     expect(waits).toEqual([1000]);
     expect(isActivationRecoveryPending()).toBe(false);
+  });
+
+  it('stops a pending retry when the version-2 journal is gone, unparsable or not version 2 (D1)', async () => {
+    for (const journal of [null, '{not json', JSON.stringify({ version: 1, accountId: T, phase: 'backed-up' })]) {
+      crashedAfterLiveWrites();
+      mkdirSync(join(home, '.claude.lock'));
+      expect(await recoverInterruptedActivation(deps())).toBe('locked');
+      expect(isActivationRecoveryPending()).toBe(true);
+      rmSync(join(home, '.claude.lock'), { recursive: true });
+      rmSync(backupDir(), { recursive: true, force: true });
+      if (journal !== null) { mkdirSync(backupDir(), { recursive: true }); writeFileSync(join(backupDir(), 'swap-journal.json'), journal); }
+      expect(await recoverInterruptedActivation(deps())).toBe('legacy');
+      expect(isActivationRecoveryPending()).toBe(false);
+      rmSync(backupDir(), { recursive: true, force: true });
+    }
+  });
+
+  it('retries a locked recovery on its own timer, also without the usage polls (M3)', async () => {
+    crashedAfterLiveWrites();
+    mkdirSync(join(home, '.claude.lock'));
+    expect(await recoverInterruptedActivation(deps())).toBe('locked');
+    rmSync(join(home, '.claude.lock'), { recursive: true });
+    let run: Promise<unknown> | undefined;
+    const retry = vi.fn(() => (run = recoverInterruptedActivation(deps())));
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const stop = startActivationRecoveryRetry(retry, 30_000);
+    try {
+      vi.advanceTimersByTime(29_000);
+      expect(retry).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1_000);
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(await run).toBe('recovered');
+      expect(isActivationRecoveryPending()).toBe(false);
+      vi.advanceTimersByTime(60_000); // nothing pending any more: no further tries
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally { stop(); vi.useRealTimers(); }
+  });
+});
+
+describe('clearing the warning of an interrupted version-2 swap (M1)', () => {
+  /** A crash between the live credentials write and the identity write, left unresolved (manual). */
+  function crashedBetweenLiveWrites(phase = 'live-json-written') {
+    mkdirSync(backupDir(), { recursive: true });
+    writeFileSync(join(backupDir(), 'live-credentials.json'), readFileSync(liveCreds(), 'utf8'));
+    writeFileSync(join(backupDir(), 'live-claude.json'), readFileSync(liveJson(), 'utf8'));
+    put(join(backupDir(), 'swap-journal.json'), { version: 2, phase, outgoingId: A, targetId: T, created: false, outCredsExisted: false, outJsonExisted: false, startedAt: NOW });
+    put(join(store.dirOf(A), '.credentials.json'), creds('A'));
+    put(join(store.dirOf(A), '.claude.json'), { oauthAccount: account('A', 'a@x.com') });
+    put(liveCreds(), { ...creds('X'), mcpOAuth: { server: 'A' } }); // the target's tokens, A's identity still in .claude.json
+  }
+  const clear = () => clearPendingSwap({ backupDir: backupDir(), fs });
+  const resync = (id: string, identity: AccountIdentity) => resyncActiveBackup({ paths: { credentials: liveCreds(), claudeJson: liveJson() }, store, delay: async () => undefined, locks: { timeoutMs: 300 } }, id, identity);
+
+  it('marks the outgoing record switched out and never copies the live tokens into it afterwards', async () => {
+    crashedBetweenLiveWrites();
+    expect(await clearPendingActivation(deps(), clear)).toBe(true);
+    expect(existsSync(backupDir()) ? readdirSync(backupDir()) : []).toEqual([]);
+    expect(store.get(A)?.custody).toBe('foreign');
+    expect(store.get(A)?.heldTokens).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(store.list())).not.toContain('fake-');
+    // The next poll: A is signed in by identity, so it holds the card again, but its saved copy is never overwritten.
+    await reconcileLive({ store, readLiveIdentity: async () => ({ email: 'a@x.com', accountUuid: 'uuid-A', organizationUuid: 'org-A' }), resync, now: () => NOW });
+    expect(store.get(A)?.custody).toBe('live');
+    expect(json(join(store.dirOf(A), '.credentials.json')).claudeAiOauth.refreshToken).toBe('fake-ref-A');
+    // Neither does a swap away from A: its own copy stays, the live tokens are not saved under its name.
+    expect((await activateAccount(deps(), T)).ok).toBe(true);
+    expect(json(join(store.dirOf(A), '.credentials.json')).claudeAiOauth.refreshToken).toBe('fake-ref-A');
+    expect(json(liveCreds()).claudeAiOauth.refreshToken).toBe('fake-ref-X');
+  });
+
+  it('holds nothing when the live tokens are the outgoing record\'s own, and leaves an earlier phase alone', async () => {
+    crashedBetweenLiveWrites();
+    put(liveCreds(), creds('A'));
+    expect(await clearPendingActivation(deps(), clear)).toBe(true);
+    expect(store.get(A)?.custody).toBe('foreign');
+    expect(store.get(A)?.heldTokens).toBeUndefined();
+    store.setCustody(A, 'live');
+    crashedBetweenLiveWrites('outgoing-saved');
+    expect(await clearPendingActivation(deps(), clear)).toBe(true);
+    expect(store.get(A)).toMatchObject({ custody: 'live' });
+    expect(store.get(A)?.heldTokens).toBeUndefined();
+  });
+
+  it('marks nothing when the clear itself fails', async () => {
+    crashedBetweenLiveWrites();
+    expect(await clearPendingActivation(deps(), async () => false)).toBe(false);
+    expect(store.get(A)?.custody).toBe('live');
+    expect(store.get(A)?.heldTokens).toBeUndefined();
   });
 });
 

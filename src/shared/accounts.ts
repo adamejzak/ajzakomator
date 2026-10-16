@@ -27,6 +27,12 @@ export interface ManagedAccount extends AccountIdentity {
   family?: TokenFamily;
   /** For `quarantined`: the record that holds the account now. */
   duplicateOf?: string;
+  /**
+   * SHA-256 (hex, never the token) of a live refresh token that must never be copied into this record: the warning of an
+   * interrupted swap was cleared while the live files may have held another account's tokens under this identity. Dropped
+   * once the live login proves to be this record's own or the record is signed in again.
+   */
+  heldTokens?: string;
 }
 
 /** The identity last seen in the live Claude Code login and the record it belongs to. */
