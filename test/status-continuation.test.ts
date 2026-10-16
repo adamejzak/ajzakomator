@@ -4,7 +4,7 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { HookServer, hasActiveBackgroundWork, stopInfo } from '../src/main/hooks';
 import {
-  ANSWER_GRACE_MS, BG_STALL_MS, END_GRACE_MS, INTERRUPT_QUIET_MS, isFocusOrMouseReport, isUserInput, shouldNotify, StatusTracker,
+  ANSWER_GRACE_MS, BG_STALL_MS, END_GRACE_MS, INTERRUPT_QUIET_MS, isFocusOrMouseReport, isUserInput, shouldNotify, STALL_MS, StatusTracker,
   type CellStatus, type HookEvent, type HookInfo, type StatusCause, WORKFLOW_STALL_MS,
 } from '../src/shared/status';
 
@@ -385,11 +385,11 @@ describe('a dynamic workflow keeps the cell working (W2)', () => {
     expect(s.alerts()).toBe(1);
   });
 
-  it('a wait line that never leaves the screen holds a screen-converted stop only up to WORKFLOW_STALL_MS, then one alert', () => {
+  it('the screen veto extends a payload-entered bg net only up to WORKFLOW_STALL_MS, then one alert', () => {
     const s = sim();
     s.hook(0, 'prompt');
-    s.t.bgGuard = () => true; // a stale transcript row or a frozen footer
-    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    s.t.bgGuard = () => true; // the frozen "Waiting for ..." row never leaves the bottom rows
+    s.hook(1000, 'stopbg', { tasks: 1, active: 1, workflows: 0 });
     s.run(1000, 1000 + WORKFLOW_STALL_MS - 400);
     expect(s.t.status).toBe('working');
     expect(s.t.backgroundFor(1000 + WORKFLOW_STALL_MS)).toBe(WORKFLOW_STALL_MS);
@@ -403,32 +403,47 @@ describe('a dynamic workflow keeps the cell working (W2)', () => {
   it('a later stopbg in the same background mode does not restart the cap', () => {
     const s = sim();
     s.hook(0, 'prompt');
-    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    s.hook(1000, 'stopbg', { tasks: 1, active: 1, workflows: 0 });
     s.hook(60_000, 'busy');
-    s.hook(70_000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    s.hook(70_000, 'stopbg', { tasks: 1, active: 1, workflows: 0 });
     expect(s.t.backgroundFor(100_000)).toBe(99_000);
     s.hook(80_000, 'prompt');
     expect(s.t.backgroundFor(100_000)).toBe(0);
   });
 
-  it('a stopbg converted by the screen veto stays working while the screen still shows the wait', () => {
-    const s = sim();
-    s.hook(0, 'prompt');
-    s.t.bgGuard = () => true;
-    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
-    s.run(1000, 1000 + BG_STALL_MS * 3);
-    expect(s.t.status).toBe('working');
+  it('a Stop without workflows ends the turn at once with one alert even while the frozen row is on screen', () => {
+    // The self-started turn after the workflow.
+    const next = sim();
+    start(next);
+    next.t.bgGuard = () => true;
+    next.run(1000, 3_600_000);
+    next.hook(3_600_010, 'prompt');
+    next.hook(3_602_000, 'busy');
+    next.hook(3_609_000, 'stop', { tasks: 0, active: 0, workflows: 0 });
+    expect(next.t.status).toBe('waiting');
+    expect(next.alerts()).toBe(1);
+    next.run(3_609_400, 3_609_000 + BG_STALL_MS * 2);
+    expect(next.t.status).toBe('waiting');
+    expect(next.alerts()).toBe(1);
+    // A Stop straight in background mode, no prompt in between.
+    const direct = sim();
+    direct.hook(0, 'prompt');
+    direct.t.bgGuard = () => true;
+    direct.hook(1000, 'stopbg', { tasks: 1, active: 1, workflows: 0 });
+    direct.hook(30_000, 'stop', { tasks: 0, active: 0, workflows: 0 });
+    expect(direct.t.status).toBe('waiting');
+    expect(direct.alerts()).toBe(1);
+    expect(direct.t.backgroundFor(31_000)).toBe(0);
   });
 
-  it('a screen-converted stop keeps the short net: once the footer is gone it ends at BG_STALL_MS with one alert', () => {
+  it('the screen veto never applies outside background mode', () => {
     const s = sim();
     s.hook(0, 'prompt');
-    s.t.bgGuard = () => false; // a leftover footer that is gone by the deadline
-    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
-    s.run(1000, 1000 + BG_STALL_MS + 1000);
+    s.hook(500, 'busy');
+    s.t.bgGuard = () => true;
+    s.run(500, 500 + STALL_MS + 1000);
     expect(s.t.status).toBe('waiting');
-    expect(s.t.lastStallKind).toBe('bg');
-    expect(s.alerts()).toBe(1);
+    expect(s.t.lastStallKind).toBe('plain');
   });
 
   it('Esc during a workflow wait is ignored', () => {

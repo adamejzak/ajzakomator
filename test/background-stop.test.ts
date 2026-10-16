@@ -200,10 +200,9 @@ describe('workflow entries in the Stop payload', () => {
     expect(line).not.toContain('SECRET');
   });
 
-  it('hookDetail shows the workflow count, an unknown task list and the screen veto', () => {
+  it('hookDetail shows the workflow count and an unknown task list', () => {
     expect(hookDetail({ tasks: 1, active: 1, workflows: 1 })).toBe('tasks=1 active=1 workflows=1');
     expect(hookDetail({ tasks: 0, active: 0, workflows: 0, tasksUnknown: true })).toBe('tasks=?');
-    expect(hookDetail({ screenWait: true })).toBe('screen-wait');
   });
 
   it('the hook server emits stopbg for a workflow and stop when the task list is absent', async () => {

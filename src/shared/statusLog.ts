@@ -41,7 +41,6 @@ export function hookDetail(info?: HookInfo): string {
   if (info.subagent) out.push('subagent');
   if (info.error) out.push(`error=${info.error}`);
   if (info.source) out.push(`source=${info.source}`);
-  if (info.screenWait) out.push('screen-wait');
   return out.join(' ');
 }
 

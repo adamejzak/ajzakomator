@@ -7,7 +7,7 @@ import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
 import type { BoundThread } from '../../../shared/codexHooks';
-import { screenHoldsStop, screenWaitsForBackground } from '../../../shared/backgroundWait';
+import { screenWaitsForBackground } from '../../../shared/backgroundWait';
 import { AgentInference, keySequence, type InferredAgent, type ScreenLine, type ScreenState } from '../../../shared/agentInfer';
 import { FailureScanner } from '../../../shared/outputFailure';
 import { isFocusOrMouseReport, isUserInput, StatusTracker, type CellStatus, type HookEvent, type HookInfo, type StatusCause, type StatusReason } from '../../../shared/status';
@@ -625,17 +625,10 @@ class TerminalManager {
   hook(cellId: string, event: HookEvent, info?: HookInfo): void {
     const e = this.entries.get(cellId);
     if (!e) return;
-    const now = performance.now();
-    // A Stop that names no running workflow while the footer still says "Waiting for N dynamic workflow(s)": the payload
-    // missed it (registry unreachable, race with a self-started turn). The cell keeps working; the next real Stop decides.
-    if (event === 'stop' && screenHoldsStop({ agent: e.agent, codex: e.codex, workflows: info?.workflows, backgroundMs: e.tracker.backgroundFor(now), screenWaits: () => this.screenWaits(e) })) {
-      event = 'stopbg';
-      info = { ...info, screenWait: true };
-    }
-    this.setStatus(e, () => e.tracker.hook(event, now, info), event, info);
+    this.setStatus(e, () => e.tracker.hook(event, performance.now(), info), event, info);
   }
 
-  /** Claude Code's footer shows it waiting for background work (agent cells only, never a shell or SSH session). */
+  /** Claude Code's screen shows it waiting for background work (agent cells only, never a shell or SSH session); see bgGuard. */
   private screenWaits(e: Entry): boolean {
     return e.agent && !e.codex && screenWaitsForBackground(e.term.buffer.active, e.term.rows);
   }

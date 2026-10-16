@@ -31,8 +31,6 @@ export interface HookInfo {
   workflows?: number;
   /** Stop: `background_tasks` was absent or not an array (registry unreachable): "unknown", never "nothing runs". */
   tasksUnknown?: boolean;
-  /** Stop turned into stopbg because the terminal still showed "Waiting for N dynamic workflow(s)" (see backgroundWait.ts). */
-  screenWait?: boolean;
   /** busy: SubagentStop, which never reopens a closed turn. */
   subagent?: boolean;
   /** StopFailure: the error code. */
@@ -144,8 +142,8 @@ export class StatusTracker {
   private waitingFromNotify = false;
   private background = false;
   /**
-   * The background mode was entered for a dynamic workflow named in the Stop payload: the long, silent net applies. A Stop
-   * turned into stopbg by the screen check alone keeps the short net (bgGuard vetoes it while the footer is shown).
+   * The background mode was entered for a dynamic workflow named in the Stop payload: the long, silent net applies.
+   * Other background tasks keep the short net (bgGuard may extend it while the screen shows the wait row).
    */
   private longBackground = false;
   /** Set by the renderer: true while the terminal still shows "Waiting for N dynamic workflow(s)" (src/shared/backgroundWait.ts). */
@@ -187,9 +185,8 @@ export class StatusTracker {
   }
 
   /**
-   * How long the cell has been in background mode (0 when it is not). The screen veto (bgGuard, and the stop -> stopbg
-   * conversion in TerminalManager) holds only below WORKFLOW_STALL_MS of it: a wait line that stays on screen after the
-   * run (a stale transcript row, a frozen footer) cannot keep the cell working forever.
+   * How long the cell has been in background mode (0 when it is not). The screen veto (bgGuard) holds only below
+   * WORKFLOW_STALL_MS of it: the wait row is frozen in the transcript, so it cannot keep the cell working forever.
    */
   backgroundFor(now: number): number {
     return this.background ? now - this.backgroundSince : 0;
