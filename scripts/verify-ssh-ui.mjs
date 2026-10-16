@@ -14,8 +14,8 @@ const CELL_BUFFERS = `(() => { const s = window.__mc.useStore.getState().s; cons
 const hasLine = (index, line) => `${CELL_BUFFERS}[${index}].split('\\n').some((l) => l.trim() === ${JSON.stringify(line)})`;
 /** UI texts the checks click on or wait for, per language of SSH_CHECK_LANGUAGE (only the `cell` part is language-aware). */
 const TEXT = {
-  pl: { connect: 'Połącz', trust: 'Zaufaj i zapisz', disconnect: 'Rozłącz', reconnect: 'Połącz ponownie', crashed: 'Proces terminali został uruchomiony ponownie', crashedShort: 'Proces terminali' },
-  en: { connect: 'Connect', trust: 'Trust and save', disconnect: 'Disconnect', reconnect: 'Reconnect', crashed: 'The terminal process was restarted', crashedShort: 'The terminal process' },
+  pl: { connect: 'Połącz', trust: 'Zaufaj i zapisz', disconnect: 'Rozłącz', reconnect: 'Połącz ponownie', crashed: 'Proces terminali został uruchomiony ponownie', crashedShort: 'Proces terminali', restartToast: 'Proces terminali się zrestartował', resumeToast: 'wznawiam rozmowy' },
+  en: { connect: 'Connect', trust: 'Trust and save', disconnect: 'Disconnect', reconnect: 'Reconnect', crashed: 'The terminal process was restarted', crashedShort: 'The terminal process', restartToast: 'The terminal process restarted', resumeToast: 'resuming conversations' },
 }[LANGUAGE];
 if (!TEXT) throw new Error(`SSH_CHECK_LANGUAGE=${LANGUAGE} has no TEXT entry`);
 const PARTS = {
@@ -42,10 +42,16 @@ const PARTS = {
         const chip = await app.evaluate(`document.querySelector('.cell-head .ssh-host')?.textContent`);
         if (chip !== host.label) throw new Error(`header chip shows "${chip}", expected the host label`);
         await app.screenshot('ssh-cell-connected.png');
+        // I2: a remote program switches on the alternate screen and mouse tracking (the echo shell echoes the escape sequences).
+        const term = `(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId); return window.__mc.terminals.entries.get(t.cells[0].id).term; })()`;
+        await app.evaluate(`(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId); window.__mc.terminals.post({ t: 'write', id: t.cells[0].id, data: 'echo \x1b[?1049h\x1b[?1000h\x1b[?1h' }); return true; })()`);
+        await app.until(`${term}.buffer.active.type === 'alternate' && ${term}.modes.mouseTrackingMode !== 'none'`, 'remote TUI modes on');
         // R11: after "Rozłącz" a bar sits at the bottom of the cell and the last output stays readable.
         await app.click('.cell-head .ssh-host');
         await app.click('.menu .menu-item', TEXT.disconnect);
         await app.until(`document.querySelector('.ssh-bar button')?.textContent === ${JSON.stringify(TEXT.reconnect)} && !document.querySelector('.ssh-card')`, 'disconnected bar');
+        // I2: the end of the session left the alternate screen and switched mouse tracking and app cursor keys off.
+        await app.until(`${term}.buffer.active.type === 'normal' && ${term}.modes.mouseTrackingMode === 'none' && !${term}.modes.applicationCursorKeysMode`, 'modes reset after the session ended');
         await app.screenshot('ssh-cell-closed.png');
         // R13: "Połącz ponownie" keeps the screen; the host key is known and the password saved, so no prompt comes up.
         await app.click('.ssh-bar button', TEXT.reconnect);
@@ -56,6 +62,9 @@ const PARTS = {
         if (hosts.length !== 1) throw new Error(`expected one Pty Host process, found ${hosts.length}`);
         killTree(hosts[0]);
         await app.until(`document.querySelector('.ssh-bar.error')?.textContent.includes(${JSON.stringify(TEXT.crashed)})`, 'crash bar');
+        // D1: only an SSH cell was live, so the toast does not promise resumed conversations.
+        await app.until(`[...document.querySelectorAll('.toast')].some((t) => t.textContent === ${JSON.stringify(TEXT.restartToast)})`, 'restart toast without resuming');
+        if (await app.evaluate(`[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes(${JSON.stringify(TEXT.resumeToast)}))`)) throw new Error('the crash toast promises resumed conversations');
         await sleep(3000);
         const after = await app.evaluate(`[!!document.querySelector('.ssh-bar.error'), !!document.querySelector('.ssh-card'), document.querySelector('.status-text.ssh')?.textContent ?? '']`);
         if (!after[0] || after[1] || !after[2].includes(TEXT.crashedShort)) throw new Error(`unexpected state after the crash: ${JSON.stringify(after)}`);
@@ -101,6 +110,14 @@ const PARTS = {
         // A half-filled host editor survives switching to another editor tab and to Settings.
         await palette('SSH: nowy klucz');
         await app.until(`!!document.querySelector('${A} .ssh-segmented')`, 'new key tab in front');
+        // D4: a hidden editor keeps its label but forgets a typed passphrase.
+        await app.setValue(`${A} [data-field=newKeyLabel]`, 'kept label');
+        await app.setValue(`${A} input[type=password]`, 'typed-secret');
+        await app.click('.workspace-tabs .ssh-tab', 'Nowy host');
+        await app.until(`!!document.querySelector('${A} [data-field=address]')`, 'host editor in front');
+        if (await app.evaluate(`[...document.querySelectorAll('.ssh-editor-screen input[type=password]')].some((e) => e.value)`)) throw new Error('a hidden editor still holds a typed secret');
+        await app.click('.workspace-tabs .ssh-tab', 'Nowy klucz');
+        await app.until(`document.querySelector('${A} [data-field=newKeyLabel]')?.value === 'kept label'`, 'new key label kept');
         await app.click('.workspace-tabs .ssh-tab', 'Nowy host');
         await app.until(`!!document.querySelector('${A} [data-field=address]')`, 'host editor again');
         if (await fieldValues() !== 'local test|127.0.0.1|22|') throw new Error(`host editor lost its input: ${await fieldValues()}`);
@@ -269,6 +286,17 @@ const PARTS = {
         await app.until(`!!document.querySelector('.grid-dialog')`, 'grid dialog');
         await app.click('.cell-table .select');
         await app.screenshot('ssh-grid-dialog.png');
+        // M4: choosing a host keeps the cell name empty (the header shows the label once and follows renames).
+        await app.click('.select-popup .select-option', 'lab');
+        await app.until(`document.querySelector('.pc .nm')?.textContent === 'lab' && document.querySelector('.cell-table input.input').value === ''`, 'host chosen, name left empty');
+        const tabs = await app.evaluate(`window.__mc.useStore.getState().s.projects[0].tabs.length`);
+        await app.click('.modal-foot button.white');
+        // A missing agent CLI in the other cells only arms the banner on the first click.
+        if (await app.evaluate(`!!document.querySelector('.grid-dialog')`)) await app.click('.modal-foot button.white');
+        await app.until(`window.__mc.useStore.getState().s.projects[0].tabs.length === ${tabs + 1}`, 'grid opened');
+        const named = await app.evaluate(`(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId); return t.cells.filter((c) => c.ssh).map((c) => c.name ?? null); })()`);
+        if (!named.length || named.some((n) => n !== null)) throw new Error(`grid-dialog SSH cells: ${JSON.stringify(named)}`);
+        await app.screenshot('ssh-grid-dialog-opened.png');
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },
