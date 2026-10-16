@@ -218,4 +218,20 @@ describe('SshVault', () => {
     expect(statSync(join(dir, 'ssh')).mode & 0o777).toBe(0o700);
     expect(statSync(file()).mode & 0o777).toBe(0o600);
   });
+
+  it('remembers only a digest of a verified passphrase and forgets it with the key (M2)', () => {
+    const vault = new SshVault(file(), fakeCipher());
+    const added = vault.addKey(key());
+    if (!added.ok) throw new Error('add');
+    vault.markVerified(added.key.id, 'very-secret-passphrase');
+    expect(vault.isVerified(added.key.id, 'very-secret-passphrase')).toBe(true);
+    expect(vault.isVerified(added.key.id, 'other')).toBe(false);
+    const cache = (vault as unknown as { verifiedPassphrases: Map<string, string> }).verifiedPassphrases;
+    expect([...cache.values()].join()).not.toContain('very-secret-passphrase');
+    vault.forgetRemembered();
+    expect(vault.isVerified(added.key.id, 'very-secret-passphrase')).toBe(false);
+    vault.markVerified(added.key.id, 'very-secret-passphrase');
+    expect(vault.removeKey(added.key.id)).toBe(true);
+    expect(vault.isVerified(added.key.id, 'very-secret-passphrase')).toBe(false);
+  });
 });

@@ -38,6 +38,17 @@ export class SshCoordinator {
   private sessionsByCell = new Map<string, Live>();
   private groups = new Map<string, Group>();
   private promptOfCell = new Map<string, string>();
+  /** Results computed once per answer of a coalesced prompt (passphrase check, host key trust). Keyed weakly by the answer
+   *  object every cell of the group receives, so a typed passphrase is not kept once the cells are done with it (D7). */
+  private perAnswer = new WeakMap<Answer, boolean>();
+
+  private onceFor(answer: Answer, compute: () => boolean): boolean {
+    const known = this.perAnswer.get(answer);
+    if (known !== undefined) return known;
+    const result = compute();
+    this.perAnswer.set(answer, result);
+    return result;
+  }
 
   constructor(private readonly deps: CoordinatorDeps) {}
 
@@ -91,9 +102,10 @@ export class SshCoordinator {
           if (!current()) return { ok: false, error: 'cancelled' };
           if (!('values' in answer)) return fail('cancelled');
           const typed = answer.values[0] ?? '';
-          // Cells of one coalesced prompt get the same answer: only the first one pays for the check.
-          if (this.deps.vault.isVerified(host.keyId, typed) || checkPassphrase(privateKey, typed)) {
-            this.deps.vault.markVerified(host.keyId, typed);
+          // Cells of one coalesced prompt get the same answer object: only the first one pays for the check. A typed passphrase
+          // is never cached by itself; it is kept only when the user asked to remember it (D7).
+          const key = privateKey;
+          if (this.onceFor(answer, () => checkPassphrase(key, typed))) {
             passphrase = typed;
             if (answer.remember) this.deps.vault.remember(host.keyId, typed);
           }
@@ -219,7 +231,10 @@ export class SshCoordinator {
     if ('hostKey' in answer) {
       if (answer.hostKey !== 'once') {
         // A read-only store (false) cannot save, the key is accepted for this connection; a failed write must not look like success.
-        try { this.deps.knownHosts.trust(live.host, live.port, blob, answer.hostKey === 'replace' ? 'replace' : 'save'); } catch { reply(false, 'unknown'); return; }
+        // Once per group: every cell of the prompt gets the same outcome, even when a write fails only now and then.
+        const mode = answer.hostKey === 'replace' ? 'replace' : 'save';
+        const saved = this.onceFor(answer, () => { try { this.deps.knownHosts.trust(live.host, live.port, blob, mode); return true; } catch { return false; } });
+        if (!saved) { reply(false, 'unknown'); return; }
       }
       reply(true);
       return;

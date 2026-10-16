@@ -114,7 +114,7 @@ export interface SshApi {
   discardDraft(draftId: string): void;
   updateKey(req: UpdateKeyRequest): Promise<KeyResult>;
   removeKey(id: string): Promise<{ ok: boolean }>;
-  exportPrivateKey(id: string): Promise<{ ok: true } | { ok: false; error: 'cancelled' | 'locked' | 'notFound' }>;
+  exportPrivateKey(id: string): Promise<{ ok: true } | { ok: false; error: 'cancelled' | 'locked' | 'notFound' | 'failed' }>;
   setPassword(hostId: string, password: string): Promise<{ ok: true; ephemeral: boolean } | { ok: false; error: 'notFound' | 'invalid' | 'readOnly' | 'failed' }>;
   clearPassword(hostId: string): Promise<{ ok: boolean }>;
   forgetPassphrases(): Promise<{ ok: boolean }>;

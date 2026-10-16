@@ -290,7 +290,9 @@ export class AutomationService {
       return this.log({ ...next, automation: { ...next.automation, tasks } }, project.id, 'grid_closed', tab.name, actorId);
     });
     for (const id of ids) { this.statuses.set(id, 'exited'); this.pendingRestart.delete(id); }
-    return { archivedGridId: tab.id, stoppedCellIds: ids };
+    // SSH cells are closed too, but never named to MCP (spec 11).
+    const sshIds = new Set(tab.cells.filter((c) => c.ssh).map((c) => c.id));
+    return { archivedGridId: tab.id, stoppedCellIds: ids.filter((id) => !sshIds.has(id)) };
   }
   private async updateAgent(a: ReturnType<typeof automationSchemas.update_agent.parse>, actorId?: string) {
     if (actorId && actorId !== a.cellId) this.coordinator(actorId);

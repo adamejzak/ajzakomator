@@ -295,4 +295,42 @@ describe('SshCoordinator', () => {
     expect(f.sessions.at(-1)).toMatchObject({ cellId: f.cells.d, phase: 'connected' });
     expect(() => f.coordinator.stateChanged(removeSshHost(f.getState(), OTHER))).not.toThrow();
   });
+
+  it('checks a typed answer once for a 3-cell prompt and keeps no copy unless remembered (D7, fix round 1)', async () => {
+    const f = setup({ encryptedKey: true });
+    const results = [connect(f, f.cells.a), connect(f, f.cells.b), connect(f, f.cells.c)];
+    await tick();
+    const p = f.open(f.cells.a)!;
+    expect(f.open(f.cells.b)!.id).toBe(p.id);
+    expect(f.open(f.cells.c)!.id).toBe(p.id);
+    checks.count = 0;
+    f.coordinator.answer({ cellId: f.cells.c, promptId: p.id, values: ['right'] });
+    expect(await Promise.all(results)).toEqual([{ ok: true }, { ok: true }, { ok: true }]);
+    expect(checks.count).toBe(1);
+    expect(f.vault.remembered(f.keyId!)).toBeUndefined();
+    expect(f.vault.isVerified(f.keyId!, 'right')).toBe(false);
+    // A reconnect asks again: nothing of the typed passphrase was kept.
+    f.coordinator.killed(f.cells.a);
+    void connect(f, f.cells.a);
+    await tick();
+    expect(f.open(f.cells.a)).toMatchObject({ kind: 'passphrase', retry: false });
+  });
+
+  it('saves a coalesced host key once per group, so all cells get the same outcome (fix round 1)', async () => {
+    const f = setup();
+    const trust = vi.spyOn(f.knownHosts, 'trust').mockImplementationOnce(() => { throw new Error('EBUSY'); });
+    await connect(f, f.cells.a);
+    await connect(f, f.cells.b);
+    await connect(f, f.cells.c);
+    for (const [cell, pid] of [[f.cells.a, 'pa'], [f.cells.b, 'pb'], [f.cells.c, 'pc']] as const) {
+      f.coordinator.onHostMessage({ t: 'sshHostKey', id: cell, promptId: pid, key: blobA.toString('base64') });
+    }
+    await tick();
+    f.coordinator.answer({ cellId: f.cells.b, promptId: f.open(f.cells.b)!.id, hostKey: 'save' });
+    await tick();
+    expect(trust).toHaveBeenCalledTimes(1);
+    const answers = f.sent.filter((m) => m.t === 'sshHostKeyAnswer');
+    expect(answers).toHaveLength(3);
+    expect(answers.every((m) => m.t === 'sshHostKeyAnswer' && !m.accept && m.error === 'unknown')).toBe(true);
+  });
 });

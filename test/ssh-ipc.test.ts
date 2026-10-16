@@ -216,4 +216,17 @@ describe('ssh IPC handlers', () => {
     }
     expect(written).toHaveLength(1);
   });
+
+  it('answers a fixed code when exporting the private key fails (fix round 1)', async () => {
+    const h = createSshHandlers(deps);
+    const generated = await h.generateKey({ label: 'gen', type: 'ed25519', savePassphrase: false });
+    if (!generated.ok) throw new Error('generate');
+    deps.writeKeyFile = async () => { throw new Error('EPERM: operation not permitted, open D:\private\exported'); };
+    const failedWrite = await h.exportPrivateKey({ id: generated.key.id });
+    expect(failedWrite).toEqual({ ok: false, error: 'failed' });
+    deps.saveKeyFile = async () => { throw new Error('EPERM dialog D:\private'); };
+    const failedDialog = await h.exportPrivateKey({ id: generated.key.id });
+    expect(failedDialog).toEqual({ ok: false, error: 'failed' });
+    for (const r of [failedWrite, failedDialog]) expect(JSON.stringify(r)).not.toMatch(/EPERM|private/);
+  });
 });

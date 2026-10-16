@@ -322,6 +322,18 @@ describe('closing grids through MCP', () => {
     expect(stopCells).toHaveBeenCalledWith(created.cellIds);
     expect(f.deps.removeWorktree).not.toHaveBeenCalled();
   });
+  it('stops SSH cells of a closed grid without naming them to MCP (spec 11)', async () => {
+    const f = automationFixture();
+    const stopCells = vi.fn(async (_ids: string[]) => {});
+    const service = new AutomationService(f.controller, { ...f.deps, stopCells });
+    const created = await service.execute('create_grid', { name: 'Mixed', cells: [{ profileId: 'claude', role: 'worker' }, { profileId: 'shell' }] }, f.coordinator.id) as { gridId: string; cellIds: string[] };
+    const sshHostId = '00000000-0000-4000-8000-000000000001';
+    f.controller.change((s) => updateCell(s, created.cellIds[1], { ssh: { hostId: sshHostId } }));
+    const result = await service.execute('close_grid', { gridId: created.gridId }, f.coordinator.id);
+    expect(result).toEqual({ archivedGridId: created.gridId, stoppedCellIds: [created.cellIds[0]] });
+    expect(JSON.stringify(result)).not.toContain(created.cellIds[1]);
+    expect(stopCells).toHaveBeenCalledWith(created.cellIds);
+  });
   it('guards role, project, own grid, paused operation and unfinished tasks', async () => {
     const f = automationFixture();
     const stopCells = vi.fn(async (_ids: string[]) => {});

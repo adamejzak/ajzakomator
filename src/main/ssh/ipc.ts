@@ -144,15 +144,18 @@ export function createSshHandlers(deps: SshIpcDeps) {
       deps.change((s) => clearSshKeyRefs(s, p.data.id));
       return changed({ ok: true });
     },
-    async exportPrivateKey(raw: unknown): Promise<{ ok: true } | { ok: false; error: 'cancelled' | 'locked' | 'notFound' }> {
+    async exportPrivateKey(raw: unknown): Promise<{ ok: true } | { ok: false; error: 'cancelled' | 'locked' | 'notFound' | 'failed' }> {
       const p = S.byId.safeParse(raw);
       const key = p.success ? deps.vault.key(p.data.id) : undefined;
       if (!p.success || !key) return { ok: false, error: 'notFound' };
       const material = deps.vault.keySecret(key.id);
       if (!material.ok) return { ok: false, error: material.error === 'keyLocked' ? 'locked' : 'notFound' };
-      const target = await deps.saveKeyFile(safeFileName(key.label));
-      if (!target) return { ok: false, error: 'cancelled' };
-      await deps.writeKeyFile(target, material.privateKey);
+      // A failing dialog or write must not reject the invoke: Electron would hand the raw error text (paths) to the renderer.
+      try {
+        const target = await deps.saveKeyFile(safeFileName(key.label));
+        if (!target) return { ok: false, error: 'cancelled' };
+        await deps.writeKeyFile(target, material.privateKey);
+      } catch { return { ok: false, error: 'failed' }; }
       return { ok: true };
     },
     async setPassword(raw: unknown): Promise<{ ok: true; ephemeral: boolean } | { ok: false; error: 'notFound' | 'invalid' | 'readOnly' | 'failed' }> {

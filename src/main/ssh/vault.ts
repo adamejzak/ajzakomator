@@ -1,5 +1,5 @@
 // The SSH vault (<data>/ssh/vault.json, spec 7.3): key metadata in clear, secrets as safeStorage blobs. Main only.
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { existsSync } from 'fs';
 import { dirname } from 'path';
 import { KEY_ALGOS, type SshKeyAlgo, type SshKeyInfo, type SshVaultInfo } from '../../shared/ssh';
@@ -36,6 +36,7 @@ interface PasswordRecord { hostId: string; updatedAt: number; secret: string | n
 
 const VERSION = 1;
 const ALGOS = new Set<string>(KEY_ALGOS);
+const digest = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const str = (v: unknown, max = 4000) => (typeof v === 'string' && v.length <= max ? v : undefined);
 
@@ -46,7 +47,8 @@ export class SshVault {
   private newer = false;
   /** D7: passphrases typed into a prompt with "remember until the app quits". Never written. */
   private rememberedPassphrases = new Map<string, string>();
-  /** Saved passphrases already checked against their key this run (preflight M2: the bcrypt check is not repeated per connect). */
+  /** Saved passphrases already checked against their key this run (preflight M2: the bcrypt check is not repeated per connect).
+   *  Only a SHA-256 of the passphrase is kept, never a second plaintext copy. */
   private verifiedPassphrases = new Map<string, string>();
 
   constructor(private readonly file: string, private readonly cipher: Cipher, private readonly now: () => number = Date.now) {
@@ -191,8 +193,8 @@ export class SshVault {
   remember(keyId: string, passphrase: string): void { this.rememberedPassphrases.set(keyId, passphrase); }
   remembered(keyId: string): string | undefined { return this.rememberedPassphrases.get(keyId); }
   forgetRemembered(): void { this.rememberedPassphrases.clear(); this.verifiedPassphrases.clear(); }
-  markVerified(keyId: string, passphrase: string): void { this.verifiedPassphrases.set(keyId, passphrase); }
-  isVerified(keyId: string, passphrase: string): boolean { return this.verifiedPassphrases.get(keyId) === passphrase; }
+  markVerified(keyId: string, passphrase: string): void { this.verifiedPassphrases.set(keyId, digest(passphrase)); }
+  isVerified(keyId: string, passphrase: string): boolean { return this.verifiedPassphrases.get(keyId) === digest(passphrase); }
 
   setPassword(hostId: string, password: string): { ok: true; ephemeral: boolean } | { ok: false; error: 'readOnly' } {
     if (this.newer) return { ok: false, error: 'readOnly' };
