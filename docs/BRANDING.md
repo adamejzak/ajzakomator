@@ -13,7 +13,7 @@ three exports. The full image, rounded tile, padding and transparency are preser
 no brightness-based crop or additional CSS mask is applied. Then run `npm run build` and
 `node scripts/capture-readme.mjs` to refresh the screenshots from the actual app.
 
-Since 0.8.5 the internal identities use the new name as well, with these
+Since 0.9.0 the internal identities use the new name as well, with these
 compatibility measures for installations from before the rebranding:
 
 - The Electron application ID (`build.appId`) and the Windows AppUserModelID are
@@ -33,12 +33,12 @@ compatibility measures for installations from before the rebranding:
   keep the pin), so the window groups with its pin and notifications keep working.
 - On macOS the bundle identifier stays `com.ajzakomator.app` (`build.mac.appId`):
   the in-app updater of 0.8.4 and earlier refuses an update whose
-  `CFBundleIdentifier` differs from the running app. From 0.8.5 the updater accepts
+  `CFBundleIdentifier` differs from the running app. From 0.9.0 the updater accepts
   both identifiers, so a later release can switch the bundle to `com.unimux.app`
-  once installations older than 0.8.5 no longer matter. Switching also resets
+  once installations older than 0.9.0 no longer matter. Switching also resets
   macOS permissions that are stored per bundle identifier (notifications).
 - The data directory is `%APPDATA%\unimux` on Windows and
-  `~/Library/Application Support/unimux` on macOS. The first start of 0.8.5 or
+  `~/Library/Application Support/unimux` on macOS. The first start of 0.9.0 or
   later moves the previous `ajzakomator` directory there
   (`src/main/dataDirMigration.ts`) before anything else touches it, and leaves a
   link at the old path (a directory junction on Windows, a symlink on macOS).
