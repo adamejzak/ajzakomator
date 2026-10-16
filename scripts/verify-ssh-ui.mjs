@@ -14,8 +14,8 @@ const CELL_BUFFERS = `(() => { const s = window.__mc.useStore.getState().s; cons
 const hasLine = (index, line) => `${CELL_BUFFERS}[${index}].split('\\n').some((l) => l.trim() === ${JSON.stringify(line)})`;
 /** UI texts the checks click on or wait for, per language of SSH_CHECK_LANGUAGE (only the `cell` part is language-aware). */
 const TEXT = {
-  pl: { connect: 'Połącz', trust: 'Zaufaj i zapisz', disconnect: 'Rozłącz', reconnect: 'Połącz ponownie', crashed: 'Proces terminali został uruchomiony ponownie', crashedShort: 'Proces terminali', restartToast: 'Proces terminali się zrestartował', resumeToast: 'wznawiam rozmowy' },
-  en: { connect: 'Connect', trust: 'Trust and save', disconnect: 'Disconnect', reconnect: 'Reconnect', crashed: 'The terminal process was restarted', crashedShort: 'The terminal process', restartToast: 'The terminal process restarted', resumeToast: 'resuming conversations' },
+  pl: { connecting: 'łączenie z', connect: 'Połącz', trust: 'Zaufaj i zapisz', disconnect: 'Rozłącz', reconnect: 'Połącz ponownie', crashed: 'Proces terminali został uruchomiony ponownie', crashedShort: 'Proces terminali', restartToast: 'Proces terminali się zrestartował', resumeToast: 'wznawiam rozmowy' },
+  en: { connecting: 'connecting to', connect: 'Connect', trust: 'Trust and save', disconnect: 'Disconnect', reconnect: 'Reconnect', crashed: 'The terminal process was restarted', crashedShort: 'The terminal process', restartToast: 'The terminal process restarted', resumeToast: 'resuming conversations' },
 }[LANGUAGE];
 if (!TEXT) throw new Error(`SSH_CHECK_LANGUAGE=${LANGUAGE} has no TEXT entry`);
 const PARTS = {
@@ -39,6 +39,8 @@ const PARTS = {
         await app.click('.ssh-card button', TEXT.trust);
         await connectWithPassword(app, server.password, { save: true });
         await connected(app, 1);
+        // W4: the connecting notice comes before the server greeting in the terminal buffer.
+        await app.until(`(() => { const t = ${CELL_BUFFERS}[0]; const a = t.indexOf(${JSON.stringify(TEXT.connecting)}); const b = t.indexOf('unimux test server'); return a >= 0 && b > a; })()`, 'connecting notice before the greeting');
         const chip = await app.evaluate(`document.querySelector('.cell-head .ssh-host')?.textContent`);
         if (chip !== host.label) throw new Error(`header chip shows "${chip}", expected the host label`);
         await app.screenshot('ssh-cell-connected.png');

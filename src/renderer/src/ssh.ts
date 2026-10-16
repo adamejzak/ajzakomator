@@ -3,7 +3,7 @@
 // the other at load time (only inside functions).
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell, removeSshHost } from '../../shared/state';
-import { closeEditorTab, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
+import { closeEditorTab, connectingNotice, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
 import type { MessageKey, MessageParams } from '../../shared/i18n';
 import type { AppState } from '../../shared/types';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
@@ -89,7 +89,15 @@ export async function connectCell(cellId: string): Promise<void> {
   const ref = found?.cell.ssh;
   if (!ref) return;
   ensureTerminal(cellId);
+  // A second click while the first request is still connecting writes no second line (main answers it without an event, R13).
+  const repeated = useSshStore.getState().sessions[cellId]?.phase === 'connecting';
   terminals.prepareReconnect(cellId);
+  if (!repeated) {
+    // Written before the request leaves, so it always precedes the server greeting (W4).
+    const notice = connectingNotice(sshContext(ref.hostId));
+    terminals.writeNotice(cellId, tr(notice.key, notice.params));
+    useSshStore.getState().setSession({ cellId, hostId: ref.hostId, phase: 'connecting', since: Date.now() });
+  }
   const { cols, rows } = terminals.size(cellId);
   const result = await window.mc.ssh.connect({ cellId, hostId: ref.hostId, cols, rows });
   // A refusal before any session event: the same path as an event, so the "[SSH · błąd: ...]" line is written too.

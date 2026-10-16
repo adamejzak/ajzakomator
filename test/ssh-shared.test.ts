@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  storageLabel, readOnlyStoreNote, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
+  storageLabel, readOnlyStoreNote, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, closeEditorTab, connectingNotice, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
   broadcastProblem, broadcastRowState, broadcastSend, ptyHostRestartToast, pushHistory, resumesConversation, sshCellsOfTab, cellSourcePatch, cellSourceValue, currentBroadcastResult, connectingBanner, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshModeReset, sshPhaseLabel, sshSpecName, sshSessionEnded, stampBroadcastResults, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -104,7 +104,8 @@ describe('session texts', () => {
     expect(sshPhaseLabel(session('c', 'error', { error: 'timeout' }), undefined, ctx)).toEqual({ key: 'Przekroczono czas połączenia' });
   });
   it('writes one notice per phase change, including a dropped connection', () => {
-    expect(sshNotice(undefined, session('c', 'connecting'), ctx)).toEqual({ key: '[SSH · łączenie z {endpoint}]', params: { endpoint: 'h1.example:2200' } });
+    expect(sshNotice(undefined, session('c', 'connecting'), ctx)).toBeNull(); // written by the renderer before the request (W4)
+    expect(connectingNotice(ctx)).toEqual({ key: '[SSH · łączenie z {endpoint}]', params: { endpoint: 'h1.example:2200' } });
     expect(sshNotice('connecting', session('c', 'verifying'), ctx)).toBeNull();
     expect(sshNotice('authenticating', session('c', 'connected'), ctx)).toEqual({ key: '[SSH · połączono]' });
     expect(sshNotice('connected', session('c', 'connected'), ctx)).toBeNull();

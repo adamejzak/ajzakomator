@@ -377,12 +377,19 @@ export type SshNotice =
 export function sshNotice(prev: SshPhase | undefined, next: SshSessionState, ctx: { host: string; endpoint: string }): SshNotice | null {
   if (prev === next.phase) return null;
   switch (next.phase) {
-    case 'connecting': return { key: '[SSH · łączenie z {endpoint}]', params: { endpoint: ctx.endpoint } };
     case 'connected': return { key: '[SSH · połączono]' };
     case 'closed': return { key: '[SSH · rozłączono]' };
     case 'error': return { key: '[SSH · błąd: {reason}]', reason: sshErrorText(next.error ?? 'unknown', ctx) };
     default: return null;
   }
+}
+
+/**
+ * The "connecting" line is written by the renderer right before it sends the connect request: session events come over
+ * IPC and terminal data over the Pty Host port, so an event-driven line could land after the server greeting (W4).
+ */
+export function connectingNotice(ctx: { host: string; endpoint: string }): Extract<SshNotice, { key: '[SSH · łączenie z {endpoint}]' }> {
+  return { key: '[SSH · łączenie z {endpoint}]', params: { endpoint: ctx.endpoint } };
 }
 
 /**
