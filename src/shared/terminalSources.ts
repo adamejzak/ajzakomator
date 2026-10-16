@@ -1,8 +1,7 @@
-// Where a terminal can come from. The Terminal panel lists these sources; today they are the local shells of the configured profiles.
-// To add SSH connections later, write a provider that returns `kind: 'ssh'` sources whose `launch` is a ready command
-// ({ type: 'command', program: 'ssh', args: [...] }) and add it to TERMINAL_SOURCE_PROVIDERS - the panel shows it under
-// "Połączenia" without further changes (starting a command launch is the one part that still has to be written then).
+// Where a terminal can come from. The SSH panel lists the local shells of the configured profiles and the saved SSH hosts
+// (AppState.sshHosts). A host launches as { type: 'ssh', hostId }: an SSH cell whose session runs in the Pty Host (src/ptyhost/ssh.ts).
 import { shellsForPlatform, type AppPlatform } from './platform';
+import { userAtEndpoint, type SshHost } from './ssh';
 import type { Profile, ShellKind } from './types';
 
 export type TerminalSourceKind = 'local' | 'ssh';
@@ -11,7 +10,9 @@ export type TerminalLaunch =
   /** A configured shell profile: what a cell starts today (the cell runs the user's shell). */
   | { type: 'profile'; profileId: string }
   /** A ready command line (program and arguments, never one shell string): for sources that need one, such as ssh. */
-  | { type: 'command'; program: string; args: string[] };
+  | { type: 'command'; program: string; args: string[] }
+  /** A saved SSH host: the cell runs an SSH session to it. */
+  | { type: 'ssh'; hostId: string };
 
 export interface TerminalSource {
   /** Stable and unique across providers. */
@@ -29,6 +30,7 @@ export interface TerminalSourceContext {
   platform: AppPlatform;
   /** The shell chosen in Settings. */
   shell: ShellKind;
+  sshHosts?: readonly SshHost[];
 }
 
 export interface TerminalSourceProvider {
@@ -53,8 +55,22 @@ export const localShellProvider: TerminalSourceProvider = {
   },
 };
 
-/** Providers in display order. SSH hosts: add a provider here. */
-export const TERMINAL_SOURCE_PROVIDERS: readonly TerminalSourceProvider[] = [localShellProvider];
+/** The saved SSH hosts, in the order they are stored. */
+export const sshHostProvider: TerminalSourceProvider = {
+  id: 'ssh-host',
+  list(ctx) {
+    return (ctx.sshHosts ?? []).map((host) => ({
+      id: `ssh:${host.id}`,
+      label: host.label,
+      kind: 'ssh' as const,
+      detail: userAtEndpoint(host),
+      launch: { type: 'ssh' as const, hostId: host.id },
+    }));
+  },
+};
+
+/** Providers in display order. */
+export const TERMINAL_SOURCE_PROVIDERS: readonly TerminalSourceProvider[] = [localShellProvider, sshHostProvider];
 
 /** Every source of every provider; a source without an id or label, or with an id already seen, is dropped. */
 export function listTerminalSources(ctx: TerminalSourceContext, providers: readonly TerminalSourceProvider[] = TERMINAL_SOURCE_PROVIDERS): TerminalSource[] {
@@ -76,10 +92,12 @@ export function groupTerminalSources(sources: readonly TerminalSource[]): { loca
   return { local: sources.filter((s) => s.kind === 'local'), connections: sources.filter((s) => s.kind !== 'local') };
 }
 
-/** Can the app start this source now? Only profile launches exist yet. */
-export const canLaunchSource = (source: TerminalSource): boolean => source.launch.type === 'profile';
+/** Can the app start this source now? Profiles and saved SSH hosts. */
+export const canLaunchSource = (source: TerminalSource): boolean => source.launch.type === 'profile' || source.launch.type === 'ssh';
 
-/** The launch as a short line for tooltips and logs: the profile id, or the program and its arguments. */
+/** The launch as a short line for tooltips and logs: the profile id, the SSH host id, or the program and its arguments. */
 export function describeLaunch(launch: TerminalLaunch): string {
-  return launch.type === 'profile' ? `profile ${launch.profileId}` : [launch.program, ...launch.args].join(' ');
+  if (launch.type === 'profile') return `profile ${launch.profileId}`;
+  if (launch.type === 'ssh') return `ssh ${launch.hostId}`;
+  return [launch.program, ...launch.args].join(' ');
 }

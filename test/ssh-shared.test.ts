@@ -1,0 +1,141 @@
+import { describe, expect, it } from 'vitest';
+import {
+  addressProblem, broadcastTargets, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
+  sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
+  type SshHost, type SshSessionState,
+} from '../src/shared/ssh';
+
+const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const host = (n: number, patch: Partial<SshHost> = {}): SshHost => ({ id: ID(n), label: `h${n}`, address: `h${n}.example`, port: 22, username: 'deploy', createdAt: 1, updatedAt: 1, ...patch });
+const session = (cellId: string, phase: SshSessionState['phase'], extra: Partial<SshSessionState> = {}): SshSessionState => ({ cellId, hostId: ID(1), phase, since: 0, ...extra });
+
+describe('host normalization', () => {
+  it('keeps valid hosts, fills defaults and clamps fields', () => {
+    const [h] = normalizeSshHosts([{ id: ID(1), label: '  web  ', address: 'WEB.Example.COM', port: 0, username: ' deploy ', tags: ['Prod', 'prod', ' a b ', 'x'.repeat(30)], group: ' eu ', color: '#ABCDEF', keyId: 'not-a-uuid', extra: 1 }]);
+    expect(h).toEqual({ id: ID(1), label: 'web', address: 'web.example.com', port: 22, username: 'deploy', group: 'eu', tags: ['prod', 'a-b'], color: '#ABCDEF', createdAt: 0, updatedAt: 0 });
+  });
+
+  it('drops junk, bad ids, bad addresses and duplicates', () => {
+    const hosts = normalizeSshHosts([null, 5, { id: 'x' }, { id: ID(2), address: 'a b', username: 'u' }, host(3), host(3, { label: 'dup' }), { ...host(4), username: '' }]);
+    expect(hosts.map((h) => h.id)).toEqual([ID(3)]);
+    expect(normalizeSshHosts('nope')).toEqual([]);
+  });
+
+  it('falls back to the address as label and keeps IPv6 literals without brackets', () => {
+    expect(normalizeSshHosts([{ ...host(1), label: '', address: '[FE80::1]' }])[0]).toMatchObject({ label: 'fe80::1', address: 'fe80::1' });
+  });
+
+  it('refuses a startup command with control characters when loading', () => {
+    expect(normalizeSshHosts([{ ...host(1), startupCommand: 'ls\u001b[2J' }])[0].startupCommand).toBeUndefined();
+    expect(normalizeSshHosts([{ ...host(1), startupCommand: 'cd /srv\n\tls' }])[0].startupCommand).toBe('cd /srv\n\tls');
+  });
+});
+
+describe('host drafts', () => {
+  const draft = { label: '', address: 'example.com', port: '', username: 'me', group: '', tags: [], startupCommand: '' };
+  it('accepts a minimal draft with port 22 and the address as label', () => {
+    expect(validateHostDraft(draft)).toEqual({ ok: true, value: { label: 'example.com', address: 'example.com', port: 22, username: 'me' } });
+  });
+  it('reports each bad field with a message key', () => {
+    const r = validateHostDraft({ ...draft, address: 'example.com:2222', port: '70000', username: 'a b', startupCommand: 'x\u0007' });
+    expect(r).toEqual({ ok: false, errors: { address: 'Port wpisz w polu Port', port: 'Nieprawidłowy port', username: 'Podaj nazwę użytkownika', startupCommand: 'Polecenie zawiera znaki sterujące' } });
+    expect(validateHostDraft({ ...draft, address: '' })).toMatchObject({ ok: false, errors: { address: 'Podaj adres hosta' } });
+    expect(validateHostDraft({ ...draft, address: 'bad host' })).toMatchObject({ ok: false, errors: { address: 'Nieprawidłowy adres hosta' } });
+    expect(validateHostDraft({ ...draft, startupCommand: 'x'.repeat(8 * 1024 + 1) })).toMatchObject({ ok: false, errors: { startupCommand: 'Polecenie startowe jest za długie' } });
+  });
+  it('accepts IPv4, IPv6 (bracketed or not) and ports with spaces around', () => {
+    for (const address of ['10.0.0.5', '::1', '[2001:db8::7]', 'fe80::1%eth0']) expect(validateHostDraft({ ...draft, address }).ok, address).toBe(true);
+    expect(validateHostDraft({ ...draft, port: ' 2222 ' })).toMatchObject({ ok: true, value: { port: 2222 } });
+    expect(addressProblem('-oProxyCommand=x')).toBe('invalid');
+  });
+});
+
+describe('endpoints and known host ids', () => {
+  it('uses the OpenSSH forms', () => {
+    expect(knownHostId('example.com', 22)).toBe('example.com');
+    expect(knownHostId('example.com', 2222)).toBe('[example.com]:2222');
+    expect(knownHostId('::1', 2222)).toBe('[::1]:2222');
+    expect(hostEndpoint('::1', 22)).toBe('::1');
+    expect(hostEndpoint('::1', 2200)).toBe('[::1]:2200');
+    expect(hostEndpoint('example.com', 2200)).toBe('example.com:2200');
+    expect(userAtEndpoint(host(1, { port: 2200 }))).toBe('deploy@h1.example:2200');
+  });
+});
+
+describe('search and groups', () => {
+  const hosts = [host(1, { label: 'web-1', group: 'prod', tags: ['eu'] }), host(2, { label: 'db', group: 'prod' }), host(3, { label: 'pi' }), host(4, { label: 'api', group: 'dev' })];
+  it('groups by name with "no group" last and hosts by label', () => {
+    expect(groupHosts(hosts).map((g) => [g.name, g.hosts.map((h) => h.label)])).toEqual([['dev', ['api']], ['prod', ['db', 'web-1']], [null, ['pi']]]);
+  });
+  it('filters over label, address, user, group and tags', () => {
+    expect(filterHosts(hosts, 'eu').map((h) => h.label)).toEqual(['web-1']);
+    expect(filterHosts(hosts, 'dev').map((h) => h.label)).toEqual(['api']);
+    expect(filterHosts(hosts, '')).toHaveLength(4);
+  });
+});
+
+describe('startup input', () => {
+  it('normalizes newlines, drops trailing blank lines and ends with Enter', () => {
+    expect(startupInput('cd /srv\r\nls -la\n\n  \n')).toBe('cd /srv\rls -la\r');
+    expect(startupInput('one')).toBe('one\r');
+    expect(startupInput('\tindented')).toBe('\tindented\r');
+  });
+  it('refuses ESC, other controls, empty text and oversize text', () => {
+    expect(startupInput('ls\u001b[31m')).toBeNull();
+    expect(startupInput('a\u0003')).toBeNull();
+    expect(startupInput('\n\n')).toBeNull();
+    expect(startupInput(undefined)).toBeNull();
+    expect(startupInput('x'.repeat(8 * 1024 + 1))).toBeNull();
+    expect(startupProblem('ok\n')).toBeNull();
+  });
+});
+
+describe('session texts', () => {
+  const ctx = { host: 'h1.example', endpoint: 'h1.example:2200' };
+  it('maps every error code to a message', () => {
+    expect(sshErrorText('dns', ctx)).toEqual({ key: 'Nie znaleziono hosta {host}', params: { host: 'h1.example' } });
+    expect(sshErrorText('refused', ctx)).toEqual({ key: 'Połączenie odrzucone ({endpoint})', params: { endpoint: 'h1.example:2200' } });
+    expect(sshErrorText('unknown', ctx)).toEqual({ key: 'Nieznany błąd SSH' });
+  });
+  it('labels phases and prompts for the header', () => {
+    expect(sshPhaseLabel(session('c', 'connecting'))).toEqual({ key: 'łączenie…' });
+    expect(sshPhaseLabel(session('c', 'connected'))).toBeNull();
+    expect(sshPhaseLabel(session('c', 'authenticating'), { id: 'p', kind: 'password', user: 'u', endpoint: 'e', canSave: true, retry: false })).toEqual({ key: 'czeka na hasło' });
+    expect(sshPhaseLabel(session('c', 'error', { error: 'timeout' }), undefined, ctx)).toEqual({ key: 'Przekroczono czas połączenia' });
+  });
+  it('writes one notice per phase change, including a dropped connection', () => {
+    expect(sshNotice(undefined, session('c', 'connecting'), ctx)).toEqual({ key: '[SSH · łączenie z {endpoint}]', params: { endpoint: 'h1.example:2200' } });
+    expect(sshNotice('connecting', session('c', 'verifying'), ctx)).toBeNull();
+    expect(sshNotice('authenticating', session('c', 'connected'), ctx)).toEqual({ key: '[SSH · połączono]' });
+    expect(sshNotice('connected', session('c', 'connected'), ctx)).toBeNull();
+    expect(sshNotice('connected', session('c', 'error', { error: 'reset' }), ctx)).toEqual({ key: '[SSH · błąd: {reason}]', reason: { key: 'Połączenie zostało przerwane' } });
+    expect(sshNotice('connected', session('c', 'closed', { exitCode: 0 }), ctx)).toEqual({ key: '[SSH · rozłączono]' });
+  });
+  it('decides what a mounted SSH cell does', () => {
+    expect(sshCellStart({ alive: true, connectOnMount: true })).toBe('attach');
+    expect(sshCellStart({ alive: false, connectOnMount: true })).toBe('connect');
+    expect(sshCellStart({ alive: false, connectOnMount: false })).toBe('idle');
+  });
+});
+
+describe('broadcast targets', () => {
+  it('checks connected cells and disables the rest with a reason', () => {
+    const cells = ['a', 'b', 'c', 'd'].map((cellId) => ({ cellId, label: cellId, endpoint: 'e' }));
+    const rows = broadcastTargets(cells, { a: session('a', 'connected'), b: session('b', 'connecting'), c: session('c', 'authenticating') },
+      { c: { id: 'p', kind: 'password', user: 'u', endpoint: 'e', canSave: false, retry: false } });
+    expect(rows.map((r) => [r.cellId, r.enabled, r.checked, r.reason])).toEqual([
+      ['a', true, true, undefined], ['b', false, false, 'łączenie…'], ['c', false, false, 'czeka na hasło'], ['d', false, false, 'rozłączono'],
+    ]);
+  });
+});
+
+describe('server text', () => {
+  it('strips escape sequences and controls, keeps newlines and tabs, caps the length', () => {
+    expect(sanitizeServerText('Welcome\u001b[31m red\u001b[0m\r\n\tok\u0007\u001b]0;title\u0007!')).toBe('Welcome red\n\tok!');
+    expect(sanitizeServerText('x'.repeat(5000))).toHaveLength(2048);
+    expect(sanitizeServerText(42)).toBe('');
+  });
+  it('normalizes tags', () => {
+    expect(normalizeTags(['A', 'a', '', 'b c', 7, ...'cdefghijk'.split('')])).toEqual(['a', 'b-c', 'c', 'd', 'e', 'f', 'g', 'h']);
+  });
+});

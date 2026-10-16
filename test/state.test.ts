@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { layoutForCount } from '../src/shared/layout';
 import {
-  addCell, addProject, addTab, CELL_COLORS, nextCellColor, closeTab, defaultState, findCell, moveProject, moveSnippet, normalizeState, removeCell, removeProject,
-  restoreTab, updateCell, upsertSnippet,
+  addCell, addProject, addSshHost, addTab, CELL_COLORS, nextCellColor, clearSshKeyRefs, closeTab, defaultState, duplicateSshHost, ensureShellProfile, findCell,
+  moveProject, moveSnippet, normalizeState, removeCell, removeProject, removeSshHost, restoreTab, updateCell, updateSshHost, upsertPreset, upsertSnippet,
 } from '../src/shared/state';
+import { mergeStateEdit } from '../src/shared/stateEdits';
 
 function withProject() {
   let s = defaultState();
@@ -216,5 +217,66 @@ describe('state', () => {
     const cell = s.projects[0].tabs[0].cells[1];
     expect(findCell(s, cell.id)?.cell.profileId).toBe('b');
     expect(findCell(s, 'nope')).toBeNull();
+  });
+});
+
+describe('ssh hosts in state', () => {
+  const H = (n: number) => ({ id: `00000000-0000-4000-8000-00000000000${n}`, label: `h${n}`, address: `h${n}.example`, port: 22, username: 'u', createdAt: 1, updatedAt: 1 });
+  it('starts empty and survives a round trip with cells and presets', () => {
+    let { s, p } = withProject();
+    expect(s.sshHosts).toEqual([]);
+    s = addSshHost(s, H(1));
+    s = addTab(s, p.id, { layout: layoutForCount(2), cells: [{ profileId: 'shell', ssh: { hostId: H(1).id } }, { profileId: 'shell' }] });
+    s = upsertPreset(s, { id: 'pr', name: 'ssh', layout: layoutForCount(1), cells: [{ profileId: 'shell', worktree: false, sshHostId: H(1).id }] });
+    const back = normalizeState(JSON.parse(JSON.stringify(s)))!;
+    expect(back.sshHosts).toEqual([H(1)]);
+    expect(back.projects[0].tabs[0].cells[0].ssh).toEqual({ hostId: H(1).id });
+    expect(back.projects[0].tabs[0].cells[1].ssh).toBeUndefined();
+    expect(back.presets[0].cells[0].sshHostId).toBe(H(1).id);
+  });
+  it('keeps the ref of a cell whose host was deleted and cleans malformed refs', () => {
+    const { s: s0, p } = withProject();
+    let s = addTab(s0, p.id, { layout: layoutForCount(1), cells: [{ profileId: 'shell', ssh: { hostId: 'gone' } }] });
+    s = removeSshHost(s, 'gone');
+    const raw = JSON.parse(JSON.stringify(s));
+    raw.projects[0].tabs[0].cells.push({ id: 'x', profileId: 'shell', ssh: { hostId: 5, extra: 1 } });
+    raw.presets = [{ id: 'p', name: 'n', layout: layoutForCount(1), cells: [{ profileId: 'shell', worktree: false, sshHostId: 9 }] }];
+    const back = normalizeState(raw)!;
+    expect(back.projects[0].tabs[0].cells[0].ssh).toEqual({ hostId: 'gone' });
+    expect(back.projects[0].tabs[0].cells[1].ssh).toBeUndefined();
+    expect(back.presets[0].cells[0].sshHostId).toBeUndefined();
+  });
+  it('updates, duplicates and removes hosts, and clears key references', () => {
+    let s = addSshHost(addSshHost(defaultState(), { ...H(1), keyId: 'k' }), { ...H(2), keyId: 'k' });
+    s = updateSshHost(s, H(1).id, { label: 'web', keyId: undefined }, 50);
+    expect(s.sshHosts[0]).toMatchObject({ label: 'web', updatedAt: 50 });
+    expect('keyId' in s.sshHosts[0]).toBe(false);
+    s = duplicateSshHost(s, H(2).id, '00000000-0000-4000-8000-000000000009', 60);
+    expect(s.sshHosts.map((h) => h.label)).toEqual(['web', 'h2', 'h2 (2)']);
+    s = clearSshKeyRefs(s, 'k');
+    expect(s.sshHosts.some((h) => h.keyId)).toBe(false);
+    expect(removeSshHost(s, H(1).id).sshHosts).toHaveLength(2);
+  });
+  it('merges concurrent edits of two different hosts', () => {
+    const base = addSshHost(addSshHost(defaultState(), H(1)), H(2));
+    const current = updateSshHost(base, H(2).id, { label: 'two' }, 2);
+    const merged = mergeStateEdit(current, { base, next: updateSshHost(base, H(1).id, { label: 'one' }, 3) });
+    expect(merged.sshHosts.map((h) => h.label)).toEqual(['one', 'two']);
+  });
+  it('finds a shell profile for SSH cells and restores the default one when none is left', () => {
+    expect(ensureShellProfile(defaultState()).profileId).toBe('shell');
+    const s = { ...defaultState(), profiles: defaultState().profiles.filter((p) => p.cli !== 'shell') };
+    const r = ensureShellProfile(s);
+    expect(r.profileId).toBe('shell');
+    expect(r.s.profiles.find((p) => p.id === 'shell')?.cli).toBe('shell');
+  });
+  it('uses a fixed fallback id when a non-shell profile already took the shell id', () => {
+    const base = defaultState();
+    const s = { ...base, profiles: base.profiles.map((p) => (p.cli === 'shell' ? { ...p, id: 'x', cli: 'claude' as const } : p)).filter((p) => p.cli !== 'shell').concat({ ...base.profiles[0], id: 'shell', cli: 'claude' }) };
+    const a = ensureShellProfile(s);
+    const b = ensureShellProfile(s);
+    expect(a.profileId).toBe('ssh-shell');
+    expect(b.profileId).toBe(a.profileId);
+    expect(a.s.profiles.find((p) => p.id === 'ssh-shell')?.cli).toBe('shell');
   });
 });

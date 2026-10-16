@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PROFILES } from '../src/shared/profiles';
 import {
-  canLaunchSource, describeLaunch, groupTerminalSources, listTerminalSources, localShellProvider, TERMINAL_SOURCE_PROVIDERS,
+  canLaunchSource, describeLaunch, groupTerminalSources, listTerminalSources, localShellProvider, sshHostProvider, TERMINAL_SOURCE_PROVIDERS,
   type TerminalSource, type TerminalSourceContext, type TerminalSourceProvider,
 } from '../src/shared/terminalSources';
 import type { Profile } from '../src/shared/types';
@@ -40,5 +40,15 @@ describe('terminal sources', () => {
     expect(canLaunchSource(host)).toBe(false);
     expect(describeLaunch(host.launch)).toBe('ssh -p 22 me@build.example');
     expect(describeLaunch({ type: 'profile', profileId: 'shell' })).toBe('profile shell');
+  });
+
+  it('lists saved SSH hosts as connections that can be launched', () => {
+    const sshHosts = [{ id: '00000000-0000-4000-8000-000000000001', label: 'web', address: 'web.example', port: 2222, username: 'deploy', createdAt: 0, updatedAt: 0 }];
+    const sources = listTerminalSources(ctx({ sshHosts }));
+    const { connections } = groupTerminalSources(sources);
+    expect(connections).toEqual([{ id: `ssh:${sshHosts[0].id}`, label: 'web', kind: 'ssh', detail: 'deploy@web.example:2222', launch: { type: 'ssh', hostId: sshHosts[0].id } }]);
+    expect(canLaunchSource(connections[0])).toBe(true);
+    expect(describeLaunch(connections[0].launch)).toBe(`ssh ${sshHosts[0].id}`);
+    expect(TERMINAL_SOURCE_PROVIDERS).toContain(sshHostProvider);
   });
 });

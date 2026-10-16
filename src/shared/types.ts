@@ -5,6 +5,7 @@ import type { UpdateMode } from './updateMode';
 import type { AgentRole, AutomationState } from './automation';
 import type { BackgroundLoadMode } from './backgroundLoad';
 import type { Overrides as ShortcutOverrides } from './shortcuts';
+import type { SshCellRef, SshHost } from './ssh';
 
 export type CliKind = 'claude' | 'codex' | 'shell';
 /** A forced path format of a shell cell: Claude (@path), Codex (plain path) or the quoted shell form. */
@@ -49,6 +50,8 @@ export interface Cell {
   muted?: boolean;
   /** Format of paths inserted into a shell cell (drop from the Files tree, "Add to conversation"); absent = detect the agent running in it. */
   pathMode?: PathMode;
+  /** Present = an SSH cell: a session to this saved host instead of a local shell (the profile is a shell profile). */
+  ssh?: SshCellRef;
 }
 
 export interface Tab {
@@ -84,6 +87,8 @@ export interface PresetCell {
   worktree: boolean;
   name?: string;
   prompt?: string;
+  /** The cell connects to this saved host when the preset is opened (a deleted host gives a local shell). */
+  sshHostId?: string;
 }
 
 export interface Preset {
@@ -136,6 +141,8 @@ export interface AppState {
   profiles: Profile[];
   presets: Preset[];
   snippets: Snippet[];
+  /** Saved SSH hosts (no secrets: those live in <data>/ssh/vault.json, owned by main). */
+  sshHosts: SshHost[];
   settings: Settings;
   sidebarCollapsed: boolean;
   snippetsOpen: boolean;

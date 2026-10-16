@@ -11,8 +11,9 @@ import { defaultAlerts, LEGACY_ALERT_KEYS, readAlerts } from './alerts';
 import { DEFAULT_UPDATE_MODE, normalizeUpdateMode } from './updateMode';
 import { DEFAULT_BACKGROUND_LOAD, normalizeBackgroundLoad } from './backgroundLoad';
 import { normalizeShortcutOverrides } from './shortcuts';
+import { normalizeSshHosts, type SshCellRef, type SshHost } from './ssh';
 import type {
-  AppState, Cell, Preset, Profile, Project, Settings, Snippet, Tab, Worktree,
+  AppState, Cell, Preset, PresetCell, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
 
 export const ARCHIVE_LIMIT = 50;
@@ -29,6 +30,7 @@ export function defaultState(platform: AppPlatform = 'win32'): AppState {
     profiles: DEFAULT_PROFILES.map((p) => ({ ...p, ...(p.cli === 'shell' && platform !== 'win32' ? { name: 'Terminal' } : {}) })),
     presets: [],
     snippets: [],
+    sshHosts: [],
     settings: { language: null, fontSize: 13, shell: defaultShell(platform), lastProfileId: 'claude', updateMode: DEFAULT_UPDATE_MODE, showAiUsage: true, usageIntervalMinutes: 5, usageCollapsed: false, alerts: defaultAlerts(), backgroundLoad: DEFAULT_BACKGROUND_LOAD, shortcuts: {} },
     sidebarCollapsed: false,
     snippetsOpen: true,
@@ -45,7 +47,7 @@ const mapProject = (s: AppState, projectId: string, fn: (p: Project) => Project)
 const mapTab = (s: AppState, projectId: string, tabId: string, fn: (t: Tab) => Tab): AppState =>
   mapProject(s, projectId, (p) => ({ ...p, tabs: p.tabs.map((t) => (t.id === tabId ? fn(t) : t)) }));
 
-type CellInput = { color?: string; model?: string; profileId: string; role?: Cell['role']; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session'] };
+type CellInput = { color?: string; model?: string; profileId: string; role?: Cell['role']; name?: string; startupPrompt?: string; worktree?: Worktree; session?: Cell['session']; ssh?: SshCellRef };
 
 /** Accent colors handed out to new cells, in order; also used for agents created by a coordinator. */
 export const CELL_COLORS = ['#60a5fa', '#a78bfa', '#34d399', '#fbbf24', '#fb7185', '#22d3ee', '#c084fc', '#a3e635',
@@ -67,6 +69,7 @@ const newCell = (c: CellInput, color?: string): Cell => ({
   ...(c.startupPrompt?.trim() ? { startupPrompt: c.startupPrompt } : {}),
   ...(c.worktree ? { worktree: c.worktree } : {}),
   ...(c.session ? { session: c.session } : {}),
+  ...(c.ssh ? { ssh: { hostId: c.ssh.hostId } } : {}),
 });
 
 // ── projects ────────────────────────────────────────────────────────────────
@@ -281,6 +284,54 @@ export function moveSnippet(s: AppState, id: string, targetId: string | null, ed
 export const removeSnippet = (s: AppState, id: string): AppState => ({ ...s, snippets: s.snippets.filter((x) => x.id !== id) });
 export const updateSettings = (s: AppState, patch: Partial<Settings>): AppState => ({ ...s, settings: { ...s.settings, ...patch } });
 
+// ── ssh hosts ───────────────────────────────────────────────────────────────
+
+export const addSshHost = (s: AppState, host: SshHost): AppState => ({ ...s, sshHosts: upsert(s.sshHosts, host) });
+
+/** `undefined` in the patch removes the field (for example `keyId`). */
+export function updateSshHost(s: AppState, id: string, patch: Partial<Omit<SshHost, 'id' | 'createdAt' | 'updatedAt'>>, now = Date.now()): AppState {
+  if (!s.sshHosts.some((h) => h.id === id)) return s;
+  return { ...s, sshHosts: s.sshHosts.map((h) => {
+    if (h.id !== id) return h;
+    const next: SshHost = { ...h, ...patch, updatedAt: now };
+    for (const key of Object.keys(patch) as Array<keyof typeof patch>) if (patch[key] === undefined) delete next[key];
+    return next;
+  }) };
+}
+
+export const removeSshHost = (s: AppState, id: string): AppState => ({ ...s, sshHosts: s.sshHosts.filter((h) => h.id !== id) });
+
+export function duplicateSshHost(s: AppState, id: string, newId = uid(), now = Date.now()): AppState {
+  const source = s.sshHosts.find((h) => h.id === id);
+  if (!source) return s;
+  const labels = new Set(s.sshHosts.map((h) => h.label));
+  let n = 2;
+  while (labels.has(`${source.label} (${n})`)) n++;
+  const copy: SshHost = { ...source, id: newId, label: `${source.label} (${n})`.slice(0, 80), createdAt: now, updatedAt: now };
+  const at = s.sshHosts.findIndex((h) => h.id === id) + 1;
+  return { ...s, sshHosts: [...s.sshHosts.slice(0, at), copy, ...s.sshHosts.slice(at)] };
+}
+
+/** A deleted key: hosts that used it fall back to password or keyboard-interactive sign-in. */
+export function clearSshKeyRefs(s: AppState, keyId: string): AppState {
+  if (!s.sshHosts.some((h) => h.keyId === keyId)) return s;
+  return { ...s, sshHosts: s.sshHosts.map((h) => {
+    if (h.keyId !== keyId) return h;
+    const { keyId: _keyId, ...rest } = h;
+    return rest;
+  }) };
+}
+
+/** The profile SSH cells use: the first shell profile; the default one is restored when the user deleted every shell profile (R5). */
+export function ensureShellProfile(s: AppState): { s: AppState; profileId: string } {
+  const existing = s.profiles.find((p) => p.cli === 'shell');
+  if (existing) return { s, profileId: existing.id };
+  const shell = DEFAULT_PROFILES.find((p) => p.cli === 'shell')!;
+  // A fixed fallback id (not uid()): callers may run this on every render and must get the same id each time.
+  const id = s.profiles.some((p) => p.id === shell.id) ? 'ssh-shell' : shell.id;
+  return { s: { ...s, profiles: [...s.profiles, { ...shell, id }] }, profileId: id };
+}
+
 export const getProfile = (s: AppState, id: string): Profile =>
   s.profiles.find((p) => p.id === id) ?? s.profiles.find((p) => p.cli === 'shell') ?? s.profiles[0];
 
@@ -295,11 +346,16 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
   const d = defaultState(platform);
   const remap = (id: string) => RETIRED_PROFILES[id] ?? id;
   const remapCells = <T extends { profileId: string }>(cells: T[]) => cells.map((c) => ({ ...c, profileId: remap(c.profileId) }));
-  // A cell's path format override survives only as one of the known values.
+  // A cell's path format override survives only as one of the known values; an SSH reference only as { hostId: string }.
   const cleanCells = (cells: Cell[]) => remapCells(cells).map((c) => {
-    const { pathMode: raw, ...rest } = c;
+    const { pathMode: raw, ssh, ...rest } = c;
     const pathMode = normalizePathMode(raw);
-    return pathMode ? { ...rest, pathMode } : rest;
+    const hostId = ssh && typeof ssh === 'object' && typeof (ssh as { hostId?: unknown }).hostId === 'string' ? (ssh as { hostId: string }).hostId : undefined;
+    return { ...rest, ...(pathMode ? { pathMode } : {}), ...(hostId ? { ssh: { hostId } } : {}) };
+  });
+  const cleanPresetCells = (cells: PresetCell[]) => remapCells(cells).map((c) => {
+    const { sshHostId, ...rest } = c;
+    return typeof sshHostId === 'string' && sshHostId.length <= 64 ? { ...rest, sshHostId } : rest;
   });
   const profiles = (Array.isArray(r.profiles) && r.profiles.length ? r.profiles : d.profiles).filter((p) => !(p.id in RETIRED_PROFILES));
   const normalized = {
@@ -315,8 +371,9 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
     sidebarWidth: normalizePanelWidth(r.sidebarWidth, 'sidebar'),
     snippetsWidth: normalizePanelWidth(r.snippetsWidth, 'snippets'),
     profiles: profiles.length ? profiles : d.profiles,
-    presets: (Array.isArray(r.presets) ? r.presets : []).map((p) => ({ ...p, cells: remapCells(p.cells ?? []) })),
+    presets: (Array.isArray(r.presets) ? r.presets : []).map((p) => ({ ...p, cells: cleanPresetCells(p.cells ?? []) })),
     snippets: Array.isArray(r.snippets) ? r.snippets : [],
+    sshHosts: normalizeSshHosts(r.sshHosts),
     settings: {
       ...d.settings, ...(r.settings ?? {}),
       // Existing Polish installations keep their UI and do not get first-run onboarding again.
