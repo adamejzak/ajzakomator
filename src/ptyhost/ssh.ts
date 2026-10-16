@@ -8,7 +8,7 @@ import { sanitizeServerText, type SshErrorCode, type SshPhase } from '../shared/
 import type { PtySink } from './manager';
 import { OutputChannel } from './output';
 import type { TerminalBackend } from './router';
-import { mapSshError, sshDebugFilter } from './sshErrors';
+import { isRecoverableAuthError, mapSshError, sshDebugFilter } from './sshErrors';
 
 export type SshAuthPromptInfo = { kind: 'password' | 'keyboard'; name?: string; instructions?: string; fields: Array<{ text: string; echo: boolean }>; retry: boolean };
 
@@ -96,7 +96,11 @@ export class SshManager implements TerminalBackend {
     this.arm(s, this.timers.connectMs);
     client.on('banner', (message: string) => { if (this.live(s)) this.events.status(s.id, s.phase, { banner: sanitizeServerText(message) }); });
     client.on('ready', () => this.onReady(s));
-    client.on('error', (err) => this.fail(s, mapSshError(err, s.override)));
+    client.on('error', (err) => {
+      // A key that cannot sign is skipped by ssh2 itself (saved password, prompt or keyboard-interactive come next).
+      if (isRecoverableAuthError(err)) return;
+      this.fail(s, mapSshError(err, s.override));
+    });
     client.on('close', () => this.onClose(s));
     const keep = sshDebugFilter();
     const config: ConnectConfig = {

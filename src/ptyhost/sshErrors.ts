@@ -17,6 +17,15 @@ export function mapSshError(err: unknown, override?: SshErrorCode): SshErrorCode
   return 'unknown';
 }
 
+/**
+ * ssh2 reports a key that could not sign (agent refused, unsupported hash) as a 'client-authentication' error and then
+ * tries the next method by itself; only the final "All configured authentication methods failed" ends the session.
+ */
+export function isRecoverableAuthError(err: unknown): boolean {
+  const e = (typeof err === 'object' && err !== null ? err : {}) as { level?: unknown; message?: unknown };
+  return e.level === 'client-authentication' && typeof e.message === 'string' && /^Error (?:signing data|while signing) with key/.test(e.message);
+}
+
 /** ssh2 debug output is only wired in unpackaged runs; everything from user authentication on is dropped (it may name methods and users). */
 export function sshDebugFilter(): (line: string) => boolean {
   let authStarted = false;

@@ -1,6 +1,7 @@
 // SshManager against a real in-process ssh2 server on 127.0.0.1 (no other network). Fake sink and events stand in for main and the renderer.
 import { createServer } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import ssh2 from 'ssh2';
 import { SshManager, type SshEvents, type SshTimers } from '../src/ptyhost/ssh';
 import type { SshConnectRequest } from '../src/shared/ipc';
 import type { SshErrorCode, SshPhase } from '../src/shared/ssh';
@@ -97,6 +98,21 @@ describe('SshManager', () => {
     await h.trust();
     await waitFor(() => h.phases().includes('connected'));
     expect(h.prompts).toEqual([]);
+  });
+
+  it('falls through to the saved password when the key cannot sign (W4)', async () => {
+    const pair = readableKeyPair('ed25519');
+    const s = await server({ publicKey: pair.public, password: 'pw' });
+    const h = harness();
+    const key = ssh2.utils.parseKey(pair.private);
+    if (key instanceof Error || Array.isArray(key)) throw new Error('key');
+    // ssh2 accepts an already parsed key; this one fails to sign like a refusing agent or an unsupported hash.
+    (key as unknown as { sign: () => Error }).sign = () => new Error('agent refused');
+    h.m.connect(req(s.port, { privateKey: key as unknown as string, password: 'pw', allowPasswordPrompt: false }));
+    await h.trust();
+    await waitFor(() => h.phases().includes('connected') || h.exits.has('c1'));
+    expect(h.phases()).toEqual(['connecting', 'verifying', 'authenticating', 'connected']);
+    expect(h.statuses.some((x) => x.phase === 'error')).toBe(false);
   });
 
   it('forwards keyboard-interactive prompts and signs in with the answer', async () => {
