@@ -6,6 +6,7 @@
 import { compareIdentity, custodyOf, fillMissingIdentity, identityFields, type AccountIdentity, type LiveIdentity, type ManagedAccount } from '../../shared/accounts';
 import type { ResyncResult } from './resync';
 import { AccountsReadOnlyError, type AccountsStore } from './store';
+import { claimSwap, releaseSwap } from './swap';
 
 export interface ReconcileDeps {
   store: AccountsStore;
@@ -45,6 +46,8 @@ export async function reconcileLive(deps: ReconcileDeps, opts: { ownChange?: boo
     }
     for (const record of visible()) {
       if (record.id === active?.id || custodyOf(record) !== 'live') continue;
+      // A second record of the live account did not leave the login: it is set aside below, without a false notice.
+      if (current && compareIdentity(record, current) === 'same') continue;
       // It left the live login. Whoever switched it holds the newest tokens; ours may be consumed, so they are never renewed.
       store.setCustody(record.id, opts.ownChange ? 'app' : 'foreign');
       if (!opts.ownChange) store.addNotice({ kind: current ? 'switchedOut' : 'loggedOut', at, recordId: record.id, ...(record.email ? { email: record.email } : {}) });
@@ -71,4 +74,14 @@ export async function reconcileLive(deps: ReconcileDeps, opts: { ownChange?: boo
     if (error instanceof AccountsReadOnlyError) return { ...unchanged(), changed };
     throw error;
   }
+}
+
+/**
+ * Runs `reconcile` holding the swap slot, so it never interleaves with an activation, a recovery or a re-login; skipped
+ * (resolves false) while a swap runs or is unresolved or a login is in progress.
+ */
+export async function reconcileWhenIdle(guard: { swapUnresolved(): boolean; loginActive(): boolean }, reconcile: () => Promise<unknown>): Promise<boolean> {
+  if (guard.swapUnresolved() || guard.loginActive() || !claimSwap()) return false;
+  try { await reconcile(); } finally { releaseSwap(); }
+  return true;
 }

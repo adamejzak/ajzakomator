@@ -36,9 +36,9 @@ import { createRefreshLimits } from './accounts/refreshLimits';
 import { createTokenFetch } from './accounts/tokenTransport';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
-import { gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
-import { claimSwap, clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, releaseSwap, swapMainAccount, swapPaths, type SwapDeps } from './accounts/swap';
-import { reconcileLive, type ReconcileDeps } from './accounts/reconcile';
+import { gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
+import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapMainAccount, swapPaths, type SwapDeps } from './accounts/swap';
+import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
 import { readManagedIdentity } from './accounts/identity';
 import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
@@ -146,10 +146,7 @@ const usage = new UsageService({
   intervalMs: () => state.settings.usageIntervalMinutes * 60_000,
   // Every poll first looks at who is signed in to Claude Code (cswap switch, /login); never while a swap or a login runs.
   // The swap slot is held meanwhile, so a "Set as main" or a recovery can never interleave with the role changes.
-  beforeRun: async () => {
-    if (isSwapUnresolved() || login.isActive() || !claimSwap()) return;
-    try { await reconcileLive(reconcileDeps()); } finally { releaseSwap(); }
-  },
+  beforeRun: async () => { await reconcileWhenIdle({ swapUnresolved: isSwapUnresolved, loginActive: () => login.isActive() }, () => reconcileLive(reconcileDeps())); },
   watchLive: true,
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
@@ -232,6 +229,8 @@ const migrationDeps = (): MigrationDeps => ({
   readExpiry: async (dir) => (await readClaudeCredentials(profileSource(usageDeps.credentials, dir)))?.expiresAt,
   now: () => Date.now(),
 });
+/** Live-file signatures of the previous reconcile per record: a backup is only taken of files that read the same twice. */
+const resyncSeen = new Map<string, string>();
 const reconcileDeps = (): ReconcileDeps => {
   const paths = swapPaths({ home: homedir(), env: process.env });
   return {
@@ -239,7 +238,7 @@ const reconcileDeps = (): ReconcileDeps => {
     readLiveIdentity,
     // macOS keeps the live login in the Keychain: there is no file to back up.
     ...(paths && process.platform !== 'darwin'
-      ? { resync: (recordId: string, identity: AccountIdentity) => resyncActiveBackup({ paths, store: accounts, delay: (ms) => new Promise((r) => setTimeout(r, ms)) }, recordId, identity) }
+      ? { resync: (recordId: string, identity: AccountIdentity) => resyncActiveBackup({ paths, store: accounts, seen: resyncSeen, delay: (ms) => new Promise((r) => setTimeout(r, ms)) }, recordId, identity) }
       : {}),
     now: () => Date.now(),
   };
@@ -249,13 +248,9 @@ async function pushSwapPending(): Promise<void> {
   send('accounts:swapPending', await hasPendingSwap(swapDeps()).catch(() => true));
 }
 // Background refreshes never write into a managed profile while a swap runs or is unresolved.
-// The live account's profile copy (resyncActiveBackup) shares its token family with Claude Code's login: never renewed here.
-const holdsLiveCopy = (dir: string) => accounts.list().some((a) => custodyOf(a) === 'live' && accounts.dirOf(a.id) === dir);
-usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(
-  guardDeps,
-  (dir) => (holdsLiveCopy(dir) ? Promise.resolve<RefreshOutcome>({ kind: 'transient', detail: { reason: 'blocked' } }) : renewProfile(dir)),
-  { kind: 'transient', detail: { reason: 'blocked' } },
-);
+// Only profiles with their own token family are renewed; a copy of the live family (resyncActiveBackup) never is.
+const refreshBlocked: RefreshOutcome = { kind: 'transient', detail: { reason: 'blocked' } };
+usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, gateFamilyRefresh(accounts, (dir) => renewProfile(dir), refreshBlocked), refreshBlocked);
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();

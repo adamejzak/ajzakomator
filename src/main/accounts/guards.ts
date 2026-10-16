@@ -1,5 +1,5 @@
 // src/main/accounts/guards.ts
-import { isAccountId, type SwapError } from '../../shared/accounts';
+import { custodyOf, familyOf, isAccountId, type ManagedAccount, type SwapError } from '../../shared/accounts';
 
 export interface GuardDeps {
   swapRunning(): boolean;
@@ -46,4 +46,17 @@ export async function loginBlock(deps: GuardDeps, request: unknown): Promise<'bu
 export function gateProfileRefresh<R>(deps: GuardDeps, refresh: (dir: string) => Promise<R>, blocked: R): (dir: string) => Promise<R> {
   // Checked synchronously: nothing may happen between the check and the start of the refresh.
   return (dir) => (deps.swapRunning() || deps.swapPendingNow?.() ? Promise.resolve(blocked) : refresh(dir));
+}
+
+/**
+ * Only a profile the app owns outright is renewed: custody `app` and a token family of its own. A record that is or was the
+ * live login (`live`, `foreign`), a set-aside copy (`quarantined`) or one whose tokens are a copy of the live family (`family:
+ * live`, also the default of a 0.9.0 record) shares its refresh token with Claude Code or cswap; renewing it would rotate that
+ * token out from under them. A dir no record names is never renewed either.
+ */
+export function gateFamilyRefresh<R>(store: { list(): ManagedAccount[]; dirOf(id: string): string }, refresh: (dir: string) => Promise<R>, blocked: R): (dir: string) => Promise<R> {
+  return (dir) => {
+    const record = store.list().find((a) => store.dirOf(a.id) === dir);
+    return record && custodyOf(record) === 'app' && familyOf(record) !== 'live' ? refresh(dir) : Promise.resolve(blocked);
+  };
 }

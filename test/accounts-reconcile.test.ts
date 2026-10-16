@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compareIdentity, custodyOf, type AccountIdentity } from '../src/shared/accounts';
-import { reconcileLive, type ReconcileDeps } from '../src/main/accounts/reconcile';
+import { gateFamilyRefresh } from '../src/main/accounts/guards';
+import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
 import { resyncActiveBackup } from '../src/main/accounts/resync';
 import { AccountsStore } from '../src/main/accounts/store';
+import { claimSwap, isSwapRunning, releaseSwap } from '../src/main/accounts/swap';
 
 const G = { email: 'g@x.com', accountUuid: 'ug' };
 const A = { email: 'a@x.com', accountUuid: 'ua' };
@@ -122,10 +124,78 @@ describe('reconcileLive', () => {
     expect(resync).not.toHaveBeenCalled();
   });
 
+  it('sets a second live record of the live account aside without a switchedOut notice', async () => {
+    const p = add(A, 'live');
+    const copy = add(A, 'live');
+    store.setLive({ ...A, recordId: p });
+    live = A;
+    await reconcileLive(deps());
+    expect(store.get(copy)).toMatchObject({ custody: 'quarantined', duplicateOf: p });
+    expect(store.notices().map((n) => n.kind)).toEqual(['quarantined']);
+  });
+
+  it('stops without a throw and leaves the file as it was when accounts.json turns read-only during the run', async () => {
+    const a = add(A, 'live');
+    store.setLive({ ...A, recordId: a });
+    const file = join(root, 'accounts', 'accounts.json');
+    let before = '';
+    const result = await reconcileLive({ ...deps(), readLiveIdentity: async () => {
+      writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), version: 99 }));
+      before = readFileSync(file, 'utf8');
+      return G;
+    } });
+    expect(result).toEqual({ activeId: a, changed: false });
+    expect(readFileSync(file, 'utf8')).toBe(before);
+  });
+
   it('changes nothing when the live identity cannot be read', async () => {
     add(A, 'live');
     const result = await reconcileLive({ ...deps(), readLiveIdentity: async () => { throw new Error('io'); } });
     expect(result.changed).toBe(false);
+  });
+});
+
+describe('reconcileWhenIdle', () => {
+  const idle = { swapUnresolved: () => false, loginActive: () => false };
+  it('holds the swap slot while it runs and releases it, also after a throw', async () => {
+    let during = false;
+    expect(await reconcileWhenIdle(idle, async () => { during = isSwapRunning(); })).toBe(true);
+    expect(during).toBe(true);
+    expect(isSwapRunning()).toBe(false);
+    await expect(reconcileWhenIdle(idle, async () => { throw new Error('x'); })).rejects.toThrow('x');
+    expect(isSwapRunning()).toBe(false);
+  });
+
+  it('skips while a swap holds the slot, a swap is unresolved or a login runs', async () => {
+    const run = vi.fn(async () => undefined);
+    expect(claimSwap()).toBe(true);
+    try { expect(await reconcileWhenIdle(idle, run)).toBe(false); } finally { releaseSwap(); }
+    expect(await reconcileWhenIdle({ ...idle, swapUnresolved: () => true }, run)).toBe(false);
+    expect(await reconcileWhenIdle({ ...idle, loginActive: () => true }, run)).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    expect(isSwapRunning()).toBe(false);
+  });
+});
+
+describe('gateFamilyRefresh', () => {
+  it('renews only app-owned profiles with their own token family', async () => {
+    const own = add(A);
+    store.setFamily(own, 'own');
+    const legacy = add({ email: 'b@x.com' });
+    const copy = add({ email: 'c@x.com' }, 'live');
+    store.setFamily(copy, 'own');
+    const foreign = add({ email: 'd@x.com' });
+    store.setFamily(foreign, 'live');
+    store.setCustody(foreign, 'foreign');
+    const parked = add({ email: 'e@x.com' });
+    store.setFamily(parked, 'own');
+    store.setCustody(parked, 'quarantined', own);
+    const refresh = vi.fn(async () => 'renewed');
+    const gated = gateFamilyRefresh(store, refresh, 'blocked');
+    expect(await gated(store.dirOf(own))).toBe('renewed');
+    for (const id of [legacy, copy, foreign, parked]) expect(await gated(store.dirOf(id))).toBe('blocked');
+    expect(await gated(join(root, 'elsewhere'))).toBe('blocked');
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -163,6 +233,32 @@ describe('resyncActiveBackup', () => {
     mkdirSync(join(home, '.claude', '.oauth_refresh.lock'));
     expect(await resyncActiveBackup(rdeps(), p, A)).toBe('locked');
     expect(existsSync(join(store.dirOf(p), '.credentials.json'))).toBe(false);
+  });
+
+  it('with a memory of the last look, copies new tokens only once the live files read the same twice', async () => {
+    const p = add(A, 'live');
+    const seen = new Map<string, string>();
+    putLive({ emailAddress: 'a@x.com', accountUuid: 'ua' }, '4');
+    expect(await resyncActiveBackup({ ...rdeps(), seen }, p, A)).toBe('settling');
+    expect(existsSync(join(store.dirOf(p), '.credentials.json'))).toBe(false);
+    expect(await resyncActiveBackup({ ...rdeps(), seen }, p, A)).toBe('copied');
+    expect(JSON.parse(readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8')).claudeAiOauth.refreshToken).toBe('fake-ref-4');
+    // A /login caught between its two writes: new tokens, the old identity. Never copied on that look.
+    writeFileSync(paths().credentials, JSON.stringify({ claudeAiOauth: { accessToken: 'fake-acc-5', refreshToken: 'fake-ref-5', expiresAt: 6 } }));
+    expect(await resyncActiveBackup({ ...rdeps(), seen }, p, A)).toBe('settling');
+    expect(JSON.parse(readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8')).claudeAiOauth.refreshToken).toBe('fake-ref-4');
+  });
+
+  it('copies an identity-only change (organisation renamed) at once and leaves the tokens alone', async () => {
+    const p = add(A, 'live');
+    putLive({ emailAddress: 'a@x.com', accountUuid: 'ua' }, '6');
+    expect(await resyncActiveBackup(rdeps(), p, A)).toBe('copied');
+    const credsBefore = readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8');
+    writeFileSync(paths().claudeJson, JSON.stringify({ oauthAccount: { emailAddress: 'a@x.com', accountUuid: 'ua', organizationName: 'New Org' } }));
+    expect(await resyncActiveBackup({ ...rdeps(), seen: new Map() }, p, A)).toBe('copied');
+    expect(JSON.parse(readFileSync(join(store.dirOf(p), '.claude.json'), 'utf8')).oauthAccount.organizationName).toBe('New Org');
+    expect(readFileSync(join(store.dirOf(p), '.credentials.json'), 'utf8')).toBe(credsBefore);
+    expect(await resyncActiveBackup(rdeps(), p, A)).toBe('unchanged');
   });
 
   it('reports a missing live login', async () => {
