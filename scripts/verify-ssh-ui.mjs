@@ -215,6 +215,13 @@ const PARTS = {
         await app.click('.rail-tiles [aria-label="SSH"]');
         await app.until(`!!document.querySelector('.ssh-view') && !!document.querySelector('.workspace-tabs .ssh-tab.active')`, 'SSH view in the main area');
         if (await app.evaluate(`!!document.querySelector('.side-panel .ssh-tile')`)) throw new Error('hosts are still listed in the left panel');
+        // The SSH tile is a pressed toggle, not a second selected tab; behind Settings it is not pressed.
+        const railState = `(() => { const t = document.querySelector('.rail-tiles [aria-label="SSH"]'); return [t.getAttribute('aria-pressed'), t.hasAttribute('aria-selected'), document.querySelectorAll('.rail-tiles [aria-selected=true]').length].join('|'); })()`;
+        if (await app.evaluate(railState) !== 'true|false|1') throw new Error(`rail state with the view in front: ${await app.evaluate(railState)}`);
+        await app.click('button[aria-label="Ustawienia"]');
+        await app.until(`${railState} === 'false|false|1'`, 'SSH tile not pressed behind Settings');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`${railState} === 'true|false|1'`, 'SSH tile pressed again');
         const heads = await app.evaluate(`[...document.querySelectorAll('.ssh-group-head .grow')].map((e) => e.textContent)`);
         if (JSON.stringify(heads) !== JSON.stringify(['lab', 'Bez grupy'])) throw new Error(`groups: ${heads}`);
         const sections = await app.evaluate(`[...document.querySelectorAll('.ssh-view-heading')].map((e) => e.textContent)`);
@@ -239,8 +246,24 @@ const PARTS = {
         await app.evaluate(`(() => { for (const tile of [...document.querySelectorAll('.ssh-tile[data-host-id]')].filter((t) => /web-1|pi/.test(t.textContent))) tile.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return true; })()`);
         await app.until(`document.querySelectorAll('.ssh-tile.selected').length === 2 && document.querySelector('.ssh-open-grid')?.textContent === 'Otwórz jako siatkę (2)'`, 'two hosts selected');
         await app.screenshot('ssh-view-selected.png');
+        if (await app.evaluate(`[...document.querySelectorAll('.ssh-tile[aria-pressed=true]')].length + '|' + document.querySelector('.ssh-tile[aria-current=true]')?.textContent.includes('web-1')`) !== '2|true') throw new Error('aria-pressed / aria-current of the tiles');
         await app.click('.ssh-view-selection button', 'Wyczyść zaznaczenie');
         await app.until(`!document.querySelector('.ssh-open-grid') && !document.querySelector('.ssh-tile.selected')`, 'selection cleared');
+        // Esc clears a selection too (focus on a tile).
+        await app.evaluate(`(() => { const t = [...document.querySelectorAll('.ssh-tile[data-host-id]')].find((e) => e.textContent.includes('pi')); t.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); t.focus(); return true; })()`);
+        await app.until(`document.querySelectorAll('.ssh-tile.selected').length === 1`, 'one host selected');
+        await app.press('Escape');
+        await app.until(`!document.querySelector('.ssh-tile.selected') && document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`, 'Esc cleared the selection, details kept');
+        // "Nowy klucz > mode" always switches an open new-key pane to that mode, also after the mode was changed inside it.
+        const pickKey = async (mode) => { await app.click('.ssh-view-head button', 'Nowy klucz'); await app.click('.menu [role=menuitem]', mode); };
+        await pickKey('Wklej klucz');
+        await app.until(`!!document.querySelector('.ssh-view-detail .ssh-editor textarea')`, 'paste mode');
+        await app.click('.ssh-view-detail .ssh-segmented button', 'Wygeneruj klucz');
+        await app.until(`!document.querySelector('.ssh-view-detail .ssh-editor textarea')`, 'generate chosen in the pane');
+        await pickKey('Wklej klucz');
+        await app.until(`!!document.querySelector('.ssh-view-detail .ssh-editor textarea')`, 'paste mode again from the header');
+        await pickKey('Importuj z pliku');
+        await app.until(`!!document.querySelector('.ssh-view-detail .ssh-drop')`, 'file mode from the header');
         // A group opens as an SSH-only grid named after it; the SSH tab stays open.
         await app.evaluate(`(() => { const group = [...document.querySelectorAll('.ssh-view-group')].find((g) => g.querySelector('.ssh-group-head')?.textContent.includes('lab')); group.querySelector('.ssh-group-open').click(); return true; })()`);
         await app.until(`document.querySelectorAll('.cell .ssh-fingerprint').length === 3`, 'host key prompt in all three cells');

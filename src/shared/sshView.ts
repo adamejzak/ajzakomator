@@ -5,7 +5,9 @@ import { groupHosts, isLivePhase, type SshHost, type SshSessionState } from './s
 export type SshDetail =
   | { kind: 'host'; hostId?: string }
   | { kind: 'key'; keyId: string }
-  | { kind: 'newKey'; mode?: 'generate' | 'file' | 'paste' };
+  | { kind: 'newKey'; mode?: NewKeyMode; seq?: number };
+
+export type NewKeyMode = 'generate' | 'file' | 'paste';
 
 export type HostTileState = 'connected' | 'connecting' | 'error' | 'idle';
 
@@ -31,7 +33,12 @@ export function liveDetail(detail: SshDetail | null, hosts: ReadonlyArray<Pick<S
 }
 
 /** React key of the pane: another host or key is a fresh pane (typed secrets and drafts of the previous one are dropped, R12). */
-export const detailKey = (d: SshDetail): string => (d.kind === 'host' ? `host:${d.hostId ?? 'new'}` : d.kind === 'key' ? `key:${d.keyId}` : `newKey:${d.mode ?? 'generate'}`);
+export const detailKey = (d: SshDetail): string => (d.kind === 'host' ? `host:${d.hostId ?? 'new'}` : d.kind === 'key' ? `key:${d.keyId}` : `newKey:${d.mode ?? 'generate'}${d.seq ? `:${d.seq}` : ''}`);
+
+/** "Nowy klucz > mode" from the header: an open new-key pane (in any mode) is replaced by a fresh one in the asked mode. */
+export function newKeyDetail(current: SshDetail | null, mode: NewKeyMode): SshDetail & { kind: 'newKey' } {
+  return current?.kind === 'newKey' ? { kind: 'newKey', mode, seq: (current.seq ?? 0) + 1 } : { kind: 'newKey', mode };
+}
 
 export const MENU_HOSTS = 12;
 

@@ -140,7 +140,6 @@ export const sshMessages = {
   'Brak hostów. Dodaj pierwszy host.': ['No hosts yet. Add your first host.', 'Noch keine Hosts. Füge deinen ersten Host hinzu.', 'Aún no hay hosts. Añade el primero.', 'Aucun hôte pour l’instant. Ajoutez votre premier hôte.', 'Ainda não há anfitriões. Adicione o primeiro.'],
   'Brak kluczy.': ['No keys.', 'Keine Schlüssel.', 'No hay claves.', 'Aucune clé.', 'Sem chaves.'],
   'Połącz w aktywnej siatce': ['Connect in the active grid', 'Im aktiven Raster verbinden', 'Conectar en la cuadrícula activa', 'Se connecter dans la grille active', 'Ligar na grelha ativa'],
-  'Połącz w nowej zakładce': ['Connect in a new tab', 'In neuem Tab verbinden', 'Conectar en una pestaña nueva', 'Se connecter dans un nouvel onglet', 'Ligar num novo separador'],
   'Otwórz jako siatkę': ['Open as grid', 'Als Raster öffnen', 'Abrir como cuadrícula', 'Ouvrir en grille', 'Abrir como grelha'],
   'Otwórz jako siatkę ({count})': ['Open as grid ({count})', 'Als Raster öffnen ({count})', 'Abrir como cuadrícula ({count})', 'Ouvrir en grille ({count})', 'Abrir como grelha ({count})'],
   'Edytuj': ['Edit', 'Bearbeiten', 'Editar', 'Modifier', 'Editar'],

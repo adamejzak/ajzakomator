@@ -48,6 +48,13 @@ export function railClick(state: RailState, clicked: string): RailState {
   return { collapsed: false, view: clicked };
 }
 
+export interface RailTileContext { collapsed: boolean; activeId: string; viewActive: boolean; settingsActive: boolean }
+
+/** Whether a tile looks selected: a panel tile while its panel is open, a view tile while its view is on screen (not behind Settings). */
+export function railTileShown(def: Pick<PanelDef, 'id' | 'opensView'>, ctx: RailTileContext): boolean {
+  return def.opensView ? ctx.viewActive && !ctx.settingsActive : !ctx.collapsed && def.id === ctx.activeId;
+}
+
 /** Roving focus along the rail: where the focus goes for an arrow / Home / End key (null: not a rail key). */
 export function railFocusTarget(count: number, index: number, key: string): number | null {
   if (count <= 0) return null;

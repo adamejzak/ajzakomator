@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_PANEL, gitPanelReason, panelOpenable, railClick, railFocusTarget, resolvePanelId, visiblePanels, type PanelContext, type PanelDef,
+  DEFAULT_PANEL, gitPanelReason, panelOpenable, railClick, railTileShown, railFocusTarget, resolvePanelId, visiblePanels, type PanelContext, type PanelDef,
 } from '../src/shared/sidebarPanels';
 import { defaultState, normalizeState } from '../src/shared/state';
 
@@ -101,5 +101,22 @@ describe('git and terminal tiles', () => {
     expect(terminal).not.toContain('unavailableReason');
     expect(terminal).toContain('opensView: true');
     expect(entries.find((line) => line.includes("id: 'git'"))).toContain('unavailableReason: gitPanelReason');
+  });
+});
+
+describe('railTileShown (W3)', () => {
+  const panel = { id: 'projects' };
+  const view = { id: 'terminal', opensView: true };
+  const base = { collapsed: false, activeId: 'projects', viewActive: false, settingsActive: false };
+  it('marks the open panel, never the panel tile of a folded rail', () => {
+    expect(railTileShown(panel, base)).toBe(true);
+    expect(railTileShown(panel, { ...base, collapsed: true })).toBe(false);
+    expect(railTileShown({ id: 'files' }, base)).toBe(false);
+  });
+  it('marks a view tile only while its view is the workspace on screen (not behind Settings)', () => {
+    expect(railTileShown(view, base)).toBe(false);
+    expect(railTileShown(view, { ...base, viewActive: true })).toBe(true);
+    expect(railTileShown(view, { ...base, viewActive: true, collapsed: true })).toBe(true);
+    expect(railTileShown(view, { ...base, viewActive: true, settingsActive: true })).toBe(false);
   });
 });

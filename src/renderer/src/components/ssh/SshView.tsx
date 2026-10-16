@@ -1,10 +1,10 @@
 // The SSH view (W3): one workspace tab with the saved hosts as tiles by group, the keys, the local shells and a details pane
 // on the right (host or key form). Opened by the SSH rail tile, the palette, "Edytuj host" and "Wszystkie hosty…".
 // It stays mounted while its tab is open; the pane is "active" only while the view is on screen (D4: typed secrets go).
-import { useMemo, useState, type MouseEvent } from 'react';
+import { useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { activeProject, activeTab, duplicateSshHost, updateSshHost } from '../../../../shared/state';
 import { existingSelection, filterHosts, groupHosts, parseFoldedGroups, toggleSelection, userAtEndpoint, type SshHost } from '../../../../shared/ssh';
-import { detailKey, hostTileState, liveDetail, type SshDetail } from '../../../../shared/sshView';
+import { detailKey, hostTileState, liveDetail, newKeyDetail, type NewKeyMode, type SshDetail } from '../../../../shared/sshView';
 import { describeLaunch, groupTerminalSources, listTerminalSources, type TerminalSource } from '../../../../shared/terminalSources';
 import { addAgent, quickTab } from '../../actions';
 import { showTerminalTabs } from '../../files';
@@ -85,6 +85,15 @@ export function SshView() {
     showTerminalTabs();
     if (target === 'tab') quickTab(source.launch.profileId); else void addAgent(source.launch.profileId);
   };
+  /** Header "Nowy klucz > mode": always that mode, also when a new-key pane is already open (it is replaced by a fresh one). */
+  const newKey = (mode: NewKeyMode) => showSshDetail(newKeyDetail(useSshStore.getState().detail, mode));
+  /** Esc clears the multi-selection; with nothing selected it is left to the rest of the app. */
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || !useSshStore.getState().selectedHosts.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    useSshStore.setState({ selectedHosts: [] });
+  };
   const broadcast = () => {
     const project = activeProject(getS());
     if (project && activeGrid) setUi({ modal: { kind: 'broadcast', projectId: project.id, tabId: activeGrid.id } });
@@ -92,16 +101,18 @@ export function SshView() {
 
   return (
     <div className="ssh-view">
-      <div className="ssh-view-main">
+      <div className="ssh-view-main" onKeyDown={onKeyDown}>
         <div className="ssh-view-head">
           <input className="input ssh-search" placeholder={tr('Szukaj hostów...')} aria-label={tr('Szukaj hostów...')} value={query} onChange={(e) => setQuery(e.target.value)} />
-          <button className="btn primary" onClick={() => showSshDetail({ kind: 'host' })}><IPlus />{tr('Nowy host')}</button>
-          <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, [
-            { label: tr('Wygeneruj klucz'), onClick: () => showSshDetail({ kind: 'newKey', mode: 'generate' }) },
-            { label: tr('Importuj z pliku'), onClick: () => showSshDetail({ kind: 'newKey', mode: 'file' }) },
-            { label: tr('Wklej klucz'), onClick: () => showSshDetail({ kind: 'newKey', mode: 'paste' }) },
-          ])}>{tr('Nowy klucz')} <IChevron /></button>
-          <button className="btn ssh-broadcast-open" disabled={!sshInGrid} onClick={broadcast}>{tr('Wyślij do wszystkich ({count})', { count: sshInGrid })}</button>
+          <div className="ssh-view-actions">
+            <button className="btn primary" onClick={() => showSshDetail({ kind: 'host' })}><IPlus />{tr('Nowy host')}</button>
+            <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, [
+              { label: tr('Wygeneruj klucz'), onClick: () => newKey('generate') },
+              { label: tr('Importuj z pliku'), onClick: () => newKey('file') },
+              { label: tr('Wklej klucz'), onClick: () => newKey('paste') },
+            ])}>{tr('Nowy klucz')} <IChevron /></button>
+            <button className="btn ssh-broadcast-open" disabled={!sshInGrid} onClick={broadcast}>{tr('Wyślij do wszystkich ({count})', { count: sshInGrid })}</button>
+          </div>
         </div>
         {vault?.storage === 'unavailable' && <div className="ssh-banner-warn">{tr('Szyfrowanie systemowe jest niedostępne - klucze i hasła są trzymane tylko do zamknięcia aplikacji')}</div>}
         {selected.length > 0 && (
@@ -142,6 +153,7 @@ export function SshView() {
                         const current = detail?.kind === 'host' && detail.hostId === h.id;
                         return (
                           <button key={h.id} className={`ssh-tile${selected.includes(h.id) ? ' selected' : ''}${current ? ' current' : ''}`} data-host-id={h.id}
+                            aria-current={current ? 'true' : undefined} aria-pressed={selected.includes(h.id)}
                             onClick={(e) => clickTile(e, h)} onDoubleClick={() => connect(h.id, 'cell')} onContextMenu={(e) => hostMenu(e, h)}
                             title={`${userAtEndpoint(h)} · ${tr(STATE_LABEL[state])}`}>
                             <span className="ssh-tile-name"><span className="ssh-dot" style={{ background: h.color ?? 'var(--muted)' }} />{h.label}</span>
@@ -161,7 +173,7 @@ export function SshView() {
           {!keys.length ? <p className="terminal-empty">{tr('Brak kluczy.')}</p> : (
             <div className="ssh-tiles">
               {keys.map((k) => (
-                <button key={k.id} className={`ssh-tile${detail?.kind === 'key' && detail.keyId === k.id ? ' current' : ''}`} onClick={() => showSshDetail({ kind: 'key', keyId: k.id })} title={k.fingerprint}>
+                <button key={k.id} className={`ssh-tile${detail?.kind === 'key' && detail.keyId === k.id ? ' current' : ''}`} aria-current={detail?.kind === 'key' && detail.keyId === k.id ? 'true' : undefined} onClick={() => showSshDetail({ kind: 'key', keyId: k.id })} title={k.fingerprint}>
                   <span className="ssh-tile-name"><span className="ssh-key-type">{shortType(k.type)}</span>{k.label}{k.locked ? ' !' : ''}</span>
                   <span className="ssh-tile-detail">{k.fingerprint.slice(0, 19)}...</span>
                 </button>

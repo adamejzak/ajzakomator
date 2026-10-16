@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SshHost, SshSessionState } from '../src/shared/ssh';
-import { detailKey, hostTileState, liveDetail, menuHosts } from '../src/shared/sshView';
+import { detailKey, hostTileState, liveDetail, menuHosts, newKeyDetail } from '../src/shared/sshView';
 
 const host = (id: string, label: string, group?: string): SshHost => ({ id, label, address: `${label}.example`, port: 22, username: 'u', createdAt: 0, updatedAt: 0, ...(group ? { group } : {}) });
 const session = (cellId: string, phase: SshSessionState['phase']): SshSessionState => ({ cellId, hostId: 'h1', phase, since: 0 });
@@ -36,5 +36,20 @@ describe('menuHosts', () => {
     expect(shown[0].group).toBe('lab');
     expect(more).toBe(true);
     expect(menuHosts([host('a', 'one')])).toEqual({ shown: [host('a', 'one')], more: false });
+  });
+});
+
+describe('newKeyDetail (W3)', () => {
+  it('opens the asked mode; an open new-key pane always becomes a fresh pane in that mode', () => {
+    const first = newKeyDetail(null, 'file');
+    expect(first).toEqual({ kind: 'newKey', mode: 'file' });
+    expect(detailKey(first)).toBe('newKey:file');
+    expect(newKeyDetail({ kind: 'host', hostId: 'h1' }, 'paste')).toEqual({ kind: 'newKey', mode: 'paste' });
+    const again = newKeyDetail(first, 'file');
+    expect(again.mode).toBe('file');
+    expect(detailKey(again)).not.toBe(detailKey(first));
+    const other = newKeyDetail(again, 'generate');
+    expect(other.mode).toBe('generate');
+    expect(new Set([detailKey(first), detailKey(again), detailKey(other)]).size).toBe(3);
   });
 });

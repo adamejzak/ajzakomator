@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { useI18n } from '../i18n';
 import { activeProject } from '../../../shared/state';
 import { useGitProbe, useGitProbeSync } from '../git/gitProbe';
-import { panelOpenable, railClick, railFocusTarget, resolvePanelId, visiblePanels } from '../../../shared/sidebarPanels';
+import { panelOpenable, railClick, railFocusTarget, railTileShown, resolvePanelId, visiblePanels } from '../../../shared/sidebarPanels';
 import { SIDEBAR_PANELS } from '../panelRegistry';
 import { useSshStore } from '../sshStore';
 import { setUi, update, useStore } from '../store';
@@ -21,6 +21,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
   const projectId = useStore((st) => activeProject(st.s)?.id);
   const projectPath = useStore((st) => activeProject(st.s)?.path);
   const sshActive = useSshStore((st) => st.viewActive);
+  const settingsActive = useStore((st) => st.ui.settingsActive);
   useGitProbeSync(projectId, projectPath);
   const git = useGitProbe(projectId);
   const rail = useRef<HTMLDivElement>(null);
@@ -50,7 +51,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
         <div ref={rail} className="rail-tiles" role="tablist" aria-orientation="vertical" aria-label={tr("Panele boczne")} onKeyDown={onKeyDown}>
           {panels.map((panel) => {
             const reason = panel.unavailableReason?.(ctx) ?? null;
-            const shown = panel.opensView ? sshActive : !collapsed && panel.id === active.id;
+            const shown = railTileShown(panel, { collapsed, activeId: active.id, viewActive: sshActive, settingsActive });
             const Icon = panel.icon;
             const label = tr(panel.label);
             return (
@@ -58,9 +59,11 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
                 key={panel.id}
                 id={`${panel.id}-view`}
                 type="button"
-                role="tab"
+                // A view tile is a toggle button (aria-pressed), so only the open panel's tile is the selected tab of the rail.
+                role={panel.opensView ? undefined : 'tab'}
                 className={`rail-tile ${shown ? 'on' : ''}`}
-                aria-selected={shown}
+                aria-selected={panel.opensView ? undefined : shown}
+                aria-pressed={panel.opensView ? shown : undefined}
                 aria-controls={shown && !panel.opensView ? `sidebar-${panel.id}` : undefined}
                 aria-disabled={reason ? true : undefined}
                 aria-label={label}
