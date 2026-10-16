@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ManagedAccount } from '../src/shared/accounts';
-import { cswapHolds, cswapRosterPath, readCswapRoster } from '../src/main/accounts/cswap';
+import { CSWAP_ROSTER_MAX_BYTES, cswapHolds, cswapRosterPath, readCswapRoster } from '../src/main/accounts/cswap';
 import { claudeRefs, renewRule } from '../src/main/accounts/refs';
 
 const ID = (n: number) => `${n}1111111-1111-4111-8111-111111111111`;
@@ -24,6 +24,13 @@ describe('renewRule', () => {
     expect(renewRule(rec(1), null, roster)).toBe('held-by-cswap');
     expect(renewRule(rec(1, { family: 'own' }), null, roster)).toBe('allowed');
     expect(renewRule(rec(1), null, { present: true, accounts: null })).toBe('held-by-cswap');
+  });
+  it('blocks a quarantined record and one whose identity cannot be told apart from the live login', () => {
+    expect(renewRule(rec(1, { family: 'own', custody: 'quarantined' }), null, none)).not.toBe('allowed');
+    const unknown: ManagedAccount = { id: ID(4), addedAt: 4, family: 'own' };
+    expect(renewRule(unknown, { email: 'u2@x.com', accountUuid: 'u2' }, none)).toBe('held-by-live');
+    expect(renewRule(unknown, null, none)).toBe('allowed');
+    expect(renewRule(rec(1, { family: 'own' }), { email: 'u2@x.com', accountUuid: 'u2' }, none)).toBe('allowed');
   });
 });
 
@@ -47,6 +54,8 @@ describe('cswap roster (read only)', () => {
     expect(cswapRosterPath('/h', {}, 'win32')).toBe(join('/h', '.claude-swap-backup', 'sequence.json'));
     expect(cswapRosterPath('/h', { XDG_DATA_HOME: '/x' }, 'linux')).toBe(join('/x', 'claude-swap', 'sequence.json'));
     expect(cswapRosterPath('/h', { XDG_DATA_HOME: 'rel' }, 'linux')).toBe(join('/h', '.local', 'share', 'claude-swap', 'sequence.json'));
+    expect(cswapRosterPath('/h', { XDG_DATA_HOME: '~/data' }, 'linux')).toBe(join('/h', 'data', 'claude-swap', 'sequence.json'));
+    expect(cswapRosterPath('/h', { XDG_DATA_HOME: '~' }, 'linux')).toBe(join('/h', 'claude-swap', 'sequence.json'));
   });
   it('reads identities only and treats an unreadable roster as holding everything', async () => {
     const path = cswapRosterPath(home, {}, 'win32');
@@ -58,6 +67,22 @@ describe('cswap roster (read only)', () => {
     expect(cswapHolds(roster, { email: 'a@x.com', accountUuid: 'ua' })).toBe(true);
     expect(cswapHolds(roster, { email: 'b@x.com', accountUuid: 'ub' })).toBe(false);
     writeFileSync(path, '{ torn');
+    expect(await readCswapRoster(path)).toEqual({ present: true, accounts: null });
+  });
+  it('holds everything for a roster it cannot trust and reads only usable entries', async () => {
+    const path = cswapRosterPath(home, {}, 'win32');
+    mkdirSync(path, { recursive: true }); // a directory where the file should be (EISDIR)
+    expect(await readCswapRoster(path)).toEqual({ present: true, accounts: null });
+    rmSync(path, { recursive: true });
+    writeFileSync(path, JSON.stringify({ accounts: [{ email: 'a@x.com', uuid: 'ua' }] }));
+    expect(await readCswapRoster(path)).toEqual({ present: true, accounts: null });
+    writeFileSync(path, JSON.stringify({ accounts: { 1: 'x', 2: null, 3: [1], 4: { email: 'tok@x.com', uuid: '', organizationUuid: '', organizationName: '', kind: 'api_key' } } }));
+    const roster = await readCswapRoster(path);
+    expect(roster).toEqual({ present: true, accounts: [{ email: 'tok@x.com' }] });
+    // A token-added entry has no uuid: the e-mail decides.
+    expect(cswapHolds(roster, { email: 'TOK@x.com', accountUuid: 'ut' })).toBe(true);
+    expect(cswapHolds(roster, { email: 'other@x.com', accountUuid: 'uo' })).toBe(false);
+    writeFileSync(path, JSON.stringify({ accounts: {}, pad: 'x'.repeat(CSWAP_ROSTER_MAX_BYTES) }));
     expect(await readCswapRoster(path)).toEqual({ present: true, accounts: null });
   });
 });

@@ -13,8 +13,11 @@ export type RenewRule = NonNullable<AccountRef['renew']>;
  */
 export function renewRule(record: ManagedAccount, live: LiveIdentity | null, cswap: CswapRoster): RenewRule {
   const custody = custodyOf(record);
+  // A set-aside duplicate is never renewed: another record holds the account (callers also skip it, as defence in depth).
+  if (custody === 'quarantined') return 'switched-out';
   if (custody === 'foreign') return 'switched-out';
-  if (custody === 'live' || (live && compareIdentity(record, live) === 'same')) return 'held-by-live';
+  // Like cswapHolds: only a proven different identity lets a record be renewed while someone is signed in.
+  if (custody === 'live' || (live && compareIdentity(record, live) !== 'different')) return 'held-by-live';
   if (familyOf(record) === 'live' && cswapHolds(cswap, record)) return 'held-by-cswap';
   return 'allowed';
 }
