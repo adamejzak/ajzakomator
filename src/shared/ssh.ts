@@ -381,9 +381,36 @@ export function broadcastTargets(
   });
 }
 
+/** TAB, LF and CR are allowed; every other C0 control (Ctrl-C, Ctrl-D, ESC...) and DEL is refused, like the startup command: one paste must not hit every host with a signal. */
 export function broadcastProblem(text: string): MessageKey | null {
   if (text.length > SSH_LIMITS.broadcast) return 'Polecenie jest za długie';
-  return text.includes('') ? 'Polecenie zawiera znaki sterujące' : null;
+  return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text) ? 'Polecenie zawiera znaki sterujące' : null;
+}
+
+export type BroadcastResult = 'sent' | 'skipped';
+
+/** What the dialog writes: every checked cell that is still connected right now gets the text (and Enter when `enter`); the others are skipped. */
+export function broadcastSend(
+  checkedCellIds: readonly string[],
+  sessions: Readonly<Record<string, SshSessionState | undefined>>,
+  text: string,
+  enter: boolean,
+  paste: (cellId: string, text: string, submit: boolean) => void,
+): Record<string, BroadcastResult> {
+  const results: Record<string, BroadcastResult> = {};
+  for (const cellId of checkedCellIds) {
+    if (sessions[cellId]?.phase !== 'connected') { results[cellId] = 'skipped'; continue; }
+    paste(cellId, text, enter);
+    results[cellId] = 'sent';
+  }
+  return results;
+}
+
+/** The state text of a dialog row: a "sent" result only counts while the cell is still connected, otherwise the row's own reason shows. */
+export function broadcastRowState(row: Pick<BroadcastRow, 'enabled' | 'reason'>, result: BroadcastResult | undefined): MessageKey | null {
+  if (result === 'skipped') return 'pominięto: rozłączono';
+  if (result === 'sent' && row.enabled) return 'wysłano';
+  return row.reason ?? null;
 }
 
 /** Newest last, no consecutive duplicate, at most `max` entries; blank text changes nothing. */

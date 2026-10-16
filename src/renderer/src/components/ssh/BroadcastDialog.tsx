@@ -1,6 +1,6 @@
 // "Wyślij do wszystkich" (spec 10.5, D10): one command to the checked SSH cells of a grid, over the existing data port.
 import { useMemo, useRef, useState } from 'react';
-import { broadcastProblem, broadcastTargets, pushHistory, sshCellsOfTab } from '../../../../shared/ssh';
+import { broadcastProblem, broadcastRowState, broadcastSend, broadcastTargets, pushHistory, sshCellsOfTab, type BroadcastResult } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { closeModal, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
@@ -20,22 +20,16 @@ export function BroadcastDialog({ projectId, tabId }: { projectId: string; tabId
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set());
   const [enter, setEnter] = useState(true);
   const [text, setText] = useState('');
-  const [results, setResults] = useState<Record<string, 'sent' | 'skipped'>>({});
+  const [results, setResults] = useState<Record<string, BroadcastResult>>({});
   const [recall, setRecall] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const checked = rows.filter((r) => r.enabled && !unchecked.has(r.cellId));
   const problem = broadcastProblem(text);
 
   const send = () => {
-    if (!text || problem || !checked.length) return;
+    if (!text.trim() || problem || !checked.length) return;
     // Connected is decided at send time, not when the dialog was opened.
-    const now = useSshStore.getState().sessions;
-    const next: Record<string, 'sent' | 'skipped'> = {};
-    for (const row of checked) {
-      if (now[row.cellId]?.phase !== 'connected') { next[row.cellId] = 'skipped'; continue; }
-      terminals.paste(row.cellId, text, enter, { focus: false });
-      next[row.cellId] = 'sent';
-    }
+    const next = broadcastSend(checked.map((r) => r.cellId), useSshStore.getState().sessions, text, enter, (cellId, t, submit) => terminals.paste(cellId, t, submit, { focus: false }));
     setResults(next);
     history = pushHistory(history, text);
     setText('');
@@ -74,7 +68,7 @@ export function BroadcastDialog({ projectId, tabId }: { projectId: string; tabId
                     onChange={(e) => setUnchecked((u) => { const n = new Set(u); if (e.target.checked) n.delete(r.cellId); else n.add(r.cellId); return n; })} />
                   <span className="grow">{r.label}</span><span className="muted">{r.endpoint}</span>
                 </label>
-                <span className="ssh-target-state">{results[r.cellId] === 'sent' ? tr('wysłano') : results[r.cellId] === 'skipped' ? tr('pominięto: rozłączono') : r.reason ? tr(r.reason) : ''}</span>
+                <span className="ssh-target-state">{(() => { const key = broadcastRowState(r, results[r.cellId]); return key ? tr(key) : ''; })()}</span>
               </li>
             ))}
           </ul>
@@ -83,7 +77,7 @@ export function BroadcastDialog({ projectId, tabId }: { projectId: string; tabId
       <div className="modal-foot">
         <span style={{ flex: 1 }} />
         <button className="btn" onClick={closeModal}>{tr('Zamknij')}</button>
-        <button className="btn white" disabled={!text || !!problem || !checked.length} onClick={send}>{tr('Wyślij do {count}', { count: checked.length })}</button>
+        <button className="btn white" disabled={!text.trim() || !!problem || !checked.length} onClick={send}>{tr('Wyślij do {count}', { count: checked.length })}</button>
       </div>
     </div>
   );

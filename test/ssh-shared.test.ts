@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
-  broadcastProblem, pushHistory, sshCellsOfTab, cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
+  broadcastProblem, broadcastRowState, broadcastSend, pushHistory, sshCellsOfTab, cellSourceValue, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
 
@@ -277,5 +277,28 @@ describe('broadcast helpers', () => {
       { cellId: 'a', label: 'h1', endpoint: 'deploy@h1.example:2200' },
       { cellId: 'c', label: 'mine', endpoint: '' },
     ]);
+  });
+});
+
+describe('broadcast fix round', () => {
+  it('refuses every C0 control except TAB, LF and CR', () => {
+    for (const c of ['\u0003', '\u0004', '\u001b', '\u0000', '\u007f']) expect(broadcastProblem(`ls${c}`)).toBe('Polecenie zawiera znaki sterujące');
+    expect(broadcastProblem('a\tb\nc\r\nd')).toBeNull();
+  });
+  it('writes only to connected cells and adds Enter only when asked', () => {
+    const sessions = { a: session('a', 'connected'), b: session('b', 'closed'), c: session('c', 'connected') };
+    const calls: Array<[string, string, boolean]> = [];
+    const paste = (id: string, text: string, submit: boolean) => { calls.push([id, text, submit]); };
+    expect(broadcastSend(['a', 'b', 'c'], sessions, 'uptime', false, paste)).toEqual({ a: 'sent', b: 'skipped', c: 'sent' });
+    expect(calls).toEqual([['a', 'uptime', false], ['c', 'uptime', false]]);
+    calls.length = 0;
+    broadcastSend(['a'], sessions, 'uptime', true, paste);
+    expect(calls).toEqual([['a', 'uptime', true]]);
+  });
+  it('shows the live reason instead of a stale "sent"', () => {
+    expect(broadcastRowState({ enabled: true }, 'sent')).toBe('wysłano');
+    expect(broadcastRowState({ enabled: false, reason: 'rozłączono' }, 'sent')).toBe('rozłączono');
+    expect(broadcastRowState({ enabled: false, reason: 'rozłączono' }, 'skipped')).toBe('pominięto: rozłączono');
+    expect(broadcastRowState({ enabled: true }, undefined)).toBeNull();
   });
 });
