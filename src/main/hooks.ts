@@ -53,17 +53,26 @@ function holdsCell(t: unknown): boolean {
   return typeof type !== 'string' || !PLUMBING_TASK.test(type);
 }
 
+/** Task types that keep a session busy for a long time: the documented `workflow` and the raw `local_workflow`. */
+export const LONG_TASK = /workflow/i;
+
+function isWorkflow(t: unknown): boolean {
+  if (!isRunning(t)) return false;
+  const type = (t as { type?: unknown } | null)?.type;
+  return typeof type === 'string' && LONG_TASK.test(type);
+}
+
 /** True when a Stop payload lists a running background task of agent-like (or unknown) type; crons and shell tasks do not count. */
 export function hasActiveBackgroundWork(body: string): boolean {
   const tasks = parseObject(body)?.background_tasks;
   return Array.isArray(tasks) && tasks.some(holdsCell);
 }
 
-/** Diagnostics for a Stop payload: task counts and the distinct status strings (never ids, commands or text). */
+/** Diagnostics for a Stop payload: task counts and the distinct status strings (never ids, names, commands or text). */
 export function stopInfo(body: string): HookInfo {
   const tasks = parseObject(body)?.background_tasks;
   const continuation = parseObject(body)?.stop_hook_active === true;
-  if (!Array.isArray(tasks)) return { tasks: 0, active: 0, statuses: [], types: [], continuation };
+  if (!Array.isArray(tasks)) return { tasks: 0, active: 0, statuses: [], types: [], continuation, workflows: 0, tasksUnknown: true };
   const statuses = new Set<string>();
   const types = new Set<string>();
   const clean = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase().replace(/[^\w.-]/g, '').slice(0, 24) || '?' : '?');
@@ -74,6 +83,7 @@ export function stopInfo(body: string): HookInfo {
   return {
     tasks: tasks.length, active: tasks.filter(holdsCell).length,
     statuses: [...statuses].slice(0, MAX_STATUS_STRINGS), types: [...types].slice(0, MAX_STATUS_STRINGS), continuation,
+    workflows: tasks.filter(isWorkflow).length,
   };
 }
 
@@ -90,11 +100,12 @@ export function stopDebugLine(cellId: string, body: string, now = new Date()): s
 `;
   const tasks = Array.isArray(p.background_tasks)
     ? p.background_tasks.map((t) => {
-        const o = (t ?? {}) as { type?: unknown; status?: unknown };
-        return `${typeof o.type === 'string' ? o.type.slice(0, 40) : '?'}/${typeof o.status === 'string' ? o.status.slice(0, 40) : '?'}`;
+        const o = (t ?? {}) as { type?: unknown; status?: unknown; name?: unknown };
+        const named = typeof o.name === 'string' && o.name ? '/named' : '';
+        return `${typeof o.type === 'string' ? o.type.slice(0, 40) : '?'}/${typeof o.status === 'string' ? o.status.slice(0, 40) : '?'}${named}`;
       })
-    : [];
-  return `${now.toISOString()} ${cellId} keys=${Object.keys(p).join(',')} tasks=[${tasks.join(' ')}]
+    : null;
+  return `${now.toISOString()} ${cellId} keys=${Object.keys(p).join(',')} tasks=${tasks ? `[${tasks.join(' ')}]` : '?'} stop_hook_active=${p.stop_hook_active === true}
 `;
 }
 

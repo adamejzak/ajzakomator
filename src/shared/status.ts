@@ -27,6 +27,12 @@ export interface HookInfo {
   types?: string[];
   /** Stop: the payload said stop_hook_active, i.e. Claude was continuing because a Stop hook blocked the stop. */
   continuation?: boolean;
+  /** Stop: running tasks of workflow type (a dynamic workflow keeps the session busy for hours, often silently). */
+  workflows?: number;
+  /** Stop: `background_tasks` was absent or not an array (registry unreachable): "unknown", never "nothing runs". */
+  tasksUnknown?: boolean;
+  /** Stop turned into stopbg because the terminal still showed "Waiting for N dynamic workflow(s)" (see backgroundWait.ts). */
+  screenWait?: boolean;
   /** busy: SubagentStop, which never reopens a closed turn. */
   subagent?: boolean;
   /** StopFailure: the error code. */

@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { HookServer, hasActiveBackgroundWork, logStopDebug, parseSessionStart } from '../src/main/hooks';
+import { HookServer, hasActiveBackgroundWork, logStopDebug, parseSessionStart, stopDebugLine, stopInfo } from '../src/main/hooks';
+import { hookDetail } from '../src/shared/statusLog';
 import { BG_STALL_MS, INTERRUPT_QUIET_MS, shouldNotify, StatusTracker, STALL_MS } from '../src/shared/status';
 
 /** Ticks every 5 s (like the app) so the sleep detection does not restart the silence window. */
@@ -160,5 +161,61 @@ describe('Stop debug log', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('workflow entries in the Stop payload', () => {
+  it('holds the cell for running workflows and counts them', () => {
+    const running = [
+      { type: 'workflow', status: 'running', name: 'audyt-guybot-runda-4', description: 'SECRET-DESC' },
+      { type: 'local_workflow', status: 'running' },
+      { type: 'workflow', status: 'pending' },
+    ];
+    for (const task of running) {
+      expect(hasActiveBackgroundWork(bg(task))).toBe(true);
+      expect(stopInfo(bg(task)).workflows).toBe(1);
+    }
+    for (const status of ['completed', 'failed', 'killed']) {
+      expect(hasActiveBackgroundWork(bg({ type: 'workflow', status }))).toBe(false);
+      expect(stopInfo(bg({ type: 'workflow', status })).workflows).toBe(0);
+    }
+    expect(JSON.stringify(stopInfo(bg(running[0])))).not.toMatch(/SECRET|audyt/);
+  });
+
+  it('a running shell plus a running workflow holds; a shell alone does not (dev server regression)', () => {
+    expect(hasActiveBackgroundWork(bg({ type: 'shell', status: 'running' }, { type: 'workflow', status: 'running' }))).toBe(true);
+    expect(hasActiveBackgroundWork(bg({ type: 'shell', status: 'running' }))).toBe(false);
+  });
+
+  it('marks a payload without a task list as unknown, not as "nothing runs"', () => {
+    expect(stopInfo('{}')).toMatchObject({ tasks: 0, workflows: 0, tasksUnknown: true });
+    expect(stopInfo(JSON.stringify({ background_tasks: 'x' })).tasksUnknown).toBe(true);
+    expect(stopInfo(bg()).tasksUnknown).toBeUndefined();
+  });
+
+  it('the debug line tells whether a task is named and whether the stop hook was active, never the name', () => {
+    const line = stopDebugLine('c1', JSON.stringify({ stop_hook_active: true, background_tasks: [{ type: 'workflow', status: 'running', name: 'SECRET-NAME' }] }));
+    expect(line).toContain('workflow/running/named');
+    expect(line).toContain('stop_hook_active=true');
+    expect(line).not.toContain('SECRET');
+  });
+
+  it('hookDetail shows the workflow count, an unknown task list and the screen veto', () => {
+    expect(hookDetail({ tasks: 1, active: 1, workflows: 1 })).toBe('tasks=1 active=1 workflows=1');
+    expect(hookDetail({ tasks: 0, active: 0, workflows: 0, tasksUnknown: true })).toBe('tasks=?');
+    expect(hookDetail({ screenWait: true })).toBe('screen-wait');
+  });
+
+  it('the hook server emits stopbg for a workflow and stop when the task list is absent', async () => {
+    const s = new HookServer();
+    await s.start();
+    const seen: string[] = [];
+    s.on('hook', (_cell, ev, info) => seen.push(`${ev}:${info?.workflows ?? '-'}`));
+    const url = s.url('c1', 'stop');
+    await fetch(url, { method: 'POST', body: bg({ type: 'workflow', status: 'running' }) });
+    await fetch(url, { method: 'POST', body: JSON.stringify({ last_assistant_message: 'x' }) });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(seen).toEqual(['stopbg:1', 'stop:0']);
+    s.stop();
   });
 });

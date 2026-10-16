@@ -147,7 +147,7 @@ describe('long shell-type background tasks do not hold the cell (P2)', () => {
 
   it('stopInfo counts only the holding tasks as active and lists the types', () => {
     const info = stopInfo(bg({ id: 'SECRET', type: 'local_bash', status: 'running', command: 'SECRET-CMD' }, { type: 'local_agent', status: 'running' }, { type: 'local_agent', status: 'completed' }));
-    expect(info).toEqual({ tasks: 3, active: 1, statuses: ['running', 'completed'], types: ['local_bash', 'local_agent'], continuation: false });
+    expect(info).toEqual({ tasks: 3, active: 1, statuses: ['running', 'completed'], types: ['local_bash', 'local_agent'], continuation: false, workflows: 0 });
     expect(JSON.stringify(info)).not.toContain('SECRET');
   });
 

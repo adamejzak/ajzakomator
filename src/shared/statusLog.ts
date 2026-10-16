@@ -29,14 +29,19 @@ export interface StatusLogEntry {
 export function hookDetail(info?: HookInfo): string {
   if (!info) return '';
   const out: string[] = [];
-  if (info.tasks !== undefined) out.push(`tasks=${info.tasks}`);
-  if (info.active !== undefined) out.push(`active=${info.active}`);
+  if (info.tasksUnknown) out.push('tasks=?');
+  else {
+    if (info.tasks !== undefined) out.push(`tasks=${info.tasks}`);
+    if (info.active !== undefined) out.push(`active=${info.active}`);
+  }
+  if (info.workflows) out.push(`workflows=${info.workflows}`);
   if (info.statuses?.length) out.push(`task_status=${info.statuses.join(',')}`);
   if (info.types?.length) out.push(`task_type=${info.types.join(',')}`);
   if (info.continuation) out.push('continuation');
   if (info.subagent) out.push('subagent');
   if (info.error) out.push(`error=${info.error}`);
   if (info.source) out.push(`source=${info.source}`);
+  if (info.screenWait) out.push('screen-wait');
   return out.join(' ');
 }
 

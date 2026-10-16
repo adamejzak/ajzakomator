@@ -294,9 +294,9 @@ describe('H3 stale background tasks', () => {
       { id: 'SECRET-ID', type: 'shell', status: 'running', command: 'SECRET-CMD' },
       { status: 'Running' }, { status: 'completed' }, { id: 'x' },
     ], session_crons: [{ id: 'c' }] });
-    expect(stopInfo(body)).toEqual({ tasks: 4, active: 2, statuses: ['running', 'completed', '?'], types: ['shell', '?'], continuation: false });
+    expect(stopInfo(body)).toEqual({ tasks: 4, active: 2, statuses: ['running', 'completed', '?'], types: ['shell', '?'], continuation: false, workflows: 0 });
     expect(JSON.stringify(stopInfo(body))).not.toContain('SECRET');
-    expect(stopInfo('garbage')).toEqual({ tasks: 0, active: 0, statuses: [], types: [], continuation: false });
+    expect(stopInfo('garbage')).toEqual({ tasks: 0, active: 0, statuses: [], types: [], continuation: false, workflows: 0, tasksUnknown: true });
   });
 
   it('the hook server emits Stop info and a sessionstart event that is never a status hook', async () => {
