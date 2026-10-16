@@ -4,7 +4,7 @@ import type { LoginTarget } from '../../../shared/accounts';
 import { claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
-import { swapErrorKey } from '../../../shared/swapMessages';
+import { swapErrorKey, swapErrorText } from '../../../shared/swapMessages';
 import { askChoice, setUi, toast, update, useStore } from '../store';
 import { useUsage } from '../usage';
 import { openMenuAt } from './ContextMenu';
@@ -227,7 +227,7 @@ export function UsagePanel() {
     const current = providers.find((usage) => usage.active)?.email || tr('obecne konto główne');
     const name = target.email || NAMES.claude;
     const exhausted = target.windows.some((window) => effectivePercent(window, Date.now()) >= 100);
-    const body = tr('Obecne konto główne ({current}) zostanie zachowane jako zapisane konto, a wybrane stanie się głównym logowaniem Claude Code. Token wybranego konta jest przed zamianą odświeżany w Anthropic, a pliki logowania są wymieniane na tym komputerze. Otwarte sesje Claude zwykle przejmują nowe logowanie przy następnej wiadomości, ale zależy to od wersji Claude Code - sesję, która tego nie zrobi, wystarczy zrestartować lub wznowić.', { current })
+    const body = tr('Logowanie obecnego konta głównego ({current}) zostanie zapisane na jego karcie, a wybrane konto stanie się głównym logowaniem Claude Code. Na czas zamiany aplikacja blokuje pliki logowania tak samo jak Claude Code. Otwarte sesje Claude zwykle przejmują nowe logowanie przy następnej wiadomości - sesję, która tego nie zrobi, wystarczy zrestartować lub wznowić.', { current })
       + (exhausted ? `\n\n${tr('Limity tego konta są wyczerpane (100%), więc sesje mogą nie działać do czasu resetu.')}` : '');
     const choice = await askChoice(tr('Ustawić {name} jako konto główne?', { name }), body, [{ label: tr('Ustaw jako główne'), value: 'yes', primary: true }]);
     if (choice !== 'yes') return;
@@ -235,7 +235,7 @@ export function UsagePanel() {
     try {
       const result = await window.mc.makeMainAccount(target.accountId.replace(/^claude:/, ''));
       if (result.ok) toast(result.email ? tr('Konto główne: {email}', { email: result.email }) : tr('Zmieniono konto główne.'));
-      else toast(tr(swapErrorKey(result.error)), 'error');
+      else { const text = swapErrorText(result); toast(tr(text.key, text.params), 'error'); }
     } catch {
       toast(tr('Nie udało się zmienić konta głównego.'), 'error');
     } finally {

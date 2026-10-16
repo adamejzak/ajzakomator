@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SWAP_ERRORS, type SwapResult } from '../src/shared/accounts';
 import { LANGUAGES } from '../src/shared/languages';
 import { translate } from '../src/shared/i18n';
-import { swapErrorKey, swapMessages } from '../src/shared/swapMessages';
+import { swapErrorKey, swapErrorText, swapMessages } from '../src/shared/swapMessages';
 import { handleMakeMain, type MakeMainDeps } from '../src/main/accounts/makeMain';
 import { LoginManager, type LoginDeps } from '../src/main/auth/login';
 import type { AccountsStore } from '../src/main/accounts/store';
@@ -13,6 +13,7 @@ const ID = '123e4567-e89b-42d3-a456-426614174000';
 function deps(over: Partial<MakeMainDeps> = {}) {
   const base = {
     loginActive: vi.fn(() => false),
+    validate: vi.fn(async (): Promise<SwapResult | null> => null),
     swap: vi.fn(async (): Promise<SwapResult> => ({ ok: true, email: 'a@b.c' })),
     onSwapped: vi.fn(),
   };
@@ -33,6 +34,17 @@ describe('accounts:makeMain handler', () => {
     const d = deps({ loginActive: vi.fn(() => true) });
     expect(await handleMakeMain(d, ID)).toEqual({ ok: false, error: 'busy' });
     expect(d.swap).not.toHaveBeenCalled();
+  });
+
+  it('validates the target in the main process and refuses without swapping', async () => {
+    const refused = deps({ validate: vi.fn(async (): Promise<SwapResult | null> => ({ ok: false, error: 'foreign', email: 'x@x.com' })) });
+    expect(await handleMakeMain(refused, ID)).toEqual({ ok: false, error: 'foreign', email: 'x@x.com' });
+    expect(refused.validate).toHaveBeenCalledWith(ID);
+    expect(refused.swap).not.toHaveBeenCalled();
+    expect(refused.onSwapped).not.toHaveBeenCalled();
+    const throwing = deps({ validate: vi.fn(async () => { throw new Error('x'); }) });
+    expect(await handleMakeMain(throwing, ID)).toEqual({ ok: false, error: 'write' });
+    expect(throwing.swap).not.toHaveBeenCalled();
   });
 
   it('refreshes usage only after a successful swap and passes the result through', async () => {
@@ -101,5 +113,18 @@ describe('swap error messages', () => {
   it('uses distinct messages for the specific errors', () => {
     const specific = SWAP_ERRORS.filter((e) => e !== 'invalid');
     expect(new Set(specific.map((e) => swapErrorKey(e))).size).toBe(specific.length);
+  });
+
+  it('names the account in the texts that concern one, and falls back to the plain text otherwise', () => {
+    const named = swapErrorText({ error: 'foreign', email: 'x@x.com' });
+    expect(named.params).toEqual({ email: 'x@x.com' });
+    expect(translate('en', named.key, named.params)).toContain('x@x.com');
+    for (const error of ['dead', 'transient', 'sameAccount', 'noTarget'] as const) {
+      const text = swapErrorText({ error, email: 'x@x.com' });
+      for (const { code } of LANGUAGES) expect(translate(code, text.key, text.params), `${code}: ${error}`).toContain('x@x.com');
+    }
+    expect(swapErrorText({ error: 'foreign' })).toEqual({ key: swapErrorKey('foreign') });
+    expect(swapErrorText({ error: 'locked', email: 'x@x.com' })).toEqual({ key: swapErrorKey('locked') });
+    expect(swapErrorText({ error: 'nope', email: 'x@x.com' })).toEqual({ key: swapErrorKey('invalid') });
   });
 });

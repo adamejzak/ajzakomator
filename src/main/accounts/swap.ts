@@ -74,7 +74,7 @@ export interface SwapDeps {
 
 type Rec = Record<string, unknown>;
 export const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
-const str = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
+export const str = (value: unknown): string | undefined => (typeof value === 'string' && value ? value : undefined);
 
 const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const MAX_RETRIES = 5;
@@ -109,6 +109,8 @@ export function claimSwap(): boolean {
   return true;
 }
 export function releaseSwap(): void { running = false; }
+/** Set by the 0.9.1 activation and its recovery when they leave a journal and backups behind (or clear them). */
+export function setSwapUnresolved(value: boolean): void { unresolved = value; }
 
 export interface Snap { text: string; data: Rec; sig: string }
 interface Identity { uuid?: string; email: string; org?: string }
@@ -178,7 +180,7 @@ function sameIdentity(a: Identity, b: Identity): boolean {
 }
 
 const oauthOf = (data: Rec): Rec | null => (isRecord(data.claudeAiOauth) ? data.claudeAiOauth : null);
-const validOauth = (o: Rec | null): o is Rec => o !== null && !!str(o.accessToken) && !!str(o.refreshToken);
+export const validOauth = (o: Rec | null): o is Rec => o !== null && !!str(o.accessToken) && !!str(o.refreshToken);
 
 interface Paths { credentials: string; claudeJson: string }
 interface State {
@@ -241,7 +243,11 @@ export async function clearPendingSwap(deps: Pick<SwapDeps, 'backupDir' | 'fs'>)
   } catch { return false; } finally { running = false; }
 }
 
-/** Swaps the main Claude login with the one saved in managed account `accountId`. Never throws; never exposes a token. */
+/**
+ * @deprecated 0.9.0 exchange; no longer wired (0.9.1 uses activateAccount). Kept because recoverInterruptedSwap must still
+ * repair its version-1 journals and its tests build those states.
+ * Swaps the main Claude login with the one saved in managed account `accountId`. Never throws; never exposes a token.
+ */
 export async function swapMainAccount(deps: SwapDeps, accountId: string): Promise<SwapResult> {
   if (deps.platform === 'darwin') return { ok: false, error: 'unsupported' };
   if (!isAccountId(accountId)) return { ok: false, error: 'invalid' };

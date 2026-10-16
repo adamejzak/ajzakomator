@@ -37,7 +37,8 @@ import { createTokenFetch } from './accounts/tokenTransport';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
 import { gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
-import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapMainAccount, swapPaths, type SwapDeps } from './accounts/swap';
+import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
+import { activateAccount, checkActivationTarget, recoverInterruptedActivation, type ActivateDeps } from './accounts/activate';
 import { reconcileLive, reconcileWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
 import { claudeRefs } from './accounts/refs';
@@ -222,8 +223,18 @@ const swapDeps = (): SwapDeps => ({
   store: accounts,
   backupDir: join(DATA_DIR, 'accounts', 'swap-backup'),
   now: () => Date.now(),
+  // The 0.9.0 exchange is no longer wired; should it ever run, it renews only through the one family rule too.
+  refresh: (dir) => familyRenew(dir),
+  delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+});
+/** "Set as main" (0.9.1): renewals inside go through gateFamilyRefresh with the roster read for that activation. */
+const activateDeps = (): ActivateDeps => ({
+  home: homedir(), env: process.env, platform: process.platform, store: accounts,
+  backupDir: join(DATA_DIR, 'accounts', 'swap-backup'),
+  now: () => Date.now(),
   refresh: (dir) => renewProfile(dir),
   delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  cswap: () => readCswapRoster(cswapRosterPath(homedir(), process.env, process.platform)),
 });
 const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: isSwapUnresolved };
 /** The live Claude login's identity (`~/.claude.json`), null when nobody is signed in. */
@@ -257,7 +268,8 @@ async function pushSwapPending(): Promise<void> {
 // Only profiles whose token family lives nowhere else are renewed (renewRule, R6): never the live login, a switched-out
 // record or a copy of the live family that cswap also holds.
 const refreshBlocked: RefreshOutcome = { kind: 'transient', detail: { reason: 'blocked' } };
-usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, gateFamilyRefresh(accounts, () => cswapRoster, (dir) => renewProfile(dir), refreshBlocked), refreshBlocked);
+const familyRenew = gateFamilyRefresh(accounts, () => cswapRoster, (dir) => renewProfile(dir), refreshBlocked);
+usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, familyRenew, refreshBlocked);
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();
@@ -773,7 +785,8 @@ ipcMain.handle('accounts:remove', (_e, id: unknown) => handleRemoveAccount({
 ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
   const result = await handleMakeMain({
     loginActive: () => login.isActive(),
-    swap: (accountId) => swapMainAccount(swapDeps(), accountId),
+    validate: (accountId) => checkActivationTarget(activateDeps(), accountId),
+    swap: (accountId) => activateAccount(activateDeps(), accountId),
     onSwapped: () => { void usage.refresh(true, true); },
   }, id);
   void pushSwapPending();
@@ -950,8 +963,11 @@ async function startMainApp(): Promise<void> {
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   startSsh();
-  // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another.
-  try { await recoverInterruptedSwap(swapDeps()); } catch { /* the journal stays and the next start retries */ }
+  // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another:
+  // first a 0.9.1 (version 2) journal, otherwise the 0.9.0 recovery decides.
+  try {
+    if ((await recoverInterruptedActivation(activateDeps())) === 'legacy') await recoverInterruptedSwap(swapDeps());
+  } catch { /* the journal stays and the next start retries */ }
   // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
   try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }
   createWindow();

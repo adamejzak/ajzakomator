@@ -113,10 +113,10 @@ export function isAccountId(value: unknown): value is string {
 }
 
 /** Why making a managed account the main one was refused or failed (see `swapMainAccount` in the main process). */
-export const SWAP_ERRORS = ['unsupported', 'invalid', 'busy', 'envToken', 'noMain', 'noTarget', 'sameAccount', 'duplicate', 'dead', 'transient', 'write', 'manual', 'pending'] as const;
+export const SWAP_ERRORS = ['unsupported', 'invalid', 'busy', 'envToken', 'noMain', 'noTarget', 'sameAccount', 'duplicate', 'dead', 'transient', 'write', 'manual', 'pending', 'locked', 'foreign'] as const;
 export type SwapError = (typeof SWAP_ERRORS)[number];
 
-export type SwapResult = { ok: true; email?: string } | { ok: false; error: SwapError };
+export type SwapResult = { ok: true; email?: string } | { ok: false; error: SwapError; email?: string };
 
 export function isSwapError(value: unknown): value is SwapError {
   return typeof value === 'string' && (SWAP_ERRORS as readonly string[]).includes(value);
