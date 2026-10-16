@@ -32,7 +32,7 @@ function parseEntry(raw: unknown): KnownHostEntry | null {
   const blob = Buffer.from(r.key, 'base64');
   const keyType = keyTypeOfBlob(blob);
   if (!keyType) return null;
-  return { id: r.id, host: r.host.toLowerCase(), port: r.port, keyType, key: r.key, fingerprint: sha256Fingerprint(blob), addedAt: typeof r.addedAt === 'number' ? r.addedAt : 0 };
+  return { id: r.id, host: r.host.toLowerCase(), port: r.port, keyType, key: blob.toString('base64'), fingerprint: sha256Fingerprint(blob), addedAt: typeof r.addedAt === 'number' ? r.addedAt : 0 };
 }
 
 export class KnownHostsStore {
@@ -59,16 +59,19 @@ export class KnownHostsStore {
     return { judgement: judgeHostKey(this.entries, host.toLowerCase(), port, keyType, blob.toString('base64')), keyType, fingerprint: sha256Fingerprint(blob) };
   }
 
-  /** `replace` first removes the entries of that host:port and key type. False when the file is read-only or the blob is malformed. */
+  /** `replace` first removes the entries of that host:port and key type. False when the file is read-only or the blob is malformed.
+   *  A failing write throws and leaves the entries in memory unchanged. */
   trust(host: string, port: number, blob: Buffer, mode: 'save' | 'replace'): boolean {
     const keyType = keyTypeOfBlob(blob);
     if (this.newer || !keyType) return false;
     const h = host.toLowerCase();
     const kept = mode === 'replace' ? this.entries.filter((e) => !(e.host === h && e.port === port && e.keyType === keyType)) : this.entries;
     const key = blob.toString('base64');
-    if (kept.some((e) => e.host === h && e.port === port && e.key === key)) { this.entries = kept; this.write(); return true; }
-    this.entries = [...kept, { id: randomUUID(), host: h, port, keyType, key, fingerprint: sha256Fingerprint(blob), addedAt: this.now() }];
-    this.write();
+    const next = kept.some((e) => e.host === h && e.port === port && e.key === key)
+      ? kept
+      : [...kept, { id: randomUUID(), host: h, port, keyType, key, fingerprint: sha256Fingerprint(blob), addedAt: this.now() }];
+    this.write(next);
+    this.entries = next;
     return true;
   }
 
@@ -76,13 +79,14 @@ export class KnownHostsStore {
     if (this.newer) return false;
     const next = this.entries.filter((e) => e.id !== id);
     if (next.length === this.entries.length) return false;
+    this.write(next);
     this.entries = next;
-    this.write();
     return true;
   }
 
-  private write(): void {
+  /** Writes the given entries; the caller adopts them only after this returns. */
+  private write(entries: readonly KnownHostEntry[]): void {
     ensurePrivateDir(dirname(this.file));
-    writePrivateFile(this.file, JSON.stringify({ version: VERSION, entries: this.entries }, null, 1));
+    writePrivateFile(this.file, JSON.stringify({ version: VERSION, entries }, null, 1));
   }
 }

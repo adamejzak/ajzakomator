@@ -1,16 +1,16 @@
 // test/ssh-known-hosts.test.ts
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { keyTypeOfBlob, sha256Fingerprint } from '../src/main/ssh/fingerprint';
 import { judgeHostKey, KnownHostsStore } from '../src/main/ssh/knownHosts';
+import { sshString } from './helpers/sshKeys';
 
 // A fixed public key (generated once from a constant seed, public data only) and the fingerprint `ssh-keygen -lf` prints for it.
 const FIXTURE_LINE = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpKbGPinFIKvvVQexMuxfmVR3auvr57kkIe6mkURtIs fixture@unimux';
 const FIXTURE_FP = 'SHA256:z/fSv0Z0RZS+Lccbc6ZoOWwt/fbj1VFJGSBKQbo4icE';
 const blob = Buffer.from(FIXTURE_LINE.split(' ')[1], 'base64');
-const sshString = (s: string | Buffer) => { const b = Buffer.isBuffer(s) ? s : Buffer.from(s); const l = Buffer.alloc(4); l.writeUInt32BE(b.length); return Buffer.concat([l, b]); };
 const otherBlob = Buffer.concat([sshString('ssh-ed25519'), sshString(Buffer.alloc(32, 9))]);
 const rsaBlob = Buffer.concat([sshString('ssh-rsa'), sshString(Buffer.from([1, 0, 1])), sshString(Buffer.alloc(256, 7))]);
 
@@ -81,6 +81,32 @@ describe('KnownHostsStore', () => {
     expect(store.readOnly()).toBe(true);
     expect(store.trust('b', 22, blob, 'save')).toBe(false);
     expect(JSON.parse(readFileSync(file(), 'utf8')).version).toBe(2);
+  });
+
+  it('leaves memory unchanged when a write fails', () => {
+    const store = new KnownHostsStore(file());
+    store.trust('a', 22, blob, 'save');
+    const before = store.list();
+    // A non-empty directory where the file belongs makes the atomic rename throw.
+    rmSync(file());
+    mkdirSync(join(file(), 'child'), { recursive: true });
+    expect(() => store.trust('b', 22, rsaBlob, 'save')).toThrow();
+    expect(() => store.trust('a', 22, otherBlob, 'replace')).toThrow();
+    expect(() => store.remove(before[0].id)).toThrow();
+    expect(store.list()).toEqual(before);
+    expect(store.judge('b', 22, rsaBlob).judgement).toEqual({ result: 'unknown' });
+  });
+
+  it('stores the canonical base64 of a loaded key', () => {
+    const store0 = new KnownHostsStore(file());
+    store0.trust('a', 22, rsaBlob, 'save');
+    expect(rsaBlob.toString('base64').endsWith('=')).toBe(true);
+    const raw = JSON.parse(readFileSync(file(), 'utf8'));
+    raw.entries[0].key = raw.entries[0].key.replace(/=+$/, '');
+    writeFileSync(file(), JSON.stringify(raw));
+    const store = new KnownHostsStore(file());
+    expect(store.list()[0].key).toBe(rsaBlob.toString('base64'));
+    expect(store.judge('a', 22, rsaBlob).judgement).toEqual({ result: 'match' });
   });
 
   it('drops malformed entries when loading', () => {
