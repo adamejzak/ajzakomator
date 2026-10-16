@@ -35,4 +35,6 @@ export const sshMessages = {
   'Polecenie zawiera znaki sterujące': ['The command contains control characters', 'Der Befehl enthält Steuerzeichen', 'El comando contiene caracteres de control', 'La commande contient des caractères de contrôle', 'O comando contém caracteres de controlo'],
   'Bez grupy': ['No group', 'Ohne Gruppe', 'Sin grupo', 'Sans groupe', 'Sem grupo'],
   'Host usunięty': ['Host deleted', 'Host gelöscht', 'Host eliminado', 'Hôte supprimé', 'Anfitrião eliminado'],
+  'Importuj z pliku': ['Import from file', 'Aus Datei importieren', 'Importar desde archivo', 'Importer depuis un fichier', 'Importar de ficheiro'],
+  'Zapisz klucz prywatny do pliku...': ['Save private key to file...', 'Privaten Schlüssel in Datei speichern...', 'Guardar clave privada en archivo...', 'Enregistrer la clé privée dans un fichier...', 'Guardar chave privada em ficheiro...'],
 } as const;

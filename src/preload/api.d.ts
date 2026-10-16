@@ -13,6 +13,7 @@ import type { LoginRequest, LoginState, SwapResult } from '../shared/accounts';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
 import type { CreateResult, DeleteResult, FileOpProgress, FileOpRequest, FileOpResult, RenameResult } from '../shared/fileOps';
 import type { GitApi } from '../shared/git';
+import type { SshApi, SshPrompt, SshSessionState, SshVaultInfo } from '../shared/ssh';
 import type { AppState, CellSession, Profile, ProjectDirectory, ProjectFilePreview, SessionInfo, UpdateState, Worktree } from '../shared/types';
 
 export type { SessionInfo };
@@ -89,6 +90,7 @@ export interface McApi {
   removeWorktree(projectPath: string, wt: Worktree, deleteBranch: boolean): Promise<void>;
   /** The Git panel (see shared/git.ts): every call names a project; main resolves the folder and validates the request. */
   git: GitApi;
+  ssh: SshApi;
   notify(n: { title: string; body: string; cellId: string }): void;
   openExternal(url: string): void;
   openPath(path: string): void;
@@ -120,6 +122,9 @@ export interface McApi {
   on(channel: 'cell:spawnError', cb: (cellId: string, message: string) => void): () => void;
   on(channel: 'focus-cell', cb: (cellId: string) => void): () => void;
   on(channel: 'ptyhost:crashed', cb: () => void): () => void;
+  on(channel: 'ssh:session', cb: (state: SshSessionState) => void): () => void;
+  on(channel: 'ssh:prompt', cb: (cellId: string, prompt: SshPrompt | null) => void): () => void;
+  on(channel: 'ssh:vault:changed', cb: (info: SshVaultInfo) => void): () => void;
   on(channel: 'app:before-quit', cb: () => void): () => void;
   on(channel: 'update:state', cb: (s: UpdateState) => void): () => void;
   on(channel: 'usage:state', cb: (state: UsageState) => void): () => void;

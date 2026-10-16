@@ -1,7 +1,16 @@
 // test/helpers/sshKeys.ts
 // Key fixtures built in memory for the tests (nothing is written to disk, nothing is a real key of anybody).
 import { createHash, createHmac, generateKeyPairSync } from 'node:crypto';
+import ssh2 from 'ssh2';
 import type { Cipher } from '../../src/main/ssh/vault';
+
+/** ssh2's generateKeyPairSync, retried until ssh2 can read the key back (it writes an unreadable one about 1 in 200 times). */
+export function readableKeyPair(type: 'ed25519' | 'ecdsa' | 'rsa', options: Record<string, unknown> = {}): { private: string; public: string } {
+  for (;;) {
+    const pair = ssh2.utils.generateKeyPairSync(type as 'ed25519', options as never);
+    if (!(ssh2.utils.parseKey(pair.private, options.passphrase as string | undefined) instanceof Error)) return pair;
+  }
+}
 
 export const sshString = (value: string | Buffer): Buffer => {
   const b = Buffer.isBuffer(value) ? value : Buffer.from(value);

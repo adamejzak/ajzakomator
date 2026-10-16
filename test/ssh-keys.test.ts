@@ -4,7 +4,7 @@ import ssh2 from 'ssh2';
 import { describe, expect, it } from 'vitest';
 import { certificateCheck, checkPassphrase, generateKey, KeyDrafts, parsePrivateKey, publicKeyMatches } from '../src/main/ssh/keys';
 import { sha256Fingerprint } from '../src/main/ssh/fingerprint';
-import { fakeCertificate, ppkV2Rsa } from './helpers/sshKeys';
+import { fakeCertificate, ppkV2Rsa, readableKeyPair } from './helpers/sshKeys';
 
 const none = () => undefined;
 
@@ -30,8 +30,8 @@ describe('generateKey', () => {
 });
 
 describe('parsePrivateKey', () => {
-  const ed = ssh2.utils.generateKeyPairSync('ed25519', { comment: 'me@laptop' });
-  const enc = ssh2.utils.generateKeyPairSync('ed25519', { passphrase: 'pw', cipher: 'aes256-ctr', rounds: 16 });
+  const ed = readableKeyPair('ed25519', { comment: 'me@laptop' });
+  const enc = readableKeyPair('ed25519', { passphrase: 'pw', cipher: 'aes256-ctr', rounds: 16 });
   it('accepts OpenSSH, PEM PKCS#1 RSA, PEM SEC1 EC and PPK v2 RSA', () => {
     expect(parsePrivateKey(ed.private)).toMatchObject({ ok: true, encrypted: false, meta: { type: 'ssh-ed25519', comment: 'me@laptop' } });
     const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }) as string;
@@ -73,7 +73,7 @@ describe('KeyDrafts', () => {
   it('creates, unlocks, flags duplicates and mismatches, and expires drafts', () => {
     let now = 0;
     const drafts = new KeyDrafts(() => now);
-    const enc = ssh2.utils.generateKeyPairSync('ed25519', { passphrase: 'pw', cipher: 'aes256-ctr', rounds: 16 });
+    const enc = readableKeyPair('ed25519', { passphrase: 'pw', cipher: 'aes256-ctr', rounds: 16 });
     const locked = drafts.create({ privateKey: enc.private }, none);
     expect(locked).toMatchObject({ ok: true, needsPassphrase: true, encrypted: true });
     if (!locked.ok) throw new Error('draft');
@@ -85,7 +85,7 @@ describe('KeyDrafts', () => {
     expect(taken?.passphrase).toBe('pw');
     expect(drafts.take(locked.draftId)).toBeNull();
 
-    const plain = ssh2.utils.generateKeyPairSync('ed25519');
+    const plain = readableKeyPair('ed25519');
     expect(drafts.create({ privateKey: plain.private, publicKey: ssh2.utils.generateKeyPairSync('ed25519').public }, none)).toEqual({ ok: false, error: 'mismatch' });
     expect(drafts.create({ privateKey: plain.private, certificate: fakeCertificate(ssh2.utils.generateKeyPairSync('ed25519').public) }, none)).toEqual({ ok: false, error: 'certMismatch' });
     expect(drafts.create({ privateKey: plain.private, certificate: 'ssh-ed25519-cert-v01@openssh.com AAAA' }, none)).toMatchObject({ ok: true, certificateWarning: true });

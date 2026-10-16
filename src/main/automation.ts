@@ -41,7 +41,7 @@ export class AutomationService {
 
   private actor(cellId: string) {
     const found = findCell(this.state.get(), cellId);
-    if (!found || !found.cell.role || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent MCP integration is disabled or the cell is no longer available.');
+    if (!found || !found.cell.role || !!found.cell.ssh || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent MCP integration is disabled or the cell is no longer available.');
     return found;
   }
   /** The MCP role of a cell, or undefined while MCP is disabled for it (used to decide which tools the agent sees). */
@@ -61,7 +61,7 @@ export class AutomationService {
   }
   private target(cellId: string, actorId?: string) {
     const found = findCell(this.state.get(), cellId);
-    if (!found || !found.cell.role || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Target must be an active agent cell with MCP enabled.');
+    if (!found || !found.cell.role || !!found.cell.ssh || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Target must be an active agent cell with MCP enabled.');
     this.project(found.project.id, actorId);
     return found;
   }
@@ -116,7 +116,7 @@ export class AutomationService {
       case 'list_agents': {
         const a = args as { projectId?: string };
         const project = this.project(a.projectId, actorId);
-        return project.tabs.flatMap((tab) => tab.cells.filter((cell) => getProfile(this.state.get(), cell.profileId).cli !== 'shell').map((cell) => ({
+        return project.tabs.flatMap((tab) => tab.cells.filter((cell) => !cell.ssh && getProfile(this.state.get(), cell.profileId).cli !== 'shell').map((cell) => ({
           cellId: cell.id, name: cell.name ?? getProfile(this.state.get(), cell.profileId).name,
           gridId: tab.id, gridName: tab.name, gridColor: tab.color, profileId: cell.profileId, model: cell.model, color: cell.color,
           role: cell.role ?? null,
@@ -127,7 +127,8 @@ export class AutomationService {
       case 'list_library': {
         const project = this.project((args as { projectId?: string }).projectId, actorId);
         return { snippets: this.state.get().snippets.filter((s) => !s.projectId || s.projectId === project.id).map(({ id, name, autoSend, projectId }) => ({ id, name, autoSend, projectId })),
-          presets: this.state.get().presets.filter((p) => !p.projectId || p.projectId === project.id) };
+          // SSH hosts never reach MCP (R4, spec 11): preset cells lose their host reference.
+          presets: this.state.get().presets.filter((p) => !p.projectId || p.projectId === project.id).map((p) => ({ ...p, cells: p.cells.map(({ sshHostId: _ssh, ...cell }) => cell) })) };
       }
       case 'get_snippet': {
         const { snippetId } = automationSchemas.get_snippet.parse(input);
@@ -246,7 +247,7 @@ export class AutomationService {
       case 'set_role': {
         const { cellId, role } = automationSchemas.set_role.parse(input);
         const found = findCell(this.state.get(), cellId);
-        if (!found || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent cell not found.');
+        if (!found || !!found.cell.ssh || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent cell not found.');
         const { project } = found;
         this.state.change((s) => this.log(updateCell(s, cellId, { role: role ?? undefined }), project.id, 'role', role ?? 'disabled', cellId));
         return { cellId, role };
@@ -296,7 +297,7 @@ export class AutomationService {
     // Launch settings decide what an agent may run: a worker must not change its own profile or model, or restart itself.
     if (actorId && (a.profileId !== undefined || a.model !== undefined || a.restart)) this.coordinator(actorId);
     const found = findCell(this.state.get(), a.cellId);
-    if (!found || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent cell not found.');
+    if (!found || !!found.cell.ssh || getProfile(this.state.get(), found.cell.profileId).cli === 'shell') throw new Error('Agent cell not found.');
     this.project(found.project.id, actorId);
     if (a.profileId !== undefined) {
       const profile = this.state.get().profiles.find((p) => p.id === a.profileId);

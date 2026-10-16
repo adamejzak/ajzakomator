@@ -3,6 +3,7 @@ import { MessageChannelMain, utilityProcess, type UtilityProcess, type WebConten
 import { EventEmitter } from 'events';
 import { join } from 'path';
 import type { HostToMain, MainToHost, SpawnRequest } from '../shared/ipc';
+import type { SshHostCommand } from './ssh/coordinator';
 
 export class PtyHostClient extends EventEmitter {
   private child: UtilityProcess | null = null;
@@ -51,6 +52,11 @@ export class PtyHostClient extends EventEmitter {
 
   spawn(req: SpawnRequest): void {
     this.send({ t: 'spawn', req });
+  }
+
+  /** SSH control messages (they may carry secrets: never log them). */
+  sendSsh(m: SshHostCommand): void {
+    this.send(m);
   }
 
   kill(id: string): void {

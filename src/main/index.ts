@@ -1,8 +1,8 @@
 import { createHash } from 'crypto';
 import { execFile, spawn, spawnSync } from 'child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, safeStorage, shell, type OpenDialogOptions } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
+import { homedir, hostname } from 'os';
 import { isAbsolute, join } from 'path';
 import { stat } from 'fs/promises';
 import type { SpawnCellRequest } from '../preload/api';
@@ -48,6 +48,12 @@ import { MAIN_ACCOUNTS } from '../shared/usage';
 import type { UpdateStrings } from '../shared/updateProgress';
 import { createWorktree, isGitRepo, removeWorktree } from './worktree';
 import { StateController } from './stateController';
+import { SshCoordinator } from './ssh/coordinator';
+import { createSshHandlers, readKeyFileFromDisk, registerSshIpc } from './ssh/ipc';
+import { KeyDrafts } from './ssh/keys';
+import { KnownHostsStore } from './ssh/knownHosts';
+import { writePrivateFile } from './ssh/files';
+import { electronCipher, SshVault } from './ssh/vault';
 import { AutomationService } from './automation';
 import { UnimuxMcpServer } from './mcp';
 import { queueCodexMessage } from './agentDelivery';
@@ -104,6 +110,8 @@ if (!superseded && process.platform === 'win32' && app.isPackaged && !process.en
 if (superseded) app.exit(0);
 
 let win: BrowserWindow | null = null;
+/** SSH sessions: created after app.whenReady() (safeStorage needs it), before the window (startSsh). */
+let ssh: SshCoordinator | null = null;
 let state: AppState = loadState(DATA_DIR, appPlatform(process.platform));
 const tr = (key: MessageKey, params?: MessageParams) => translate(state.settings.language ?? detectLanguage([app.getLocale()]), key, params);
 const saver = createSaver(DATA_DIR);
@@ -266,6 +274,7 @@ const controller = new StateController(state, (snapshot) => {
   }
   const previous = state;
   state = snapshot.state;
+  ssh?.stateChanged(state);
   const key = `${state.settings.showAiUsage}:${state.settings.usageIntervalMinutes}`;
   if (key !== usageKey) { usageKey = key; usage.reschedule(); }
   saver.save(state);
@@ -280,7 +289,7 @@ const automation = new AutomationService(controller, {
     return profile ? missingCli(profile, cliDetector.snapshot()) ?? undefined : undefined;
   },
   stopCells: async (ids) => {
-    for (const id of ids) { noteKill(id); mcp.revokeCell(id); verifiedCodex.delete(id); alive.delete(id); automation.statuses.set(id, 'exited'); }
+    for (const id of ids) { noteKill(id); ssh?.killed(id); mcp.revokeCell(id); verifiedCodex.delete(id); alive.delete(id); automation.statuses.set(id, 'exited'); }
     await Promise.all(ids.map((id) => ptyHost.killAndWait(id)));
   },
   isCellRunning: (cellId) => alive.has(cellId),
@@ -363,11 +372,47 @@ function createWindow(): void {
   else win.loadFile(join(__dirname, '../renderer/index.html'));
 }
 
+function startSsh(): void {
+  const dir = join(DATA_DIR, 'ssh');
+  const cipher = electronCipher(safeStorage, process.platform, !app.isPackaged && process.env.MC_SSH_NO_SAFESTORAGE === '1');
+  const vault = new SshVault(join(dir, 'vault.json'), cipher);
+  const knownHosts = new KnownHostsStore(join(dir, 'known_hosts.json'));
+  const vaultChanged = () => send('ssh:vault:changed', vault.info());
+  ssh = new SshCoordinator({
+    state: () => state, vault, knownHosts,
+    host: (m) => ptyHost.sendSsh(m),
+    events: { session: (s) => send('ssh:session', s), prompt: (cellId, prompt) => send('ssh:prompt', cellId, prompt), vaultChanged },
+    debug: !app.isPackaged && process.env.MC_SSH_DEBUG === '1',
+  });
+  const coordinator = ssh;
+  registerSshIpc(ipcMain, createSshHandlers({
+    coordinator, vault, knownHosts, drafts: new KeyDrafts(),
+    state: () => state,
+    change: (fn) => { controller.change(fn); },
+    vaultChanged,
+    pickKeyFile: async () => {
+      // The default folder is only passed to the dialog; the app never reads ~/.ssh by itself.
+      const sshDir = join(homedir(), '.ssh');
+      const r = await showOpen({ title: tr('Importuj z pliku'), properties: ['openFile', 'showHiddenFiles'], ...(existsSync(sshDir) ? { defaultPath: sshDir } : {}) });
+      return r.canceled ? null : r.filePaths[0] ?? null;
+    },
+    saveKeyFile: async (name) => {
+      const options = { title: tr('Zapisz klucz prywatny do pliku...'), defaultPath: name };
+      const r = isLive(win) ? await dialog.showSaveDialog(win!, options) : await dialog.showSaveDialog(options);
+      return r.canceled || !r.filePath ? null : r.filePath;
+    },
+    readKeyFile: readKeyFileFromDisk,
+    writeKeyFile: async (path, text) => writePrivateFile(path, text),
+    hostname: () => hostname(),
+  }), (event) => isLive(win) && event.sender === win!.webContents);
+}
+
 // ── pty host ────────────────────────────────────────────────────────────────
 
 ptyHost.on('message', (m: HostToMain) => {
   if ('id' in m && m.id.startsWith(INSTALL_PTY_PREFIX)) { install.onHostMessage(m); return; } // the install window is not a cell
   if ('id' in m && m.id.startsWith('auth:')) return; // login windows are not cells
+  if (ssh?.onHostMessage(m)) return;
   if (m.t === 'spawned') { automation.runtimeStarted(m.id); alive.add(m.id); automation.statuses.set(m.id, 'unknown'); }
   else if (m.t === 'exit') {
     alive.delete(m.id);
@@ -386,6 +431,7 @@ ptyHost.on('crashed', () => {
   install.failActive();
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
   verifiedCodex.clear();
+  ssh?.hostCrashed();
   alive.clear();
   send('ptyhost:crashed');
 });
@@ -537,6 +583,7 @@ async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
 }
 ipcMain.on('cell:kill', (_e, id: string) => {
   noteKill(id);
+  ssh?.killed(id);
   mcp.revokeCell(id);
   verifiedCodex.delete(id);
   automation.statuses.set(id, 'exited');
@@ -545,6 +592,7 @@ ipcMain.on('cell:kill', (_e, id: string) => {
 });
 ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
   noteKill(id);
+  ssh?.killed(id);
   mcp.revokeCell(id);
   verifiedCodex.delete(id);
   automation.statuses.set(id, 'exited');
@@ -857,6 +905,7 @@ async function startMainApp(): Promise<void> {
   await hooks.start();
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
+  startSsh();
   // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another.
   try { await recoverInterruptedSwap(swapDeps()); } catch { /* the journal stays and the next start retries */ }
   createWindow();

@@ -46,6 +46,8 @@ export class SshVault {
   private newer = false;
   /** D7: passphrases typed into a prompt with "remember until the app quits". Never written. */
   private rememberedPassphrases = new Map<string, string>();
+  /** Saved passphrases already checked against their key this run (preflight M2: the bcrypt check is not repeated per connect). */
+  private verifiedPassphrases = new Map<string, string>();
 
   constructor(private readonly file: string, private readonly cipher: Cipher, private readonly now: () => number = Date.now) {
     const read = readJsonFile(file);
@@ -171,6 +173,7 @@ export class SshVault {
     this.write(next, this.passwords);
     this.keys = next;
     if (patch.passphrase) this.rememberedPassphrases.delete(id);
+    this.verifiedPassphrases.delete(id);
     return { ok: true, key: this.infoOf(updated) };
   }
 
@@ -181,12 +184,15 @@ export class SshVault {
     this.write(next, this.passwords);
     this.keys = next;
     this.rememberedPassphrases.delete(id);
+    this.verifiedPassphrases.delete(id);
     return true;
   }
 
   remember(keyId: string, passphrase: string): void { this.rememberedPassphrases.set(keyId, passphrase); }
   remembered(keyId: string): string | undefined { return this.rememberedPassphrases.get(keyId); }
-  forgetRemembered(): void { this.rememberedPassphrases.clear(); }
+  forgetRemembered(): void { this.rememberedPassphrases.clear(); this.verifiedPassphrases.clear(); }
+  markVerified(keyId: string, passphrase: string): void { this.verifiedPassphrases.set(keyId, passphrase); }
+  isVerified(keyId: string, passphrase: string): boolean { return this.verifiedPassphrases.get(keyId) === passphrase; }
 
   setPassword(hostId: string, password: string): { ok: true; ephemeral: boolean } | { ok: false; error: 'readOnly' } {
     if (this.newer) return { ok: false, error: 'readOnly' };

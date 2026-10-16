@@ -361,4 +361,23 @@ describe('review fixes: ownership, launch settings, inbox acknowledgement', () =
     expect(inbox.messages.find((m) => m.id === long.id)!.readAt).toBeUndefined();
     expect(f.controller.get().automation.messages.find((m) => m.id === long.id)!.readAt).toBeUndefined();
   });
+  it('never shows SSH cells or SSH hosts to MCP (R4, spec 11)', async () => {
+    const f = automationFixture();
+    const sshHost = { id: '00000000-0000-4000-8000-000000000001', label: 'secret-host-label', address: 'internal.example', port: 22, username: 'root', createdAt: 0, updatedAt: 0 };
+    f.controller.change((s) => {
+      const withHost = { ...s, sshHosts: [sshHost] };
+      const withCell = addTab(withHost, f.project.id, { layout: layoutForCount(1), cells: [{ profileId: 'claude', role: 'worker', ssh: { hostId: sshHost.id } }] });
+      return upsertPreset(withCell, { id: 'ssh-preset', name: 'ssh', layout: layoutForCount(1), cells: [{ profileId: 'shell', worktree: false, sshHostId: sshHost.id }] });
+    });
+    const sshCell = f.controller.get().projects[0].tabs.at(-1)!.cells[0];
+    const agents = await f.service.execute('list_agents', {}, f.coordinator.id);
+    const library = await f.service.execute('list_library', {}, f.coordinator.id);
+    expect(JSON.stringify(agents)).not.toContain(sshCell.id);
+    for (const text of [JSON.stringify(agents), JSON.stringify(library)]) {
+      expect(text).not.toContain('secret-host-label');
+      expect(text).not.toContain('internal.example');
+      expect(text).not.toContain(sshHost.id);
+    }
+    await expect(f.service.execute('get_context', {}, sshCell.id)).rejects.toThrow();
+  });
 });

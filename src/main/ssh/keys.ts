@@ -76,6 +76,17 @@ export function parsePrivateKey(text: string, passphrase?: string): ParseResult 
   return meta ? { ok: true, meta, encrypted } : { ok: false, error: 'unsupportedType' };
 }
 
+/** The metadata of a stored key rebuilt from its public line (to check a certificate added later in the key editor). */
+export function keyMetaFromPublic(line: string): KeyMeta | null {
+  const parsed = utils.parseKey(line.trim());
+  const key = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!key || key instanceof Error) return null;
+  const type = key.type as SshKeyAlgo;
+  if (!KEY_ALGOS.includes(type)) return null;
+  const blob = key.getPublicSSH();
+  return { type, bits: bitsOf(type, blob), fingerprint: sha256Fingerprint(blob), publicKey: line.trim(), comment: key.comment ?? '', blob };
+}
+
 export const checkPassphrase = (privateKey: string, passphrase: string): boolean => parsePrivateKey(privateKey, passphrase).ok;
 
 export function publicKeyMatches(meta: KeyMeta, publicText: string): boolean {
@@ -101,13 +112,17 @@ export async function generateKey(req: { type: SshKeyType; bits?: number; commen
   const bits = req.type === 'ed25519' ? undefined : req.bits ?? DEFAULT_KEY_BITS[req.type];
   if (bits !== undefined && !KEY_SIZES[req.type].includes(bits)) throw new Error('unsupported key size');
   const options = { ...(bits ? { bits } : {}), comment: req.comment, ...(req.passphrase ? { passphrase: req.passphrase, cipher: 'aes256-ctr', rounds: 16 } : {}) };
-  // The async variant keeps main responsive while RSA 4096 is generated.
-  const pair = await new Promise<{ private: string; public: string }>((resolve, reject) => {
-    utils.generateKeyPair(req.type, options as never, (err: Error | null, keys: { private: string; public: string }) => (err ? reject(err) : resolve(keys)));
-  });
-  const parsed = parsePrivateKey(pair.private, req.passphrase);
-  if (!parsed.ok) throw new Error('generated key does not parse');
-  return { privateKey: pair.private, meta: parsed.meta };
+  // ssh2 1.17 writes a key it cannot read back now and then (about 1 in 200 OpenSSH keys, "Malformed OpenSSH private key"):
+  // such a key is never stored, a new one is generated instead.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    // The async variant keeps main responsive while RSA 4096 is generated.
+    const pair = await new Promise<{ private: string; public: string }>((resolve, reject) => {
+      utils.generateKeyPair(req.type, options as never, (err: Error | null, keys: { private: string; public: string }) => (err ? reject(err) : resolve(keys)));
+    });
+    const parsed = parsePrivateKey(pair.private, req.passphrase);
+    if (parsed.ok) return { privateKey: pair.private, meta: parsed.meta };
+  }
+  throw new Error('generated key does not parse');
 }
 
 interface Draft { text: string; publicKey?: string; certificate?: string; meta?: KeyMeta; encrypted: boolean; passphrase?: string; certificateWarning?: boolean; created: number }

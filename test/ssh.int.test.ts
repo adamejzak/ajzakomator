@@ -1,11 +1,11 @@
 // SshManager against a real in-process ssh2 server on 127.0.0.1 (no other network). Fake sink and events stand in for main and the renderer.
 import { createServer } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import ssh2 from 'ssh2';
 import { SshManager, type SshEvents, type SshTimers } from '../src/ptyhost/ssh';
 import type { SshConnectRequest } from '../src/shared/ipc';
 import type { SshErrorCode, SshPhase } from '../src/shared/ssh';
 import { startTestServer, type TestServer } from './helpers/sshServer';
+import { readableKeyPair } from './helpers/sshKeys';
 
 const FAST: Partial<SshTimers> = { quietMs: 100, startupMaxMs: 2000, killGraceMs: 500 };
 let servers: TestServer[] = [];
@@ -90,7 +90,7 @@ describe('SshManager', () => {
   });
 
   it('signs in with a public key, also an encrypted one', async () => {
-    const pair = ssh2.utils.generateKeyPairSync('ed25519', { passphrase: 'secret', cipher: 'aes256-ctr', rounds: 16 });
+    const pair = readableKeyPair('ed25519', { passphrase: 'secret', cipher: 'aes256-ctr', rounds: 16 });
     const s = await server({ publicKey: pair.public });
     const h = harness();
     h.m.connect(req(s.port, { privateKey: pair.private, passphrase: 'secret', allowPasswordPrompt: false }));
