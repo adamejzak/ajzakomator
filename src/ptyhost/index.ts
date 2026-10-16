@@ -2,8 +2,9 @@
 // terminal data flows directly to/from the renderer over a transferred MessagePort.
 import type { MessagePortMain } from 'electron';
 import type { HostToMain, HostToRenderer, MainToHost, RendererToHost } from '../shared/ipc';
-import { PtyManager } from './manager';
+import { PtyManager, type PtySink } from './manager';
 import { HostRouter } from './router';
+import { SshManager } from './ssh';
 
 const parentPort = process.parentPort;
 let rendererPort: MessagePortMain | null = null;
@@ -18,7 +19,8 @@ const toRenderer = (m: HostToRenderer): boolean => {
 /** Terminals whose output main also wants to read (the install window). */
 const tapped = new Set<string>();
 
-const manager = new PtyManager({
+/** Shared by both backends: renderer data, the install window tap and exits. */
+const sink: PtySink = {
   data: (id, data) => {
     if (tapped.has(id)) toMain({ t: 'tap', id, data });
     return toRenderer({ t: 'data', id, data });
@@ -28,9 +30,18 @@ const manager = new PtyManager({
     toRenderer({ t: 'exit', id, code });
     toMain({ t: 'exit', id, code });
   },
+};
+const manager = new PtyManager(sink);
+// Never log messages of the ssh* types: they can carry secrets.
+const ssh = new SshManager(sink, {
+  spawned: (id) => toMain({ t: 'spawned', id, pid: 0 }),
+  status: (id, phase, extra) => toMain({ t: 'sshStatus', id, phase, ...extra }),
+  hostKey: (id, promptId, key) => toMain({ t: 'sshHostKey', id, promptId, key }),
+  authPrompt: (id, promptId, prompt) => toMain({ t: 'sshAuthPrompt', id, promptId, ...prompt }),
+  debug: (id, line) => console.log(`[ssh ${id.slice(0, 8)}] ${line}`),
 });
 /** Sends renderer messages and kills to the backend that owns the terminal. */
-const router = new HostRouter([manager]);
+const router = new HostRouter([manager, ssh]);
 
 function attachRenderer(port: MessagePortMain): void {
   rendererPort?.close();
@@ -69,6 +80,17 @@ parentPort.on('message', async (e) => {
         tapped.delete(m.req.id);
         toMain({ t: 'spawnError', id: m.req.id, message: err instanceof Error ? err.message : String(err) });
       }
+      break;
+    case 'sshConnect': {
+      const early = router.takeEarlySize(m.req.id);
+      ssh.connect(early ? { ...m.req, ...early } : m.req);
+      break;
+    }
+    case 'sshHostKeyAnswer':
+      ssh.answerHostKey(m.id, m.promptId, m.accept, m.error);
+      break;
+    case 'sshAuthAnswer':
+      ssh.answerAuth(m.id, m.promptId, m.values);
       break;
     case 'kill':
       tapped.delete(m.id);

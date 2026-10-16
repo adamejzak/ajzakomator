@@ -1,4 +1,5 @@
 // Messages between main ⇄ pty host (control) and renderer ⇄ pty host (data, via MessagePort).
+import type { SshErrorCode, SshPhase } from './ssh';
 import type { ShellKind } from './types';
 
 export interface SpawnRequest {
@@ -14,10 +15,33 @@ export interface SpawnRequest {
   tap?: boolean;
 }
 
+/** Main to Pty Host: everything ssh2 needs for one cell. Secrets are in memory only and dropped by the Pty Host once used. */
+export interface SshConnectRequest {
+  id: string;
+  host: string;
+  port: number;
+  username: string;
+  cols: number;
+  rows: number;
+  /** Private key text exactly as stored (OpenSSH, PEM or PPK v2). */
+  privateKey?: string;
+  passphrase?: string;
+  /** Saved password, tried once before prompting. */
+  password?: string;
+  /** Already passed through startupInput(): typed once after the shell went quiet. */
+  startup?: string;
+  allowPasswordPrompt: boolean;
+  /** Unpackaged runs with MC_SSH_DEBUG=1 only (main decides): ssh2 debug lines up to USERAUTH go to the console. */
+  debug?: boolean;
+}
+
 export type MainToHost =
   | { t: 'spawn'; req: SpawnRequest }
   | { t: 'kill'; id: string; ack?: boolean }
-  | { t: 'killAll' };
+  | { t: 'killAll' }
+  | { t: 'sshConnect'; req: SshConnectRequest }
+  | { t: 'sshHostKeyAnswer'; id: string; promptId: string; accept: boolean; error?: SshErrorCode }
+  | { t: 'sshAuthAnswer'; id: string; promptId: string; values: string[] | null };
 
 export type HostToMain =
   | { t: 'spawned'; id: string; pid: number }
@@ -28,7 +52,11 @@ export type HostToMain =
   /** The user typed Ctrl+C into a terminal spawned with `tap`. */
   | { t: 'interrupt'; id: string }
   | { t: 'killed'; id: string }
-  | { t: 'killedAll' };
+  | { t: 'killedAll' }
+  | { t: 'sshStatus'; id: string; phase: SshPhase; error?: SshErrorCode; exitCode?: number; banner?: string }
+  /** `key` is the base64 raw public key blob the server presented. */
+  | { t: 'sshHostKey'; id: string; promptId: string; key: string }
+  | { t: 'sshAuthPrompt'; id: string; promptId: string; kind: 'password' | 'keyboard'; name?: string; instructions?: string; fields: Array<{ text: string; echo: boolean }>; retry: boolean };
 
 export type RendererToHost =
   | { t: 'write'; id: string; data: string }

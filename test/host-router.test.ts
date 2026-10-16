@@ -47,4 +47,13 @@ describe('HostRouter', () => {
     expect(a.calls).toEqual(['flow true', 'killAll']);
     expect(b.calls).toEqual(['flow true', 'killAll']);
   });
+
+  it('killAll waits for every backend even when one rejects', async () => {
+    const a = backend([]); const b = backend([]);
+    a.killAll = vi.fn(async () => { throw new Error('boom'); });
+    let bDone = false;
+    b.killAll = vi.fn(async () => { await new Promise((r) => setTimeout(r, 20)); bDone = true; });
+    await expect(new HostRouter([a, b]).killAll()).resolves.toBeUndefined();
+    expect(bDone).toBe(true);
+  });
 });

@@ -44,5 +44,6 @@ export class HostRouter {
   setFlowControl(on: boolean): void { for (const b of this.backends) b.setFlowControl(on); }
   histories(): Array<{ id: string; data: string }> { return this.backends.flatMap((b) => b.histories()); }
   kill(id: string): Promise<void> { return this.owner(id)?.kill(id) ?? Promise.resolve(); }
-  async killAll(): Promise<void> { await Promise.all(this.backends.map((b) => b.killAll())); }
+  /** Settles every backend: one that rejects must not stop the others or the `killedAll` reply. */
+  async killAll(): Promise<void> { await Promise.allSettled(this.backends.map((b) => b.killAll())); }
 }
