@@ -4,7 +4,7 @@
 
 Every cell, tab and project shows a live status: ◐ working, ● waiting for you.
 
-A Claude cell whose agent started a dynamic workflow stays ◐ working while Claude Code waits for it (also when the workflow is quiet for hours). It turns ● waiting for you, with one alert, when Claude's next turn ends without a running workflow, or right away when the agent asks you something or the turn fails.
+A Claude cell whose agent started a dynamic workflow stays ◐ working while Claude Code waits for it (also when the workflow is quiet for hours). It turns ● waiting for you, with one alert, when Claude's next turn ends without a running workflow, or right away when the agent asks you something or the turn fails. A workflow that is never reported as ending turns the cell to waiting for you silently after 6 hours.
 
 A turn that ends with a limit or an error is shown in red instead of "waiting for you": **limit reached** for a rate limit (Claude) or "You've hit your usage limit" (Codex), **error** for any other failure.
 

@@ -150,6 +150,8 @@ export class StatusTracker {
   private longBackground = false;
   /** Set by the renderer: true while the terminal still shows "Waiting for N dynamic workflow(s)" (src/shared/backgroundWait.ts). */
   bgGuard: (() => boolean) | null = null;
+  /** When the current background mode began (the first stopbg after a prompt / Stop); caps the screen veto. */
+  private backgroundSince = -Infinity;
   /** Codex cell: its approval OSC 9 is a precise attention signal, its turn end comes from the notify hook once that works. */
   private codexMode = false;
   /** The notify hook delivered an event in this process, so it is trusted to report turn ends. */
@@ -182,6 +184,15 @@ export class StatusTracker {
   /** Precise signals drive this cell: Claude hooks, or Codex whose notify hook has reported. */
   get isHooked(): boolean {
     return this.hooked || this.codexNotified;
+  }
+
+  /**
+   * How long the cell has been in background mode (0 when it is not). The screen veto (bgGuard, and the stop -> stopbg
+   * conversion in TerminalManager) holds only below WORKFLOW_STALL_MS of it: a wait line that stays on screen after the
+   * run (a stale transcript row, a frozen footer) cannot keep the cell working forever.
+   */
+  backgroundFor(now: number): number {
+    return this.background ? now - this.backgroundSince : 0;
   }
 
   /** Marks a Codex cell (profile); kept across `reset`. */
@@ -322,6 +333,7 @@ export class StatusTracker {
     this.lastOutput = now;
     if (event === 'prompt') this.interruptAt = -Infinity;
     if (event === 'stopbg') {
+      if (!this.background) this.backgroundSince = now;
       this.background = true;
       this.longBackground = (info?.workflows ?? 0) > 0;
     } else if (event !== 'busy') {
@@ -481,8 +493,9 @@ export class StatusTracker {
         : kind === 'interrupt' ? INTERRUPT_QUIET_MS : kind === 'error' ? FAILURE_QUIET_MS : kind === 'codex' ? CODEX_QUIET_MS : STALL_MS;
       const since = this.isHooked ? Math.max(this.lastOutput, this.interruptAt) : this.lastOutput;
       if (now - since >= quiet) {
-        // The terminal still shows Claude Code waiting for its workflow: the run goes on, the net starts over.
-        if ((kind === 'bg' || kind === 'workflow') && this.bgGuard?.()) {
+        // The terminal still shows Claude Code waiting for its workflow: the run goes on, the net starts over (for at most
+        // WORKFLOW_STALL_MS of background mode; after that the net ends the run normally, a bg net with one alert).
+        if ((kind === 'bg' || kind === 'workflow') && this.backgroundFor(now) < WORKFLOW_STALL_MS && this.bgGuard?.()) {
           this.lastOutput = now;
           return this.status;
         }

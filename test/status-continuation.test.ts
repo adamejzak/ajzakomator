@@ -376,8 +376,39 @@ describe('a dynamic workflow keeps the cell working (W2)', () => {
     s.run(1000, 1000 + BG_STALL_MS + 5000);
     expect(s.t.status).toBe('working');
     showing = false;
-    s.run(1000 + BG_STALL_MS + 5000, 1000 + 2 * BG_STALL_MS + 10_000);
+    // The veto at 1000 + BG_STALL_MS restarted the window: still working just before the second deadline.
+    s.run(1000 + BG_STALL_MS + 5000, 1000 + 2 * BG_STALL_MS - 400);
+    expect(s.t.status).toBe('working');
+    s.run(1000 + 2 * BG_STALL_MS, 1000 + 2 * BG_STALL_MS + 10_000);
     expect(s.t.status).toBe('waiting');
+    expect(s.t.lastStallKind).toBe('bg');
+    expect(s.alerts()).toBe(1);
+  });
+
+  it('a wait line that never leaves the screen holds a screen-converted stop only up to WORKFLOW_STALL_MS, then one alert', () => {
+    const s = sim();
+    s.hook(0, 'prompt');
+    s.t.bgGuard = () => true; // a stale transcript row or a frozen footer
+    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    s.run(1000, 1000 + WORKFLOW_STALL_MS - 400);
+    expect(s.t.status).toBe('working');
+    expect(s.t.backgroundFor(1000 + WORKFLOW_STALL_MS)).toBe(WORKFLOW_STALL_MS);
+    s.run(1000 + WORKFLOW_STALL_MS, 1000 + WORKFLOW_STALL_MS + BG_STALL_MS + 1000);
+    expect(s.t.status).toBe('waiting');
+    expect(s.t.lastStallKind).toBe('bg');
+    expect(s.alerts()).toBe(1);
+    expect(s.t.backgroundFor(1000 + WORKFLOW_STALL_MS + BG_STALL_MS + 1000)).toBe(0);
+  });
+
+  it('a later stopbg in the same background mode does not restart the cap', () => {
+    const s = sim();
+    s.hook(0, 'prompt');
+    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    s.hook(60_000, 'busy');
+    s.hook(70_000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    expect(s.t.backgroundFor(100_000)).toBe(99_000);
+    s.hook(80_000, 'prompt');
+    expect(s.t.backgroundFor(100_000)).toBe(0);
   });
 
   it('a stopbg converted by the screen veto stays working while the screen still shows the wait', () => {
