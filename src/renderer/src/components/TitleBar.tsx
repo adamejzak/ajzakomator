@@ -1,7 +1,7 @@
 import { shortcutText, titleWithShortcut } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent } from 'react';
-import { workspaceOrder, reorderWorkspace } from '../../../shared/workspaceOrder';
+import { activeWorkspaceKey, workspaceOrder, reorderWorkspace } from '../../../shared/workspaceOrder';
 import { describeLayout } from '../../../shared/layout';
 import { activeProject, renameTab, PROJECT_COLORS } from '../../../shared/state';
 import { aggregate } from '../../../shared/status';
@@ -9,7 +9,7 @@ import { addAgent, closeTab, selectTab } from '../actions';
 import { setUi, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
 import { openMenu, openMenuAt } from './ContextMenu';
-import { IChevron, IPlusBold, ISearch, IX, TGrid, THistory, TSettings, TSidebar, TSnippet } from './icons';
+import { IChevron, IPlusBold, ISearch, IX, TGrid, THistory, TSettings, TSidebar, TSnippet, TTerminal } from './icons';
 import { FileIcon } from './FileIcon';
 import { StatusBadges } from './StatusBadges';
 import { Brand } from './Brand';
@@ -18,6 +18,8 @@ import { locateInFiles } from '../explorer';
 import { fullProjectPath } from '../../../shared/platform';
 import { tabsToClose } from '../../../shared/fileOps';
 import { revealScroll, scrollEdges, stepScroll, wheelScroll } from '../../../shared/tabStrip';
+import { useSshStore } from '../sshStore';
+import { activateSshEditor, closeSshEditor, sshEditorTitleText } from '../ssh';
 
 export function TitleBar() {
   const { tr } = useI18n();
@@ -55,6 +57,9 @@ export function WorkspaceTabs() {
   const activeFileId = documents.some((doc) => doc.id === selectedFile && doc.projectId === project?.id) ? selectedFile : null;
   const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
   const settingsActive = useStore((st) => st.ui.settingsActive);
+  const editors = useSshStore((st) => st.editors);
+  const activeEditorId = useSshStore((st) => st.activeEditorId);
+  const vault = useSshStore((st) => st.vault);
   const [editing, setEditing] = useState<string | null>(null);
   const [orders, setOrders] = useState<Record<string, string[]>>(() => {
     try {
@@ -67,6 +72,7 @@ export function WorkspaceTabs() {
   const projectKey = project?.id ?? 'no-project';
   const order = workspaceOrder(orders[projectKey] ?? [], [
     ...(settingsTabOpen ? ['settings'] : []),
+    ...editors.map((e) => `ssh:${e.id}`),
     ...(project?.tabs.map((t) => `grid:${t.id}`) ?? []),
     ...documents.filter((doc) => doc.projectId === project?.id).map((doc) => `file:${doc.id}`),
   ]);
@@ -136,7 +142,7 @@ export function WorkspaceTabs() {
     el.addEventListener('wheel', wheel, { passive: false });
     return () => { observer.disconnect(); el.removeEventListener('wheel', wheel); };
   }, []);
-  const activeKey = settingsActive ? 'settings' : activeFileId ? `file:${activeFileId}` : project?.activeTabId ? `grid:${project.activeTabId}` : null;
+  const activeKey = activeWorkspaceKey({ settingsActive, sshEditorId: activeEditorId, fileId: activeFileId, gridId: project?.activeTabId ?? null });
   useEffect(() => {
     const el = stripRef.current;
     if (!el || !activeKey) return;
@@ -156,6 +162,10 @@ export function WorkspaceTabs() {
       ...order.flatMap((key) => {
         const hint = key === activeKey ? '✓' : undefined;
         if (key === 'settings') return [{ label: tr('Ustawienia'), hint, onClick: () => setUi({ settingsActive: true }) }];
+        if (key.startsWith('ssh:')) {
+          const e = editors.find((x) => `ssh:${x.id}` === key);
+          return e ? [{ label: sshEditorTitleText(e, s, vault, tr), hint, onClick: () => activateSshEditor(e.id) }] : [];
+        }
         if (key.startsWith('grid:')) {
           const t = project.tabs.find((tab) => `grid:${tab.id}` === key);
           return t ? [{ label: t.name, hint, onClick: () => selectTab(project.id, t) }] : [];
@@ -199,6 +209,13 @@ export function WorkspaceTabs() {
         <span className="tab-type-icon"><TSettings /></span><span className="label">{tr('Ustawienia')}</span>
         <button className="x" aria-label={tr('Zamknij')} onClick={(e) => { e.stopPropagation(); setUi({ settingsTabOpen: false, settingsActive: false }); }}><IX /></button>
       </div>}
+      {editors.map((e) => (
+        <div key={e.id} {...dragProps(`ssh:${e.id}`)} style={{ order: order.indexOf(`ssh:${e.id}`) }} className={`tab ssh-tab ${activeKey === `ssh:${e.id}` ? 'active' : ''}`}
+          onClick={() => activateSshEditor(e.id)} onAuxClick={(ev) => { if (ev.button === 1) closeSshEditor(e.id); }}>
+          <span className="tab-type-icon" aria-hidden="true"><TTerminal /></span><span className="label">{sshEditorTitleText(e, s, vault, tr)}</span>
+          <button className="x" aria-label={tr('Zamknij')} onClick={(ev) => { ev.stopPropagation(); closeSshEditor(e.id); }}><IX /></button>
+        </div>
+      ))}
       {project && (
         <>
           {project.tabs.map((t) => {
@@ -207,7 +224,7 @@ export function WorkspaceTabs() {
               <div
                 key={t.id}
                 {...dragProps(`grid:${t.id}`)}
-                className={`tab grid-tab ${!settingsActive && !activeFileId && t.id === project.activeTabId ? 'active' : ''}`}
+                className={`tab grid-tab ${activeKey === `grid:${t.id}` ? 'active' : ''}`}
                 style={{ order: order.indexOf(`grid:${t.id}`), ...(t.color ? { '--tab-color': t.color } : {}) } as CSSProperties}
                 onMouseDown={(e) => e.button === 0 && selectTab(project.id, t)}
                 onAuxClick={(e) => e.button === 1 && closeTab(project.id, t.id)}
@@ -252,7 +269,7 @@ export function WorkspaceTabs() {
             );
           })}
           {documents.filter((doc) => doc.projectId === project.id).map((doc) => (
-            <div key={doc.id} {...dragProps(`file:${doc.id}`)} style={{ order: order.indexOf(`file:${doc.id}`) }} className={`tab file-tab ${!settingsActive && activeFileId === doc.id ? 'active' : ''}`} title={doc.relativePath}
+            <div key={doc.id} {...dragProps(`file:${doc.id}`)} style={{ order: order.indexOf(`file:${doc.id}`) }} className={`tab file-tab ${activeKey === `file:${doc.id}` ? 'active' : ''}`} title={doc.relativePath}
               onClick={() => activateFile(doc.id)} onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); void closeFile(doc.id); } }}
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               onContextMenu={(e) => { e.preventDefault(); fileTabMenu(e.clientX, e.clientY, doc); }}>

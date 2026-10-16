@@ -3,11 +3,13 @@
 // the other at load time (only inside functions).
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell } from '../../shared/state';
-import { hostEndpoint, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshNotice, type SshPrompt, type SshSessionState } from '../../shared/ssh';
+import { closeEditorTab, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshNotice, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
+import type { MessageKey, MessageParams } from '../../shared/i18n';
+import type { AppState } from '../../shared/types';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
 import { tr } from './i18n';
-import { getS, getUi, toast, update } from './store';
+import { getS, getUi, setUi, toast, update } from './store';
 import { useSshStore } from './sshStore';
 import { terminals } from './terminals/TerminalManager';
 
@@ -118,4 +120,37 @@ export async function openSshTab(projectId: string, hostIds: string[], name?: st
   let profileId = '';
   update((s) => { const r = ensureShellProfile(s); profileId = r.profileId; return r.s; });
   await openTab(projectId, layoutFor(hostIds.length), hostIds.map((sshHostId) => ({ profileId, worktree: false, sshHostId })), name);
+}
+
+// ── editor tabs (spec 10.2) ──────────────────────────────────────────────────
+
+/** The title of an editor tab, as plain text (used by the tab strip and the all-tabs menu). */
+export function sshEditorTitleText(editor: SshEditorRef, state: AppState, vault: SshVaultInfo | null, t: (key: MessageKey, params?: MessageParams) => string): string {
+  if (editor.kind === 'newKey') return t('Nowy klucz');
+  if (editor.kind === 'host') return state.sshHosts.find((h) => h.id === editor.targetId)?.label ?? t('Nowy host');
+  return vault?.keys.find((k) => k.id === editor.targetId)?.label ?? t('Klucz');
+}
+
+export function openSshEditor(kind: SshEditorRef['kind'], targetId?: string): void {
+  const { editors } = useSshStore.getState();
+  const r = openEditorTab(editors, kind, targetId, crypto.randomUUID());
+  useSshStore.setState({ editors: r.list, activeEditorId: r.id });
+  setUi({ settingsActive: false });
+}
+
+export function activateSshEditor(id: string): void {
+  if (!useSshStore.getState().editors.some((e) => e.id === id)) return;
+  useSshStore.setState({ activeEditorId: id });
+  setUi({ settingsActive: false });
+}
+
+export function closeSshEditor(id: string): void {
+  const { editors, activeEditorId } = useSshStore.getState();
+  const r = closeEditorTab(editors, activeEditorId, id);
+  useSshStore.setState({ editors: r.list, activeEditorId: r.activeId });
+}
+
+/** "Nowy host" saved, or a new key stored: the same tab now edits that host or key. */
+export function retargetSshEditor(id: string, kind: 'host' | 'key', targetId: string): void {
+  useSshStore.setState((st) => ({ editors: st.editors.map((e) => (e.id === id ? { id, kind, targetId } : e)) }));
 }

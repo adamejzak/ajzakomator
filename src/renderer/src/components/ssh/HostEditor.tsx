@@ -1,0 +1,139 @@
+// Host details (spec 10.2). A new host is stored on "Zapisz" only; the password is write-only (D6).
+import { useMemo, useState } from 'react';
+import { hostToDraft, validateHostDraft, type HostDraftField, type SshHostDraft } from '../../../../shared/ssh';
+import { addSshHost, removeSshHost, uid, updateSshHost } from '../../../../shared/state';
+import type { MessageKey } from '../../../../shared/i18n';
+import { showTerminalTabs } from '../../files';
+import { useI18n } from '../../i18n';
+import { askChoice, toast, update, useStore } from '../../store';
+import { useSshStore } from '../../sshStore';
+import { closeSshEditor, openHostInCell, openSshEditor, retargetSshEditor } from '../../ssh';
+import { ColorPicker } from '../ColorPicker';
+import { Select } from '../Select';
+
+export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: string }) {
+  const { tr } = useI18n();
+  const host = useStore((st) => st.s.sshHosts.find((h) => h.id === hostId));
+  const allHosts = useStore((st) => st.s.sshHosts);
+  const vault = useSshStore((st) => st.vault);
+  const groups = useMemo(() => [...new Set(allHosts.map((h) => h.group).filter((g): g is string => !!g))].sort(), [allHosts]);
+  const [draft, setDraft] = useState<SshHostDraft>(() => hostToDraft(host));
+  const [errors, setErrors] = useState<Partial<Record<HostDraftField, MessageKey>>>({});
+  const [tag, setTag] = useState('');
+  const [password, setPassword] = useState('');
+  const set = (patch: Partial<SshHostDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  const saved = host ? vault?.savedPasswords.includes(host.id) : false;
+  const locked = host ? vault?.lockedPasswords.includes(host.id) : false;
+  const readOnly = !!vault?.readOnly;
+
+  const save = (connect: boolean) => {
+    const r = validateHostDraft(draft);
+    if (!r.ok) { setErrors(r.errors); return; }
+    setErrors({});
+    const now = Date.now();
+    let id = host?.id;
+    if (host) update((s) => updateSshHost(s, host.id, { group: undefined, tags: undefined, keyId: undefined, startupCommand: undefined, color: undefined, ...r.value }, now));
+    else {
+      id = uid();
+      const created = { id, ...r.value, createdAt: now, updatedAt: now };
+      update((s) => addSshHost(s, created));
+      retargetSshEditor(editorId, 'host', id);
+    }
+    if (connect && id) {
+      // The new cell asks for the host key and the password in the grid: show the grid (the editor tab stays open).
+      showTerminalTabs();
+      void openHostInCell(id, 'cell');
+    }
+  };
+
+  const remove = async () => {
+    if (!host) { closeSshEditor(editorId); return; }
+    const choice = await askChoice(tr('Usunąć host {name}?', { name: host.label }), '', [{ label: tr('Usuń host'), value: 'yes', danger: true }]);
+    if (choice !== 'yes') return;
+    update((s) => removeSshHost(s, host.id));
+    closeSshEditor(editorId);
+  };
+
+  const setPw = async () => {
+    if (!host || !password) return;
+    const value = password;
+    setPassword('');
+    const r = await window.mc.ssh.setPassword(host.id, value);
+    if (!r.ok) toast(tr(r.error === 'readOnly' ? 'Plik sejfu SSH pochodzi z nowszej wersji' : r.error === 'failed' ? 'Nie udało się zapisać zmian' : 'Nieprawidłowe dane'), 'error');
+  };
+  const clearPw = async () => {
+    if (!host) return;
+    if (!(await window.mc.ssh.clearPassword(host.id)).ok) toast(tr('Nie udało się zapisać zmian'), 'error');
+  };
+
+  const field = (name: HostDraftField) => errors[name] && <div className="ssh-error" role="alert">{tr(errors[name]!)}</div>;
+  const addTag = () => {
+    const t = tag.trim();
+    if (t && !draft.tags.includes(t)) set({ tags: [...draft.tags, t] });
+    setTag('');
+  };
+
+  return (
+    <form className="ssh-editor" onSubmit={(e) => { e.preventDefault(); save(false); }}>
+      <h2>{host ? host.label : tr('Nowy host')}</h2>
+      <div className="ssh-section">
+        <label className="ssh-field"><span>{tr('Etykieta')}</span><input className="input" data-field="label" value={draft.label} maxLength={80} placeholder={draft.address} onChange={(e) => set({ label: e.target.value })} /></label>
+        <div className="ssh-row">
+          <label className="ssh-field grow"><span>{tr('Adres')}</span><input className="input" data-field="address" value={draft.address} spellCheck={false} onChange={(e) => set({ address: e.target.value })} />{field('address')}</label>
+          <label className="ssh-field port"><span>{tr('Port')}</span><input className="input" data-field="port" value={draft.port} inputMode="numeric" onChange={(e) => set({ port: e.target.value })} />{field('port')}</label>
+        </div>
+        <label className="ssh-field"><span>{tr('Użytkownik')}</span><input className="input" data-field="username" value={draft.username} spellCheck={false} onChange={(e) => set({ username: e.target.value })} />{field('username')}</label>
+      </div>
+      <div className="ssh-section">
+        <label className="ssh-field"><span>{tr('Klucz')}</span>
+          <Select className="select" value={draft.keyId ?? ''} onChange={(e) => (e.target.value === '__new' ? openSshEditor('newKey') : set({ keyId: e.target.value || undefined }))}>
+            <option value="">{tr('Brak')}</option>
+            {(vault?.keys ?? []).map((k) => <option key={k.id} value={k.id}>{`${k.label} (${k.type.replace('ecdsa-sha2-', '')})`}</option>)}
+            {!readOnly && <option value="__new">{tr('Nowy klucz...')}</option>}
+          </Select>
+        </label>
+        <div className="ssh-field"><span>{tr('Hasło')}</span>
+          {!host ? <div className="ssh-card-hint">{tr('Najpierw zapisz host')}</div> : <>
+            <div className="ssh-card-hint">{locked ? tr('Nie można odczytać tego sekretu na tym komputerze. Usuń go i dodaj ponownie.') : saved ? tr('Hasło zapisane') : tr('Hasło nie jest zapisane - zapytamy przy łączeniu')}</div>
+            {readOnly ? <div className="ssh-card-hint">{tr('Plik sejfu SSH pochodzi z nowszej wersji')}</div> : (
+              <div className="ssh-row">
+                <input className="input grow" type="password" autoComplete="off" value={password} maxLength={1024} onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void setPw(); } }} />
+                <button type="button" className="btn" disabled={!password} onClick={() => void setPw()}>{tr('Ustaw hasło')}</button>
+                {(saved || locked) && <button type="button" className="btn" onClick={() => void clearPw()}>{tr('Usuń hasło')}</button>}
+              </div>
+            )}
+          </>}
+        </div>
+      </div>
+      <div className="ssh-section">
+        <label className="ssh-field"><span>{tr('Grupa')}</span>
+          <input className="input" list={`${editorId}-groups`} value={draft.group} maxLength={60} onChange={(e) => set({ group: e.target.value })} />
+          <datalist id={`${editorId}-groups`}>{groups.map((g) => <option key={g} value={g} />)}</datalist>
+        </label>
+        <div className="ssh-field"><span>{tr('Tagi')}</span>
+          <div className="ssh-tags">
+            {draft.tags.map((t) => <span key={t} className="ssh-tag">{t}<button type="button" aria-label={tr('Usuń')} onClick={() => set({ tags: draft.tags.filter((x) => x !== t) })}>×</button></span>)}
+            <input className="input" value={tag} maxLength={24} onChange={(e) => setTag(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(); } }} onBlur={addTag} />
+          </div>
+        </div>
+        <div className="ssh-field"><span>{tr('Kolor')}</span>
+          <div className="ssh-row"><ColorPicker value={draft.color ?? '#60a5fa'} label={tr('Kolor')} onChange={(color) => set({ color })} />
+            {draft.color && <button type="button" className="btn small ghost" onClick={() => set({ color: undefined })}>{tr('Usuń kolor')}</button>}</div>
+        </div>
+      </div>
+      <div className="ssh-section">
+        <label className="ssh-field"><span>{tr('Polecenie startowe')}</span>
+          <textarea className="input mono" rows={4} value={draft.startupCommand} spellCheck={false} onChange={(e) => set({ startupCommand: e.target.value })} />
+          <span className="ssh-card-hint">{tr('Każda linia jest wpisywana tak, jakby ją wpisano ręcznie')}</span>{field('startupCommand')}
+        </label>
+      </div>
+      <div className="ssh-actions">
+        <button type="submit" className="btn primary">{tr('Zapisz')}</button>
+        <button type="button" className="btn" onClick={() => save(true)}>{tr('Zapisz i połącz')}</button>
+        <span className="grow" />
+        <button type="button" className="btn danger" onClick={() => void remove()}>{tr('Usuń host')}</button>
+      </div>
+    </form>
+  );
+}

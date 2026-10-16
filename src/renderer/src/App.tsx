@@ -22,6 +22,7 @@ import { statusLog, terminals } from './terminals/TerminalManager';
 // Rarely used screens load on demand: the editor alone (CodeMirror, language packs, Markdown preview) is about a third of the bundle.
 const loadAutomationPanel = () => import('./components/AutomationPanel').then((m) => ({ default: m.AutomationPanel }));
 const loadFileEditor = () => import('./components/FileEditor').then((m) => ({ default: m.FileEditor }));
+const loadSshEditor = () => import('./components/ssh/SshEditorScreen').then((m) => ({ default: m.SshEditorScreen }));
 const loadSettingsPage = () => import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage }));
 import { useFileStore } from './files';
 import { initSsh } from './ssh';
@@ -153,6 +154,7 @@ export function App() {
   const settingsActive = useStore((st) => st.ui.settingsActive);
   const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
   const fileOpen = documents.some((doc) => doc.id === selectedFile && doc.projectId === projectId);
+  const sshEditorActive = useSshStore((st) => st.activeEditorId !== null);
   const ready = useStore((st) => st.ready);
   const automationOpen = useStore((st) => st.ui.automationOpen);
   const languageChosen = useStore((st) => st.s.settings.language !== null);
@@ -212,9 +214,10 @@ export function App() {
         <div className="main">
           <WorkspaceTabs />
           <div className="workspace-content">
-            <div className="terminal-workspace" style={{ display: fileOpen || settingsActive ? 'none' : 'flex' }}><GridView /></div>
+            <div className="terminal-workspace" style={{ display: fileOpen || settingsActive || sshEditorActive ? 'none' : 'flex' }}><GridView /></div>
             {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><LazyScreen load={loadSettingsPage} /></div>}
-            {!settingsActive && fileOpen && <LazyScreen load={loadFileEditor} />}
+            {!settingsActive && sshEditorActive && <LazyScreen load={loadSshEditor} />}
+            {!settingsActive && !sshEditorActive && fileOpen && <LazyScreen load={loadFileEditor} />}
           </div>
           {automationOpen && <LazyScreen load={loadAutomationPanel} />}
         </div>

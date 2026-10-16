@@ -1,8 +1,8 @@
 // Renderer SSH state (R1): vault info, session states and open prompts per cell, editor tabs. No imports of actions, files or terminals.
 import { create } from 'zustand';
-import { applySshSnapshot, type SshPrompt, type SshSessionState, type SshSessionsSnapshot, type SshVaultInfo } from '../../shared/ssh';
+import { applySshSnapshot, type SshEditorRef, type SshPrompt, type SshSessionState, type SshSessionsSnapshot, type SshVaultInfo } from '../../shared/ssh';
 
-export interface SshEditorTab { id: string; kind: 'host' | 'key' | 'newKey'; targetId?: string }
+export type SshEditorTab = SshEditorRef;
 
 interface SshStore {
   vault: SshVaultInfo | null;

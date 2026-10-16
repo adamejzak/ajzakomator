@@ -399,3 +399,49 @@ export const enterSubmitsPrompt = (target: { tagName: string; type?: string }): 
 export function sshCellStart(input: { alive: boolean; connectOnMount: boolean }): 'attach' | 'connect' | 'idle' {
   return input.alive ? 'attach' : input.connectOnMount ? 'connect' : 'idle';
 }
+
+// ── editor tabs ──────────────────────────────────────────────────────────────
+
+export interface SshEditorRef { id: string; kind: 'host' | 'key' | 'newKey'; targetId?: string }
+
+/** A host or key that already has a tab is focused, never opened twice; `newKey` and a new host always open a new tab. */
+export function openEditorTab(list: readonly SshEditorRef[], kind: SshEditorRef['kind'], targetId: string | undefined, newId: string): { list: SshEditorRef[]; id: string } {
+  const existing = targetId ? list.find((e) => e.kind === kind && e.targetId === targetId) : undefined;
+  if (existing) return { list: [...list], id: existing.id };
+  return { list: [...list, { id: newId, kind, ...(targetId ? { targetId } : {}) }], id: newId };
+}
+
+/** Closing the active tab activates its neighbour (the next one, else the previous one). */
+export function closeEditorTab(list: readonly SshEditorRef[], activeId: string | null, id: string): { list: SshEditorRef[]; activeId: string | null } {
+  const index = list.findIndex((e) => e.id === id);
+  const rest = list.filter((e) => e.id !== id);
+  if (activeId !== id) return { list: rest, activeId };
+  return { list: rest, activeId: rest[Math.min(index, rest.length - 1)]?.id ?? null };
+}
+
+export function draftErrorKey(error: DraftError | KeyError | 'cancelled'): MessageKey | null {
+  switch (error) {
+    case 'tooLarge': return 'Plik jest za duży na klucz SSH';
+    case 'notAKey': return 'To nie jest klucz prywatny SSH';
+    case 'publicOnly': return 'To jest klucz publiczny - potrzebny jest prywatny';
+    case 'ppkV3': return 'Klucz PuTTY w wersji 3 nie jest obsługiwany. Zapisz go w PuTTYgen jako OpenSSH.';
+    case 'unsupportedType': return 'Ten typ klucza nie jest obsługiwany';
+    case 'badPassphrase': return 'Nieprawidłowe hasło klucza';
+    case 'mismatch': return 'Klucz publiczny nie pasuje do prywatnego';
+    case 'certMismatch': return 'Certyfikat nie pasuje do klucza';
+    case 'readFailed': return 'Nie udało się odczytać pliku';
+    case 'readOnly': return 'Plik sejfu SSH pochodzi z nowszej wersji';
+    case 'notFound': return 'Klucz przypisany do hosta nie istnieje';
+    case 'failed': return 'Nie udało się wygenerować klucza';
+    case 'invalid': return 'Nieprawidłowe dane';
+    default: return null;
+  }
+}
+
+export function newKeyProblem(p: { label: string; passphrase: string; repeat: string }): MessageKey | null {
+  if (!p.label.trim()) return 'Podaj etykietę';
+  if (p.passphrase !== p.repeat) return 'Hasła się różnią';
+  return null;
+}
+
+export const hostsUsingKey = (hosts: readonly SshHost[], keyId: string): SshHost[] => hosts.filter((h) => h.keyId === keyId);

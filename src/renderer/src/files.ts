@@ -3,6 +3,7 @@ import { detectLanguage, type Language } from '../../shared/languages';
 import { askChoice, getS, getUi, setUi } from './store';
 import { refreshGitBadges } from './git/gitBadges';
 import { tr } from './i18n';
+import { useSshStore } from './sshStore';
 import type { GitDiffSource } from '../../shared/git';
 import type { ProjectFilePreview } from '../../shared/types';
 import { documentId, documentsUnder, removeDocuments, retargetDocuments, type FileMoveRecord } from '../../shared/fileOps';
@@ -80,11 +81,13 @@ export function holdTreeFocus(): void { treeOpen.hold = true; setTimeout(() => {
 export const isFileDirty = (d: FileDocument): boolean => d.text !== d.savedText;
 export function activateFile(id: string): void {
   setUi({ settingsActive: false });
+  useSshStore.setState({ activeEditorId: null });
   if (useFileStore.getState().documents.some((d) => d.id === id)) useFileStore.setState({ activeFileId: id });
 }
-export function showTerminalTabs(): void { setUi({ settingsActive: false }); useFileStore.setState({ activeFileId: null }); }
+export function showTerminalTabs(): void { setUi({ settingsActive: false }); useSshStore.setState({ activeEditorId: null }); useFileStore.setState({ activeFileId: null }); }
 export async function openFile(projectId: string, relativePath: string): Promise<void> {
   setUi({ settingsActive: false });
+  useSshStore.setState({ activeEditorId: null });
   const path = relativePath.replace(/\\/g, '/');
   const id = documentId(projectId, path);
   const existing = useFileStore.getState().documents.find((d) => d.id === id);

@@ -10,6 +10,7 @@ import {
   sendSnippet, switchProject, toggleMaximize,
 } from '../actions';
 import { openSidebarPanel } from '../panelActions';
+import { openSshEditor } from '../ssh';
 import { getS, getUi, setUi, toast, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
 import { statusLog, terminals } from '../terminals/TerminalManager';
@@ -53,6 +54,8 @@ function PaletteInner() {
     if (project) {
       out.push({ kind: tr('Akcja'), title: tr("Nowy grid / preset…"), desc: keys('grid.new') || undefined, run: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Nowy terminal (zakładka)"), desc: keys('terminal.new') || undefined, run: () => quickTab() });
+      out.push({ kind: tr('Akcja'), title: tr('SSH: nowy host'), run: () => openSshEditor('host') });
+      out.push({ kind: tr('Akcja'), title: tr('SSH: nowy klucz'), run: () => openSshEditor('newKey') });
       out.push({ kind: tr('Akcja'), title: tr("Historia projektu"), desc: keys('history.open') || undefined, run: () => setUi({ modal: { kind: 'history', projectId: project.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz folder projektu"), run: () => window.mc.openPath(project.path) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz projekt w Cursorze"), run: () => window.mc.openInEditor(project.path) });

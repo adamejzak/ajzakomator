@@ -17,3 +17,39 @@
 .ssh-bar.error { color: #ef4444; }
 .cell-head .ssh-host { display: inline-flex; align-items: center; gap: 6px; }
 .cell-head .ssh-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* Editor tabs (spec 10.2): the look of the Settings page (#181818 page, #202020 cards, labels above inputs). */
+.ssh-editor-screen { flex: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; justify-content: center; padding: 48px clamp(32px, 4vw, 64px) 32px; background: #181818; }
+.ssh-editor { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 680px; height: max-content; }
+.ssh-editor h2 { margin: 0 0 10px; color: var(--text); font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.ssh-section { display: flex; flex-direction: column; gap: 14px; padding: 14px 14px; background: #202020; border-radius: 12px; }
+.ssh-editor .ssh-field > span:first-child { color: #bdbdbd; font-size: 12px; }
+.ssh-editor .input, .ssh-editor .select { width: 100%; min-width: 0; box-sizing: border-box; background: #171717; border: 1px solid #ffffff0d; border-radius: 6px; color: var(--text); }
+.ssh-editor .styled-select { min-height: 30px; padding: 4px 8px; }
+.ssh-editor textarea.input { resize: vertical; }
+.ssh-editor .check { font-size: 12px; }
+.ssh-editor .check input { accent-color: #a8a29e; }
+.ssh-row { display: flex; gap: 8px; align-items: flex-start; }
+.ssh-row > .btn { flex: none; height: 30px; }
+.ssh-row .grow, .ssh-actions .grow, .ssh-bar .grow { flex: 1; min-width: 0; }
+.ssh-field.port { width: 96px; flex: none; }
+.ssh-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ssh-tag { display: inline-flex; align-items: center; gap: 2px; padding: 1px 4px 1px 8px; border-radius: 10px; background: var(--bg-hover); color: var(--text); font-size: 11.5px; }
+.ssh-tag button { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 2px; }
+.ssh-tag button:hover { color: var(--text); }
+.ssh-tags .input { flex: 1; width: auto; min-width: 120px; }
+.ssh-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 12px; }
+.ssh-facts dt { color: var(--muted); }
+.ssh-facts dd { margin: 0; overflow-wrap: anywhere; color: var(--text); }
+.ssh-public { margin: 0; padding: 8px; background: #171717; border: 1px solid #ffffff0d; border-radius: 6px; color: var(--text); font-family: "Cascadia Mono", "Cascadia Code", Consolas, Menlo, "SFMono-Regular", "Courier New", monospace; font-size: 11.5px; white-space: pre-wrap; word-break: break-all; user-select: text; }
+.ssh-segmented { display: inline-flex; align-self: flex-start; gap: 2px; padding: 2px; background: #202020; border-radius: 8px; }
+.ssh-segmented button { height: 26px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.ssh-segmented button:hover:not(:disabled) { color: var(--text); }
+.ssh-segmented button.on { background: #ffffff12; color: var(--text); }
+.ssh-segmented button:disabled { cursor: default; }
+.ssh-segmented button:disabled:not(.on) { opacity: .45; }
+.ssh-drop { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 36px 28px; border: 1px dashed #ffffff22; border-radius: 12px; background: #202020; color: var(--muted); font-size: 12px; }
+.ssh-drop.over { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.ssh-banner-warn { padding: 8px 10px; border: 1px solid #f59e0b55; border-radius: 8px; background: #f59e0b12; color: #f5b942; font-size: 12px; }
+.ssh-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.input.mono { font-family: "Cascadia Mono", "Cascadia Code", Consolas, Menlo, "SFMono-Regular", "Courier New", monospace; font-size: 12px; }

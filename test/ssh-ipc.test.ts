@@ -152,6 +152,17 @@ describe('ssh IPC handlers', () => {
     expect(await h.updateKey({ id: generated.key.id, passphrase: { forget: true } })).toMatchObject({ ok: true, key: { passphraseSaved: false } });
   });
 
+  it('saves a key passphrase only when it opens the key', async () => {
+    const h = createSshHandlers(deps);
+    const draft = await h.draftFromText({ privateKey: pair.private });
+    if (!draft.ok) throw new Error('draft');
+    await h.unlockDraft({ draftId: draft.draftId, passphrase: 'ipc-pass-phrase' });
+    const committed = await h.commitDraft({ draftId: draft.draftId, label: 'k', savePassphrase: false });
+    if (!committed.ok) throw new Error('commit');
+    expect(await h.updateKey({ id: committed.key.id, passphrase: { save: 'wrong' } })).toEqual({ ok: false, error: 'badPassphrase' });
+    expect(await h.updateKey({ id: committed.key.id, passphrase: { save: 'ipc-pass-phrase' } })).toMatchObject({ ok: true, key: { passphraseSaved: true } });
+  });
+
   it('answers fixed codes when the vault or known hosts file cannot be written', async () => {
     const h = createSshHandlers(deps);
     const boom = () => { throw new Error('EACCES D:\private\vault.json'); };
