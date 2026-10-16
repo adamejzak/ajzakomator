@@ -36,6 +36,7 @@
     "dist:win": "electron-vite build && electron-builder --win --publish never",
     "dist:mac": "electron-vite build && electron-builder --mac --publish never -c.npmRebuild=true",
     "test:packaged": "node scripts/smoke-pty.mjs",
+    "test:ssh-electron": "node scripts/smoke-ssh.mjs",
     "perf": "node scripts/perf-profile.mjs",
     "publish-release": "node scripts/release.mjs"
   },
@@ -43,6 +44,7 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0",
+    "ssh2": "1.17.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
@@ -61,6 +63,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/ssh2": "1.15.6",
     "@vitejs/plugin-react": "^5.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
@@ -97,7 +100,16 @@
       "resources/**",
       "package.json",
       "!resources/branding/**",
-      "!**/node_modules/node-addon-api/**"
+      "!**/node_modules/node-addon-api/**",
+      "!**/node_modules/cpu-features/**",
+      "!**/node_modules/nan/**",
+      "!**/node_modules/ssh2/lib/protocol/crypto/build/**",
+      "!**/node_modules/ssh2/lib/protocol/crypto/src/**",
+      "!**/node_modules/ssh2/lib/protocol/crypto/binding.gyp",
+      "!**/node_modules/ssh2/install.js",
+      "!**/node_modules/ssh2/test/**",
+      "!**/node_modules/ssh2/examples/**",
+      "!**/node_modules/ssh2/util/**"
     ],
     "win": {
       "target": [
@@ -131,7 +143,16 @@
         "!**/node_modules/node-pty/lib/**/*.test.js",
         "!**/*.pdb",
         "!**/node_modules/node-pty/build/**",
-        "!**/*.map"
+        "!**/*.map",
+        "!**/node_modules/cpu-features/**",
+        "!**/node_modules/nan/**",
+        "!**/node_modules/ssh2/lib/protocol/crypto/build/**",
+        "!**/node_modules/ssh2/lib/protocol/crypto/src/**",
+        "!**/node_modules/ssh2/lib/protocol/crypto/binding.gyp",
+        "!**/node_modules/ssh2/install.js",
+        "!**/node_modules/ssh2/test/**",
+        "!**/node_modules/ssh2/examples/**",
+        "!**/node_modules/ssh2/util/**"
       ],
       "asar": true,
       "asarUnpack": [
