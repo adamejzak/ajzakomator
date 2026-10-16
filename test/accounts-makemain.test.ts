@@ -73,7 +73,7 @@ describe('LoginManager and swap cross-check', () => {
     const loginDeps = {
       store, spawnPty: vi.fn(), killPty: vi.fn(), fingerprint: vi.fn(async () => null), identity: vi.fn(async () => ({})),
       knownIdentities: vi.fn(async () => []), snapshotProfile: vi.fn(async () => ({ credentials: null, claudeJson: null })),
-      restoreProfile: vi.fn(async () => undefined), emit: vi.fn(), onChanged: vi.fn(), swapRunning, timeoutMs: 1000,
+      restoreProfile: vi.fn(async () => undefined), identityRewritten: vi.fn(async () => true), emit: vi.fn(), onChanged: vi.fn(), swapRunning, timeoutMs: 1000,
     } satisfies LoginDeps;
     return { manager: new LoginManager(loginDeps), loginDeps };
   };

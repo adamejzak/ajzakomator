@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoginState } from '../src/shared/accounts';
+import { LiveBackupFailed } from '../src/main/accounts/reconcile';
 import { AccountsStore } from '../src/main/accounts/store';
 import { LoginManager, type KnownIdentity, type LoginDeps } from '../src/main/auth/login';
 
@@ -33,6 +34,7 @@ function setup(over: Partial<LoginDeps> = {}) {
     knownIdentities: vi.fn(async () => [] as KnownIdentity[]),
     snapshotProfile: vi.fn(async () => ({ credentials: 'fake-old-creds', claudeJson: null })),
     restoreProfile: vi.fn(async () => undefined),
+    identityRewritten: vi.fn(async () => true),
     emit: vi.fn((state: LoginState) => { states.push(state); }),
     onChanged: vi.fn(),
   } satisfies LoginDeps;
@@ -470,5 +472,154 @@ describe('LoginManager on macOS (main login through the Keychain)', () => {
     expect(reset.mock.calls.length).toBeGreaterThan(2);
     expect(h.states.at(-1)).toEqual({ sessionId: expect.any(String), status: 'success', email: 'mac@example.com' });
     expect(h.mock.onChanged).toHaveBeenCalledOnce();
+  });
+});
+
+describe('LoginManager re-login safety (fix round 1)', () => {
+  const card = (over: Record<string, unknown> = {}) => {
+    const prepared = store.prepare();
+    store.commit({ id: prepared.id, email: 'support@guybot.xyz', accountUuid: 'u-guybot', addedAt: 1, custody: 'app', family: 'own', ...over });
+    return prepared;
+  };
+  const other = vi.fn(async () => ({ email: 'app@x.com', accountUuid: 'u-app' }));
+
+  it('a new start of the card waits for the queued restore of a cancelled login before it takes its snapshot', async () => {
+    const prepared = card();
+    let release: () => void = () => {};
+    const restoreProfile = vi.fn(() => new Promise<undefined>((resolve) => { release = () => resolve(undefined); }));
+    const h = setup({ identity: vi.fn(async () => ({})), restoreProfile });
+    const first = await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    if (!first.ok) throw new Error('unreachable');
+    h.fp.value = SECRET;
+    await advance(1500 + 1500 + 10);
+    h.manager.cancel(first.sessionId);
+    expect(restoreProfile).toHaveBeenCalledTimes(1);
+    expect(h.manager.isActive()).toBe(false);
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(true); // the restore still runs
+    const second = h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(100);
+    expect(h.deps.snapshotProfile).toHaveBeenCalledTimes(1);
+    release();
+    expect((await second).ok).toBe(true);
+    expect(h.deps.snapshotProfile).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(h.deps.snapshotProfile).mock.invocationCallOrder[1]).toBeGreaterThan(restoreProfile.mock.invocationCallOrder[0]);
+    h.manager.dispose();
+  });
+
+  it('holds the card from renewal while its re-login runs and while its restore runs or failed', async () => {
+    const prepared = card();
+    const restoreProfile = vi.fn(async (): Promise<undefined> => { throw new Error('locked'); });
+    const h = setup({ identity: other, restoreProfile });
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(false);
+    await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(true);
+    expect(h.manager.holdsProfile(store.dirOf('123e4567-e89b-42d3-a456-426614174000'))).toBe(false);
+    h.fp.value = SECRET;
+    await advance(1500 + 1500 + 10);
+    expect(h.manager.isActive()).toBe(true);
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(true);
+    await advance(2000 * 2 + 10);
+    expect(h.manager.isActive()).toBe(false);
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(true); // parked: the files are another account's
+  });
+
+  it('a failed restore is tried 3 times, reported as restore naming the card, and the card is set aside, never renewed', async () => {
+    const prepared = card({ custody: 'foreign', family: 'live' });
+    const restoreProfile = vi.fn(async (): Promise<undefined> => { throw new Error('locked'); });
+    const h = setup({ identity: other, restoreProfile });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(2000 * 2 + 10);
+    expect(restoreProfile).toHaveBeenCalledTimes(3);
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
+    expect(h.states[1]).toMatchObject({ error: 'restore', email: 'app@x.com', expected: 'support@guybot.xyz' });
+    expect(store.get(prepared.id)?.custody).toBe('quarantined');
+    expect(h.mock.onChanged).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.states)).not.toContain('fake-old');
+    // A later retry (before a poll) puts the card back with its previous roles.
+    restoreProfile.mockImplementation(async () => undefined);
+    await h.manager.retryParkedRestores();
+    expect(restoreProfile).toHaveBeenLastCalledWith(prepared.dir, { credentials: 'fake-old-creds', claudeJson: null });
+    expect(store.get(prepared.id)).toMatchObject({ custody: 'foreign', family: 'live' });
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a new start of a parked card retries its restore first and is refused with restore while it still fails', async () => {
+    const prepared = card();
+    const restoreProfile = vi.fn(async (): Promise<undefined> => { throw new Error('locked'); });
+    const h = setup({ identity: other, restoreProfile });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(2000 * 2 + 10);
+    const again = h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(2000 * 2 + 10);
+    expect(await again).toEqual({ ok: false, error: 'restore' });
+    expect(restoreProfile).toHaveBeenCalledTimes(6);
+    expect(h.deps.snapshotProfile).toHaveBeenCalledTimes(1);
+    expect(h.manager.isActive()).toBe(false);
+    restoreProfile.mockImplementation(async () => undefined);
+    const third = await h.manager.start({ provider: 'claude', target: { type: 'account', id: prepared.id } });
+    expect(third.ok).toBe(true);
+    expect(store.get(prepared.id)?.custody).toBe('app');
+    h.manager.dispose();
+  });
+
+  it('removing a parked card forgets its snapshot', async () => {
+    const prepared = card();
+    const restoreProfile = vi.fn(async (): Promise<undefined> => { throw new Error('locked'); });
+    const h = setup({ identity: other, restoreProfile });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(2000 * 2 + 10);
+    h.manager.cancelFor(prepared.id);
+    expect(h.manager.holdsProfile(prepared.dir)).toBe(false);
+    await h.manager.retryParkedRestores();
+    expect(restoreProfile).toHaveBeenCalledTimes(3);
+  });
+
+  it('waits until the profile identity is rewritten before it compares, and never takes the old one for the card', async () => {
+    const prepared = card({ email: 'new@example.com', accountUuid: undefined });
+    let n = 0;
+    const identityRewritten = vi.fn(async () => ++n >= 3);
+    const h = setup({ identityRewritten });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(3000);
+    expect(identityRewritten).toHaveBeenCalledWith(prepared.dir, { credentials: 'fake-old-creds', claudeJson: null });
+    expect(identityRewritten).toHaveBeenCalledTimes(3);
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'success']);
+    expect(h.mock.restoreProfile).not.toHaveBeenCalled();
+  });
+
+  it('an identity that is never confirmed as rewritten restores the card and fails with identity, never counts as same', async () => {
+    const prepared = card({ email: 'new@example.com', accountUuid: undefined });
+    const h = setup({ identityRewritten: vi.fn(async () => false) });
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    await advance(5000);
+    expect(h.deps.identity).toHaveBeenCalledTimes(5);
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
+    expect(h.states[1].error).toBe('identity');
+    expect(h.mock.restoreProfile).toHaveBeenCalledTimes(1);
+    expect(store.get(prepared.id)).toMatchObject({ custody: 'app', family: 'own' });
+    expect(h.mock.onChanged).not.toHaveBeenCalled();
+  });
+
+  it('a failed main backup is refused with its own code naming the outgoing account; slot/journal refusals stay busy', async () => {
+    const prepared = card({ custody: 'live' });
+    store.setLive({ email: 'support@guybot.xyz', accountUuid: 'u-guybot', recordId: prepared.id });
+    const locked = setup({ beforeMainLogin: vi.fn(async () => { throw new LiveBackupFailed('locked'); }) });
+    expect(await locked.manager.start({ provider: 'claude', target: { type: 'main' } })).toEqual({ ok: false, error: 'backup', email: 'support@guybot.xyz' });
+    const busy = setup({ beforeMainLogin: vi.fn(async () => { throw new LiveBackupFailed('busy'); }) });
+    expect(await busy.manager.start({ provider: 'claude', target: { type: 'main' } })).toEqual({ ok: false, error: 'busy' });
+    expect(locked.mock.spawnPty).not.toHaveBeenCalled();
+    expect(busy.mock.spawnPty).not.toHaveBeenCalled();
+  });
+
+  it('isMainActive is true only during a main Claude login', async () => {
+    const h = setup();
+    expect(h.manager.isMainActive()).toBe(false);
+    await h.manager.start({ provider: 'claude', target: { type: 'main' } });
+    expect(h.manager.isMainActive()).toBe(true);
+    h.manager.dispose();
+    await h.manager.start({ provider: 'claude', target: { type: 'new' } });
+    expect(h.manager.isMainActive()).toBe(false);
+    h.manager.dispose();
   });
 });

@@ -7,7 +7,7 @@ import { compareIdentity, custodyOf, type AccountIdentity } from '../src/shared/
 import type { CswapRoster } from '../src/main/accounts/cswap';
 import { gateFamilyRefresh } from '../src/main/accounts/guards';
 import { renewRule } from '../src/main/accounts/refs';
-import { backupLiveBeforeLogin, LiveBackupFailed, reconcileLive, reconcileWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
+import { backupLiveBeforeLogin, LiveBackupFailed, reconcileLive, reconcileWhenIdle, resyncOutgoingWhenIdle, type ReconcileDeps } from '../src/main/accounts/reconcile';
 import { resyncActiveBackup } from '../src/main/accounts/resync';
 import { AccountsStore } from '../src/main/accounts/store';
 import { claimSwap, isSwapRunning, nodeSwapFs, releaseSwap, type SwapFs } from '../src/main/accounts/swap';
@@ -417,5 +417,61 @@ describe('backupLiveBeforeLogin (main re-login, preflight F10)', () => {
     live = A;
     await backupLiveBeforeLogin(guard, withResync(async () => 'missing' as const), opts);
     await backupLiveBeforeLogin(guard, deps(), opts);
+  });
+});
+
+describe('own change and the outgoing backup during a main login (fix round 1)', () => {
+  const guard = { swapUnresolved: () => false };
+  const opts = { delay: async () => undefined };
+
+  it('passes ownChange to the first reconcile that runs only and reports it applied, also when the backup then fails', async () => {
+    const g = add(G, 'live');
+    store.setLive({ ...G, recordId: g });
+    add(A);
+    live = A;
+    const applied = vi.fn();
+    const resync = vi.fn(async () => 'locked' as const);
+    await expect(backupLiveBeforeLogin(guard, deps(resync), { ...opts, ownChange: true, ownChangeApplied: applied, tries: 3 })).rejects.toThrow(LiveBackupFailed);
+    expect(applied).toHaveBeenCalledTimes(1);
+    expect(resync).toHaveBeenCalledTimes(3);
+    expect(store.get(g)?.custody).toBe('app');
+    expect(store.notices().filter((n) => n.kind === 'switchedOut')).toEqual([]);
+  });
+
+  it('does not report the own change applied when no reconcile could run', async () => {
+    const applied = vi.fn();
+    expect(claimSwap()).toBe(true);
+    try {
+      await expect(backupLiveBeforeLogin(guard, deps(async () => 'copied' as const), { ...opts, ownChange: true, ownChangeApplied: applied })).rejects.toThrow(LiveBackupFailed);
+    } finally { releaseSwap(); }
+    expect(applied).not.toHaveBeenCalled();
+  });
+
+  it('resyncs only the outgoing live record (no role changes), under the swap slot', async () => {
+    const g = add(G, 'live');
+    store.setLive({ ...G, recordId: g });
+    live = A; // the new login is already visible: roles must not change mid-login
+    let during = false;
+    const resync = vi.fn(async () => { during = isSwapRunning(); return 'mismatch' as const; });
+    expect(await resyncOutgoingWhenIdle(guard, deps(resync))).toBe('mismatch');
+    expect(resync).toHaveBeenCalledWith(g, G);
+    expect(during).toBe(true);
+    expect(store.get(g)?.custody).toBe('live');
+    expect(store.live()).toEqual({ ...G, recordId: g });
+    expect(store.list()).toHaveLength(1);
+    expect(isSwapRunning()).toBe(false);
+  });
+
+  it('skips the outgoing resync while a swap holds the slot, a journal is pending, or nothing is live', async () => {
+    const g = add(G, 'live');
+    const resync = vi.fn(async () => 'copied' as const);
+    expect(await resyncOutgoingWhenIdle(guard, deps(resync))).toBe(null);
+    store.setLive({ ...G, recordId: g });
+    expect(await resyncOutgoingWhenIdle({ ...guard, journalPending: async () => true }, deps(resync))).toBe(null);
+    expect(claimSwap()).toBe(true);
+    try { expect(await resyncOutgoingWhenIdle(guard, deps(resync))).toBe(null); } finally { releaseSwap(); }
+    expect(resync).not.toHaveBeenCalled();
+    expect(await resyncOutgoingWhenIdle(guard, deps())).toBe(null);
+    expect(await resyncOutgoingWhenIdle(guard, deps(resync))).toBe('copied');
   });
 });

@@ -106,7 +106,8 @@ export interface McApi {
   getChangelog(force?: boolean): Promise<ChangelogResult>;
   getUsage(): Promise<UsageState>;
   refreshUsage(): Promise<UsageState>;
-  startLogin(request: LoginRequest): Promise<{ ok: true; sessionId: string; ptyId: string } | { ok: false; error: string }>;
+  /** `error: 'backup'` names the outgoing main account in `email`. */
+  startLogin(request: LoginRequest): Promise<{ ok: true; sessionId: string; ptyId: string } | { ok: false; error: string; email?: string }>;
   cancelLogin(sessionId: string): void;
   removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' }>;
   makeMainAccount(id: string): Promise<SwapResult>;

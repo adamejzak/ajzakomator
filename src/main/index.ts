@@ -39,14 +39,14 @@ import { AccountsStore } from './accounts/store';
 import { gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
 import { activateAccount, activationJournalPending, checkActivationTarget, isActivationRecoveryPending, recoverActivationWithRetry, recoverInterruptedActivation, type ActivateDeps } from './accounts/activate';
-import { backupLiveBeforeLogin, reconcileLive, reconcileWhenIdle, type ReconcileDeps } from './accounts/reconcile';
+import { backupLiveBeforeLogin, reconcileLive, reconcileWhenIdle, resyncOutgoingWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
 import { claudeRefs } from './accounts/refs';
 import { cswapRosterPath, readCswapRoster, type CswapRoster } from './accounts/cswap';
 import { readManagedIdentity } from './accounts/identity';
 import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
 import { LoginManager } from './auth/login';
-import { restoreProfile, snapshotProfile } from './auth/profileSnapshot';
+import { identityRewritten, restoreProfile, snapshotProfile } from './auth/profileSnapshot';
 import { custodyOf, identityFields, isAccountId, type AccountIdentity, type LoginRequest } from '../shared/accounts';
 import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
@@ -159,7 +159,11 @@ const usage = new UsageService({
       const recovered = await recoverInterruptedActivation(activateDeps()).catch(() => 'manual' as const);
       if (recovered !== 'locked') void pushSwapPending();
     }
-    await reconcileIdle();
+    // A re-login whose restore failed earlier is tried again (the card stays set aside until it works).
+    await login.retryParkedRestores().catch(() => undefined);
+    // During a main login the roles stay as they are, but the outgoing live login keeps being backed up.
+    if (login.isMainActive()) await resyncOutgoingWhenIdle(liveGuard(), reconcileDeps()).catch(() => null);
+    else await reconcileIdle();
   },
   watchLive: true,
 });
@@ -222,17 +226,14 @@ const login = new LoginManager({
   },
   snapshotProfile,
   restoreProfile,
+  identityRewritten,
   // The live login is backed up into its record before `claude auth login` replaces it (nothing is dropped); refused
   // (the login does not start) unless that backup is current.
-  beforeMainLogin: async () => {
-    const ownChange = ownLoginChange;
-    await backupLiveBeforeLogin(
-      { swapUnresolved: isSwapUnresolved, journalPending: () => activationJournalPending(activateDeps()) },
-      reconcileDeps(),
-      { delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), ownChange },
-    );
-    if (ownChange) ownLoginChange = false;
-  },
+  beforeMainLogin: () => backupLiveBeforeLogin(liveGuard(), reconcileDeps(), {
+    delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    ownChange: ownLoginChange,
+    ownChangeApplied: () => { ownLoginChange = false; },
+  }),
   emit: (s) => send('auth:state', s),
   onChanged: (change) => {
     if (change.ownChange) ownLoginChange = true;
@@ -294,16 +295,15 @@ const reconcileDeps = (): ReconcileDeps => {
  * runs, so a poll that wins the swap slot first applies it too.
  */
 let ownLoginChange = false;
+/** What stops any look at the live login: an unresolved swap or an interrupted activation's journal (the slot is checked too). */
+const liveGuard = () => ({ swapUnresolved: isSwapUnresolved, journalPending: () => activationJournalPending(activateDeps()) });
 /** Reconciles the live login holding the swap slot; skipped while a swap, a login or an activation journal is pending. */
 function reconcileIdle(): Promise<boolean> {
-  return reconcileWhenIdle({
-    swapUnresolved: isSwapUnresolved,
-    loginActive: () => login.isActive(),
-    journalPending: () => activationJournalPending(activateDeps()),
-  }, async () => {
+  return reconcileWhenIdle({ ...liveGuard(), loginActive: () => login.isActive() }, async () => {
+    // The own change is used by this one reconcile, also when it fails halfway.
     const ownChange = ownLoginChange;
+    ownLoginChange = false;
     await reconcileLive(reconcileDeps(), ownChange ? { ownChange } : {});
-    if (ownChange) ownLoginChange = false;
   });
 }
 /** Tells the renderer whether an unresolved swap blocks further swaps. */
@@ -314,7 +314,8 @@ async function pushSwapPending(): Promise<void> {
 // Only profiles whose token family lives nowhere else are renewed (renewRule, R6): never the live login, a switched-out
 // record or a copy of the live family that cswap also holds.
 const refreshBlocked: RefreshOutcome = { kind: 'transient', detail: { reason: 'blocked' } };
-const familyRenew = gateFamilyRefresh(accounts, () => cswapRoster, (dir) => renewProfile(dir), refreshBlocked);
+// Nor a card being signed in again or whose restore runs or failed: its files must stay the snapshot's (or are another account's).
+const familyRenew = gateFamilyRefresh(accounts, () => cswapRoster, (dir) => (login.holdsProfile(dir) ? Promise.resolve(refreshBlocked) : renewProfile(dir)), refreshBlocked);
 usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, familyRenew, refreshBlocked);
 const hooks = new HookServer();
 if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;

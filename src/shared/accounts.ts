@@ -102,9 +102,10 @@ export interface LoginState {
   sessionId: string;
   status: LoginStatus;
   email?: string;
-  /** `mismatch`: the account the card belongs to (the login signed in `email` instead; nothing was changed). */
+  /** `mismatch` / error `restore`: the account the card belongs to (the login signed in `email` instead). */
   expected?: string;
-  error?: 'timeout' | 'spawn' | 'identity';
+  /** `restore`: the login was another account and the card's previous login could not be put back (`expected` names the card). */
+  error?: 'timeout' | 'spawn' | 'identity' | 'restore';
 }
 
 const ACCOUNT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

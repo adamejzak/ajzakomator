@@ -110,15 +110,17 @@ export class LiveBackupFailed extends Error {
  * Keychain). `settling` (not yet backed up), `locked`, `mismatch` and a failed copy are tried again `tries` times, then it
  * throws. A swap holding the slot, an unresolved swap or a pending activation journal refuse it too. The login being
  * started is the caller itself, so a login in progress does not count here. `ownChange`: an earlier login of the app
- * changed the live account and was not reconciled yet (see reconcileLive).
+ * changed the live account and was not reconciled yet (see reconcileLive); it is passed to the first reconcile that runs
+ * only, and `ownChangeApplied` is called then (also when that reconcile or the backup fails afterwards).
  */
 export async function backupLiveBeforeLogin(
   guard: { swapUnresolved(): boolean; journalPending?(): Promise<boolean> },
   deps: ReconcileDeps,
-  opts: { delay(ms: number): Promise<void>; tries?: number; gapMs?: number; ownChange?: boolean },
+  opts: { delay(ms: number): Promise<void>; tries?: number; gapMs?: number; ownChange?: boolean; ownChangeApplied?(): void },
 ): Promise<void> {
   const tries = Math.max(1, opts.tries ?? 3);
   let reason = 'busy';
+  let ownApplied = false;
   for (let attempt = 0; attempt < tries; attempt++) {
     if (attempt > 0) await opts.delay(opts.gapMs ?? 1_000);
     const look: { live: 'unknown' | 'none' | 'present'; backup: ResyncResult | 'none' | 'failed' } = { live: 'unknown', backup: 'none' };
@@ -140,7 +142,12 @@ export async function backupLiveBeforeLogin(
     };
     let ran = false;
     try {
-      ran = await reconcileWhenIdle({ ...guard, loginActive: () => false }, () => reconcileLive(watched, opts.ownChange ? { ownChange: true } : {}));
+      ran = await reconcileWhenIdle({ ...guard, loginActive: () => false }, () => {
+        // The own change applies to the first reconcile that runs only; later tries look at the result of that one.
+        const own = !!opts.ownChange && !ownApplied;
+        if (own) { ownApplied = true; opts.ownChangeApplied?.(); }
+        return reconcileLive(watched, own ? { ownChange: true } : {});
+      });
     } catch { look.backup = 'failed'; }
     if (!ran) { reason = look.backup === 'failed' ? 'failed' : 'busy'; continue; }
     if (look.backup === 'copied' || look.backup === 'unchanged' || look.backup === 'missing') return;
@@ -149,4 +156,27 @@ export async function backupLiveBeforeLogin(
     reason = look.backup === 'none' ? 'unread' : look.backup;
   }
   throw new LiveBackupFailed(reason);
+}
+
+/**
+ * While a main Claude login runs, the polls do not reconcile (no role changes mid-login), but the outgoing live login is
+ * still backed up into its record, so the copy never falls a token rotation behind before `claude auth login` replaces it.
+ * Resync checks the live identity against the record's, so the new login is never copied into the outgoing record.
+ * Holds the swap slot; skipped (null) while a swap runs or is unresolved, a journal is pending, accounts.json is read-only
+ * or there is nothing to resync.
+ */
+export async function resyncOutgoingWhenIdle(
+  guard: { swapUnresolved(): boolean; journalPending?(): Promise<boolean> },
+  deps: ReconcileDeps,
+): Promise<ResyncResult | null> {
+  const { store, resync } = deps;
+  if (!resync || store.readOnly()) return null;
+  let result: ResyncResult | null = null;
+  await reconcileWhenIdle({ ...guard, loginActive: () => false }, async () => {
+    const live = store.live();
+    const record = live?.recordId ? store.get(live.recordId) : undefined;
+    if (!live || !record || custodyOf(record) === 'quarantined') return;
+    result = await resync(record.id, identityFields(live));
+  });
+  return result;
 }

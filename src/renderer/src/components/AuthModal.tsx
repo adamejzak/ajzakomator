@@ -17,7 +17,9 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startFailed, setStartFailed] = useState(false);
   /** Why the main process refused to start the login (a swap runs or is unresolved), if it did. */
-  const [refusal, setRefusal] = useState<'busy' | 'pending' | null>(null);
+  const [refusal, setRefusal] = useState<'busy' | 'pending' | 'backup' | 'restore' | null>(null);
+  /** `backup` refusal: the outgoing main account whose sign-in could not be backed up. */
+  const [refusalEmail, setRefusalEmail] = useState('');
   // The latest state may arrive before startLogin resolves, so it is matched to the session at render time.
   const [state, setState] = useState<LoginState | null>(null);
   // A first main Claude login (nothing detected when the window opened) gets "sign in" instead of "sign in again".
@@ -33,7 +35,11 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
     const off = window.mc.on('auth:state', (s) => setState(s));
     void window.mc.startLogin({ provider, target }).then((res) => {
       if (!res.ok) {
-        if (!cancelled) { setStartFailed(true); if (res.error === 'busy' || res.error === 'pending') setRefusal(res.error); }
+        if (!cancelled) {
+          setStartFailed(true);
+          if (res.error === 'busy' || res.error === 'pending' || res.error === 'backup' || res.error === 'restore') setRefusal(res.error);
+          setRefusalEmail(res.email ?? '');
+        }
         return;
       }
       if (cancelled) {
@@ -85,8 +91,15 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   let line: string;
   if (status === 'success') line = email ? tr('Zalogowano jako {email}', { email }) : tr('Zalogowano.');
   else if (status === 'duplicate' && email) line = tr('To konto jest już dodane ({email}).', { email });
-  else if (status === 'mismatch' && email) line = tr('Zalogowano jako {email}, a ta karta należy do {expected}. Nic nie zmieniono.', { email, expected: current?.expected ?? '' });
+  else if (status === 'mismatch' && email && current?.expected) line = tr('Zalogowano jako {email}, a ta karta należy do {expected}. Nic nie zmieniono.', { email, expected: current.expected });
+  else if (startFailed && refusal === 'backup') line = refusalEmail
+    ? tr('Nie udało się zapisać kopii obecnego logowania ({email}), więc logowanie nie zostało rozpoczęte. Spróbuj za chwilę.', { email: refusalEmail })
+    : tr('Nie udało się zapisać kopii obecnego logowania, więc logowanie nie zostało rozpoczęte. Spróbuj za chwilę.');
+  else if (startFailed && refusal === 'restore') line = tr('Nie udało się przywrócić poprzedniego logowania tej karty. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.');
   else if (startFailed && refusal) line = tr(swapErrorKey(refusal));
+  else if (status === 'failed' && current?.error === 'restore') line = current.expected
+    ? tr('Nie udało się przywrócić poprzedniego logowania karty {expected}. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.', { expected: current.expected })
+    : tr('Nie udało się przywrócić poprzedniego logowania tej karty. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.');
   else if (status === 'failed' || status === 'duplicate' || status === 'mismatch') {
     line = current?.error === 'timeout' ? tr('Upłynął czas na logowanie.')
       : current?.error === 'identity' ? tr('Nie udało się odczytać konta po zalogowaniu.')
@@ -106,7 +119,7 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
         <span>{line}</span>
       </div>
       <div className="modal-foot">
-        {status === 'mismatch' && <button className="btn primary" onClick={() => setUi({ modal: { kind: 'auth', provider: 'claude', target: { type: 'new' } } })}>{tr('Dodaj jako nowe konto')}</button>}
+        {status === 'mismatch' && !!current?.expected && <button className="btn primary" onClick={() => setUi({ modal: { kind: 'auth', provider: 'claude', target: { type: 'new' } } })}>{tr('Dodaj jako nowe konto')}</button>}
         <button className="btn" onClick={closeModal}>{waiting ? tr('Anuluj') : tr('Zamknij')}</button>
       </div>
     </div>
