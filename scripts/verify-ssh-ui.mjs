@@ -1,16 +1,23 @@
 // Real-app SSH checks: node scripts/verify-ssh-ui.mjs [part ...]   (npm run build first)
-// Parts are added task by task; with no argument every part runs. Screenshots: D:\Projekty\_shots\ssh-*.png
+// With no argument every part runs. Screenshots: D:\Projekty\_shots\ssh-*.png
+// SSH_CHECK_LANGUAGE=en runs a part with the English UI (the `cell` part uses the TEXT table; screenshots get an -en suffix).
 // Only the local test server (scripts/ssh-test-server.mjs on 127.0.0.1) is used; scratch dirs are deleted afterwards.
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import ssh2 from 'ssh2';
 import { join } from 'node:path';
-import { childPids, connected, connectWithPassword, killTree, launchApp, sleep, scratchRoot, sshState, startTestServer, testHost, writeKnownHost, writeState } from './ssh-ui-lib.mjs';
+import { childPids, connected, connectWithPassword, killTree, LANGUAGE, launchApp, sleep, scratchRoot, sshState, startTestServer, testHost, writeKnownHost, writeState } from './ssh-ui-lib.mjs';
 
 if (!existsSync('out/main/index.js')) throw new Error('Build first: npm run build');
 /** Expression: the xterm buffer text of every cell of the active tab, in cell order (what the terminal really shows, not a screenshot). */
 const CELL_BUFFERS = `(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId);
   return t.cells.map((c) => { const b = window.__mc.terminals.entries.get(c.id)?.term.buffer.active; if (!b) return ''; let text = ''; for (let i = 0; i < b.length; i++) text += (b.getLine(i)?.translateToString(true) ?? '') + '\\n'; return text; }); })()`;
 const hasLine = (index, line) => `${CELL_BUFFERS}[${index}].split('\\n').some((l) => l.trim() === ${JSON.stringify(line)})`;
+/** UI texts the checks click on or wait for, per language of SSH_CHECK_LANGUAGE (only the `cell` part is language-aware). */
+const TEXT = {
+  pl: { connect: 'Połącz', trust: 'Zaufaj i zapisz', disconnect: 'Rozłącz', reconnect: 'Połącz ponownie', crashed: 'Proces terminali został uruchomiony ponownie', crashedShort: 'Proces terminali' },
+  en: { connect: 'Connect', trust: 'Trust and save', disconnect: 'Disconnect', reconnect: 'Reconnect', crashed: 'The terminal process was restarted', crashedShort: 'The terminal process' },
+}[LANGUAGE];
+if (!TEXT) throw new Error(`SSH_CHECK_LANGUAGE=${LANGUAGE} has no TEXT entry`);
 const PARTS = {
   /** Task 8: a prepared SSH cell shows "Połącz", the host key card, the password prompt, then the session. */
   async cell() {
@@ -22,14 +29,14 @@ const PARTS = {
       const app = await launchApp(root);
       try {
         // D5: a restored SSH cell never connects by itself.
-        await app.until(`document.querySelector('.ssh-card button')?.textContent === 'Połącz'`, 'connect card');
+        await app.until(`document.querySelector('.ssh-card button')?.textContent === ${JSON.stringify(TEXT.connect)}`, 'connect card');
         await app.screenshot('ssh-cell-idle.png');
-        await app.click('.ssh-card button', 'Połącz');
+        await app.click('.ssh-card button', TEXT.connect);
         await app.until(`!!document.querySelector('.ssh-fingerprint')`, 'host key card');
         const shown = await app.evaluate(`document.querySelector('.ssh-fingerprint').textContent`);
         if (!shown.includes(server.fingerprint)) throw new Error(`fingerprint mismatch: ${shown} vs ${server.fingerprint}`);
         await app.screenshot('ssh-hostkey-new.png');
-        await app.click('.ssh-card button', 'Zaufaj i zapisz');
+        await app.click('.ssh-card button', TEXT.trust);
         await connectWithPassword(app, server.password, { save: true });
         await connected(app, 1);
         const chip = await app.evaluate(`document.querySelector('.cell-head .ssh-host')?.textContent`);
@@ -37,23 +44,23 @@ const PARTS = {
         await app.screenshot('ssh-cell-connected.png');
         // R11: after "Rozłącz" a bar sits at the bottom of the cell and the last output stays readable.
         await app.click('.cell-head .ssh-host');
-        await app.click('.menu .menu-item', 'Rozłącz');
-        await app.until(`document.querySelector('.ssh-bar button')?.textContent === 'Połącz ponownie' && !document.querySelector('.ssh-card')`, 'disconnected bar');
+        await app.click('.menu .menu-item', TEXT.disconnect);
+        await app.until(`document.querySelector('.ssh-bar button')?.textContent === ${JSON.stringify(TEXT.reconnect)} && !document.querySelector('.ssh-card')`, 'disconnected bar');
         await app.screenshot('ssh-cell-closed.png');
         // R13: "Połącz ponownie" keeps the screen; the host key is known and the password saved, so no prompt comes up.
-        await app.click('.ssh-bar button', 'Połącz ponownie');
+        await app.click('.ssh-bar button', TEXT.reconnect);
         await connected(app, 1);
         await app.screenshot('ssh-cell-reconnected.png');
         // D5 after a Pty Host crash: the cell ends in the error bar and never connects by itself; "Połącz ponownie" works.
         const hosts = childPids(app.pid, 'node.mojom.NodeService');
         if (hosts.length !== 1) throw new Error(`expected one Pty Host process, found ${hosts.length}`);
         killTree(hosts[0]);
-        await app.until(`document.querySelector('.ssh-bar.error')?.textContent.includes('Proces terminali został uruchomiony ponownie')`, 'crash bar');
+        await app.until(`document.querySelector('.ssh-bar.error')?.textContent.includes(${JSON.stringify(TEXT.crashed)})`, 'crash bar');
         await sleep(3000);
         const after = await app.evaluate(`[!!document.querySelector('.ssh-bar.error'), !!document.querySelector('.ssh-card'), document.querySelector('.status-text.ssh')?.textContent ?? '']`);
-        if (!after[0] || after[1] || !after[2].includes('Proces terminali')) throw new Error(`unexpected state after the crash: ${JSON.stringify(after)}`);
+        if (!after[0] || after[1] || !after[2].includes(TEXT.crashedShort)) throw new Error(`unexpected state after the crash: ${JSON.stringify(after)}`);
         await app.screenshot('ssh-cell-after-crash.png');
-        await app.click('.ssh-bar button', 'Połącz ponownie');
+        await app.click('.ssh-bar button', TEXT.reconnect);
         await connected(app, 1);
       } finally { await app.close(); }
       for (const file of ['state.json', 'ssh/vault.json', 'ssh/known_hosts.json']) {
@@ -362,7 +369,7 @@ const PARTS = {
         await app.click('.settings-nav [role=tab]', 'SSH');
         await app.until(`document.querySelectorAll('.settings-content .ssh-banner-warn').length === 2`, 'two read-only notes');
         const text = await app.evaluate(`document.querySelector('.settings-content').textContent`);
-        for (const needle of ['Sejf SSH jest tylko do odczytu', vaultFile, 'Lista znanych hostów jest tylko do odczytu', hostsFile, 'Zaufaj i zapisz']) {
+        for (const needle of ['Sejf SSH jest tylko do odczytu', vaultFile, 'Lista znanych hostów jest tylko do odczytu', hostsFile, 'Zaufaj i zapisz', 'Zastąp zapisany klucz']) {
           if (!text.includes(needle)) throw new Error(`Settings text misses: ${needle}`);
         }
         if (!(await app.evaluate(`[...document.querySelectorAll('.ssh-known button')].every((b) => b.disabled)`))) throw new Error('remove buttons are enabled on a read-only store');
@@ -370,6 +377,83 @@ const PARTS = {
       } finally { await app.close(); }
       if (readFileSync(vaultFile, 'utf8') !== '{"version":99,"keys":[],"passwords":[]}') throw new Error('the vault file was modified');
       if (readFileSync(hostsFile, 'utf8') !== damaged) throw new Error('the known hosts file was modified');
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
+  /** Spec 14: after a restart of the app the cell shows "Połącz" (D5); a new host key on the same port gives the red card (incl. the changed host key, L13). */
+  async restart() {
+    let server = await startTestServer();
+    const root = scratchRoot('ssh-restart');
+    const passwords = [server.password];
+    try {
+      const host = testHost(server.port);
+      writeState(root, sshState({ projectPath: join(root, 'project'), hosts: [host], cells: [host.id] }));
+      let app = await launchApp(root);
+      try {
+        await app.click('.ssh-card button', 'Połącz');
+        await app.until(`!!document.querySelector('.ssh-fingerprint')`, 'host key');
+        await app.click('.ssh-card button', 'Zaufaj i zapisz');
+        await connectWithPassword(app, server.password, { save: true });
+        await connected(app, 1);
+        await sleep(2500); // state.json is written debounced
+      } finally { await app.close(); }
+      app = await launchApp(root);
+      try {
+        await app.until(`document.querySelector('.ssh-card button')?.textContent === 'Połącz'`, 'not restored after restart');
+        await app.screenshot('ssh-after-restart.png');
+      } finally { await app.close(); }
+      const port = server.port;
+      server.stop();
+      await sleep(500); // the port is free again
+      server = await startTestServer(['--port', String(port)]);
+      passwords.push(server.password);
+      if (server.port !== port) throw new Error('test server did not come back on the same port');
+      app = await launchApp(root);
+      try {
+        await app.click('.ssh-card button', 'Połącz');
+        await app.until(`!!document.querySelector('.ssh-card.danger')`, 'changed host key card');
+        const shown = await app.evaluate(`document.querySelector('.ssh-card.danger').textContent`);
+        if (!shown.includes(server.fingerprint)) throw new Error('the red card does not show the new fingerprint');
+        await app.until(`document.querySelector('.ssh-card.danger button.danger')?.disabled === true`, 'replace disabled until confirmed');
+        await app.screenshot('ssh-hostkey-changed.png');
+        await app.click('.ssh-card.danger button', 'Rozłącz');
+        await app.until(`!!document.querySelector('.ssh-bar.error')`, 'hostKeyChanged bar');
+        await app.screenshot('ssh-hostkey-changed-refused.png');
+      } finally { await app.close(); }
+      const files = ['state.json', 'ssh/vault.json', 'ssh/known_hosts.json'].map((f) => join(root, 'data', f)).filter(existsSync);
+      if (files.length !== 3) throw new Error(`expected state, vault and known hosts files, found ${files.length}`);
+      for (const file of files) {
+        const text = readFileSync(file, 'utf8');
+        for (const secret of [...passwords, 'PRIVATE KEY']) if (text.includes(secret)) throw new Error(`${file} contains a secret`);
+      }
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
+  /** D8: with MC_SSH_NO_SAFESTORAGE=1 the banner shows, a saved password works for the session, nothing secret is written. */
+  async noSafeStorage() {
+    const server = await startTestServer();
+    const root = scratchRoot('ssh-nosafe');
+    try {
+      const host = testHost(server.port);
+      writeState(root, sshState({ projectPath: join(root, 'project'), hosts: [host], cells: [host.id] }));
+      const app = await launchApp(root, { MC_SSH_NO_SAFESTORAGE: '1' });
+      try {
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`!!document.querySelector('.ssh-banner-warn')`, 'unavailable banner');
+        await app.screenshot('ssh-no-safestorage.png');
+        await app.click('.ssh-card button', 'Połącz');
+        await app.until(`!!document.querySelector('.ssh-fingerprint')`, 'host key');
+        await app.click('.ssh-card button', 'Zaufaj i zapisz');
+        await connectWithPassword(app, server.password, { save: true });
+        await connected(app, 1);
+        // The password is kept in memory for the session: a reconnect does not ask again.
+        await app.click('.cell-head .ssh-host');
+        await app.click('.menu .menu-item', 'Rozłącz');
+        await app.until(`document.querySelector('.ssh-bar button')?.textContent === 'Połącz ponownie'`, 'disconnected bar');
+        await app.click('.ssh-bar button', 'Połącz ponownie');
+        await connected(app, 1);
+        await sleep(2500); // state.json is written debounced
+      } finally { await app.close(); }
+      if (existsSync(join(root, 'data', 'ssh', 'vault.json'))) throw new Error('vault.json written although safeStorage was unavailable');
+      if (readFileSync(join(root, 'data', 'state.json'), 'utf8').includes(server.password)) throw new Error('state.json contains the password');
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },
 };

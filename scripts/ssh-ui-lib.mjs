@@ -35,11 +35,14 @@ export function scratchRoot(name) {
 
 const rowLayout = (n) => ({ cols: n, rows: 1, areas: Array.from({ length: n }, (_, i) => ({ col: i, row: 0, colSpan: 1, rowSpan: 1 })) });
 
-/** A minimal state.json: Polish UI (no onboarding), one project, optional hosts and one tab of SSH cells (hostIds). */
+/** UI language of the checks: Polish by default, SSH_CHECK_LANGUAGE=en for the English pass. */
+export const LANGUAGE = process.env.SSH_CHECK_LANGUAGE ?? 'pl';
+
+/** A minimal state.json: UI in LANGUAGE (no onboarding), one project, optional hosts and one tab of SSH cells (hostIds). */
 export function sshState({ projectPath, hosts = [], cells = [] }) {
   const projectId = randomUUID();
   const tabs = cells.length ? [{ id: randomUUID(), name: 'SSH', color: '#60a5fa', layout: rowLayout(cells.length), cells: cells.map((hostId) => ({ id: randomUUID(), profileId: 'shell', ssh: { hostId } })) }] : [];
-  return { version: 1, settings: { language: 'pl' }, sshHosts: hosts, activeProjectId: projectId,
+  return { version: 1, settings: { language: LANGUAGE }, sshHosts: hosts, activeProjectId: projectId,
     projects: [{ id: projectId, name: 'ssh-check', path: projectPath, color: '#3b82f6', tabs, archive: [], activeTabId: tabs[0]?.id ?? null }] };
 }
 
@@ -124,7 +127,9 @@ export async function launchApp(root, extraEnv = {}) {
     for (const type of ['keyDown', 'keyUp']) await cdp('Input.dispatchKeyEvent', { type, key, code: key, windowsVirtualKeyCode: codes[key] ?? 0, modifiers, ...(key === 'Enter' && type === 'keyDown' ? { text: '\r' } : {}) });
   };
   const insertText = (text) => cdp('Input.insertText', { text });
+  /** Screenshots of a non-Polish pass get a language suffix: ssh-cell-idle-en.png. */
   const screenshot = async (name) => {
+    if (LANGUAGE !== 'pl') name = name.replace(/\.png$/, `-${LANGUAGE}.png`);
     mkdirSync(SHOTS, { recursive: true });
     const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
     writeFileSync(join(SHOTS, name), Buffer.from(data, 'base64'));

@@ -62,6 +62,20 @@ Repozytorium git może mieć własną konfigurację, przez którą git uruchamia
 
 Panel wymaga gita 2.26 lub nowszego w `PATH`.
 
+## Połączenia SSH
+
+Kafelek **SSH** w lewym pasku to mały klient SSH wewnątrz siatki terminali. Korzysta z wbudowanej biblioteki `ssh2` (program `ssh` nie jest potrzebny), a każda sesja działa w procesie terminali (Pty Host), obok lokalnych terminali.
+
+- **Hosty.** Zapisujesz hosty z etykietą, adresem, portem, użytkownikiem, grupą i tagami; możesz je wyszukiwać, zwijać grupy, duplikować i usuwać. Kliknięcie hosta łączy w aktywnej siatce, można też otworzyć go w nowej zakładce. Grupa (albo kilka hostów zaznaczonych Ctrl/Cmd+klik) otwiera się jako siatka z jedną sesją na host. Komórki SSH mogą być też w oknie nowego gridu i w presetach.
+- **Klucze.** Generowanie kluczy Ed25519, ECDSA (256, 384, 521) i RSA (3072, 4096, 2048) albo dodanie klucza z pliku (wybór lub przeciągnięcie) lub wklejonego tekstu: klucze OpenSSH, klucze PEM RSA i EC oraz klucze PuTTY PPK v2 RSA. Klucz PuTTY PPK v3 trzeba najpierw zapisać w PuTTYgen jako OpenSSH. Klucz publiczny kopiujesz do `authorized_keys`; klucz prywatny można tylko zapisać do wskazanego pliku. Certyfikaty można zapisać, ale nie służą jeszcze do logowania. Klucze ML-DSA i inne postkwantowe nie są dostępne: nie ma dla nich standardowego podpisu SSH i serwery ich nie przyjmują.
+- **Logowanie.** Klucz publiczny, zapisane hasło, pytanie o hasło i keyboard-interactive (kody jednorazowe). Wpisane hasło klucza może być pamiętane do zamknięcia aplikacji, więc siatka komórek na jednym kluczu pyta raz.
+- **Klucze hostów.** Pierwsze połączenie pokazuje odcisk klucza serwera i pyta, czy mu zaufać; zmieniony klucz daje czerwone ostrzeżenie i połączenie dopiero po potwierdzeniu zastąpienia. Zaufane klucze są w **Ustawienia > SSH > Znane hosty**.
+- **Polecenie startowe** hosta: wpisywane w powłokę po zalogowaniu, linia po linii, tak jakbyś je wpisał.
+- **Wyślij do wszystkich.** Jedno polecenie dla zaznaczonych sesji SSH bieżącej siatki (przycisk w panelu, paleta, menu zakładki).
+- **Sesje nie są wznawiane** po ponownym uruchomieniu aplikacji; komórki pokazują kartę **Połącz**. Nie ma automatycznego ponownego łączenia.
+- **Sekrety.** Hosty są w `state.json`, bez sekretów. Klucze i zapisane hasła są w `ssh/vault.json` w folderze danych aplikacji, zaszyfrowane przez Windows DPAPI albo pęk kluczy macOS (`safeStorage`); gdy szyfrowanie systemowe jest niedostępne, są trzymane tylko w pamięci do zamknięcia aplikacji i nic tajnego nie trafia na dysk. Zaufane klucze hostów są w `ssh/known_hosts.json`. Aplikacja nigdy sama nie czyta `~/.ssh`. Na macOS pęk kluczy może po aktualizacji ponownie zapytać o dostęp do „unimux Safe Storage”.
+- Jeszcze niedostępne: przekazywanie agenta i ssh-agent/Pageant, hosty pośrednie i proxy, przekierowanie portów, SFTP, mosh, zmienne środowiskowe hosta, import `~/.ssh/config` i `known_hosts`.
+
 ## Instalacja
 
 Wydania sprzed zmiany nazwy na Unimux mają `ajzakomator` w nazwach paczek. W tych wydaniach wybierz odpowiadający instalator lub architekturę Maca.

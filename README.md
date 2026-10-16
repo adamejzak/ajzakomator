@@ -126,6 +126,20 @@ A git repository can carry its own configuration that makes git start programs: 
 
 The panel needs git 2.26 or newer on your `PATH`.
 
+## SSH connections
+
+The **SSH** tile in the left rail is a small SSH client inside the terminal grid. It uses the built-in `ssh2` library (no `ssh` program is needed) and runs every session in the Pty Host, next to the local terminals.
+
+- **Hosts.** Save hosts with a label, address, port, user, group and tags; search them, fold groups, duplicate or delete them. Click a host to connect in the active grid, or open it in a new tab. A group (or several hosts selected with Ctrl/Cmd+click) opens as a grid with one session per host. The grid dialog and presets can hold SSH cells too.
+- **Keys.** Generate Ed25519, ECDSA (256, 384, 521) or RSA (3072, 4096, 2048) keys, or add one from a file (picker or drag and drop) or as pasted text: OpenSSH keys, PEM RSA and EC keys and PuTTY PPK v2 RSA keys. PuTTY PPK v3 keys must be saved as OpenSSH in PuTTYgen first. Copy the public key for `authorized_keys`; the private key can only be saved to a file you choose. Certificates can be stored but are not used to sign in yet. ML-DSA and other post-quantum keys are not offered: there is no standard SSH signature for them and servers do not accept them.
+- **Signing in.** Public key, saved password, password prompt and keyboard-interactive (one-time codes). A passphrase you type can be remembered until the app quits, so a grid of cells on one key asks once.
+- **Host keys.** The first connection shows the server's fingerprint and asks whether to trust it; a changed key shows a red warning and connects only after you confirm the replacement. Trusted keys are listed in **Settings > SSH > Known hosts**.
+- **Startup command** per host: typed into the shell after login, line by line as if you typed it.
+- **Send to all.** One command for the checked SSH sessions of the current grid (panel button, palette, grid tab menu).
+- **Sessions are not restored** after a restart of the app; the cells show a **Connect** card. There is no automatic reconnect.
+- **Secrets.** Hosts are stored in `state.json` without secrets. Keys and saved passwords are stored in `ssh/vault.json` in the app data folder, encrypted with Windows DPAPI or the macOS Keychain (`safeStorage`); when the system encryption is unavailable they are kept in memory only until the app quits and nothing secret is written. Trusted host keys are in `ssh/known_hosts.json`. The app never reads `~/.ssh` by itself. On macOS the Keychain may ask again for access to "unimux Safe Storage" after an update.
+- Not supported yet: agent forwarding and ssh-agent/Pageant, jump hosts and proxies, port forwarding, SFTP, mosh, per-host environment variables, importing `~/.ssh/config` or `known_hosts`.
+
 ## Install
 
 Releases published before the Unimux rebranding use `ajzakomator` in package names. Choose the matching installer or Mac architecture from those releases.
@@ -216,7 +230,7 @@ flowchart LR
   H --> T["Native PTY<br/>Windows: pwsh / ConPTY<br/>macOS: zsh / bash<br/>→ claude / codex"]
 ```
 
-- **Pty Host.** All terminals live in a separate process and stream straight to the window, so a dozen chatty agents never freeze the UI. Reloading the window keeps every agent alive and replays its output.
+- **Pty Host.** All terminals live in a separate process and stream straight to the window, so a dozen chatty agents never freeze the UI. Reloading the window keeps every agent alive and replays its output. SSH sessions (ssh2) run there too and use the same output path, flow control and replay; host keys, keys and passwords are handled by the main process, which passes secrets to the Pty Host in memory only.
 - **Terminal fidelity.** On Windows, node-pty runs with the bundled, newer ConPTY, and unimux implements Windows Terminal's `win32-input-mode`. That delivers real key release events, which is what makes hold Space to talk work. macOS uses native POSIX PTYs.
 - **Status.** Claude Code reports through per-cell hooks passed with `--settings` (your own `settings.json` is never touched). Codex calls a per-process `notify` hook (`-c notify=[...]`, a `curl` call to the local hook server) when a turn completes, which also reports the conversation id; its approval prompts arrive as terminal notifications (OSC 9), a usage-limit error is recognized from its output, and an activity heuristic is the fallback (see Codex notes above).
 - **Resume.** Claude cells start with a known `--session-id` and resume with `--resume`. Codex sessions are matched to their cell from `~/.codex/sessions` and resumed with `codex resume`.
@@ -233,6 +247,7 @@ npm test             # unit tests + integration tests against a real native PTY
 npm run dist:win     # Windows installer in release/
 npm run dist:mac     # macOS DMG + ZIP in release/ (run on a Mac)
 npm run test:packaged # verify node-pty using the packaged Electron runtime
+npm run test:ssh-electron # SSH algorithms and key generation under Electron's crypto
 ```
 
 Built with Electron, TypeScript, React, Zustand, xterm.js, node-pty, electron-vite and Vitest.
