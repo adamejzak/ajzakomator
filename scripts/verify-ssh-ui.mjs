@@ -242,7 +242,19 @@ const PARTS = {
         await app.until(`document.querySelectorAll('.cell .ssh-fingerprint').length === 3`, 'one shared host key card in three cells');
         await app.click('.ssh-card button', 'Zaufaj i zapisz');
         await app.until(`document.querySelectorAll('.cell .ssh-card').length === 0`, 'all three connected');
+        // Every cell's terminal buffer holds the connected notice and the server greeting (nothing lost to the shared prompt or an early write).
+        const buffers = `(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId);
+          return t.cells.map((c) => { const b = window.__mc.terminals.entries.get(c.id)?.term.buffer.active; if (!b) return ''; let text = ''; for (let i = 0; i < b.length; i++) text += (b.getLine(i)?.translateToString(true) ?? '') + '\\n'; return text; }); })()`;
+        await app.until(`${buffers}.length === 3 && ${buffers}.every((t) => t.includes('połączono') && t.includes('unimux test server') && t.includes('$'))`, 'every cell shows the connected notice and the server greeting');
         await app.screenshot('ssh-grid-preset.png');
+        // Typing into each cell reaches its own session and the echo comes back.
+        for (let i = 0; i < 3; i++) {
+          await app.evaluate(`(() => { const s = window.__mc.useStore.getState().s; const p = s.projects.find((x) => x.id === s.activeProjectId); const t = p.tabs.find((x) => x.id === p.activeTabId); window.__mc.terminals.focus(t.cells[${i}].id); return true; })()`);
+          await app.insertText(`echo ok${i}`);
+          await app.press('Enter');
+          await app.until(`${buffers}[${i}].split('\\n').some((l) => l.trim() === 'ok${i}')`, `cell ${i + 1} echoes its command`);
+        }
+        await app.screenshot('ssh-grid-preset-echo.png');
         await app.click('button[title^="Nowy grid"]');
         await app.until(`!!document.querySelector('.grid-dialog')`, 'grid dialog');
         await app.click('.cell-table .select');
