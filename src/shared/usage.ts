@@ -79,6 +79,8 @@ export interface UsageState {
   /** Path of accounts.json when it cannot be read safely: the app writes nothing to it (no logins saved, no removals). */
   accountsReadOnly?: string;
   setAside?: SetAsideAccount[];
+  /** Records set aside as a second copy of an account whose holder still exists: only these offer "Delete copy". */
+  duplicateCopies?: string[];
 }
 
 export const USAGE_INTERVALS_MINUTES = [1, 5, 15] as const;

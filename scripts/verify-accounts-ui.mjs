@@ -78,6 +78,10 @@ try {
   const app = await launchApp(roRoot, { MC_USAGE_CLAUDE_URL: 'http://127.0.0.1:9/usage', MC_USAGE_CLAUDE_TOKEN_URL: 'http://127.0.0.1:9/token' });
   try {
     await app.until(`[...document.querySelectorAll('.usage-warning')].some((w) => w.textContent.includes('nie da się bezpiecznie odczytać') && w.textContent.includes('accounts.json'))`, 'read-only explanation');
+    // No Claude login can be saved meanwhile: the empty-state button and the "+" entry are disabled, with the reason.
+    if (!(await app.evaluate(`[...document.querySelectorAll('.usage-empty-buttons button')].find((b) => b.textContent.includes('Claude'))?.disabled === true`))) throw new Error('Claude button not disabled');
+    await app.click('.usage-head button[aria-label="Dodaj konto"]');
+    await app.until(`[...document.querySelectorAll('.menu button')].some((b) => b.textContent.includes('Dodaj konto Claude') && b.getAttribute('aria-disabled') === 'true') && document.querySelector('.menu').textContent.includes('Niedostępne')`, 'add menu disabled with the reason');
     await app.screenshot('091-accounts-readonly.png');
   } finally { await app.close(); }
   if (readFileSync(file, 'utf8') !== body) throw new Error('a read-only accounts.json was written');

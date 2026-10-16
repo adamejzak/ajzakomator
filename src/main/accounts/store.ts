@@ -165,11 +165,18 @@ export class AccountsStore {
     const file = this.read();
     if (file.readOnly) throw new AccountsReadOnlyError();
     rmSync(this.dirOf(id), { recursive: true, force: true });
-    const claude = file.claude.filter((entry) => entry.id !== id);
-    const notices = file.notices.filter((n) => n.recordId !== id);
+    // Copies set aside for this record are released: no longer a copy of anything (still set aside, never renewed), so the
+    // panel offers signing in again or removing them, never a "Delete copy" that would drop the account's last saved copy.
+    const released = new Set(file.claude.filter((entry) => entry.duplicateOf === id).map((entry) => entry.id));
+    const claude = file.claude.filter((entry) => entry.id !== id).map((entry) => {
+      if (!released.has(entry.id)) return entry;
+      const { duplicateOf: _drop, ...rest } = entry;
+      return rest;
+    });
+    const notices = file.notices.filter((n) => n.recordId !== id && !(n.kind === 'quarantined' && n.recordId && released.has(n.recordId)));
     let live = file.live;
     if (live?.recordId === id) { const { recordId: _drop, ...rest } = live; live = rest; }
-    if (claude.length === file.claude.length && notices.length === file.notices.length && live === file.live) return;
+    if (claude.length === file.claude.length && !released.size && notices.length === file.notices.length && live === file.live) return;
     this.write({ version: file.version, claude, notices, readOnly: false, ...(live ? { live } : {}) });
   }
 

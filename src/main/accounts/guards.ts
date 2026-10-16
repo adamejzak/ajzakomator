@@ -36,6 +36,8 @@ export async function handleRemoveAccount(deps: RemoveDeps, id: unknown): Promis
   if (deps.readOnly?.()) return { ok: false, error: 'readOnly' };
   const block = await accountMutationBlock(deps);
   if (block) return { ok: false, error: block };
+  // Checked again after the wait, right before a parked restore snapshot is dropped: the card must not stay without it.
+  if (deps.readOnly?.()) return { ok: false, error: 'readOnly' };
   deps.cancelLogin(id);
   try {
     deps.remove(id);
@@ -45,6 +47,20 @@ export async function handleRemoveAccount(deps: RemoveDeps, id: unknown): Promis
   }
   deps.onRemoved();
   return { ok: true };
+}
+
+/**
+ * IPC handler body for `accounts:dismissNotice`: a read-only accounts.json keeps its notices (the panel explains that state);
+ * any other failure becomes one fixed error (no path or system message reaches the renderer or the log).
+ */
+export function dismissAccountNotice(store: { dismissNotice(id: string): void }, id: unknown): void {
+  if (typeof id !== 'string' || !id || id.length > 64) return;
+  try {
+    store.dismissNotice(id);
+  } catch (error) {
+    if (error instanceof AccountsReadOnlyError) return;
+    throw new Error('notice not dismissed');
+  }
 }
 
 /**

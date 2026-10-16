@@ -36,12 +36,12 @@ import { createRefreshLimits } from './accounts/refreshLimits';
 import { createTokenFetch } from './accounts/tokenTransport';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
-import { gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
+import { dismissAccountNotice, gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
 import { activateAccount, activationJournalPending, checkActivationTarget, isActivationRecoveryPending, recoverActivationWithRetry, recoverInterruptedActivation, type ActivateDeps } from './accounts/activate';
 import { backupLiveBeforeLogin, reconcileLive, reconcileWhenIdle, resyncOutgoingWhenIdle, type ReconcileDeps } from './accounts/reconcile';
 import { resyncActiveBackup } from './accounts/resync';
-import { claudeRefs } from './accounts/refs';
+import { accountsPanelInfo, claudeRefs } from './accounts/refs';
 import { cswapRosterPath, readCswapRoster, type CswapRoster } from './accounts/cswap';
 import { readManagedIdentity } from './accounts/identity';
 import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
@@ -172,17 +172,10 @@ const usage = new UsageService({
   },
   watchLive: true,
   notices: () => accounts.notices(),
-  // An unreadable accounts.json is explained in the panel; a card set aside after a failed restore (custody quarantined
-  // without a holder, or parked while accounts.json refused the write) is listed with what to do about it.
-  accountsInfo: () => {
-    if (accounts.readOnly()) return { accountsReadOnly: join(DATA_DIR, 'accounts', 'accounts.json') };
-    const parked = new Set(login.parkedIds());
-    return {
-      setAside: accounts.list()
-        .filter((a) => parked.has(a.id) || (custodyOf(a) === 'quarantined' && !a.duplicateOf))
-        .map((a) => ({ recordId: a.id, ...(a.email ? { email: a.email } : {}), restoring: parked.has(a.id) })),
-    };
-  },
+  // An unreadable accounts.json is explained in the panel; set-aside cards are listed with what to do about them.
+  accountsInfo: () => (accounts.readOnly()
+    ? { accountsReadOnly: join(DATA_DIR, 'accounts', 'accounts.json') }
+    : accountsPanelInfo(accounts.list(), login.parkedIds())),
   liveEmail: () => accounts.live()?.email,
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
@@ -870,9 +863,11 @@ ipcMain.handle('accounts:clearSwapPending', async () => {
   return { ok: cleared };
 });
 ipcMain.handle('accounts:dismissNotice', (_e, id: unknown) => {
-  // A read-only accounts.json keeps its notices (nothing is written); the panel explains that state.
-  try { if (typeof id === 'string' && id.length <= 64) accounts.dismissNotice(id); } catch { /* read-only */ }
-  send('usage:state', usage.getState());
+  try {
+    dismissAccountNotice(accounts, id);
+  } finally {
+    send('usage:state', usage.getState());
+  }
 });
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());

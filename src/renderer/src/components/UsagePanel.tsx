@@ -203,14 +203,14 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
  * Notices about the saved accounts (outside switches, set-aside copies, the upgrade), cards set aside after a failed
  * restore, and an accounts.json that cannot be read safely. Each says what happened and what to do.
  */
-function AccountNotices({ notices, setAside, readOnlyPath }: { notices: AccountNotice[]; setAside: SetAsideAccount[]; readOnlyPath?: string }) {
+function AccountNotices({ notices, setAside, copies, readOnlyPath }: { notices: AccountNotice[]; setAside: SetAsideAccount[]; copies: string[]; readOnlyPath?: string }) {
   const { tr } = useI18n();
   if (!notices.length && !setAside.length && !readOnlyPath) return null;
-  // A second copy goes while the account's card stays; a card set aside after a failed restore is that card itself.
+  // A second copy goes while the account's card stays; a set-aside card is the account's card itself ("Usuń konto").
   const removeCopy = async (recordId: string | undefined, email: string | undefined, whole = false) => {
     const name = email ?? NAMES.claude;
     const choice = whole
-      ? await askChoice(tr('Usunąć konto {name}?', { name }), tr('Logowanie zostanie usunięte z aplikacji. Samo konto pozostaje bez zmian.'), [{ label: tr('Usuń kopię'), value: 'yes', danger: true }])
+      ? await askChoice(tr('Usunąć konto {name}?', { name }), tr('Logowanie zostanie usunięte z aplikacji. Samo konto pozostaje bez zmian.'), [{ label: tr('Usuń konto'), value: 'yes', danger: true }])
       : await askChoice(tr('Usunąć kopię konta {name}?', { name }), tr('Kopia logowania zostanie usunięta z aplikacji. Konto i jego karta pozostają bez zmian.'), [{ label: tr('Usuń kopię'), value: 'yes', danger: true }]);
     if (choice !== 'yes' || !recordId) return;
     await removeSaved(recordId, tr);
@@ -227,7 +227,7 @@ function AccountNotices({ notices, setAside, readOnlyPath }: { notices: AccountN
           <p className="usage-note">{tr(setAsideText(card.restoring), { email: card.email ?? NAMES.claude })}</p>
           <div className="usage-empty-buttons">
             <button className="btn small" onClick={() => openAuth('claude', { type: 'account', id: card.recordId })}>{tr('Zaloguj ponownie')}</button>
-            <button className="btn small" onClick={() => void removeCopy(card.recordId, card.email, true)}>{tr('Usuń kopię')}</button>
+            <button className="btn small" onClick={() => void removeCopy(card.recordId, card.email, true)}>{tr('Usuń konto')}</button>
           </div>
         </div>
       ))}
@@ -237,7 +237,7 @@ function AccountNotices({ notices, setAside, readOnlyPath }: { notices: AccountN
           <div key={notice.id} className="usage-warning" role="status">
             <p className="usage-note">{tr(text.key, text.params)}</p>
             <div className="usage-empty-buttons">
-              {notice.kind === 'quarantined' && notice.recordId && <button className="btn small" onClick={() => void removeCopy(notice.recordId, notice.email)}>{tr('Usuń kopię')}</button>}
+              {notice.kind === 'quarantined' && notice.recordId && copies.includes(notice.recordId) && <button className="btn small" onClick={() => void removeCopy(notice.recordId, notice.email)}>{tr('Usuń kopię')}</button>}
               <button className="btn small ghost" onClick={() => void window.mc.dismissAccountNotice(notice.id).catch(() => undefined)}>{tr('Ukryj')}</button>
             </div>
           </div>
@@ -252,7 +252,7 @@ export function UsagePanel() {
   const { tr, language } = useI18n();
   const settings = useStore((st) => st.s.settings);
   const rail = useStore((st) => st.s.sidebarCollapsed);
-  const { providers, notices = [], setAside = [], accountsReadOnly } = useUsage();
+  const { providers, notices = [], setAside = [], duplicateCopies = [], accountsReadOnly } = useUsage();
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const spinning = useHoldBusy(refreshing, 700);
@@ -351,9 +351,12 @@ export function UsagePanel() {
 
   const collapsed = settings.usageCollapsed;
   const toggle = () => update((st) => updateSettings(st, { usageCollapsed: !collapsed }));
+  // No Claude login can be saved while accounts.json is read-only: the entries stay visible, disabled, with the reason.
+  const readOnlyHint = accountsReadOnly ? tr('Niedostępne: pliku kont aplikacji nie da się bezpiecznie odczytać (szczegóły w panelu limitów).') : undefined;
   const openAddMenu = (el: HTMLElement) => openMenuAt(el, [
-    ...(claudeLogin.menu === 'new' ? [{ label: tr('Dodaj konto Claude'), onClick: () => openAuth('claude', { type: 'new' }) }] : []),
-    ...(claudeLogin.menu === 'main' ? [{ label: tr('Zaloguj się do Claude'), onClick: () => openAuth('claude', { type: 'main' }) }] : []),
+    ...(claudeLogin.menu === 'new' ? [{ label: tr('Dodaj konto Claude'), disabled: !!readOnlyHint, onClick: () => openAuth('claude', { type: 'new' }) }] : []),
+    ...(claudeLogin.menu === 'main' ? [{ label: tr('Zaloguj się do Claude'), disabled: !!readOnlyHint, onClick: () => openAuth('claude', { type: 'main' }) }] : []),
+    ...(readOnlyHint && claudeLogin.menu ? [{ label: readOnlyHint, disabled: true, onClick: () => undefined }] : []),
     ...(hasCodex ? [] : [{ label: tr('Zaloguj się do Codex'), onClick: () => openAuth('codex', { type: 'main' }) }]),
   ]);
   return (
@@ -404,7 +407,7 @@ export function UsagePanel() {
               <button className="btn small" onClick={() => void clearWarning()}>{tr('Wyczyść ostrzeżenie')}</button>
             </div>
           )}
-          <AccountNotices notices={notices} setAside={setAside} readOnlyPath={accountsReadOnly} />
+          <AccountNotices notices={notices} setAside={setAside} copies={duplicateCopies} readOnlyPath={accountsReadOnly} />
           {visible.length ? (
             <>
               {visible.map((usage) => <AccountCard key={usage.accountId} usage={usage} savedIndex={visible.filter((u) => u.managed && u.provider === 'claude').indexOf(usage) + 1} now={now} language={language} showMain={claudeCount > 1} swapping={swapping} onMakeMain={(target) => void makeMain(target)} />)}
@@ -414,7 +417,7 @@ export function UsagePanel() {
             <div className="usage-empty">
               <p className="usage-note">{tr('Brak podłączonych kont. Dodaj konto, aby zobaczyć limity.')}</p>
               <div className="usage-empty-buttons">
-                <button className="btn small" onClick={() => openAuth('claude', { type: claudeLogin.emptyTarget })}><ProviderIcon provider="claude" size={14} />Claude</button>
+                <button className="btn small" disabled={!!readOnlyHint} title={readOnlyHint} onClick={() => openAuth('claude', { type: claudeLogin.emptyTarget })}><ProviderIcon provider="claude" size={14} />Claude</button>
                 <button className="btn small" onClick={() => openAuth('codex', { type: 'main' })}><ProviderIcon provider="codex" size={14} />Codex</button>
               </div>
             </div>

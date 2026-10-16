@@ -565,6 +565,15 @@ describe('LoginManager re-login safety (fix round 1)', () => {
     h.manager.dispose();
   });
 
+  it('signing in again a card set aside before a restart (quarantined, no holder) makes it the app\'s own again', async () => {
+    const prepared = card({ email: 'new@example.com', accountUuid: undefined, custody: 'quarantined', family: 'live' });
+    const h = setup();
+    await runSuccess(h, { provider: 'claude', target: { type: 'account', id: prepared.id } });
+    expect(h.states.map((s) => s.status)).toEqual(['waiting', 'success']);
+    expect(store.get(prepared.id)).toMatchObject({ custody: 'app', family: 'own' });
+    expect(store.get(prepared.id)?.duplicateOf).toBeUndefined();
+  });
+
   it('removing a parked card forgets its snapshot', async () => {
     const prepared = card();
     const restoreProfile = vi.fn(async (): Promise<undefined> => { throw new Error('locked'); });

@@ -256,4 +256,22 @@ describe('AccountsStore v2', () => {
     expect(store.notices()).toEqual([]);
     expect(store.live()).toEqual({ email: 'a@x.com' });
   });
+  it('removing the record a copy was set aside for releases the copy (never the last saved copy behind a copy notice)', () => {
+    const store = new AccountsStore(root);
+    const holder = store.prepare().id;
+    const copy = store.prepare().id;
+    const other = store.prepare().id;
+    store.commit({ id: holder, addedAt: 1, email: 'a@x.com' });
+    store.commit({ id: copy, addedAt: 2, email: 'a@x.com', custody: 'quarantined', duplicateOf: holder });
+    store.commit({ id: other, addedAt: 3, email: 'b@x.com', custody: 'quarantined', duplicateOf: copy });
+    store.addNotice({ kind: 'quarantined', at: 1, recordId: copy, email: 'a@x.com' });
+    store.addNotice({ kind: 'switchedOut', at: 1, recordId: copy, email: 'a@x.com' });
+    store.remove(holder);
+    // Still set aside (never renewed), but no longer a copy of anything: the panel lists it as a set-aside card.
+    expect(store.get(copy)).toMatchObject({ custody: 'quarantined' });
+    expect(store.get(copy)?.duplicateOf).toBeUndefined();
+    expect(store.notices().map((n) => n.kind)).toEqual(['switchedOut']);
+    expect(store.get(other)?.duplicateOf).toBe(copy);
+    expect(existsSync(store.dirOf(copy))).toBe(true);
+  });
 });

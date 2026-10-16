@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ManagedAccount } from '../src/shared/accounts';
 import { CSWAP_ROSTER_MAX_BYTES, cswapHolds, cswapRosterPath, readCswapRoster } from '../src/main/accounts/cswap';
-import { claudeRefs, renewRule } from '../src/main/accounts/refs';
+import { accountsPanelInfo, claudeRefs, renewRule } from '../src/main/accounts/refs';
 
 const ID = (n: number) => `${n}1111111-1111-4111-8111-111111111111`;
 const rec = (n: number, over: Partial<ManagedAccount> = {}): ManagedAccount => ({ id: ID(n), addedAt: n, email: `u${n}@x.com`, accountUuid: `u${n}`, ...over });
@@ -84,5 +84,28 @@ describe('cswap roster (read only)', () => {
     expect(cswapHolds(roster, { email: 'other@x.com', accountUuid: 'uo' })).toBe(false);
     writeFileSync(path, JSON.stringify({ accounts: {}, pad: 'x'.repeat(CSWAP_ROSTER_MAX_BYTES) }));
     expect(await readCswapRoster(path)).toEqual({ present: true, accounts: null });
+  });
+});
+
+describe('accountsPanelInfo', () => {
+  it('lists set-aside cards (no holder, or parked) and the copies whose holder exists', () => {
+    const records = [
+      rec(1),
+      rec(2, { custody: 'quarantined', duplicateOf: ID(1) }),
+      rec(3, { custody: 'quarantined' }),
+      rec(4, { custody: 'quarantined', duplicateOf: ID(9) }),
+      rec(5, { custody: 'app' }),
+    ];
+    const info = accountsPanelInfo(records, [ID(5)]);
+    expect(info.duplicateCopies).toEqual([ID(2)]);
+    expect(info.setAside).toEqual([
+      { recordId: ID(3), email: 'u3@x.com', restoring: false },
+      { recordId: ID(4), email: 'u4@x.com', restoring: false },
+      { recordId: ID(5), email: 'u5@x.com', restoring: true },
+    ]);
+  });
+
+  it('a set-aside card signed in again (custody app) leaves the set-aside list', () => {
+    expect(accountsPanelInfo([rec(3, { custody: 'app', family: 'own' })], []).setAside).toEqual([]);
   });
 });

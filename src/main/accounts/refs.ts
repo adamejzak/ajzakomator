@@ -1,7 +1,7 @@
 // The Claude cards of the limits panel: one per account. The live login is read through Claude Code's files and never
 // renewed here; a saved account is renewed only when its token family lives nowhere else (R6).
 import { compareIdentity, custodyOf, familyOf, identityKey, type LiveIdentity, type ManagedAccount } from '../../shared/accounts';
-import type { AccountRef } from '../../shared/usage';
+import type { AccountRef, SetAsideAccount } from '../../shared/usage';
 import { cswapHolds, type CswapRoster } from './cswap';
 
 export type RenewRule = NonNullable<AccountRef['renew']>;
@@ -20,6 +20,24 @@ export function renewRule(record: ManagedAccount, live: LiveIdentity | null, csw
   if (custody === 'live' || (live && compareIdentity(record, live) !== 'different')) return 'held-by-live';
   if (familyOf(record) === 'live' && cswapHolds(cswap, record)) return 'held-by-cswap';
   return 'allowed';
+}
+
+/**
+ * What the limits panel tells about records that have no card: set-aside cards (quarantined without a holder - a failed
+ * restore, or a copy whose holder was removed - or parked while their restore is retried) and the copies whose holder still
+ * exists (only those may be deleted as "a copy").
+ */
+export function accountsPanelInfo(records: ManagedAccount[], parkedIds: string[]): { setAside: SetAsideAccount[]; duplicateCopies: string[] } {
+  const parked = new Set(parkedIds);
+  const ids = new Set(records.map((r) => r.id));
+  const quarantined = (r: ManagedAccount) => custodyOf(r) === 'quarantined';
+  const isCopy = (r: ManagedAccount) => quarantined(r) && !!r.duplicateOf && ids.has(r.duplicateOf) && r.duplicateOf !== r.id;
+  return {
+    setAside: records
+      .filter((r) => !parked.has(r.id) ? quarantined(r) && !isCopy(r) : true)
+      .map((r) => ({ recordId: r.id, ...(r.email ? { email: r.email } : {}), restoring: parked.has(r.id) })),
+    duplicateCopies: records.filter((r) => isCopy(r) && !parked.has(r.id)).map((r) => r.id),
+  };
 }
 
 export interface RefsInput { records: ManagedAccount[]; dirOf(id: string): string; live: LiveIdentity | null; cswap: CswapRoster; platform: NodeJS.Platform }

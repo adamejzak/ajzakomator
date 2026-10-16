@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { accountMutationBlock, gateProfileRefresh, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
+import { accountMutationBlock, dismissAccountNotice, gateProfileRefresh, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
 import { AccountsReadOnlyError, AccountsStore } from '../src/main/accounts/store';
 import { clearPendingSwap, hasPendingSwap, isSwapUnresolved, nodeSwapFs, recoverInterruptedSwap, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
 
@@ -319,6 +319,24 @@ describe('account mutation guards', () => {
     const thrown = { ...d, remove: () => { throw new AccountsReadOnlyError(); } };
     expect(await handleRemoveAccount(thrown, ID)).toEqual({ ok: false, error: 'readOnly' });
     await expect(handleRemoveAccount({ ...d, remove: () => { throw new Error('io'); } }, ID)).rejects.toThrow('io');
+  });
+
+  it('checks read-only again after waiting for the swap state, before a parked restore is dropped', async () => {
+    const { calls, deps: d } = removeDeps(false, false);
+    let readOnly = false;
+    const racing = { ...d, readOnly: () => readOnly, swapPending: async () => { readOnly = true; return false; } };
+    expect(await handleRemoveAccount(racing, ID)).toEqual({ ok: false, error: 'readOnly' });
+    expect(calls).toEqual([]);
+  });
+
+  it('dismissing a notice ignores only a read-only store and turns other failures into a fixed error', () => {
+    const ids: string[] = [];
+    dismissAccountNotice({ dismissNotice: (id) => { ids.push(id); } }, 'n1');
+    dismissAccountNotice({ dismissNotice: (id) => { ids.push(id); } }, 5);
+    dismissAccountNotice({ dismissNotice: (id) => { ids.push(id); } }, 'x'.repeat(65));
+    expect(ids).toEqual(['n1']);
+    expect(() => dismissAccountNotice({ dismissNotice: () => { throw new AccountsReadOnlyError(); } }, 'n1')).not.toThrow();
+    expect(() => dismissAccountNotice({ dismissNotice: () => { throw new Error('EACCES C:/secret/path'); } }, 'n1')).toThrow(/^notice not dismissed$/);
   });
 
   it('refuses every Claude login while accounts.json is read-only (it could not be saved), never a Codex one', async () => {

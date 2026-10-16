@@ -198,6 +198,6 @@ describe('account notices', () => {
     for (const restoring of [true, false]) {
       for (const lang of ['pl', 'en', 'de', 'es', 'fr', 'pt'] as const) expect(translate(lang, setAsideText(restoring), { email: 'g@x.com' })).toContain('g@x.com');
     }
-    expect(translate('en', setAsideText(false), { email: 'g@x.com' })).toMatch(/sign in to it again or delete the copy/i);
+    expect(translate('en', setAsideText(false), { email: 'g@x.com' })).toMatch(/sign in to it again or remove the account/i);
   });
 });
