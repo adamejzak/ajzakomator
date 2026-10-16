@@ -120,12 +120,12 @@ describe('swap error messages', () => {
     const named = swapErrorText({ error: 'foreign', email: 'x@x.com' });
     expect(named.params).toEqual({ email: 'x@x.com' });
     expect(translate('en', named.key, named.params)).toContain('x@x.com');
-    for (const error of ['dead', 'transient', 'sameAccount', 'noTarget'] as const) {
+    for (const error of ['dead', 'transient', 'sameAccount', 'noTarget', 'duplicate', 'locked', 'manual'] as const) {
       const text = swapErrorText({ error, email: 'x@x.com' });
       for (const { code } of LANGUAGES) expect(translate(code, text.key, text.params), `${code}: ${error}`).toContain('x@x.com');
     }
     expect(swapErrorText({ error: 'foreign' })).toEqual({ key: swapErrorKey('foreign') });
-    expect(swapErrorText({ error: 'locked', email: 'x@x.com' })).toEqual({ key: swapErrorKey('locked') });
+    expect(swapErrorText({ error: 'busy', email: 'x@x.com' })).toEqual({ key: swapErrorKey('busy') });
     expect(swapErrorText({ error: 'nope', email: 'x@x.com' })).toEqual({ key: swapErrorKey('invalid') });
   });
 });

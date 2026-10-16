@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { sanitizeUsage } from '../src/main/usage/sanitize';
 import { MAIN_ACCOUNTS, claudeLoginActions, clampPercent, effectivePercent, formatDuration, heldByOf, usageBand, usageDiagnostics, usageErrorKind, usageHttpStatus, worstPercent, type ProviderUsage } from '../src/shared/usage';
-import { usageErrorKey, usageMessages } from '../src/shared/usageMessages';
+import { noticeText, setAsideText, usageErrorKey, usageMessages } from '../src/shared/usageMessages';
+import { translate } from '../src/shared/i18n';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 
@@ -164,5 +165,39 @@ describe('failure reasons', () => {
     expect(heldByOf('held-by-live')).toBe('live');
     expect(heldByOf('held-by-cswap')).toBe('cswap');
     expect(heldByOf('switched-out')).toBe('switched-out');
+  });
+});
+
+describe('account notices', () => {
+  it('has a text for every kind, naming the account, in every language', () => {
+    const kinds = ['switchedOut', 'loggedOut', 'adopted', 'migrated', 'quarantined'] as const;
+    for (const kind of kinds) {
+      const { key, params } = noticeText({ id: 'n', kind, at: 1, email: 'g@x.com', count: 2 });
+      for (const lang of ['pl', 'en', 'de', 'es', 'fr', 'pt'] as const) {
+        const text = translate(lang, key, params);
+        expect(text.length).toBeGreaterThan(10);
+        if (kind !== 'migrated') expect(text).toContain('g@x.com');
+      }
+    }
+  });
+
+  it('never claims a kept copy on macOS (the live login is in the Keychain) (F24)', () => {
+    for (const kind of ['switchedOut', 'loggedOut'] as const) {
+      const notice = { id: 'n', kind, at: 1, email: 'g@x.com' };
+      const mac = noticeText(notice, 'darwin');
+      expect(mac.key).not.toBe(noticeText(notice, 'win32').key);
+      expect(noticeText(notice).key).toBe(noticeText(notice, 'win32').key);
+      for (const lang of ['pl', 'en', 'de', 'es', 'fr', 'pt'] as const) expect(translate(lang, mac.key, mac.params)).toContain('g@x.com');
+      expect(translate('en', mac.key, mac.params)).not.toContain('kept its copy');
+    }
+    expect(noticeText({ id: 'n', kind: 'adopted', at: 1, email: 'g@x.com' }, 'darwin').key).toBe(noticeText({ id: 'n', kind: 'adopted', at: 1, email: 'g@x.com' }).key);
+  });
+
+  it('tells why a card is set aside after a failed restore and what to do, naming it, in every language', () => {
+    expect(setAsideText(true)).not.toBe(setAsideText(false));
+    for (const restoring of [true, false]) {
+      for (const lang of ['pl', 'en', 'de', 'es', 'fr', 'pt'] as const) expect(translate(lang, setAsideText(restoring), { email: 'g@x.com' })).toContain('g@x.com');
+    }
+    expect(translate('en', setAsideText(false), { email: 'g@x.com' })).toMatch(/sign in to it again or delete the copy/i);
   });
 });

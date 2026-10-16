@@ -106,14 +106,18 @@ export interface McApi {
   getChangelog(force?: boolean): Promise<ChangelogResult>;
   getUsage(): Promise<UsageState>;
   refreshUsage(): Promise<UsageState>;
-  /** `error: 'backup'` names the outgoing main account in `email`. */
+  /** `error: 'backup'` names the outgoing main account in `email`; `readOnly`: accounts.json cannot be read safely (no Claude login starts). */
   startLogin(request: LoginRequest): Promise<{ ok: true; sessionId: string; ptyId: string } | { ok: false; error: string; email?: string }>;
   cancelLogin(sessionId: string): void;
-  removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' }>;
+  /** `readOnly`: accounts.json cannot be read safely, nothing was removed. */
+  removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' | 'readOnly' }>;
   makeMainAccount(id: string): Promise<SwapResult>;
   /** True while an interrupted swap is unresolved (swaps are blocked). Also pushed on the 'accounts:swapPending' channel. */
   swapPending(): Promise<boolean>;
-  clearSwapPending(): Promise<{ ok: boolean }>;
+  /** `locked`: the recovery of an interrupted activation waits for Claude Code's locks and is retried automatically. */
+  clearSwapPending(): Promise<{ ok: boolean; error?: 'locked' }>;
+  /** Hides a notice about the saved accounts (the state is pushed again on 'usage:state'). */
+  dismissAccountNotice(id: string): Promise<void>;
   on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
   on(channel: 'install:state', cb: (state: InstallState) => void): () => void;
   on(channel: 'cli:changed', cb: (status: CliStatusMap) => void): () => void;

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { accountMutationBlock, gateProfileRefresh, handleRemoveAccount, loginBlock } from '../src/main/accounts/guards';
-import { AccountsStore } from '../src/main/accounts/store';
+import { AccountsReadOnlyError, AccountsStore } from '../src/main/accounts/store';
 import { clearPendingSwap, hasPendingSwap, isSwapUnresolved, nodeSwapFs, recoverInterruptedSwap, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
 
 const FUTURE = Date.parse('2026-10-11T12:00:00Z') + 3_600_000;
@@ -309,6 +309,24 @@ describe('account mutation guards', () => {
     expect(await handleRemoveAccount(d, '../x')).toEqual({ ok: false });
     expect(await handleRemoveAccount(d, ID)).toEqual({ ok: true });
     expect(calls).toEqual(['cancel', 'remove', 'refresh']);
+  });
+
+  it('answers a fixed readOnly code instead of throwing when accounts.json cannot be read safely', async () => {
+    const { calls, deps: d } = removeDeps(false, false);
+    expect(await handleRemoveAccount({ ...d, readOnly: () => true }, ID)).toEqual({ ok: false, error: 'readOnly' });
+    expect(calls).toEqual([]);
+    // The file became unreadable between the check and the write: the store's refusal is the same code.
+    const thrown = { ...d, remove: () => { throw new AccountsReadOnlyError(); } };
+    expect(await handleRemoveAccount(thrown, ID)).toEqual({ ok: false, error: 'readOnly' });
+    await expect(handleRemoveAccount({ ...d, remove: () => { throw new Error('io'); } }, ID)).rejects.toThrow('io');
+  });
+
+  it('refuses every Claude login while accounts.json is read-only (it could not be saved), never a Codex one', async () => {
+    const ro = { ...base(false, false), readOnly: () => true };
+    for (const type of ['new', 'main', 'account'] as const) {
+      expect(await loginBlock(ro, { provider: 'claude', target: type === 'account' ? { type, id: ID } : { type } })).toBe('readOnly');
+    }
+    expect(await loginBlock(ro, { provider: 'codex', target: { type: 'main' } })).toBeNull();
   });
 
   it('holds re-logins of the main login or a saved account, not new accounts', async () => {

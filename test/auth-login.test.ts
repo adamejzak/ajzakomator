@@ -533,6 +533,7 @@ describe('LoginManager re-login safety (fix round 1)', () => {
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
     expect(h.states[1]).toMatchObject({ error: 'restore', email: 'app@x.com', expected: 'support@guybot.xyz' });
     expect(store.get(prepared.id)?.custody).toBe('quarantined');
+    expect(h.manager.parkedIds()).toEqual([prepared.id]);
     expect(h.mock.onChanged).not.toHaveBeenCalled();
     expect(JSON.stringify(h.states)).not.toContain('fake-old');
     // A later retry (before a poll) puts the card back with its previous roles.
@@ -541,6 +542,7 @@ describe('LoginManager re-login safety (fix round 1)', () => {
     expect(restoreProfile).toHaveBeenLastCalledWith(prepared.dir, { credentials: 'fake-old-creds', claudeJson: null });
     expect(store.get(prepared.id)).toMatchObject({ custody: 'foreign', family: 'live' });
     expect(h.manager.holdsProfile(prepared.dir)).toBe(false);
+    expect(h.manager.parkedIds()).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -622,7 +624,7 @@ describe('LoginManager re-login safety (fix round 1)', () => {
     await advance(5000);
     expect(h.deps.identity).toHaveBeenCalledTimes(5);
     expect(h.states.map((s) => s.status)).toEqual(['waiting', 'failed']);
-    expect(h.states[1].error).toBe('identity');
+    expect(h.states[1]).toMatchObject({ error: 'identity', expected: 'new@example.com' });
     expect(h.mock.restoreProfile).toHaveBeenCalledTimes(1);
     expect(store.get(prepared.id)).toMatchObject({ custody: 'app', family: 'own' });
     expect(h.mock.onChanged).not.toHaveBeenCalled();

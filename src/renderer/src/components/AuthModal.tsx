@@ -17,13 +17,13 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [startFailed, setStartFailed] = useState(false);
   /** Why the main process refused to start the login (a swap runs or is unresolved), if it did. */
-  const [refusal, setRefusal] = useState<'busy' | 'pending' | 'backup' | 'restore' | null>(null);
+  const [refusal, setRefusal] = useState<'busy' | 'pending' | 'backup' | 'restore' | 'readOnly' | null>(null);
   /** `backup` refusal: the outgoing main account whose sign-in could not be backed up. */
   const [refusalEmail, setRefusalEmail] = useState('');
   // The latest state may arrive before startLogin resolves, so it is matched to the session at render time.
   const [state, setState] = useState<LoginState | null>(null);
   // A first main Claude login (nothing detected when the window opened) gets "sign in" instead of "sign in again".
-  const { providers } = useUsage();
+  const { providers, setAside = [] } = useUsage();
   const [hadMain] = useState(() => providers.some((usage) => usage.provider === 'claude' && usage.active && usage.status !== 'signedOut'));
   const container = useRef<HTMLDivElement>(null);
 
@@ -37,7 +37,7 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
       if (!res.ok) {
         if (!cancelled) {
           setStartFailed(true);
-          if (res.error === 'busy' || res.error === 'pending' || res.error === 'backup' || res.error === 'restore') setRefusal(res.error);
+          if (res.error === 'busy' || res.error === 'pending' || res.error === 'backup' || res.error === 'restore' || res.error === 'readOnly') setRefusal(res.error);
           setRefusalEmail(res.email ?? '');
         }
         return;
@@ -87,22 +87,29 @@ export function AuthModal({ provider, target }: { provider: 'claude' | 'codex'; 
   const waiting = status === 'waiting';
   /** Login refused up front: no terminal session exists, so only the refusal message is shown. */
   const refused = startFailed && refusal !== null;
+  /** `restore` refusal: the set-aside card the login was for, named when its e-mail is known. */
+  const parkedEmail = target.type === 'account' ? setAside.find((card) => card.recordId === target.id)?.email : undefined;
 
   let line: string;
   if (status === 'success') line = email ? tr('Zalogowano jako {email}', { email }) : tr('Zalogowano.');
   else if (status === 'duplicate' && email) line = tr('To konto jest już dodane ({email}).', { email });
   else if (status === 'mismatch' && email && current?.expected) line = tr('Zalogowano jako {email}, a ta karta należy do {expected}. Nic nie zmieniono.', { email, expected: current.expected });
+  else if (status === 'mismatch' && current?.expected) line = tr('Zalogowano na inne konto niż {expected}. Nic nie zmieniono.', { expected: current.expected });
+  else if (startFailed && refusal === 'readOnly') line = tr('Nie można zapisać nowego logowania: pliku kont aplikacji nie da się bezpiecznie odczytać. Napraw albo usuń ten plik (szczegóły w panelu limitów) i uruchom aplikację ponownie.');
   else if (startFailed && refusal === 'backup') line = refusalEmail
     ? tr('Nie udało się zapisać kopii obecnego logowania ({email}), więc logowanie nie zostało rozpoczęte. Spróbuj za chwilę.', { email: refusalEmail })
     : tr('Nie udało się zapisać kopii obecnego logowania, więc logowanie nie zostało rozpoczęte. Spróbuj za chwilę.');
-  else if (startFailed && refusal === 'restore') line = tr('Nie udało się przywrócić poprzedniego logowania tej karty. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.');
+  else if (startFailed && refusal === 'restore') line = parkedEmail
+    ? tr('Nie udało się przywrócić poprzedniego logowania karty {expected}. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.', { expected: parkedEmail })
+    : tr('Nie udało się przywrócić poprzedniego logowania tej karty. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.');
   else if (startFailed && refusal) line = tr(swapErrorKey(refusal));
   else if (status === 'failed' && current?.error === 'restore') line = current.expected
     ? tr('Nie udało się przywrócić poprzedniego logowania karty {expected}. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.', { expected: current.expected })
     : tr('Nie udało się przywrócić poprzedniego logowania tej karty. Karta została odłożona i nie będzie odnawiana, a aplikacja ponowi przywracanie.');
   else if (status === 'failed' || status === 'duplicate' || status === 'mismatch') {
     line = current?.error === 'timeout' ? tr('Upłynął czas na logowanie.')
-      : current?.error === 'identity' ? tr('Nie udało się odczytać konta po zalogowaniu.')
+      : current?.error === 'identity' && current.expected ? tr('Nie udało się potwierdzić, na jakie konto zalogowano kartę {expected}. Poprzednie logowanie karty zostało przywrócone.', { expected: current.expected })
+        : current?.error === 'identity' ? tr('Nie udało się odczytać konta po zalogowaniu.')
         : tr('Logowanie nie powiodło się.');
   } else line = tr('Czekam na logowanie…');
 

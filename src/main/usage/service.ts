@@ -52,6 +52,8 @@ export interface UsageServiceOptions {
   retryAfterMarginMs?: number;
   /** Notices about the saved accounts, sent with every state. */
   notices?(): AccountNotice[];
+  /** The saved accounts file's read-only state and the set-aside cards, sent with every state. */
+  accountsInfo?(): Pick<UsageState, 'accountsReadOnly' | 'setAside'>;
   /** E-mail of the account signed in to Claude Code, when known: lets a 0.9.0 cache entry of the live card be checked. */
   liveEmail?(): string | undefined;
 }
@@ -112,7 +114,13 @@ export class UsageService {
       return [{ ...rest, accountId: ref.id, ...(ref.configDir ? { managed: true } : {}), ...(ref.active ? { active: true } : {}), ...(heldBy ? { heldBy } : {}) }];
     });
     const notices = this.options.notices?.() ?? [];
-    return notices.length ? { providers, notices } : { providers };
+    const info = this.options.accountsInfo?.() ?? {};
+    return {
+      providers,
+      ...(notices.length ? { notices } : {}),
+      ...(info.accountsReadOnly ? { accountsReadOnly: info.accountsReadOnly } : {}),
+      ...(info.setAside?.length ? { setAside: info.setAside } : {}),
+    };
   }
 
   onChange(listener: (state: UsageState) => void): () => void {

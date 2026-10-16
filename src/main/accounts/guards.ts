@@ -2,6 +2,7 @@
 import { custodyOf, isAccountId, type LiveIdentity, type ManagedAccount, type SwapError } from '../../shared/accounts';
 import type { CswapRoster } from './cswap';
 import { renewRule } from './refs';
+import { AccountsReadOnlyError } from './store';
 
 export interface GuardDeps {
   swapRunning(): boolean;
@@ -9,6 +10,8 @@ export interface GuardDeps {
   swapPending(): Promise<boolean>;
   /** Synchronous view of the same fact (set the moment a swap leaves its backups behind). */
   swapPendingNow?(): boolean;
+  /** accounts.json cannot be read safely (`AccountsStore.readOnly`): nothing about the saved accounts can be written. */
+  readOnly?(): boolean;
 }
 
 /** Why account-changing actions must wait: a swap is running or an earlier one is unresolved. */
@@ -24,21 +27,34 @@ export interface RemoveDeps extends GuardDeps {
   onRemoved(): void;
 }
 
-/** IPC handler body for `accounts:remove`; refused (in the main process) while a swap runs or is unresolved. */
-export async function handleRemoveAccount(deps: RemoveDeps, id: unknown): Promise<{ ok: boolean; error?: 'busy' | 'pending' }> {
+/**
+ * IPC handler body for `accounts:remove`; refused (in the main process) while a swap runs or is unresolved, and with the
+ * fixed code `readOnly` (never a thrown error) while accounts.json cannot be read safely.
+ */
+export async function handleRemoveAccount(deps: RemoveDeps, id: unknown): Promise<{ ok: boolean; error?: 'busy' | 'pending' | 'readOnly' }> {
   if (!isAccountId(id)) return { ok: false };
+  if (deps.readOnly?.()) return { ok: false, error: 'readOnly' };
   const block = await accountMutationBlock(deps);
   if (block) return { ok: false, error: block };
   deps.cancelLogin(id);
-  deps.remove(id);
+  try {
+    deps.remove(id);
+  } catch (error) {
+    if (error instanceof AccountsReadOnlyError) return { ok: false, error: 'readOnly' };
+    throw error;
+  }
   deps.onRemoved();
   return { ok: true };
 }
 
-/** `auth:start` re-logins touch the files a swap moves (main login or a saved account), so they wait too. */
-export async function loginBlock(deps: GuardDeps, request: unknown): Promise<'busy' | 'pending' | null> {
+/**
+ * `auth:start` re-logins touch the files a swap moves (main login or a saved account), so they wait too. No Claude login
+ * starts while accounts.json is read-only: its result could not be saved (and the main login could not be backed up).
+ */
+export async function loginBlock(deps: GuardDeps, request: unknown): Promise<'busy' | 'pending' | 'readOnly' | null> {
   const req = request as { provider?: unknown; target?: { type?: unknown } } | null;
   if (req?.provider !== 'claude') return null; // Codex logins never touch the files a swap moves
+  if (deps.readOnly?.()) return 'readOnly';
   const target = req.target;
   if (target?.type !== 'main' && target?.type !== 'account') return null;
   return accountMutationBlock(deps);

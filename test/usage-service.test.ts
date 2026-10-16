@@ -578,6 +578,15 @@ describe('usage keyed by account identity (W1)', () => {
     expect(service.getState().notices).toEqual(notices);
   });
 
+  it('sends the state of the saved accounts file and the set-aside cards along with the state, only when there is any', () => {
+    const base = { accounts: () => [refA], fetchAccount: async () => ok('claude', 1), cacheFile, enabled: () => true, intervalMs: () => 0 };
+    const setAside = [{ recordId: 'r1', email: 'g@x.com', restoring: false }];
+    const service = new UsageService({ ...base, accountsInfo: () => ({ accountsReadOnly: '/d/accounts.json', setAside }) });
+    expect(service.getState()).toMatchObject({ accountsReadOnly: '/d/accounts.json', setAside });
+    const quiet = new UsageService({ ...base, accountsInfo: () => ({ setAside: [] }) });
+    expect(Object.keys(quiet.getState())).toEqual(['providers']);
+  });
+
   it('adds the margin only to a 429 of the usage endpoint, not to a rate-limited token renewal (F23)', async () => {
     const saved: AccountRef = { id: 'claude:abc', provider: 'claude', key: 'uuid:B:-', configDir: '/p' };
     const renewal = (): FetchResult => ({ usage: { accountId: 'claude:abc', provider: 'claude', status: 'error', fetchedAt: Date.now(), source: 'live', windows: [], error: 'refresh-http-429' }, retryAfterMs: 600_000 });

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
-import type { LoginTarget } from '../../../shared/accounts';
-import { claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type UsageProvider, type UsageWindow } from '../../../shared/usage';
-import { usageErrorKey } from '../../../shared/usageMessages';
+import type { AccountNotice, LoginTarget } from '../../../shared/accounts';
+import { claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { noticeText, setAsideText, usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
 import { swapErrorKey, swapErrorText } from '../../../shared/swapMessages';
 import { askChoice, setUi, toast, update, useStore } from '../store';
@@ -18,7 +18,18 @@ const HELD_NOTE = {
   cswap: 'To konto zarządza też cswap. Aplikacja nie odnawia jego logowania, żeby nie unieważnić kopii cswap - limity wrócą, gdy będzie aktywne w Claude Code albo po ponownym zalogowaniu tutaj.',
   'switched-out': 'To konto zostało przełączone poza aplikacją (cswap lub /login). Kopia logowania w aplikacji może być nieaktualna, więc nie jest odnawiana. Przełącz je tam, gdzie jest aktywne, albo zaloguj się tu ponownie.',
 } as const;
+/** A saved card whose tokens cswap may hold too (every 0.9.0 card cswap lists): never renewed here until it is signed in again. */
+const CSWAP_HINT = 'Zarządza nim też cswap, więc aplikacja nie odnawia tego logowania. Zaloguj się tu ponownie raz (menu konta: Zaloguj ponownie to konto), a aplikacja będzie je odnawiać.';
 const NAMES: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
+const READ_ONLY_REMOVE = 'Nie można teraz usuwać kont: pliku kont aplikacji nie da się bezpiecznie odczytać (szczegóły w panelu limitów).';
+
+/** Removes a saved Claude account (or a set-aside copy of one); refusals are told in a toast. */
+async function removeSaved(id: string, tr: ReturnType<typeof useI18n>['tr']): Promise<void> {
+  try {
+    const result = await window.mc.removeAccount(id);
+    if (!result.ok && result.error) toast(result.error === 'readOnly' ? tr(READ_ONLY_REMOVE) : tr(swapErrorKey(result.error)), 'error');
+  } catch { /* the next usage refresh shows the real state */ }
+}
 
 function Bar({ percent, label }: { percent: number; label: string }) {
   return (
@@ -81,10 +92,7 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
       [{ label: tr('Usuń konto'), value: 'yes', danger: true }],
     );
     if (choice !== 'yes') return;
-    try {
-      const result = await window.mc.removeAccount(usage.accountId.replace(/^claude:/, ''));
-      if (!result.ok && result.error) toast(tr(swapErrorKey(result.error)), 'error');
-    } catch { /* the next usage refresh shows the real state */ }
+    await removeSaved(usage.accountId.replace(/^claude:/, ''), tr);
   };
 
   const copyDiagnostics = () => {
@@ -96,8 +104,11 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
   // Temporary trouble (limits server, network, renewal) is told calmly; only an unknown or unreadable answer is shown as a warning.
   const calm = kind !== 'other' && kind !== 'parse';
   const retry = usage.retryAt !== undefined && usage.retryAt > now ? tr('za {time}', { time: formatDuration((usage.retryAt - now) / 1000) }) : tr('wkrótce');
-  // A saved Claude account whose sign-in cannot be renewed (server limits, rejected renewal) must never leave the user stuck: signing in again is always offered.
-  const canRelogin = usage.managed && !usage.active && usage.provider === 'claude' && !expired && (kind === 'refreshLimited' || kind === 'refresh') && claudeLoginActions(window.mc.platform, true).managedAccounts;
+  // A saved Claude account whose sign-in cannot be renewed (server limits, rejected renewal, a copy cswap or an outside switch
+  // holds) must never leave the user stuck: signing in again is always offered. Not on access denied (403): the sign-in is valid.
+  const heldElsewhere = usage.heldBy === 'cswap' || usage.heldBy === 'switched-out';
+  const canRelogin = usage.managed && !usage.active && usage.provider === 'claude' && !expired && usage.status !== 'forbidden'
+    && (kind === 'refreshLimited' || kind === 'refresh' || heldElsewhere) && claudeLoginActions(window.mc.platform, true).managedAccounts;
   const failureText = tr(usageErrorKey(kind, usage.provider), { name: providerName, retry });
 
   let body;
@@ -107,6 +118,13 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         <span className="usage-note">{tr('Logowanie wygasło')}</span>
         <button className="btn small primary" onClick={() => openAuth(usage.provider, reloginTarget(usage))}>{tr('Zaloguj ponownie')}</button>
       </div>
+    );
+  } else if (usage.status === 'forbidden') {
+    body = (
+      <>
+        {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
+        <p className="usage-note warn" title={reasonTitle}>{tr('Odmowa dostępu (HTTP 403), np. wstrzymana subskrypcja. Logowanie jest ważne - ponowne logowanie nie pomoże.')}</p>
+      </>
     );
   } else if (usage.status === 'elsewhere') {
     body = (
@@ -176,6 +194,55 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         )}
       </div>
       {body}
+      {usage.heldBy === 'cswap' && usage.status !== 'elsewhere' && !expired && <p className="usage-note">{tr(CSWAP_HINT)}</p>}
+    </div>
+  );
+}
+
+/**
+ * Notices about the saved accounts (outside switches, set-aside copies, the upgrade), cards set aside after a failed
+ * restore, and an accounts.json that cannot be read safely. Each says what happened and what to do.
+ */
+function AccountNotices({ notices, setAside, readOnlyPath }: { notices: AccountNotice[]; setAside: SetAsideAccount[]; readOnlyPath?: string }) {
+  const { tr } = useI18n();
+  if (!notices.length && !setAside.length && !readOnlyPath) return null;
+  // A second copy goes while the account's card stays; a card set aside after a failed restore is that card itself.
+  const removeCopy = async (recordId: string | undefined, email: string | undefined, whole = false) => {
+    const name = email ?? NAMES.claude;
+    const choice = whole
+      ? await askChoice(tr('Usunąć konto {name}?', { name }), tr('Logowanie zostanie usunięte z aplikacji. Samo konto pozostaje bez zmian.'), [{ label: tr('Usuń kopię'), value: 'yes', danger: true }])
+      : await askChoice(tr('Usunąć kopię konta {name}?', { name }), tr('Kopia logowania zostanie usunięta z aplikacji. Konto i jego karta pozostają bez zmian.'), [{ label: tr('Usuń kopię'), value: 'yes', danger: true }]);
+    if (choice !== 'yes' || !recordId) return;
+    await removeSaved(recordId, tr);
+  };
+  return (
+    <div className="usage-notices">
+      {readOnlyPath && (
+        <div className="usage-warning" role="alert">
+          <p className="usage-note warn">{tr('Pliku kont aplikacji ({path}) nie da się bezpiecznie odczytać, więc aplikacja niczego w nim nie zapisuje. Do tego czasu nowych logowań nie można zapisać, a kont nie można usuwać. Napraw albo usuń ten plik i uruchom aplikację ponownie.', { path: readOnlyPath })}</p>
+        </div>
+      )}
+      {setAside.map((card) => (
+        <div key={`set-aside:${card.recordId}`} className="usage-warning" role="status">
+          <p className="usage-note">{tr(setAsideText(card.restoring), { email: card.email ?? NAMES.claude })}</p>
+          <div className="usage-empty-buttons">
+            <button className="btn small" onClick={() => openAuth('claude', { type: 'account', id: card.recordId })}>{tr('Zaloguj ponownie')}</button>
+            <button className="btn small" onClick={() => void removeCopy(card.recordId, card.email, true)}>{tr('Usuń kopię')}</button>
+          </div>
+        </div>
+      ))}
+      {notices.map((notice) => {
+        const text = noticeText(notice, window.mc.platform);
+        return (
+          <div key={notice.id} className="usage-warning" role="status">
+            <p className="usage-note">{tr(text.key, text.params)}</p>
+            <div className="usage-empty-buttons">
+              {notice.kind === 'quarantined' && notice.recordId && <button className="btn small" onClick={() => void removeCopy(notice.recordId, notice.email)}>{tr('Usuń kopię')}</button>}
+              <button className="btn small ghost" onClick={() => void window.mc.dismissAccountNotice(notice.id).catch(() => undefined)}>{tr('Ukryj')}</button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -185,7 +252,7 @@ export function UsagePanel() {
   const { tr, language } = useI18n();
   const settings = useStore((st) => st.s.settings);
   const rail = useStore((st) => st.s.sidebarCollapsed);
-  const { providers } = useUsage();
+  const { providers, notices = [], setAside = [], accountsReadOnly } = useUsage();
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const spinning = useHoldBusy(refreshing, 700);
@@ -219,8 +286,13 @@ export function UsagePanel() {
     if (choice !== 'yes') return;
     try {
       const result = await window.mc.clearSwapPending();
-      if (result.ok && alive.current) setSwapPending(false);
-    } catch { /* the warning stays */ }
+      if (result.ok) { if (alive.current) setSwapPending(false); }
+      // The recovery of an interrupted activation waits for Claude Code's locks and keeps its backups until it is done.
+      else if (result.error === 'locked') toast(tr('Claude Code trzyma teraz blokady plików logowania. Aplikacja sama ponawia naprawę przerwanej zamiany - spróbuj wyczyścić ostrzeżenie za chwilę.'));
+      else toast(tr('Nie udało się wyczyścić ostrzeżenia.'), 'error');
+    } catch {
+      toast(tr('Nie udało się wyczyścić ostrzeżenia.'), 'error');
+    }
   };
   const makeMain = async (target: ProviderUsage) => {
     if (swapping !== null) return;
@@ -235,7 +307,8 @@ export function UsagePanel() {
     try {
       const result = await window.mc.makeMainAccount(target.accountId.replace(/^claude:/, ''));
       if (result.ok) toast(result.email ? tr('Konto główne: {email}', { email: result.email }) : tr('Zmieniono konto główne.'));
-      else { const text = swapErrorText(result); toast(tr(text.key, text.params), 'error'); }
+      // The texts name the account: the main process' e-mail, else the card's.
+      else { const text = swapErrorText({ error: result.error, email: result.email ?? target.email }); toast(tr(text.key, text.params), 'error'); }
     } catch {
       toast(tr('Nie udało się zmienić konta głównego.'), 'error');
     } finally {
@@ -331,6 +404,7 @@ export function UsagePanel() {
               <button className="btn small" onClick={() => void clearWarning()}>{tr('Wyczyść ostrzeżenie')}</button>
             </div>
           )}
+          <AccountNotices notices={notices} setAside={setAside} readOnlyPath={accountsReadOnly} />
           {visible.length ? (
             <>
               {visible.map((usage) => <AccountCard key={usage.accountId} usage={usage} savedIndex={visible.filter((u) => u.managed && u.provider === 'claude').indexOf(usage) + 1} now={now} language={language} showMain={claudeCount > 1} swapping={swapping} onMakeMain={(target) => void makeMain(target)} />)}

@@ -172,6 +172,17 @@ const usage = new UsageService({
   },
   watchLive: true,
   notices: () => accounts.notices(),
+  // An unreadable accounts.json is explained in the panel; a card set aside after a failed restore (custody quarantined
+  // without a holder, or parked while accounts.json refused the write) is listed with what to do about it.
+  accountsInfo: () => {
+    if (accounts.readOnly()) return { accountsReadOnly: join(DATA_DIR, 'accounts', 'accounts.json') };
+    const parked = new Set(login.parkedIds());
+    return {
+      setAside: accounts.list()
+        .filter((a) => parked.has(a.id) || (custodyOf(a) === 'quarantined' && !a.duplicateOf))
+        .map((a) => ({ recordId: a.id, ...(a.email ? { email: a.email } : {}), restoring: parked.has(a.id) })),
+    };
+  },
   liveEmail: () => accounts.live()?.email,
 });
 /** Finds Claude Code / Codex even when the app's own PATH lacks them (GUI launch on macOS, installer run after start on Windows). */
@@ -274,7 +285,7 @@ const activateDeps = (): ActivateDeps => ({
   delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   cswap: () => readCswapRoster(cswapRosterPath(homedir(), process.env, process.platform)),
 });
-const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: () => isSwapUnresolved() || isActivationRecoveryPending() };
+const guardDeps = { swapRunning: isSwapRunning, swapPending: () => hasPendingSwap(swapDeps()), swapPendingNow: () => isSwapUnresolved() || isActivationRecoveryPending(), readOnly: () => accounts.readOnly() };
 /** The live Claude login's identity (`~/.claude.json`), null when nobody is signed in. */
 const readLiveIdentity = async () => { const id = await readClaudeIdentity(usageDeps.credentials); return id.email || id.accountUuid ? id : null; };
 const migrationDeps = (): MigrationDeps => ({
@@ -851,11 +862,17 @@ ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
 ipcMain.handle('accounts:swapPending', () => hasPendingSwap(swapDeps()).catch(() => true));
 /** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
 ipcMain.handle('accounts:clearSwapPending', async () => {
-  // A recovery still waiting for Claude Code's locks can repair the state itself: its backups are not deleted meanwhile.
-  if (isActivationRecoveryPending()) return { ok: false };
+  // A recovery still waiting for Claude Code's locks can repair the state itself: its backups are not deleted meanwhile
+  // (the panel says so and that the app retries).
+  if (isActivationRecoveryPending()) return { ok: false, error: 'locked' as const };
   const cleared = await clearPendingSwap(swapDeps());
   void pushSwapPending();
   return { ok: cleared };
+});
+ipcMain.handle('accounts:dismissNotice', (_e, id: unknown) => {
+  // A read-only accounts.json keeps its notices (nothing is written); the panel explains that state.
+  try { if (typeof id === 'string' && id.length <= 64) accounts.dismissNotice(id); } catch { /* read-only */ }
+  send('usage:state', usage.getState());
 });
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());

@@ -65,7 +65,21 @@ export function heldByOf(renew: AccountRef['renew']): ProviderUsage['heldBy'] {
   return renew && renew !== 'allowed' ? HELD_BY[renew] : undefined;
 }
 
-export interface UsageState { providers: ProviderUsage[]; notices?: AccountNotice[] }
+/** A saved Claude card set aside after a failed restore of its previous sign-in (not renewed, not polled, not deleted). */
+export interface SetAsideAccount {
+  recordId: string;
+  email?: string;
+  /** The app still holds the card's previous sign-in and retries the restore (until it quits). */
+  restoring: boolean;
+}
+
+export interface UsageState {
+  providers: ProviderUsage[];
+  notices?: AccountNotice[];
+  /** Path of accounts.json when it cannot be read safely: the app writes nothing to it (no logins saved, no removals). */
+  accountsReadOnly?: string;
+  setAside?: SetAsideAccount[];
+}
 
 export const USAGE_INTERVALS_MINUTES = [1, 5, 15] as const;
 

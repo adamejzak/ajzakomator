@@ -102,7 +102,7 @@ export interface LoginState {
   sessionId: string;
   status: LoginStatus;
   email?: string;
-  /** `mismatch` / error `restore`: the account the card belongs to (the login signed in `email` instead). */
+  /** `mismatch` / error `restore` / `identity` of a card: the account the card belongs to (the login signed in `email` instead). */
   expected?: string;
   /** `restore`: the login was another account and the card's previous login could not be put back (`expected` names the card). */
   error?: 'timeout' | 'spawn' | 'identity' | 'restore';

@@ -113,6 +113,7 @@ const api: McApi = {
   makeMainAccount: (id) => ipcRenderer.invoke('accounts:makeMain', id),
   swapPending: () => ipcRenderer.invoke('accounts:swapPending'),
   clearSwapPending: () => ipcRenderer.invoke('accounts:clearSwapPending'),
+  dismissAccountNotice: (id) => ipcRenderer.invoke('accounts:dismissNotice', id),
   on: (channel: string, cb: (...args: any[]) => void) => {
     const listener = (_e: unknown, ...args: any[]) => cb(...args);
     ipcRenderer.on(channel, listener);

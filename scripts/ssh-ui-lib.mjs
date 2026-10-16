@@ -81,6 +81,8 @@ export async function launchApp(root, extraEnv = {}) {
     USERPROFILE: home, HOME: home, APPDATA: join(home, 'AppData', 'Roaming'), LOCALAPPDATA: join(home, 'AppData', 'Local'),
     ...extraEnv,
   };
+  // A key set to null in extraEnv removes an inherited variable.
+  for (const [key, value] of Object.entries(env)) if (value === null) delete env[key];
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.ELECTRON_RENDERER_URL;
   const child = spawn(electron, ['.'], { cwd: process.cwd(), env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });

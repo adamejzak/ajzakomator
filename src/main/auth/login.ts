@@ -215,6 +215,11 @@ export class LoginManager {
     return [...this.parked.values()].some((p) => norm(p.dir) === target);
   }
 
+  /** Records whose failed restore is kept for a retry (set aside meanwhile); empty again after an app restart. */
+  parkedIds(): string[] {
+    return [...this.parked.keys()];
+  }
+
   /**
    * Tries the failed restores again (called before every usage poll); a card whose login is back leaves the set-aside state.
    * One retry runs at a time (a call meanwhile joins it). With `waitMs` the caller waits at most that long: a restore waiting
@@ -347,7 +352,8 @@ export class LoginManager {
     const expected = target.type === 'account' ? this.deps.store.get(target.id)?.email : undefined;
     if ((!email && !identity.accountUuid) || !confirmed) {
       if (!(await this.restoreOrReport(session, email, expected))) return;
-      this.finish(session, { sessionId: session.id, status: 'failed', error: 'identity' }, true);
+      // The card's previous login is back; the dialog names the card.
+      this.finish(session, { sessionId: session.id, status: 'failed', error: 'identity', ...(expected ? { expected } : {}) }, true);
       return;
     }
     let known: KnownIdentity[] = [];
