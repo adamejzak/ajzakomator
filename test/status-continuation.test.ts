@@ -4,8 +4,8 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { HookServer, hasActiveBackgroundWork, stopInfo } from '../src/main/hooks';
 import {
-  ANSWER_GRACE_MS, BG_STALL_MS, END_GRACE_MS, isFocusOrMouseReport, isUserInput, shouldNotify, StatusTracker,
-  type CellStatus, type HookEvent, type HookInfo, type StatusCause,
+  ANSWER_GRACE_MS, BG_STALL_MS, END_GRACE_MS, INTERRUPT_QUIET_MS, isFocusOrMouseReport, isUserInput, shouldNotify, StatusTracker,
+  type CellStatus, type HookEvent, type HookInfo, type StatusCause, WORKFLOW_STALL_MS,
 } from '../src/shared/status';
 
 /** Replays a timeline against one tracker and records every status change plus whether the app would alert for it. */
@@ -297,5 +297,114 @@ describe('SubagentStop hook wiring', () => {
       rmSync(dir, { recursive: true, force: true });
       s.stop();
     }
+  });
+});
+
+describe('a dynamic workflow keeps the cell working (W2)', () => {
+  const start = (s: ReturnType<typeof sim>) => { s.hook(0, 'prompt'); s.hook(500, 'busy'); s.hook(1000, 'stopbg', { tasks: 1, active: 1, workflows: 1 }); };
+
+  it('stays working for 3 h of sparse repaints without any hook, and never alerts', () => {
+    const s = sim();
+    start(s);
+    for (let at = 1000; at < 3 * 3_600_000; at += 600_000) { s.run(at, at + 599_600); s.t.output(at + 600_000); }
+    expect(s.t.status).toBe('working');
+    expect(s.alerts()).toBe(0);
+  });
+
+  it('stays working through 3 h of complete silence', () => {
+    const s = sim();
+    start(s);
+    s.run(1000, 1000 + 3 * 3_600_000);
+    expect(s.t.status).toBe('working');
+    expect(s.alerts()).toBe(0);
+  });
+
+  it('a plain background task (no workflow) still ends at BG_STALL_MS with one alert', () => {
+    const s = sim();
+    s.hook(0, 'prompt');
+    s.hook(1000, 'stopbg', { tasks: 1, active: 1, workflows: 0 });
+    s.run(1000, 1000 + BG_STALL_MS + 1000);
+    expect(s.t.status).toBe('waiting');
+    expect(s.t.lastStallKind).toBe('bg');
+    expect(s.alerts()).toBe(1);
+  });
+
+  it('the self-started turn after the workflow ends with exactly one alert', () => {
+    const s = sim();
+    start(s);
+    s.run(1000, 2 * 3_600_000);
+    s.hook(2 * 3_600_000 + 10, 'prompt');
+    s.hook(2 * 3_600_000 + 2000, 'busy');
+    s.hook(2 * 3_600_000 + 9000, 'stop', { tasks: 0, active: 0, workflows: 0 });
+    expect(s.t.status).toBe('waiting');
+    expect(s.alerts()).toBe(1);
+  });
+
+  it('ends silently on SessionStart (resume), with attention on notify and as an error on fail', () => {
+    const resumed = sim();
+    start(resumed);
+    resumed.hook(60_000, 'session', { source: 'resume' });
+    expect(resumed.t.status).toBe('waiting');
+    expect(resumed.alerts()).toBe(0);
+    const asked = sim();
+    start(asked);
+    asked.hook(60_000, 'notify');
+    expect(asked.t.lastReason).toBe('attention');
+    expect(asked.alerts()).toBe(1);
+    const failed = sim();
+    start(failed);
+    failed.hook(60_000, 'fail', { error: 'rate_limit' });
+    expect(failed.t.lastReason).toBe('error');
+    expect(failed.alerts()).toBe(1);
+  });
+
+  it('the 6 h net ends a forgotten workflow silently', () => {
+    const s = sim();
+    start(s);
+    s.run(1000, 1000 + WORKFLOW_STALL_MS + 1000);
+    expect(s.t.status).toBe('waiting');
+    expect(s.t.lastStallKind).toBe('workflow');
+    expect(s.alerts()).toBe(0);
+  });
+
+  it('bgGuard true at the deadline keeps working and restarts the window; false lets the net act', () => {
+    const s = sim();
+    s.hook(0, 'prompt');
+    s.hook(1000, 'stopbg', { tasks: 1, active: 1 });
+    let showing = true;
+    s.t.bgGuard = () => showing;
+    s.run(1000, 1000 + BG_STALL_MS + 5000);
+    expect(s.t.status).toBe('working');
+    showing = false;
+    s.run(1000 + BG_STALL_MS + 5000, 1000 + 2 * BG_STALL_MS + 10_000);
+    expect(s.t.status).toBe('waiting');
+  });
+
+  it('a stopbg converted by the screen veto stays working while the screen still shows the wait', () => {
+    const s = sim();
+    s.hook(0, 'prompt');
+    s.t.bgGuard = () => true;
+    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    s.run(1000, 1000 + BG_STALL_MS * 3);
+    expect(s.t.status).toBe('working');
+  });
+
+  it('a screen-converted stop keeps the short net: once the footer is gone it ends at BG_STALL_MS with one alert', () => {
+    const s = sim();
+    s.hook(0, 'prompt');
+    s.t.bgGuard = () => false; // a leftover footer that is gone by the deadline
+    s.hook(1000, 'stopbg', { tasks: 0, active: 0, workflows: 0, screenWait: true });
+    s.run(1000, 1000 + BG_STALL_MS + 1000);
+    expect(s.t.status).toBe('waiting');
+    expect(s.t.lastStallKind).toBe('bg');
+    expect(s.alerts()).toBe(1);
+  });
+
+  it('Esc during a workflow wait is ignored', () => {
+    const s = sim();
+    start(s);
+    s.t.interrupt(5000);
+    s.run(5000, 5000 + INTERRUPT_QUIET_MS + 1000);
+    expect(s.t.status).toBe('working');
   });
 });

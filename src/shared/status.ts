@@ -65,6 +65,11 @@ export const STALL_MS = 30_000;
  * Short on purpose: after a restart Claude may still list tasks of the previous session as running.
  */
 export const BG_STALL_MS = 4 * 60_000;
+/**
+ * Silence net while Claude reported a running dynamic workflow at its last Stop. Workflows stay quiet for hours (their
+ * agents fire no hooks in this session), so the net is long and ends silently: the real end comes as Claude's next turn.
+ */
+export const WORKFLOW_STALL_MS = 6 * 60 * 60_000;
 /** Tool hooks arriving this soon after a Stop / StopFailure are its late siblings (curl requests race), not a new turn. */
 export const END_GRACE_MS = 3000;
 /** A permission notification this soon after the user answered a prompt (or submitted) is the old prompt's late hook. */
@@ -116,7 +121,7 @@ export function shouldNotify(prev: CellStatus, next: CellStatus, cause: StatusCa
 /** renotify = a Stop that continued after an earlier Stop (stop_hook_active): the real end of the turn alerts again. */
 export type HookResult = 'applied' | 'ignored' | 'renotify';
 /** What ended a "working" state on a tick: the plain / background / Esc silence net, or a plain heuristic quiet window. */
-export type StallKind = 'plain' | 'bg' | 'interrupt' | 'heuristic' | 'codex' | 'error' | 'turn-end';
+export type StallKind = 'plain' | 'bg' | 'workflow' | 'interrupt' | 'heuristic' | 'codex' | 'error' | 'turn-end';
 
 export class StatusTracker {
   status: CellStatus = 'idle';
@@ -138,6 +143,13 @@ export class StatusTracker {
   private turnObserved = false;
   private waitingFromNotify = false;
   private background = false;
+  /**
+   * The background mode was entered for a dynamic workflow named in the Stop payload: the long, silent net applies. A Stop
+   * turned into stopbg by the screen check alone keeps the short net (bgGuard vetoes it while the footer is shown).
+   */
+  private longBackground = false;
+  /** Set by the renderer: true while the terminal still shows "Waiting for N dynamic workflow(s)" (src/shared/backgroundWait.ts). */
+  bgGuard: (() => boolean) | null = null;
   /** Codex cell: its approval OSC 9 is a precise attention signal, its turn end comes from the notify hook once that works. */
   private codexMode = false;
   /** The notify hook delivered an event in this process, so it is trusted to report turn ends. */
@@ -309,8 +321,13 @@ export class StatusTracker {
     this.waitingFromNotify = event === 'notify';
     this.lastOutput = now;
     if (event === 'prompt') this.interruptAt = -Infinity;
-    if (event === 'stopbg') this.background = true;
-    else if (event !== 'busy') this.background = false;
+    if (event === 'stopbg') {
+      this.background = true;
+      this.longBackground = (info?.workflows ?? 0) > 0;
+    } else if (event !== 'busy') {
+      this.background = false;
+      this.longBackground = false;
+    }
     if (event === 'prompt' || event === 'stopbg' || event === 'notify' || event === 'busy') this.turnEnded = false;
     else if (event === 'stop' || event === 'fail') {
       this.turnEnded = true;
@@ -329,6 +346,7 @@ export class StatusTracker {
   private sessionStart(now: number, source?: string): HookResult {
     const wasBackground = this.background;
     this.background = false;
+    this.longBackground = false;
     this.interruptAt = -Infinity;
     if (!wasBackground) return 'applied';
     if (source !== 'compact' && this.status === 'working') {
@@ -414,6 +432,7 @@ export class StatusTracker {
     this.status = 'exited';
     this.pendingEnd = null;
     this.background = false;
+    this.longBackground = false;
   }
 
   reset(): void {
@@ -423,6 +442,7 @@ export class StatusTracker {
     this.turnObserved = false;
     this.waitingFromNotify = false;
     this.background = false;
+    this.longBackground = false;
     this.turnEnded = false;
     this.endedAt = this.answeredAt = -Infinity;
     this.lastReason = 'done';
@@ -455,15 +475,21 @@ export class StatusTracker {
     if (this.status === 'working') {
       // Hooked agents get a long net (lost Stop, killed subagent) and a short one after Esc/Ctrl-C.
       const kind: StallKind = this.pendingFailure ? 'error'
-        : this.hooked ? (this.background ? 'bg' : this.interruptAt > -Infinity ? 'interrupt' : 'plain')
+        : this.hooked ? (this.background ? (this.longBackground ? 'workflow' : 'bg') : this.interruptAt > -Infinity ? 'interrupt' : 'plain')
         : this.codexNotified ? (this.interruptAt > -Infinity ? 'interrupt' : 'codex') : 'heuristic';
-      const quiet = kind === 'heuristic' ? this.quietMs : kind === 'bg' ? BG_STALL_MS : kind === 'interrupt' ? INTERRUPT_QUIET_MS
-        : kind === 'error' ? FAILURE_QUIET_MS : kind === 'codex' ? CODEX_QUIET_MS : STALL_MS;
+      const quiet = kind === 'heuristic' ? this.quietMs : kind === 'bg' ? BG_STALL_MS : kind === 'workflow' ? WORKFLOW_STALL_MS
+        : kind === 'interrupt' ? INTERRUPT_QUIET_MS : kind === 'error' ? FAILURE_QUIET_MS : kind === 'codex' ? CODEX_QUIET_MS : STALL_MS;
       const since = this.isHooked ? Math.max(this.lastOutput, this.interruptAt) : this.lastOutput;
       if (now - since >= quiet) {
+        // The terminal still shows Claude Code waiting for its workflow: the run goes on, the net starts over.
+        if ((kind === 'bg' || kind === 'workflow') && this.bgGuard?.()) {
+          this.lastOutput = now;
+          return this.status;
+        }
         const failure = this.pendingFailure;
         this.armed = false;
         this.background = false;
+        this.longBackground = false;
         this.interruptAt = -Infinity;
         this.pendingFailure = null;
         this.lastStallKind = kind;
