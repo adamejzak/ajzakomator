@@ -278,6 +278,23 @@ export function groupHosts(hosts: readonly SshHost[], sortByLabel = true): HostG
   return groups;
 }
 
+/** A grid opened from several hosts is named after their shared group, otherwise by how many hosts it has. */
+export function sshGridName(hosts: readonly SshHost[]): { group: string } | { count: number } {
+  const groups = new Set(hosts.map((h) => h.group ?? ''));
+  const [only] = [...groups];
+  return groups.size === 1 && only ? { group: only } : { count: hosts.length };
+}
+
+export const toggleSelection = (list: readonly string[], id: string): string[] => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+
+/** The folded group names kept in localStorage (`''` is "Bez grupy"); anything unexpected reads as none. */
+export function parseFoldedGroups(raw: string | null): string[] {
+  try {
+    const value: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string').slice(0, 200) : [];
+  } catch { return []; }
+}
+
 // ── session texts ────────────────────────────────────────────────────────────
 
 export function sshErrorText(code: SshErrorCode, ctx: { host: string; endpoint: string }): Localized {

@@ -35,5 +35,5 @@ function EditorPane({ editor }: { editor: SshEditorRef }) {
       : <div className="ssh-editor"><p className="ssh-card-hint">{tr('Ten host został usunięty')}</p></div>;
   }
   if (editor.kind === 'key') return editor.targetId ? <KeyEditor key={editor.targetId} editorId={editor.id} keyId={editor.targetId} /> : null;
-  return <NewKeyEditor editorId={editor.id} />;
+  return <NewKeyEditor key={editor.id} editorId={editor.id} initialMode={editor.targetId as 'generate' | 'file' | 'paste' | undefined} />;
 }

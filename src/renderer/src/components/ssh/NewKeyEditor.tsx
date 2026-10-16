@@ -12,11 +12,11 @@ import { Select } from '../Select';
 type Mode = 'generate' | 'file' | 'paste';
 type Draft = Extract<DraftResult, { ok: true }>;
 
-export function NewKeyEditor({ editorId }: { editorId: string }) {
+export function NewKeyEditor({ editorId, initialMode }: { editorId: string; initialMode?: Mode }) {
   const { tr } = useI18n();
   const storage = useSshStore((st) => st.vault?.storage);
   const readOnly = useSshStore((st) => !!st.vault?.readOnly);
-  const [mode, setMode] = useState<Mode>('generate');
+  const [mode, setMode] = useState<Mode>(initialMode ?? 'generate');
   const [type, setType] = useState<SshKeyType>('ed25519');
   const [bits, setBits] = useState(DEFAULT_KEY_BITS.ed25519);
   const [label, setLabel] = useState('');

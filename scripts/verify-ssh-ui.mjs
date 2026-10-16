@@ -181,6 +181,49 @@ const PARTS = {
       if (!readFileSync(join(root, 'data', 'state.json'), 'utf8').includes('"example.invalid"')) throw new Error('host not stored');
     } finally { rmSync(root, { recursive: true, force: true }); }
   },
+  /** Task 10: the SSH tile opens, hosts are grouped and searchable, folding and multi-select work, a group opens as a 3-cell grid. */
+  async panel() {
+    const server = await startTestServer();
+    const root = scratchRoot('ssh-panel');
+    try {
+      const hosts = [testHost(server.port, { label: 'web-1', group: 'lab' }), testHost(server.port, { label: 'web-2', group: 'lab' }), testHost(server.port, { label: 'web-3', group: 'lab' }), testHost(server.port, { label: 'pi' })];
+      writeState(root, sshState({ projectPath: join(root, 'project'), hosts }));
+      const app = await launchApp(root);
+      try {
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`!!document.querySelector('.ssh-hosts')`, 'host list');
+        const heads = await app.evaluate(`[...document.querySelectorAll('.ssh-group-head .grow')].map((e) => e.textContent)`);
+        if (JSON.stringify(heads) !== JSON.stringify(['lab', 'Bez grupy'])) throw new Error(`groups: ${heads}`);
+        const sections = await app.evaluate(`[...document.querySelectorAll('.terminal-heading')].map((e) => e.textContent)`);
+        if (JSON.stringify(sections) !== JSON.stringify(['Hosty', 'Klucze', 'Lokalne powłoki'])) throw new Error(`sections: ${sections}`);
+        await app.screenshot('ssh-panel.png');
+        // Search narrows the list.
+        await app.setValue('.ssh-search', 'pi');
+        await app.until(`document.querySelectorAll('.ssh-host-row').length === 1`, 'search narrows the list');
+        await app.setValue('.ssh-search', '');
+        await app.until(`document.querySelectorAll('.ssh-host-row').length === 4`, 'all hosts back');
+        // Folding a group hides its hosts and is remembered.
+        await app.click('.ssh-group-head', 'lab');
+        await app.until(`document.querySelectorAll('.ssh-host-row').length === 1 && !!document.querySelector('.ssh-group-head .chev-right')`, 'folded group');
+        await app.screenshot('ssh-panel-folded.png');
+        if (await app.evaluate(`localStorage.getItem('mc-ssh-groups-v1')`) !== '["lab"]') throw new Error('fold state not stored');
+        await app.click('.ssh-group-head', 'lab');
+        await app.until(`document.querySelectorAll('.ssh-host-row').length === 4`, 'expanded group');
+        // Ctrl+click selects; the grid button counts the selection.
+        await app.evaluate(`(() => { for (const row of [...document.querySelectorAll('.ssh-host-row')].filter((r) => /web-1|pi/.test(r.textContent))) row.querySelector('.terminal-source-main').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return true; })()`);
+        await app.until(`document.querySelectorAll('.ssh-host-row.selected').length === 2 && document.querySelector('.ssh-open-grid')?.textContent === 'Otwórz jako siatkę (2)'`, 'two hosts selected');
+        await app.screenshot('ssh-panel-selected.png');
+        await app.evaluate(`(() => { for (const row of document.querySelectorAll('.ssh-host-row.selected')) row.querySelector('.terminal-source-main').dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return true; })()`);
+        await app.until(`!document.querySelector('.ssh-open-grid') && !document.querySelector('.ssh-host-row.selected')`, 'selection cleared');
+        // A group opens as a grid named after it.
+        await app.evaluate(`(() => { const head = [...document.querySelectorAll('.ssh-group-head')].find((e) => e.textContent.includes('lab')); head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 })); return true; })()`);
+        await app.click('.menu [role=menuitem]', 'Otwórz jako siatkę');
+        await app.until(`document.querySelectorAll('.cell .ssh-fingerprint').length === 3`, 'host key prompt in all three cells');
+        await app.until(`document.querySelector('.workspace-tabs .grid-tab.active .label')?.textContent === 'lab'`, 'tab named after the group');
+        await app.screenshot('ssh-group-grid.png');
+      } finally { await app.close(); }
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
 };
 
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(PARTS);

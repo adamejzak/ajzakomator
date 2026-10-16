@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags,
+  addressProblem, applySshSnapshot, closeEditorTab, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, openEditorTab, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
   sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshPhaseLabel, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -221,5 +221,21 @@ describe('editor tabs', () => {
   it('follows the stored key label unless the user is typing in the field', () => {
     expect(labelFieldValue({ field: 'old', stored: 'renamed', focused: false })).toBe('renamed');
     expect(labelFieldValue({ field: 'typing', stored: 'renamed', focused: true })).toBe('typing');
+  });
+});
+
+describe('panel helpers', () => {
+  it('names a grid after a shared group or by count', () => {
+    expect(sshGridName([host(1, { group: 'prod' }), host(2, { group: 'prod' })])).toEqual({ group: 'prod' });
+    expect(sshGridName([host(1, { group: 'prod' }), host(2)])).toEqual({ count: 2 });
+    expect(sshGridName([host(1)])).toEqual({ count: 1 });
+  });
+  it('toggles selection and reads folded groups defensively', () => {
+    expect(toggleSelection(['a'], 'b')).toEqual(['a', 'b']);
+    expect(toggleSelection(['a', 'b'], 'a')).toEqual(['b']);
+    expect(parseFoldedGroups('["prod",""]')).toEqual(['prod', '']);
+    expect(parseFoldedGroups('{"x":1}')).toEqual([]);
+    expect(parseFoldedGroups('not json')).toEqual([]);
+    expect(parseFoldedGroups(null)).toEqual([]);
   });
 });

@@ -2,14 +2,14 @@
 // Imports actions.ts for cell helpers, and actions.ts imports this module: a static cycle, safe because neither module uses
 // the other at load time (only inside functions).
 import { layoutForCount as layoutFor } from '../../shared/layout';
-import { activeProject, activeTab, addCell, ensureShellProfile, findCell } from '../../shared/state';
-import { closeEditorTab, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshNotice, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
+import { activeProject, activeTab, addCell, ensureShellProfile, findCell, removeSshHost } from '../../shared/state';
+import { closeEditorTab, hostEndpoint, openEditorTab, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, type SshEditorRef, type SshPrompt, type SshSessionState, type SshVaultInfo } from '../../shared/ssh';
 import type { MessageKey, MessageParams } from '../../shared/i18n';
 import type { AppState } from '../../shared/types';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
 import { tr } from './i18n';
-import { getS, getUi, setUi, toast, update } from './store';
+import { askChoice, getS, getUi, setUi, toast, update } from './store';
 import { useSshStore } from './sshStore';
 import { terminals } from './terminals/TerminalManager';
 
@@ -120,6 +120,26 @@ export async function openSshTab(projectId: string, hostIds: string[], name?: st
   let profileId = '';
   update((s) => { const r = ensureShellProfile(s); profileId = r.profileId; return r.s; });
   await openTab(projectId, layoutFor(hostIds.length), hostIds.map((sshHostId) => ({ profileId, worktree: false, sshHostId })), name);
+}
+
+/** A new tab with one connecting cell per host (at most 20), named after the shared group or by count. */
+export async function openHostsAsGrid(hostIds: string[]): Promise<void> {
+  const project = activeProject(getS());
+  if (!project) return createProject();
+  const hosts = hostIds.map((id) => getS().sshHosts.find((h) => h.id === id)).filter((h): h is NonNullable<typeof h> => !!h).slice(0, 20);
+  if (!hosts.length) return;
+  const name = sshGridName(hosts);
+  await openSshTab(project.id, hosts.map((h) => h.id), 'group' in name ? name.group : tr('SSH ({count})', { count: name.count }));
+}
+
+/** Asks before deleting a host (shared by the host list and the host editor); true when it was deleted. */
+export async function confirmRemoveSshHost(hostId: string): Promise<boolean> {
+  const host = getS().sshHosts.find((h) => h.id === hostId);
+  if (!host) return false;
+  const choice = await askChoice(tr('Usunąć host {name}?', { name: host.label }), '', [{ label: tr('Usuń host'), value: 'yes', danger: true }]);
+  if (choice !== 'yes') return false;
+  update((s) => removeSshHost(s, hostId));
+  return true;
 }
 
 // ── editor tabs (spec 10.2) ──────────────────────────────────────────────────

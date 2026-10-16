@@ -1,13 +1,13 @@
 // Host details (spec 10.2). A new host is stored on "Zapisz" only; the password is write-only (D6).
 import { useMemo, useState } from 'react';
 import { hostToDraft, validateHostDraft, type HostDraftField, type SshHostDraft } from '../../../../shared/ssh';
-import { addSshHost, removeSshHost, uid, updateSshHost } from '../../../../shared/state';
+import { addSshHost, uid, updateSshHost } from '../../../../shared/state';
 import type { MessageKey } from '../../../../shared/i18n';
 import { showTerminalTabs } from '../../files';
 import { useI18n } from '../../i18n';
-import { askChoice, toast, update, useStore } from '../../store';
+import { toast, update, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
-import { closeSshEditor, openHostInCell, openSshEditor, retargetSshEditor } from '../../ssh';
+import { closeSshEditor, confirmRemoveSshHost, openHostInCell, openSshEditor, retargetSshEditor } from '../../ssh';
 import { ColorPicker } from '../ColorPicker';
 import { Select } from '../Select';
 
@@ -48,10 +48,7 @@ export function HostEditor({ editorId, hostId }: { editorId: string; hostId?: st
 
   const remove = async () => {
     if (!host) { closeSshEditor(editorId); return; }
-    const choice = await askChoice(tr('Usunąć host {name}?', { name: host.label }), '', [{ label: tr('Usuń host'), value: 'yes', danger: true }]);
-    if (choice !== 'yes') return;
-    update((s) => removeSshHost(s, host.id));
-    closeSshEditor(editorId);
+    if (await confirmRemoveSshHost(host.id)) closeSshEditor(editorId);
   };
 
   const setPw = async () => {
