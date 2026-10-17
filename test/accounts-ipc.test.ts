@@ -7,7 +7,7 @@ import { isFromWindow } from '../src/main/safeWindow';
 const APP = { sender: 'app-window' };
 const FOREIGN = { sender: 'login-window' };
 
-function setup() {
+function setup(ready?: Promise<unknown>) {
   const calls: string[] = [];
   const usage = { claude: [], codex: [] };
   const handlers = Object.fromEntries((['getUsage', 'refreshUsage', 'startLogin', 'cancelLogin', 'removeAccount', 'makeMain', 'adoptCopy', 'swapPending', 'clearSwapPending', 'dismissNotice'] as const)
@@ -18,7 +18,7 @@ function setup() {
     handle: (channel: string, fn: (event: { sender: unknown }, payload?: unknown) => unknown) => { invokes.set(channel, fn); },
     on: (channel: string, fn: (event: { sender: unknown }, payload?: unknown) => void) => { sends.set(channel, fn); },
   };
-  registerAccountIpc(ipc as never, handlers, (event) => event.sender === APP.sender);
+  registerAccountIpc(ipc as never, handlers, (event) => event.sender === APP.sender, ready);
   return { calls, usage, invokes, sends };
 }
 
@@ -56,8 +56,31 @@ describe('accounts, auth and usage IPC sender check (0.9.3)', () => {
     const { calls, invokes, sends } = setup();
     expect(await invokes.get('accounts:remove')!(APP, 'acc-1')).toEqual({ ok: true });
     sends.get('auth:cancel')!(APP, 'login-1');
+    await Promise.resolve();
     await invokes.get('usage:get')!(FOREIGN);
     expect(calls).toEqual(['removeAccount:acc-1', 'cancelLogin:login-1', 'getUsage:undefined']);
+  });
+
+  it('serves nothing that can start a swap, a login or a removal before the startup recovery finished (0.9.4)', async () => {
+    let finish!: () => void;
+    const { calls, usage, invokes, sends } = setup(new Promise<void>((resolve) => { finish = resolve; }));
+    const answers = (Object.keys(GUARDED_ACCOUNT_CHANNELS) as string[]).map((channel) => invokes.get(channel)!(APP, 'acc-1'));
+    const pending = invokes.get('accounts:swapPending')!(APP);
+    sends.get('auth:cancel')!(APP, 'login-1');
+    // The usage snapshot stays open; a foreign sender is still refused at once.
+    expect(await invokes.get('usage:get')!(FOREIGN)).toBe(usage);
+    expect(await invokes.get('accounts:makeMain')!(FOREIGN, 'acc-1')).toEqual({ ok: false, error: 'invalid' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(calls).toEqual(['getUsage:undefined']);
+    finish();
+    await Promise.all([...answers, pending]);
+    expect(calls).toEqual(expect.arrayContaining(['makeMain:acc-1', 'startLogin:acc-1', 'removeAccount:acc-1', 'swapPending:undefined', 'cancelLogin:login-1']));
+  });
+
+  it('a failed recovery still lets the handlers run (they apply their own guards)', async () => {
+    const { calls, invokes } = setup(Promise.reject(new Error('recovery failed')));
+    expect(await invokes.get('accounts:remove')!(APP, 'acc-1')).toEqual({ ok: true });
+    expect(calls).toEqual(['removeAccount:acc-1']);
   });
 
   it('every accounts:, auth: and usage: channel of the preload is registered through registerAccountIpc', () => {

@@ -438,6 +438,25 @@ const notifications = new Set<Notification>();
 const verifiedCodex = new Map<string, string>();
 let mcpError: string | undefined;
 
+/**
+ * Startup order (0.9.4): the window is created first and the other startup steps run behind it, in parallel. What must still
+ * come first is enforced by two gates instead of by delaying the window:
+ * - `accountsReady`: the recovery of an interrupted swap or "Set as main" and the account migration have finished. Every
+ *   accounts:, auth: and usage: channel that can start a swap, an activation, a login, a removal or a reconcile waits for it
+ *   (registerAccountIpc), and the usage polls (which reconcile the live login) only start after it.
+ * - `cellServicesReady`: the hook server and the MCP server listen (their ports are known) and files of removed cells were
+ *   pruned. Every cell spawn waits for it (spawnRequestUnsafe); the renderer shows the cells meanwhile.
+ * The single-instance lock and the Windows update hand-off (signalUpdateReady, waitForUpdateWindowGone, runUpdateGate) keep
+ * running before startMainApp, unchanged.
+ */
+function startupGate(): { promise: Promise<void>; open(): void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => { open = resolve; });
+  return { promise, open };
+}
+const accountsReady = startupGate();
+const cellServicesReady = startupGate();
+
 /** Localized texts for the detached update window (it cannot load the app's catalog). */
 const updateStrings = (): UpdateStrings => ({
   title: tr('Aktualizacja do wersji {version}', { version: getUpdateState().version ?? '' }),
@@ -641,7 +660,7 @@ function createWindow(): void {
   // Windows ends the session without before-quit: the last changes are written now (the renderer was asked to send its own).
   win.on('query-session-end', () => { send('app:before-quit'); });
   win.on('session-end', () => { saver.flush(); });
-  win.webContents.on('did-finish-load', () => { startupTimer.mark('did-finish-load'); hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); sendShown(); } });
+  win.webContents.on('did-finish-load', () => { startupTimer.mark('did-finish-load'); hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void accountsReady.promise.then(pushSwapPending); sendShown(); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -906,6 +925,8 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   if (ptyHost.isFatal()) return { ok: false, error: tr('Proces terminali nie działa. Uruchom aplikację ponownie.') };
   // Taken before the first await: a kill while the folder or the CLI is being checked must not be undone by this spawn.
   const killsBefore = killCount.get(req.cellId) ?? 0;
+  // No agent starts before the hook and MCP servers have their ports (the window opens before they listen).
+  await cellServicesReady.promise;
   if (!(await pathExists(req.cwd))) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const cli = cliForProfile(req.profile);
   // `force`: the user chose "start anyway" on the install card (the detection may be wrong, e.g. an alias).
@@ -1201,7 +1222,7 @@ registerAccountIpc(ipcMain, {
       send('usage:state', usage.getState());
     }
   },
-}, fromAppWindow);
+}, fromAppWindow, accountsReady.promise);
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
@@ -1374,24 +1395,48 @@ function openInstallWindow(): void {
   })();
 }
 
+let mainAppStarted = false;
+/** The window first, then the rest in parallel behind it (the gates are described at `accountsReady`). */
 async function startMainApp(): Promise<void> {
-  // Before any cell can start: files of removed cells and old startup prompts go.
+  if (mainAppStarted) return;
+  mainAppStarted = true;
   startupTimer.mark('main-app-start');
-  await pruneCellFiles(cellFileDirs, cellIdsOf(state, false)).catch(() => 0);
-  startupTimer.mark('cell-files-pruned');
-  // Without the hook server (loopback blocked by security software) the app still starts: agent states fall back to heuristics.
-  try { await hooks.start(); } catch (error) { crashLog.error(`hook server did not start: ${describeError(error)}`); }
-  startupTimer.mark('hooks-started');
-  await startMcp();
-  startupTimer.mark('mcp-started');
-  ptyHost.start();
-  startupTimer.mark('pty-host-started');
-  startSsh();
-  startupTimer.mark('ssh-started');
-  // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another:
+  createWindow();
+  try {
+    // The Pty Host process boots while the page loads; it is connected to the renderer on did-finish-load.
+    ptyHost.start();
+    startupTimer.mark('pty-host-started');
+    // Its IPC handlers are registered in the same tick as the window: the page cannot call them before it has loaded.
+    startSsh();
+    startupTimer.mark('ssh-started');
+  } catch (error) {
+    // As before the window came first: without terminals or SSH the start failed (with a message), it does not run half.
+    startupFailed(error);
+    return;
+  }
+  void cliDetector.refreshAll(); // async: the window does not wait for it, spawns wait only for their own CLI
+  scheduleUpdateCleanup();
+  const services = Promise.all([
+    // Before any cell can start: files of removed cells and old startup prompts go.
+    pruneCellFiles(cellFileDirs, cellIdsOf(state, false)).catch(() => 0).then(() => startupTimer.mark('cell-files-pruned')),
+    // Without the hook server (loopback blocked by security software) the app still starts: agent states fall back to heuristics.
+    hooks.start().catch((error: unknown) => { crashLog.error(`hook server did not start: ${describeError(error)}`); }).then(() => startupTimer.mark('hooks-started')),
+    startMcp().then(() => startupTimer.mark('mcp-started')),
+  ]).finally(() => { startupTimer.mark('cell-services-ready'); cellServicesReady.open(); });
+  const accountsDone = recoverAccounts().finally(() => {
+    accountsReady.open();
+    usage.start();
+    void pushSwapPending();
+  });
+  await Promise.all([services, accountsDone]);
+}
+
+/** Startup account work; account IPC and the usage polls wait for it (`accountsReady`). */
+async function recoverAccounts(): Promise<void> {
+  // An interrupted main-account swap is repaired (or reported as pending) before any IPC call can start another:
   // first a 0.9.1 (version 2) journal, otherwise the 0.9.0 recovery decides.
   try {
-    // Shorter lock waits here: the window waits for this; a recovery still 'locked' is retried by the polls.
+    // Shorter lock waits here: account actions wait for this; a recovery still 'locked' is retried by the polls.
     if ((await recoverActivationWithRetry({ ...activateDeps(), locks: { timeoutMs: 3_000 } })) === 'legacy') await recoverInterruptedSwap(swapDeps());
   } catch { /* the journal stays and the next start retries */ }
   startupTimer.mark('accounts-recovered');
@@ -1400,10 +1445,6 @@ async function startMainApp(): Promise<void> {
   // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
   try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }
   startupTimer.mark('accounts-migrated');
-  createWindow();
-  void cliDetector.refreshAll(); // async: the window does not wait for it, spawns wait only for their own CLI
-  usage.start();
-  scheduleUpdateCleanup();
 }
 
 app.whenReady().then(async () => {

@@ -45,13 +45,24 @@ export function accountRefusal(channel: GuardedAccountChannel, handlers: Pick<Ac
   }
 }
 
-export function registerAccountIpc(ipc: Pick<IpcMain, 'handle' | 'on'>, handlers: AccountIpcHandlers, allowed: (event: { sender: unknown }) => boolean): void {
-  for (const [channel, name] of Object.entries(OPEN_ACCOUNT_CHANNELS)) ipc.handle(channel, () => handlers[name]());
+/** Open channels answered at once, even while the startup recovery runs (the usage snapshot only reads memory). */
+const UNGATED_OPEN_CHANNELS: ReadonlySet<string> = new Set(['usage:get']);
+
+/**
+ * `ready` (0.9.4): the startup recovery of an interrupted swap or activation and the account migration. The window opens
+ * before they finish, so every channel that could start a swap, a "Set as main", a login, a removal or a reconcile (and the
+ * swap-pending answer, which the recovery changes) waits for it; the sender is checked at once.
+ */
+export function registerAccountIpc(ipc: Pick<IpcMain, 'handle' | 'on'>, handlers: AccountIpcHandlers, allowed: (event: { sender: unknown }) => boolean, ready: Promise<unknown> = Promise.resolve()): void {
+  const afterReady = <T>(run: () => T): Promise<Awaited<T>> => ready.then(run, run) as Promise<Awaited<T>>;
+  for (const [channel, name] of Object.entries(OPEN_ACCOUNT_CHANNELS)) {
+    ipc.handle(channel, () => (UNGATED_OPEN_CHANNELS.has(channel) ? handlers[name]() : afterReady(() => handlers[name]())));
+  }
   for (const [channel, name] of Object.entries(GUARDED_ACCOUNT_CHANNELS) as Array<[GuardedAccountChannel, InvokeName]>) {
     const handler = handlers[name] as (payload?: unknown) => unknown;
-    ipc.handle(channel, (event, payload) => (allowed(event) ? handler(payload) : accountRefusal(channel, handlers)));
+    ipc.handle(channel, (event, payload) => (allowed(event) ? afterReady(() => handler(payload)) : accountRefusal(channel, handlers)));
   }
   for (const [channel, name] of Object.entries(GUARDED_ACCOUNT_SENDS)) {
-    ipc.on(channel, (event, payload) => { if (allowed(event)) handlers[name](payload); });
+    ipc.on(channel, (event, payload) => { if (allowed(event)) void afterReady(() => handlers[name](payload)).catch(() => undefined); });
   }
 }
