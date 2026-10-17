@@ -18,7 +18,7 @@ import { encodeWin32Key } from '../../../shared/win32input';
 import { tr } from '../i18n';
 import { confirmTerminalLink } from '../terminalLinks';
 import { MAX_WEBGL_CONTEXTS, PENDING_OUTPUT_CHARS, SCROLLBACK_LINES } from '../../../shared/terminalLimits';
-import { planWebgl, webglBackoff } from '../../../shared/webglPool';
+import { nextLossCount, planWebgl, webglBackoff, WebglLimit } from '../../../shared/webglPool';
 import { onWindowShown } from '../windowShown';
 
 // Campbell (Windows Terminal / PowerShell default) on a Cursor-like background.
@@ -46,9 +46,12 @@ interface Entry {
   webglChangedAt: number | undefined;
   /** No new context before this time (back-off after a lost one). */
   webglBlockedUntil: number | undefined;
-  /** Lost contexts in a row (each less than a minute after the previous one). */
+  /** The GL context of `webgl` (given back explicitly on release, so Chromium's count matches ours). */
+  webglGl: WebGL2RenderingContext | null;
+  /** When the current (or last) context was created. */
+  webglGrantedAt: number;
+  /** Lost contexts in a row (a context that lived WEBGL_HEALTHY_MS starts the count over). */
   webglLosses: number;
-  webglLostAt: number;
   host: HTMLDivElement;
   tracker: StatusTracker;
   win32: boolean;
@@ -108,7 +111,7 @@ class TerminalManager {
   /** False while the window is minimized or hidden: no terminal is drawn and no WebGL context is kept (output still buffers). */
   private windowShown = true;
   /** WebGL contexts handed out at most: lowered when Chromium turns out to allow fewer (see `contextLost`). */
-  private webglLimit = MAX_WEBGL_CONTEXTS;
+  private webglLimit = new WebglLimit(MAX_WEBGL_CONTEXTS);
   /** When the last WebGL context was created. */
   private lastGrantAt = -Infinity;
 
@@ -134,10 +137,13 @@ class TerminalManager {
     onWindowShown((shown) => { this.setWindowShown(shown); environment(); });
     // A shown terminal on the DOM renderer (the pool was short, or its context was lost) asks again once a second; the
     // plan itself limits how often a context moves between cells on screen.
-    setInterval(() => { if (this.needsWebgl()) this.balanceWebgl(); }, 1000);
+    setInterval(() => {
+      if (this.webglLimit.recover(performance.now())) console.warn(`WebGL contexts limit raised to ${this.webglLimit.limit}`);
+      if (this.needsWebgl()) this.balanceWebgl();
+    }, 1000);
     document.addEventListener('focusin', () => { if (this.needsWebgl()) this.balanceWebgl(); });
     // Capture: the event does not bubble, and xterm reports a lost context only 3 s later (after waiting for a restore).
-    document.addEventListener('webglcontextlost', () => this.contextLost(), true);
+    document.addEventListener('webglcontextlost', (ev) => this.contextLost(ev.target), true);
   }
 
   /**
@@ -152,8 +158,7 @@ class TerminalManager {
       for (const e of this.entries.values()) {
         if (e.host.contains(document.activeElement)) this.refocus = e.id;
         e.host.style.display = 'none';
-        e.webgl?.dispose();
-        e.webgl = null;
+        this.releaseWebgl(e);
       }
       return;
     }
@@ -306,7 +311,7 @@ class TerminalManager {
     this.parking.appendChild(host);
 
     const entry: Entry = {
-      id: cellId, term, fit, webgl: null, shownAt: 0, outputAt: undefined, webglChangedAt: undefined, webglBlockedUntil: undefined, webglLosses: 0, webglLostAt: -Infinity, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
+      id: cellId, term, fit, webgl: null, shownAt: 0, outputAt: undefined, webglChangedAt: undefined, webglBlockedUntil: undefined, webglGl: null, webglGrantedAt: -Infinity, webglLosses: 0, host, tracker: new StatusTracker(), win32: false, agent: opts.agent,
       codex: opts.codex === true, scanner: new FailureScanner(), guard: new MouseFloodGuard(), infer: new AgentInference(window.mc.platform === 'win32' && opts.remote !== true), attachedTo: null, resizeObs: null, replaying: 0, lastSize: { cols: term.cols, rows: term.rows },
       parkedSelection: null, applySelection: null, remote: opts.remote === true,
     };
@@ -541,12 +546,11 @@ class TerminalManager {
     const plan = planWebgl([...this.entries.values()].map((o) => ({
       id: o.id, hasWebgl: o.webgl !== null, attached: o.attachedTo !== null, shownAt: o.shownAt, focused: focused !== null && focused === o.term.textarea,
       outputAt: o.outputAt, changedAt: o.webglChangedAt, blockedUntil: o.webglBlockedUntil,
-    })), this.webglLimit, now);
+    })), this.webglLimit.limit, now);
     for (const id of plan.release) {
       const victim = this.entries.get(id);
       if (!victim?.webgl) continue;
-      victim.webgl.dispose();
-      victim.webgl = null;
+      this.releaseWebgl(victim);
       victim.webglChangedAt = now;
     }
     for (const id of plan.grant) {
@@ -555,13 +559,41 @@ class TerminalManager {
     }
   }
 
+  /**
+   * Gives a terminal's context back. A disposed WebglAddon leaves its context to the garbage collector, and until then
+   * Chromium still counts it (and may evict a live one for it): the context is lost explicitly first.
+   */
+  private releaseWebgl(e: Entry): void {
+    const { webgl, webglGl } = e;
+    if (!webgl) return;
+    e.webgl = null;
+    e.webglGl = null;
+    try { if (webglGl && !webglGl.isContextLost()) webglGl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* already gone */ }
+    try { webgl.dispose(); } catch { /* the canvas is gone with the context */ }
+  }
+
+  /** The GL context the addon draws with: from xterm internals, else the new canvas in the terminal that has no 2D context. */
+  private glOf(webgl: WebglAddon, before: Set<HTMLCanvasElement>, host: HTMLElement): WebGL2RenderingContext | null {
+    const internal = (webgl as unknown as { _renderer?: { _gl?: unknown } })._renderer?._gl;
+    if (typeof WebGL2RenderingContext !== 'undefined' && internal instanceof WebGL2RenderingContext) return internal;
+    for (const canvas of host.querySelectorAll('canvas')) {
+      if (before.has(canvas) || canvas.getContext('2d')) continue;
+      const gl = canvas.getContext('webgl2');
+      if (gl) return gl;
+    }
+    return null;
+  }
+
   private createWebgl(e: Entry, now: number): void {
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => this.webglGone(e, webgl));
       this.lastGrantAt = now;
+      const before = new Set(e.host.querySelectorAll('canvas'));
       e.term.loadAddon(webgl);
       e.webgl = webgl;
+      e.webglGl = this.glOf(webgl, before, e.host);
+      e.webglGrantedAt = now;
       e.webglChangedAt = now;
     } catch {
       // No WebGL on this machine (or right now): the DOM renderer draws; ask again much later.
@@ -576,25 +608,27 @@ class TerminalManager {
     if (e.webgl !== webgl) return;
     const now = performance.now();
     e.webgl = null;
+    e.webglGl = null;
     e.webglChangedAt = now;
-    e.webglLosses = now - e.webglLostAt > 60_000 ? 1 : e.webglLosses + 1;
-    e.webglLostAt = now;
+    e.webglLosses = nextLossCount(e.webglLosses, e.webglGrantedAt, now);
     e.webglBlockedUntil = now + webglBackoff(e.webglLosses);
   }
 
   /**
-   * Chromium loses its oldest context at once when a new one goes over its limit. A loss right after we created a context
-   * therefore means the limit is lower than CHROMIUM_WEBGL_CONTEXTS (the switch did not apply): the pool shrinks to what
-   * Chromium allows, so contexts are never created only to push out another one.
+   * Chromium loses its oldest context at once when a new one goes over its limit. Losses right after we created a context
+   * therefore mean the limit is lower than CHROMIUM_WEBGL_CONTEXTS (the switch did not apply): the pool shrinks to what
+   * Chromium allows (webglPool.ts WebglLimit), so contexts are never created only to push out another one. Only the contexts
+   * of terminals that hold one count; a context we gave back ourselves is not a loss.
    */
-  private contextLost(): void {
-    if (performance.now() - this.lastGrantAt > 500) return; // a GPU reset or a driver hiccup, not the limit
-    let live = 0;
-    for (const e of this.entries.values()) if (e.webgl) live++;
-    if (live > 4 && live - 1 < this.webglLimit) {
-      this.webglLimit = live - 1;
-      console.warn(`WebGL contexts limited to ${this.webglLimit} by Chromium`);
+  private contextLost(target: EventTarget | null): void {
+    let held = 0;
+    let ours = false;
+    for (const e of this.entries.values()) {
+      if (!e.webgl) continue;
+      held++;
+      if (e.webglGl && e.webglGl.canvas === target) ours = true;
     }
+    if (ours && this.webglLimit.lost(performance.now(), held, this.lastGrantAt)) console.warn(`WebGL contexts limited to ${this.webglLimit.limit} by Chromium`);
   }
 
   detach(cellId: string, el: HTMLElement): void {
@@ -746,6 +780,7 @@ class TerminalManager {
     if (!e) return;
     e.resizeObs?.disconnect();
     this.heldFits.delete(e);
+    this.releaseWebgl(e);
     e.term.dispose();
     e.host.remove();
     this.entries.delete(cellId);

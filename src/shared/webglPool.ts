@@ -67,10 +67,58 @@ export function planWebgl(candidates: readonly WebglCandidate[], limit: number, 
   return { grant, release };
 }
 
-/**
- * Back-off after a lost context: 2 s, doubling with each loss in a row, at most a minute. Losses spread wider than a minute
- * apart start over.
- */
+/** Back-off after a lost context: 2 s, doubling with each loss in a row, at most a minute. */
 export function webglBackoff(losses: number): number {
   return Math.min(60_000, 2000 * 2 ** Math.max(0, losses - 1));
+}
+
+/** A context that lived this long before it was lost was healthy: the loss count (and so the back-off) starts over. */
+export const WEBGL_HEALTHY_MS = 5 * 60_000;
+
+/** Losses in a row after one more: counted from when the lost context was created, so the back-off settles at its maximum. */
+export function nextLossCount(losses: number, grantedAt: number, now: number): number {
+  return now - grantedAt > WEBGL_HEALTHY_MS ? 1 : losses + 1;
+}
+
+/** Chromium loses its oldest context synchronously with the creation of one too many: losses this soon after a grant are evictions. */
+export const WEBGL_EVICT_MS = 500;
+/** Never fewer contexts than this, whatever a burst of losses suggests. */
+export const WEBGL_MIN_LIMIT = 4;
+/** Without an eviction for this long the limit grows by one again (up to the pool size). */
+export const WEBGL_RECOVER_MS = 5 * 60_000;
+
+/**
+ * How many contexts Chromium really allows, learned from evictions. Every eviction of a burst (losses within WEBGL_EVICT_MS of
+ * each other) lowers the limit to the contexts held minus the evictions of the burst (the lost ones are still counted as held
+ * until xterm gives them up, 3 s later). After a quiet WEBGL_RECOVER_MS the limit grows by one per period, up to `max`.
+ */
+export class WebglLimit {
+  limit: number;
+  private burstAt = -Infinity;
+  private burstLosses = 0;
+  private lastLossAt = -Infinity;
+  private raisedAt = -Infinity;
+
+  constructor(readonly max: number) { this.limit = max; }
+
+  /** A context of a terminal that holds one was lost. Returns whether the limit went down. */
+  lost(now: number, held: number, lastGrantAt: number): boolean {
+    if (now - lastGrantAt > WEBGL_EVICT_MS) return false; // a GPU reset or a driver hiccup, not the limit
+    if (now - this.burstAt > WEBGL_EVICT_MS) this.burstLosses = 0;
+    this.burstAt = now;
+    this.burstLosses++;
+    this.lastLossAt = now;
+    const next = Math.max(WEBGL_MIN_LIMIT, held - this.burstLosses);
+    if (next >= this.limit) return false;
+    this.limit = next;
+    return true;
+  }
+
+  /** Called now and then: returns whether the limit went up. */
+  recover(now: number): boolean {
+    if (this.limit >= this.max || now - this.lastLossAt < WEBGL_RECOVER_MS || now - this.raisedAt < WEBGL_RECOVER_MS) return false;
+    this.limit++;
+    this.raisedAt = now;
+    return true;
+  }
 }

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { CHROMIUM_WEBGL_CONTEXTS, MAX_WEBGL_CONTEXTS } from '../src/shared/terminalLimits';
 import { MAX_CELLS } from '../src/shared/layout';
-import { planWebgl, WEBGL_BUSY_MS, WEBGL_HOLD_MS, webglBackoff, type WebglCandidate } from '../src/shared/webglPool';
+import { nextLossCount, planWebgl, WEBGL_BUSY_MS, WEBGL_EVICT_MS, WEBGL_HEALTHY_MS, WEBGL_HOLD_MS, WEBGL_MIN_LIMIT, WEBGL_RECOVER_MS, webglBackoff, WebglLimit, type WebglCandidate } from '../src/shared/webglPool';
 
 const NOW = 100_000;
 const c = (id: string, hasWebgl: boolean, attached: boolean, extra: Partial<WebglCandidate> = {}): WebglCandidate => ({ id, hasWebgl, attached, shownAt: 0, ...extra });
@@ -96,5 +96,65 @@ describe('WebGL context pool', () => {
     expect(MAX_WEBGL_CONTEXTS).toBeGreaterThanOrEqual(MAX_CELLS);
     expect(MAX_WEBGL_CONTEXTS).toBeLessThan(CHROMIUM_WEBGL_CONTEXTS);
     expect(readFileSync('src/main/index.ts', 'utf8')).toContain("app.commandLine.appendSwitch('max-active-webgl-contexts', String(CHROMIUM_WEBGL_CONTEXTS))");
+  });
+
+  it('the loss back-off settles at its maximum: only a context that lived WEBGL_HEALTHY_MS starts the count over', () => {
+    // A context that is lost again right after every maximal back-off (60 s + xterm's 3 s report delay) keeps the maximum.
+    let losses = 0;
+    let t = 0;
+    for (let i = 0; i < 12; i++) {
+      const grantedAt = t;
+      t += 3000;
+      losses = nextLossCount(losses, grantedAt, t);
+      t += webglBackoff(losses);
+    }
+    expect(losses).toBe(12);
+    expect(webglBackoff(losses)).toBe(60_000);
+    expect(nextLossCount(losses, t, t + WEBGL_HEALTHY_MS + 1)).toBe(1);
+    expect(nextLossCount(losses, t, t + WEBGL_HEALTHY_MS - 1)).toBe(13);
+  });
+
+  it('learns the real limit from evictions: held contexts minus the evictions of one burst', () => {
+    const limit = new WebglLimit(24);
+    // 24 held, Chromium allows 16: creating the last 8 evicted 8 (the lost ones still count as held until xterm gives them up).
+    for (let i = 0; i < 8; i++) limit.lost(1000 + i * 10, 24, 1000 + i * 10 - 5);
+    expect(limit.limit).toBe(16);
+  });
+
+  it('ignores losses long after a grant (a GPU reset) and never goes below the minimum', () => {
+    const limit = new WebglLimit(24);
+    expect(limit.lost(10_000, 20, 10_000 - WEBGL_EVICT_MS - 1)).toBe(false);
+    expect(limit.limit).toBe(24);
+    for (let i = 0; i < 10; i++) limit.lost(20_000 + i, 6, 20_000);
+    expect(limit.limit).toBe(WEBGL_MIN_LIMIT);
+  });
+
+  it('separate bursts start their own count', () => {
+    const limit = new WebglLimit(24);
+    limit.lost(1000, 20, 999);
+    expect(limit.limit).toBe(19);
+    limit.lost(1000 + WEBGL_EVICT_MS + 1000, 19, 1000 + WEBGL_EVICT_MS + 999);
+    expect(limit.limit).toBe(18);
+  });
+
+  it('grows back by one per quiet period, up to the pool size', () => {
+    const limit = new WebglLimit(24);
+    limit.lost(1000, 23, 999);
+    limit.lost(1001, 23, 999);
+    expect(limit.limit).toBe(21);
+    expect(limit.recover(1000 + WEBGL_RECOVER_MS - 1)).toBe(false);
+    expect(limit.recover(1001 + WEBGL_RECOVER_MS)).toBe(true);
+    expect(limit.recover(1002 + WEBGL_RECOVER_MS)).toBe(false);
+    expect(limit.recover(1001 + 2 * WEBGL_RECOVER_MS)).toBe(true);
+    expect(limit.recover(1001 + 3 * WEBGL_RECOVER_MS)).toBe(true);
+    expect(limit.limit).toBe(24);
+    expect(limit.recover(1001 + 9 * WEBGL_RECOVER_MS)).toBe(false);
+  });
+
+  it('released and disposed contexts are lost explicitly first, so Chromium counts what we count', () => {
+    const source = readFileSync('src/renderer/src/terminals/TerminalManager.ts', 'utf8');
+    expect(source).toMatch(/getExtension\('WEBGL_lose_context'\)\?\.loseContext\(\);[^\n]*\n\s*try \{ webgl\.dispose\(\);/);
+    expect(source).toMatch(/this\.releaseWebgl\(e\);\n\s*e\.term\.dispose\(\);/);
+    expect(source).not.toMatch(/\.webgl\?\.dispose\(\)/);
   });
 });
