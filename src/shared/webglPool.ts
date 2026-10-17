@@ -7,17 +7,118 @@ export interface WebglCandidate {
   attached: boolean;
   /** When it was last shown or hidden (performance.now()). */
   shownAt: number;
+  /** Has the keyboard focus. */
+  focused?: boolean;
+  /** Last output (performance.now()). */
+  outputAt?: number;
+  /** When its context was last created or given back (performance.now()). */
+  changedAt?: number;
+  /** No new context before this time (a lost context backs off). */
+  blockedUntil?: number;
 }
 
+/** An on-screen terminal keeps a context it just got, and waits after losing one, at least this long (no thrashing). */
+export const WEBGL_HOLD_MS = 4000;
+/** Output this recent makes a terminal "busy": it may take a context from a quiet one on screen. */
+export const WEBGL_BUSY_MS = 3000;
+
+/** 3 = focused, 2 = recent output, 1 = shown and quiet. */
+function rank(c: WebglCandidate, now: number): number {
+  if (c.focused) return 3;
+  return c.outputAt !== undefined && now - c.outputAt < WEBGL_BUSY_MS ? 2 : 1;
+}
+
+const settled = (c: WebglCandidate, now: number) => c.changedAt === undefined || now - c.changedAt >= WEBGL_HOLD_MS;
+
 /**
- * A terminal about to be shown wants a context. Returns whether it may have one and which parked terminals have to release
- * theirs (least recently shown first) so that at most `limit` contexts exist afterwards. Terminals on screen never lose theirs.
+ * Who gets a context and who gives one back so that at most `limit` exist. On-screen terminals without one are served by
+ * rank (focused, then busy, then quiet): first from free slots, then from parked terminals (least recently shown first), and
+ * only then from an on-screen terminal of a lower rank. Taking one from the screen happens at most once per plan, only from a
+ * terminal that held its context for WEBGL_HOLD_MS and for a terminal that did not just lose one, so a plan run every second
+ * swaps at most one context per second and never the same cell back and forth. Parked terminals keep theirs while slots are free.
  */
-export function planWebglSlot(candidates: readonly WebglCandidate[], limit: number): { allowed: boolean; release: string[] } {
-  const live = candidates.filter((c) => c.hasWebgl);
-  const excess = live.length - limit + 1; // after the new one is added
-  if (excess <= 0) return { allowed: true, release: [] };
-  const parked = live.filter((c) => !c.attached).sort((a, b) => a.shownAt - b.shownAt);
-  if (parked.length < excess) return { allowed: false, release: [] };
-  return { allowed: true, release: parked.slice(0, excess).map((c) => c.id) };
+export function planWebgl(candidates: readonly WebglCandidate[], limit: number, now: number): { grant: string[]; release: string[] } {
+  const grant: string[] = [];
+  const release: string[] = [];
+  const holders = candidates.filter((c) => c.hasWebgl);
+  const parked = holders.filter((c) => !c.attached).sort((a, b) => a.shownAt - b.shownAt);
+  // A lowered limit: parked terminals give back the excess first.
+  let used = holders.length;
+  while (used > limit && parked.length) { release.push(parked.shift()!.id); used--; }
+  const wanting = candidates
+    .filter((c) => c.attached && !c.hasWebgl && !(c.blockedUntil !== undefined && c.blockedUntil > now))
+    .sort((a, b) => rank(b, now) - rank(a, now) || (b.outputAt ?? 0) - (a.outputAt ?? 0) || b.shownAt - a.shownAt);
+  // On-screen holders that could give theirs up, the cheapest loss first.
+  const shown = holders.filter((c) => c.attached && !c.focused && settled(c, now))
+    .sort((a, b) => rank(a, now) - rank(b, now) || (a.outputAt ?? 0) - (b.outputAt ?? 0));
+  let swapped = false;
+  for (const c of wanting) {
+    if (used < limit) { grant.push(c.id); used++; continue; }
+    const victim = parked.shift();
+    if (victim) { release.push(victim.id); grant.push(c.id); continue; }
+    if (swapped || !settled(c, now)) continue;
+    const loser = shown[0];
+    if (!loser || rank(loser, now) >= rank(c, now)) break;
+    shown.shift();
+    release.push(loser.id);
+    grant.push(c.id);
+    swapped = true;
+  }
+  return { grant, release };
+}
+
+/** Back-off after a lost context: 2 s, doubling with each loss in a row, at most a minute. */
+export function webglBackoff(losses: number): number {
+  return Math.min(60_000, 2000 * 2 ** Math.max(0, losses - 1));
+}
+
+/** A context that lived this long before it was lost was healthy: the loss count (and so the back-off) starts over. */
+export const WEBGL_HEALTHY_MS = 5 * 60_000;
+
+/** Losses in a row after one more: counted from when the lost context was created, so the back-off settles at its maximum. */
+export function nextLossCount(losses: number, grantedAt: number, now: number): number {
+  return now - grantedAt > WEBGL_HEALTHY_MS ? 1 : losses + 1;
+}
+
+/** Chromium loses its oldest context synchronously with the creation of one too many: losses this soon after a grant are evictions. */
+export const WEBGL_EVICT_MS = 500;
+/** Never fewer contexts than this, whatever a burst of losses suggests. */
+export const WEBGL_MIN_LIMIT = 4;
+/** Without an eviction for this long the limit grows by one again (up to the pool size). */
+export const WEBGL_RECOVER_MS = 5 * 60_000;
+
+/**
+ * How many contexts Chromium really allows, learned from evictions. Every eviction of a burst (losses within WEBGL_EVICT_MS of
+ * each other) lowers the limit to the contexts held minus the evictions of the burst (the lost ones are still counted as held
+ * until xterm gives them up, 3 s later). After a quiet WEBGL_RECOVER_MS the limit grows by one per period, up to `max`.
+ */
+export class WebglLimit {
+  limit: number;
+  private burstAt = -Infinity;
+  private burstLosses = 0;
+  private lastLossAt = -Infinity;
+  private raisedAt = -Infinity;
+
+  constructor(readonly max: number) { this.limit = max; }
+
+  /** A context of a terminal that holds one was lost. Returns whether the limit went down. */
+  lost(now: number, held: number, lastGrantAt: number): boolean {
+    if (now - lastGrantAt > WEBGL_EVICT_MS) return false; // a GPU reset or a driver hiccup, not the limit
+    if (now - this.burstAt > WEBGL_EVICT_MS) this.burstLosses = 0;
+    this.burstAt = now;
+    this.burstLosses++;
+    this.lastLossAt = now;
+    const next = Math.max(WEBGL_MIN_LIMIT, held - this.burstLosses);
+    if (next >= this.limit) return false;
+    this.limit = next;
+    return true;
+  }
+
+  /** Called now and then: returns whether the limit went up. */
+  recover(now: number): boolean {
+    if (this.limit >= this.max || now - this.lastLossAt < WEBGL_RECOVER_MS || now - this.raisedAt < WEBGL_RECOVER_MS) return false;
+    this.limit++;
+    this.raisedAt = now;
+    return true;
+  }
 }

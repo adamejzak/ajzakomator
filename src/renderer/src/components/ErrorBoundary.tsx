@@ -1,5 +1,5 @@
 import { Component, type CSSProperties, type ReactNode } from 'react';
-import { tr } from '../i18n';
+import { tr, useI18n } from '../i18n';
 import { reportError } from '../errorReport';
 
 interface Props {
@@ -28,6 +28,7 @@ export class ErrorBoundary extends Component<Props, { failed: boolean }> {
 
 /** A cell that failed to draw: its box stays in the grid with a retry (the terminal keeps running behind it). */
 export function CellFallback({ style, retry }: { style: CSSProperties; retry: () => void }) {
+  const { tr } = useI18n();
   return (
     <div className="cell cell-failed" style={style} role="alert">
       <div className="cell-failed-body">
@@ -38,8 +39,12 @@ export function CellFallback({ style, retry }: { style: CSSProperties; retry: ()
   );
 }
 
-/** A panel (sidebar, status bar, snippets) that failed to draw. */
+/**
+ * A panel (sidebar, status bar, snippets) that failed to draw. It reads the language itself: the boundaries of the status bar,
+ * the palette and the modals are hoisted elements in App.tsx that never re-render, so their fallback must follow a language change on its own.
+ */
 export function PanelFallback({ retry, className }: { retry: () => void; className?: string }) {
+  const { tr } = useI18n();
   return (
     <div className={`panel-failed ${className ?? ''}`} role="alert">
       <span>{tr('Nie udało się narysować tej części okna.')}</span>

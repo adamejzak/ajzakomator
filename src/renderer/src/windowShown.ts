@@ -1,5 +1,8 @@
 // Whether anybody can see the main window. The window runs without background throttling, so `document.visibilityState`
 // stays 'visible' while it is minimized or hidden; main reports those states on 'window:shown'.
+// A window that is only covered keeps drawing: with throttling off Chromium never passes its native occlusion result to the
+// page (measured 0.9.4 on Windows: an off-screen window stays 'visible' at the full frame rate), and Electron 44 has no
+// occlusion event on Windows or macOS. Terminals draw only when output arrives, so a covered window with quiet cells costs nothing.
 let shown = true;
 const listeners = new Set<(shown: boolean) => void>();
 let wired = false;

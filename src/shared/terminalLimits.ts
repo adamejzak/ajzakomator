@@ -13,8 +13,15 @@ export const PTY_REPLAY_CHARS = 512 * 1024;
 export const PENDING_OUTPUT_CHARS = 512 * 1024;
 
 /**
- * WebGL renderers alive at the same time. Chromium allows about 16 contexts per renderer process and silently drops the
- * oldest beyond that. Terminals without a context use xterm's DOM renderer. Parked (not displayed) terminals may keep
- * theirs so that switching back to a grid is instant; the least recently shown one is released first.
+ * Active WebGL contexts Chromium allows the renderer process (switch `max-active-webgl-contexts`, set by main). Without the
+ * switch Electron 44 (Chromium 152) keeps 16 and silently loses the oldest context beyond that (measured on Windows, 48 contexts).
  */
-export const MAX_WEBGL_CONTEXTS = 12;
+export const CHROMIUM_WEBGL_CONTEXTS = 32;
+
+/**
+ * WebGL renderers alive at the same time: every cell of the largest grid (20) plus a few parked terminals, well below
+ * CHROMIUM_WEBGL_CONTEXTS. Terminals without a context use xterm's DOM renderer; when the pool is short (the limit learned
+ * from a lost context, see TerminalManager) the focused and busy cells get the contexts first (webglPool.ts). Parked (not
+ * displayed) terminals may keep theirs so that switching back to a grid is instant; the least recently shown one is released first.
+ */
+export const MAX_WEBGL_CONTEXTS = 24;
