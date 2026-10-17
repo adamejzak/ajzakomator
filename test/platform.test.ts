@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultShell, fullProjectPath, normalizeProjectPath, shellsForPlatform, shortcutLabel, WINDOWS_BUILD_ARG, windowsBuildFromArgv, windowsBuildFromRelease } from '../src/shared/platform';
+import { defaultShell, fullProjectPath, normalizeProjectPath, shellsForPlatform, shortcutLabel, windowsBuildFromRelease } from '../src/shared/platform';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { resolveShell } from '../src/ptyhost/manager';
 
@@ -42,14 +42,10 @@ describe('platform support', () => {
     expect(shortcutLabel('win32', 'Ctrl+K')).toBe('Ctrl+K');
   });
 
-  it('passes the Windows build number to the sandboxed preload on the command line', () => {
+  it('reads the Windows build number from the OS version the sandboxed preload gets', () => {
     expect(windowsBuildFromRelease('win32', '10.0.26200')).toBe(26200);
     expect(windowsBuildFromRelease('win32', 'garbage')).toBe(0);
     expect(windowsBuildFromRelease('darwin', '24.1.0')).toBe(0);
-    const argv = ['electron', '--type=renderer', `${WINDOWS_BUILD_ARG}${windowsBuildFromRelease('win32', '10.0.19045')}`];
-    expect(windowsBuildFromArgv(argv)).toBe(19045);
-    expect(windowsBuildFromArgv(['electron', `${WINDOWS_BUILD_ARG}0`])).toBe(0);
-    expect(windowsBuildFromArgv(['electron', `${WINDOWS_BUILD_ARG}abc`])).toBe(0);
-    expect(windowsBuildFromArgv(['electron'])).toBe(0);
+    expect(windowsBuildFromRelease('win32', '')).toBe(0);
   });
 });

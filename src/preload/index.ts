@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { McApi } from './api';
-import { appPlatform, windowsBuildFromArgv } from '../shared/platform';
+import { appPlatform, windowsBuildFromRelease } from '../shared/platform';
 
 // MessagePorts can't cross the context bridge; forward the pty data port to the page.
 ipcRenderer.on('pty-port', (e) => window.postMessage('mc:pty-port', '*', e.ports));
@@ -104,8 +104,8 @@ const api: McApi = {
   clipboardWrite: (text) => ipcRenderer.send('clipboard:write', text),
   clipboardWriteSecret: (text) => ipcRenderer.invoke('clipboard:writeSecret', text),
   reportError: (kind, message, stack) => ipcRenderer.send('app:reportError', String(kind).slice(0, 24), String(message).slice(0, 4000), stack === undefined ? undefined : String(stack).slice(0, 8000)),
-  // The window is sandboxed (no Node modules here): main passes the Windows build number in additionalArguments.
-  windowsBuild: windowsBuildFromArgv(process.argv),
+  // The window is sandboxed (no `os` module): the sandbox's process object still reports the OS version ("10.0.26200").
+  windowsBuild: windowsBuildFromRelease(process.platform, process.getSystemVersion?.() ?? ''),
   getUpdate: () => ipcRenderer.invoke('update:get'),
   checkUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),

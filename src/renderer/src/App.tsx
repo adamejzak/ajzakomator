@@ -256,7 +256,8 @@ export function App() {
   }, [ready, languageChosen]);
   useShortcuts();
   if (!ready) return bootFailed ? <WindowFallback message={tr('Nie udało się wczytać danych aplikacji.')} retry={() => setBootFailed(false)} /> : <div className="app" />;
-  if (!languageChosen) return <LanguageSetup />;
+  // The toast too: a language that fails to load in the preview says so.
+  if (!languageChosen) return <><LanguageSetup />{toastView}</>;
   const widths = fitPanelWidths(available, live.sidebar ?? sidebarWidth, live.snippets ?? snippetsWidth, collapsed, snippetsOpen);
   const resizeProps = (panel: Panel) => ({
     panel,

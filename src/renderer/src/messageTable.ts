@@ -26,7 +26,14 @@ export function isLanguageLoaded(language: Language): boolean {
   return loaded.has(language);
 }
 
-/** Loads a language's translations once; concurrent calls share the request. */
+/** Languages whose chunk failed to load: background loads do not retry them (no request per tr() call). */
+const failed = new Set<Language>();
+
+export function languageLoadFailed(language: Language): boolean {
+  return failed.has(language);
+}
+
+/** Loads a language's translations once; concurrent calls share the request. A failed load rejects and is remembered. */
 export function loadLanguageTable(language: Language): Promise<void> {
   if (loaded.has(language)) return Promise.resolve();
   let pending = loading.get(language);
@@ -34,8 +41,12 @@ export function loadLanguageTable(language: Language): Promise<void> {
     pending = chunks[language as Exclude<Language, 'pl'>]().then((chunk) => {
       for (const [key, text] of Object.entries(chunk.default)) (messageTable[key] ??= [])[chunk.column] = text;
       loaded.add(language);
+      failed.delete(language);
       version++;
       for (const listener of listeners) listener();
+    }, (error: unknown) => {
+      failed.add(language);
+      throw error;
     }).finally(() => loading.delete(language));
     loading.set(language, pending);
   }

@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { execFile, spawn } from 'child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, safeStorage, shell, type OpenDialogOptions } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { homedir, hostname, release as osRelease } from 'os';
+import { homedir, hostname } from 'os';
 import { isAbsolute, join } from 'path';
 import { rm, stat } from 'fs/promises';
 import type { SpawnCellRequest } from '../preload/api';
@@ -10,7 +10,7 @@ import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
 import { buildLaunchCommand } from '../shared/profiles';
 import type { AppState, Worktree } from '../shared/types';
-import { appPlatform, WINDOWS_BUILD_ARG, windowsBuildFromRelease } from '../shared/platform';
+import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
@@ -586,9 +586,8 @@ function createWindow(): void {
       : { titleBarOverlay: { color: '#0d0d0d', symbolColor: '#8a8a8a', height: 36 } }),
     show: false,
     webPreferences: {
-      // Sandboxed: the preload uses only contextBridge, ipcRenderer and webUtils; what it needs from the OS comes from main.
+      // Sandboxed: the preload uses only contextBridge, ipcRenderer, webUtils and the sandbox's process object.
       preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true,
-      additionalArguments: [`${WINDOWS_BUILD_ARG}${windowsBuildFromRelease(process.platform, osRelease())}`],
       // Status ticks and alerts keep their 400 ms cadence and output keeps flowing while the window is minimized or covered;
       // the renderer stops drawing terminals on its own while minimized or hidden ('window:shown').
       backgroundThrottling: false,
