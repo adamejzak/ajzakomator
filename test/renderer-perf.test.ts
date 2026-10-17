@@ -60,12 +60,12 @@ describe('equality helpers', () => {
   it('compares props by reference and the style by its values', () => {
     const cell = { id: 'c' };
     const onDown = () => undefined;
-    const a = { cell, index: 0, style: { left: '0%', top: '0%' }, maximized: false, onHeadPointerDown: onDown };
+    const a: Record<string, unknown> = { cell, index: 0, style: { left: '0%', top: '0%' }, maximized: false, onHeadPointerDown: onDown };
     expect(propsEqualWithStyle(a, { ...a, style: { left: '0%', top: '0%' } })).toBe(true);
     expect(propsEqualWithStyle(a, { ...a, style: { left: '1%', top: '0%' } })).toBe(false);
     expect(propsEqualWithStyle(a, { ...a, cell: { id: 'c' } })).toBe(false);
     expect(propsEqualWithStyle(a, { ...a, onHeadPointerDown: undefined })).toBe(false);
-    expect(propsEqualWithStyle<Record<string, unknown>>(a, { ...a, dragSource: false })).toBe(false);
+    expect(propsEqualWithStyle(a, { ...a, dragSource: false })).toBe(false);
   });
 
   it('knows when a patch changes nothing', () => {
@@ -143,8 +143,11 @@ beforeAll(async () => {
     },
     setTimeout, clearTimeout,
   });
-  store = await import(/* @vite-ignore */ '../src/renderer/src/store');
-  files = await import(/* @vite-ignore */ '../src/renderer/src/files');
+  // The renderer is not part of the node tsconfig: loaded through variables, so tsc does not follow the imports.
+  const storePath = '../src/renderer/src/store';
+  const filesPath = '../src/renderer/src/files';
+  store = await import(/* @vite-ignore */ storePath);
+  files = await import(/* @vite-ignore */ filesPath);
 });
 afterEach(() => { vi.useRealTimers(); });
 
