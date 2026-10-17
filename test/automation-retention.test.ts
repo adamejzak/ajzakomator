@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { pruneAutomation, PROJECT_ITEM_LIMIT, RETENTION_MS, type AgentMessage, type AgentTask, type AutomationState } from '../src/shared/automation';
 import { normalizeState, removeProject } from '../src/shared/state';
 import { automationFixture } from './helpers/automationFixture';
+import { AutomationService } from '../src/main/automation';
 
 const NOW = Date.UTC(2026, 9, 17);
 const DAY = 24 * 60 * 60 * 1000;
@@ -144,6 +145,22 @@ describe('team calls a client gave up on or repeated', () => {
     const other = await f.service.execute('create_grid', { ...args, name: 'Team C' }, f.coordinator.id) as { gridId: string };
     expect(other.gridId).not.toBe(a.gridId);
     expect(f.deps.createWorktree).toHaveBeenCalledTimes(2);
+  });
+
+  it('never replays a call whose answer was received: add_agents again adds agents, create_grid after close_grid makes a new grid', async () => {
+    const f = automationFixture();
+    const service = new AutomationService(f.controller, { ...f.deps, stopCells: async () => {} });
+    const args = { name: 'Again', cells: [{ profileId: 'codex' }] };
+    const first = await service.execute('create_grid', args, f.coordinator.id, new AbortController().signal) as { gridId: string };
+    const more = { gridId: first.gridId, cells: [{ profileId: 'claude' }] };
+    await service.execute('add_agents', more, f.coordinator.id, new AbortController().signal);
+    await service.execute('add_agents', more, f.coordinator.id, new AbortController().signal);
+    expect(f.controller.get().projects[0].tabs.find((t) => t.id === first.gridId)!.cells).toHaveLength(3);
+    await service.execute('close_grid', { gridId: first.gridId }, f.coordinator.id);
+    expect(f.controller.get().projects[0].tabs.some((t) => t.id === first.gridId)).toBe(false);
+    const second = await service.execute('create_grid', args, f.coordinator.id, new AbortController().signal) as { gridId: string };
+    expect(second.gridId).not.toBe(first.gridId);
+    expect(f.controller.get().projects[0].tabs.filter((t) => t.name === 'Again')).toHaveLength(1);
   });
 
   it('a failed call is not remembered', async () => {

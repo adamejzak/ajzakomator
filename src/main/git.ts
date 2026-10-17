@@ -542,6 +542,7 @@ export class Git {
    * unchanged (a changed pushurl is seen at once). A push always asks git again and compares with what the user confirmed.
    */
   private async cachedPushTarget(root: string, branch: string): Promise<GitPushTarget | null> {
+    const startedAt = this.generation;
     let stamp = '';
     try {
       const { commonDir } = await this.gitDirs(root);
@@ -552,7 +553,8 @@ export class Git {
     const hit = this.pushTargets.get(key);
     if (hit && hit.stamp === stamp && Date.now() - hit.at < PUSH_TARGET_TTL_MS) return hit.target;
     const target = await this.pushTarget(root, branch);
-    remember(this.pushTargets, key, { target, at: Date.now(), stamp });
+    // A write (push, fetch, checkout...) that ran meanwhile dropped the cache: this older answer must not come back into it.
+    if (this.generation === startedAt) remember(this.pushTargets, key, { target, at: Date.now(), stamp });
     return target;
   }
 

@@ -439,9 +439,12 @@ export async function removeProject(projectId: string): Promise<void> {
   const p = getS().projects.find((x) => x.id === projectId);
   if (!p) return;
   const live = p.tabs.reduce((n, t) => n + t.cells.length, 0);
+  const { tasks, messages } = getS().automation;
+  const aiItems = tasks.some((t) => t.projectId === projectId) || messages.some((m) => m.projectId === projectId);
   const choice = await askChoice(
     tr('Usunąć projekt „{name}” z listy?', { name: p.name }),
-    tr('Folder na dysku zostaje nietknięty.') + (live ? ' ' + tr('Zamkniętych zostanie {count} terminali.', { count: live }) : ''),
+    tr('Folder na dysku zostaje nietknięty.') + (live ? ' ' + tr('Zamkniętych zostanie {count} terminali.', { count: live }) : '')
+      + (aiItems ? ' ' + tr('Zadania i wiadomości zespołu AI tego projektu zostaną usunięte.') : ''),
     [{ label: tr("Usuń z listy"), value: 'yes', danger: true }],
   );
   if (choice !== 'yes') return;

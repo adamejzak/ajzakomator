@@ -28,7 +28,7 @@ const messageLimit = `Message limit reached (${PROJECT_ITEM_LIMIT} unread messag
 /** How long an identical create_grid / add_agents / close_grid call of the same agent returns the first call's answer. */
 export const IDEMPOTENT_MS = 5 * 60_000;
 const CANCELLED = 'The request ended (the MCP client disconnected or timed out) before the grid was created; nothing was kept. Retry if it is still wanted.';
-interface IdempotentEntry { at: number; controller: AbortController; callers: number; running: boolean; result: Promise<unknown> }
+interface IdempotentEntry { at: number; controller: AbortController; callers: number; running: boolean; abandoned: boolean; result: Promise<unknown> }
 
 /** Runtime statuses of the cells; `onChange` hears every real change (the Automation panel is told instead of polling). */
 export class StatusMap extends Map<string, AgentRuntimeStatus> {
@@ -328,8 +328,9 @@ export class AutomationService {
   }
 
   /**
-   * The same team call (same agent, operation and arguments) within IDEMPOTENT_MS returns the first call's answer: a client that
-   * timed out and retries must not start a second team. A running call is shared; it is cancelled only when every caller left.
+   * A retried team call (same agent, operation and arguments) must not start a second team: while the first one runs, the retry
+   * shares it (it is cancelled only when every caller left), and when a caller left before the answer, the finished result is
+   * returned to an identical call within IDEMPOTENT_MS. A call whose answer was received is never replayed.
    */
   private idempotent<T>(operation: string, args: unknown, actorId: string | undefined, signal: AbortSignal | undefined, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const now = Date.now();
@@ -338,8 +339,13 @@ export class AutomationService {
     let entry = key ? this.recent.get(key) : undefined;
     if (!entry || (entry.running && entry.controller.signal.aborted)) {
       const controller = new AbortController();
-      const created: IdempotentEntry = { at: now, controller, callers: 0, running: true, result: Promise.resolve() };
-      created.result = work(controller.signal).finally(() => { created.running = false; });
+      const created: IdempotentEntry = { at: now, controller, callers: 0, running: true, abandoned: false, result: Promise.resolve() };
+      // A finished call is remembered only when a caller left before its answer (a client that timed out and retries);
+      // otherwise the next identical call is a deliberate new one (add_agents again, create_grid after close_grid).
+      created.result = work(controller.signal).finally(() => {
+        created.running = false;
+        if (key && !created.abandoned && this.recent.get(key) === created) this.recent.delete(key);
+      });
       if (key) {
         this.recent.set(key, created);
         created.result.catch(() => { if (this.recent.get(key) === created) this.recent.delete(key); });
@@ -349,7 +355,11 @@ export class AutomationService {
     const current = entry;
     if (current.running) {
       current.callers++;
-      const leave = () => { if (--current.callers === 0 && current.running) current.controller.abort(); };
+      const leave = () => {
+        if (!current.running) return;
+        current.abandoned = true;
+        if (--current.callers === 0) current.controller.abort();
+      };
       if (!signal) current.callers++; // a caller without a signal never leaves
       else if (signal.aborted) leave();
       else {

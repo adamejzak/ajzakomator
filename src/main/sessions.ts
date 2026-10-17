@@ -66,7 +66,7 @@ function claudeText(entry: any): string | null {
   return text && !isInjected(text) ? text : null;
 }
 
-interface FileStat { size: number; mtimeMs: number; birthtimeMs: number }
+interface FileStat { size: number; mtimeMs: number; birthtimeMs: number; ino?: number }
 
 /** What the head of a transcript says; it never changes once the file is at least as long as the head slice. */
 interface ClaudeHead {
@@ -136,17 +136,19 @@ function claudeInfo(head: ClaudeHead, tail: ClaudeTail, st: FileStat): SessionIn
 
 const tailStart = (st: FileStat) => Math.max(0, st.size - TAIL_BYTES);
 
-interface ClaudeEntry { mtimeMs: number; size: number; info: SessionInfo | null; head: ClaudeHead }
+/** `birthtimeMs` and `ino` tell a replaced transcript (same path, new file) from one that only grew. */
+interface ClaudeEntry { mtimeMs: number; size: number; birthtimeMs: number; ino?: number; info: SessionInfo | null; head: ClaudeHead }
 
 /** A grown transcript whose head was complete only needs its tail again (a running agent appends all the time). */
-const canReuseHead = (hit: ClaudeEntry | undefined, st: FileStat): hit is ClaudeEntry => !!hit && hit.head.complete && st.size >= hit.size;
+const canReuseHead = (hit: ClaudeEntry | undefined, st: FileStat): hit is ClaudeEntry =>
+  !!hit && hit.head.complete && st.size >= hit.size && hit.birthtimeMs === st.birthtimeMs && hit.ino === st.ino;
 
 function readClaudeSession(file: string, st: FileStat, hit?: ClaudeEntry): ClaudeEntry {
   let head: ClaudeHead;
   if (canReuseHead(hit, st)) { head = hit.head; claudeTailReads++; }
   else { head = parseClaudeHead(readSlice(file, 0, HEAD_BYTES), st.size); claudeParses++; }
   const tail = st.size > HEAD_BYTES ? parseClaudeTail(readSlice(file, tailStart(st), TAIL_BYTES), !head.id) : {};
-  return { mtimeMs: st.mtimeMs, size: st.size, head, info: claudeInfo(head, tail, st) };
+  return { mtimeMs: st.mtimeMs, size: st.size, birthtimeMs: st.birthtimeMs, ino: st.ino, head, info: claudeInfo(head, tail, st) };
 }
 
 async function readClaudeSessionAsync(file: string, st: FileStat, hit?: ClaudeEntry): Promise<ClaudeEntry> {
@@ -158,7 +160,7 @@ async function readClaudeSessionAsync(file: string, st: FileStat, hit?: ClaudeEn
   ]);
   const head = reuse ? hit!.head : parseClaudeHead(headText, st.size);
   const tail = st.size > HEAD_BYTES ? parseClaudeTail(tailText, !head.id) : {};
-  return { mtimeMs: st.mtimeMs, size: st.size, head, info: claudeInfo(head, tail, st) };
+  return { mtimeMs: st.mtimeMs, size: st.size, birthtimeMs: st.birthtimeMs, ino: st.ino, head, info: claudeInfo(head, tail, st) };
 }
 
 // Parsed sessions keyed by file; reused while mtime and size are unchanged. Pruned per listed folder.

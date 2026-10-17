@@ -16,6 +16,29 @@ export function cellOfFile(kind: keyof CellFileDirs, name: string): string | nul
 const fileOf = (dirs: CellFileDirs, kind: keyof CellFileDirs, cellId: string): string =>
   join(dirs[kind], kind === 'hooks' ? `claude-${cellId}.json` : kind === 'mcp' ? `${cellId}.json` : `${cellId}.txt`);
 
+/**
+ * Startup prompt files (one name per spawn) of each cell's processes, oldest first; null for a spawn without one. An exit or a
+ * failed spawn always belongs to the oldest process of the cell, so it removes that one's file and never a respawn's new prompt.
+ */
+export class PromptFiles {
+  private readonly files = new Map<string, Array<string | null>>();
+  constructor(private readonly remove: (file: string) => void) {}
+  queue(cellId: string, file: string | null): void {
+    this.files.set(cellId, [...(this.files.get(cellId) ?? []), file]);
+  }
+  release(cellId: string): void {
+    const queue = this.files.get(cellId);
+    if (!queue?.length) return;
+    const file = queue.shift();
+    if (!queue.length) this.files.delete(cellId);
+    if (file) this.remove(file);
+  }
+  /** The terminal process is gone: none of its processes will report an exit any more. */
+  releaseAll(): void {
+    for (const cellId of [...this.files.keys()]) while (this.files.has(cellId)) this.release(cellId);
+  }
+}
+
 /** Removes the cell's files of the given kinds (missing ones are fine). */
 export async function removeCellFiles(dirs: CellFileDirs, cellId: string, kinds: Array<keyof CellFileDirs> = ['hooks', 'prompts', 'mcp']): Promise<void> {
   if (!CELL_ID.test(cellId)) return;

@@ -4,7 +4,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir, hostname } from 'os';
 import { isAbsolute, join } from 'path';
-import { stat } from 'fs/promises';
+import { rm, stat } from 'fs/promises';
 import type { SpawnCellRequest } from '../preload/api';
 import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
@@ -15,7 +15,7 @@ import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
 import { pathExists } from './fsProbe';
-import { pruneCellFiles, removeCellFiles } from './cellFiles';
+import { PromptFiles, pruneCellFiles, removeCellFiles } from './cellFiles';
 import { applyDockIcon, windowIcon } from './appIcon';
 import { LARGE_VIEW_BYTES, listProjectDirectories, listProjectDirectory, listProjectDirectoryBatch, readProjectFile, writeProjectFile } from './files';
 import { registerFileOpsIpc } from './filesIpc';
@@ -163,6 +163,12 @@ const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
 const cellFileDirs = { hooks: HOOKS_DIR, prompts: PROMPTS_DIR, mcp: MCP_DIR };
+// The shell read the startup prompt when it started the agent; the task text does not stay on disk.
+const prompts = new PromptFiles((file) => { void rm(file, { force: true }).catch(() => undefined); });
+let promptSeq = 0;
+const queuePrompt = (cellId: string, file: string | null) => prompts.queue(cellId, file);
+const releasePrompt = (cellId: string) => prompts.release(cellId);
+const releaseAllPrompts = () => prompts.releaseAll();
 app.setPath('userData', DATA_DIR);
 // Matches build.appId, which the installer also stamps on the shortcuts. A run from the repository (npm run dev, a clone of the
 // project) gets its own identity: it must never share the taskbar entry (and its icon) with the installed app.
@@ -733,9 +739,9 @@ ptyHost.on('message', (m: HostToMain) => {
     verifiedCodex.delete(m.id);
     mcp.revokeCell(m.id);
     automation.statuses.set(m.id, 'exited');
-    // The shell read the startup prompt when it started the agent; the task text does not stay on disk.
-    void removeCellFiles(cellFileDirs, m.id, ['prompts']);
+    releasePrompt(m.id);
   } else if (m.t === 'spawnError') {
+    releasePrompt(m.id);
     alive.delete(m.id);
     mcp.revokeCell(m.id);
     automation.statuses.set(m.id, 'exited');
@@ -746,6 +752,7 @@ ptyHost.on('message', (m: HostToMain) => {
 function forgetHostTerminals(code: unknown, stderrTail: unknown): boolean {
   const tail = typeof stderrTail === 'string' && stderrTail.trim() ? `\n${stderrTail.trim()}` : '';
   crashLog.error(`pty host exited (code ${String(code)})${tail}`);
+  releaseAllPrompts();
   login.failActive('spawn');
   install.failActive();
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
@@ -908,7 +915,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   let initialPrompt: { file: string; text: string } | undefined;
   if (mode === 'new' && req.startupPrompt?.trim()) {
     mkdirSync(PROMPTS_DIR, { recursive: true });
-    const file = join(PROMPTS_DIR, `${req.cellId}.txt`);
+    const file = join(PROMPTS_DIR, `${req.cellId}-${(++promptSeq).toString(36)}.txt`);
     writeFileSync(file, req.startupPrompt, 'utf8');
     initialPrompt = { file, text: req.startupPrompt };
   }
@@ -937,6 +944,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   automation.runtimeStarted(req.cellId);
   automation.statuses.set(req.cellId, 'starting');
   alive.add(req.cellId);
+  queuePrompt(req.cellId, initialPrompt?.file ?? null);
   ptyHost.spawn({ id: req.cellId, cwd: req.cwd, cols: req.cols, rows: req.rows, env, shell: state.settings.shell, command });
   return { ok: true };
 }

@@ -145,6 +145,27 @@ describe('incremental session reading', () => {
     expect(claudeCacheStats().parses).toBe(2);
   });
 
+  it('reads the head again when a large transcript was replaced by a new file that is not shorter', async () => {
+    clearClaudeCache();
+    const h = home();
+    const cdir = join(h, '.claude', 'projects', claudeProjectDirName(PROJECT));
+    mkdirSync(cdir, { recursive: true });
+    const file = join(cdir, 'swap.jsonl');
+    const big = (prompt: string, extra: number) => jsonl([
+      { type: 'user', message: { content: prompt }, sessionId: 'swap', cwd: PROJECT },
+      ...Array.from({ length: 400 + extra }, (_, i) => ({ type: 'assistant', sessionId: 'swap', message: { content: 'y'.repeat(900) + i } })),
+    ]);
+    writeFileSync(file, big('stary prompt', 0));
+    expect((await listClaudeSessionsAsync(h, PROJECT))[0].title).toBe('stary prompt');
+    rmSync(file);
+    await new Promise((r) => setTimeout(r, 20));
+    writeFileSync(file, big('nowy prompt', 10));
+    const later = new Date(Date.now() + 5000);
+    utimesSync(file, later, later);
+    expect((await listClaudeSessionsAsync(h, PROJECT))[0].title).toBe('nowy prompt');
+    expect(claudeCacheStats()).toMatchObject({ parses: 2, tailReads: 0 });
+  });
+
   it('walks Codex day folders newest first, stops early and lists an unchanged folder only once', async () => {
     clearCodexCache();
     const h = home();

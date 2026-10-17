@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cellOfFile, pruneCellFiles, removeCellFiles } from '../src/main/cellFiles';
+import { cellOfFile, PromptFiles, pruneCellFiles, removeCellFiles } from '../src/main/cellFiles';
 
 const roots: string[] = [];
 function dirs() {
@@ -35,6 +35,21 @@ describe('per-cell files', () => {
     expect(readdirSync(d.hooks).sort()).toEqual(['claude-kept.json', 'notes.txt']);
     expect(readdirSync(d.mcp)).toEqual(['kept.json']);
     expect(readdirSync(d.prompts)).toEqual([]);
+  });
+
+  it('an exit removes the prompt of the process that ended, never the prompt of a respawn written before that exit arrived', () => {
+    const removed: string[] = [];
+    const prompts = new PromptFiles((file) => removed.push(file));
+    prompts.queue('c1', 'c1-1.txt');
+    prompts.queue('c1', 'c1-2.txt'); // respawn wrote its prompt before the old process reported its exit
+    prompts.release('c1');
+    expect(removed).toEqual(['c1-1.txt']);
+    prompts.queue('c2', null);
+    prompts.release('c2');
+    prompts.release('c2'); // a stray exit does nothing
+    prompts.queue('c3', 'c3-1.txt');
+    prompts.releaseAll();
+    expect(removed).toEqual(['c1-1.txt', 'c1-2.txt', 'c3-1.txt']);
   });
 
   it('removes one cell\'s files on request and ignores a missing folder', async () => {

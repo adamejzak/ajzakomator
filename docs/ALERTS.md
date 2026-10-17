@@ -30,7 +30,7 @@ Rules:
 
 ## How Claude Code reports a turn
 
-Claude cells get per-cell hooks through `--settings` (your own `settings.json` is never touched): prompt, Stop, StopFailure, Notification and SessionStart post to the app's local hook server with `curl`, and the tool hooks (PreToolUse, PostToolUse, SubagentStop) only say "still working" and run in the background (`async`), so no tool call waits for them. Every hook request bypasses a configured HTTP proxy (`--noproxy '*'`), the same as the Codex hook, so a corporate proxy cannot swallow the status.
+Claude cells get per-cell hooks through `--settings` (your own `settings.json` is never touched): prompt, Stop, StopFailure, Notification and SessionStart post to the app's local hook server with `curl`, and the tool hooks (PreToolUse, PostToolUse, SubagentStop) only say "still working" and run in the background (`async`, Claude Code 2.1 or newer; older builds run them synchronously), so no tool call waits for them. Every hook request bypasses a configured HTTP proxy (`--noproxy '*'`), the same as the Codex hook, so a corporate proxy cannot swallow the status.
 
 ## How Codex reports a turn
 
