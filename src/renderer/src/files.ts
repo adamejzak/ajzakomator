@@ -201,9 +201,13 @@ export function flushDrafts(): void {
   if (draftTimer !== null) writeDrafts();
 }
 useFileStore.subscribe((s, prev) => {
-  if (s.documents === prev.documents || draftTimer !== null) return;
-  draftTimer = setTimeout(writeDrafts, DRAFT_SAVE_MS);
+  if (s.documents === prev.documents) return;
+  // A stored draft whose document is now clean (saved, discarded, closed) is removed at once: after a crash it must not come back.
+  const written = writtenDrafts ?? [];
+  if (written.some((d) => !s.documents.some((n) => n.id === d.id && isFileDirty(n)))) { writeDrafts(); return; }
+  if (draftTimer === null) draftTimer = setTimeout(writeDrafts, DRAFT_SAVE_MS);
 });
+writtenDrafts = useFileStore.getState().documents.filter(isFileDirty); // the restored drafts are what storage holds
 
 /** Open tabs follow renamed or moved files and folders (their text and unsaved changes stay untouched). */
 export function retargetOpenFiles(projectId: string, moves: FileMoveRecord[], replaced: string[] = []): void {

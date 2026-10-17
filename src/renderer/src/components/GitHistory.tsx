@@ -158,7 +158,8 @@ const CommitRow = memo(function CommitRow({ commit, row, lanes, language, onSele
       className="git-commit"
       role="button"
       tabIndex={0}
-      title={`${commit.subject}\n${commit.short} · ${commit.author} · ${formatAgo(language, commit.at * 1000)}`}
+      // The tooltip is built when the pointer arrives, so its relative time is current although the row is memoized.
+      onMouseEnter={(e) => { e.currentTarget.title = `${commit.subject}\n${commit.short} · ${commit.author} · ${formatAgo(language, commit.at * 1000)}`; }}
       onClick={() => onSelect(commit)}
       onKeyDown={(e) => { if (e.key === 'Enter') onSelect(commit); }}
       onFocus={() => onFocusRow(commit.hash)}

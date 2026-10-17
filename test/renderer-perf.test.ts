@@ -195,6 +195,21 @@ describe('store: echoed patches and acks keep what the screen shows', () => {
   });
 });
 
+describe('memoized components follow rebound shortcuts', () => {
+  // A memoized component that shows a combo must subscribe to the shortcut settings (shortcutText reads them at render).
+  const source = (path: string) => readFileSync(path, 'utf8');
+  it('title bar, tab strip, grid hints and Git changes subscribe with useShortcutText', () => {
+    const titleBar = source('src/renderer/src/components/TitleBar.tsx');
+    for (const name of ['TitleBar', 'WorkspaceTabs']) {
+      const body = titleBar.slice(titleBar.indexOf(`memo(function ${name}(`));
+      expect(body.slice(0, 400)).toContain('useShortcutText()');
+    }
+    expect(source('src/renderer/src/components/GridView.tsx')).toMatch(/function Kbd[\s\S]{0,120}useShortcutText\(\)\(id\)/);
+    expect(source('src/renderer/src/components/GitChanges.tsx')).toContain('useShortcutText()');
+    expect(source('src/renderer/src/components/CellView.tsx')).toContain('useShortcutText()');
+  });
+});
+
 describe('editor drafts are saved with a delay, and at once on flush', () => {
   const key = 'mc-file-drafts-v1';
   const doc = (id: string, text: string) => ({ id, projectId: 'p', relativePath: `${id}.ts`, name: `${id}.ts`, text, savedText: 'saved', diskText: 'saved', status: 'ready', saving: false, error: null, wrap: false });
@@ -237,6 +252,19 @@ describe('editor drafts are saved with a delay, and at once on flush', () => {
     files.useFileStore.setState({ documents: [] });
     vi.advanceTimersByTime(files.DRAFT_SAVE_MS);
     expect(JSON.parse(storage.get(key)!)).toEqual([]);
+  });
+
+  it('a stored draft whose document became clean is removed at once', () => {
+    vi.useFakeTimers();
+    files.useFileStore.setState({ documents: [doc('b', 'draft')], activeFileId: 'b' });
+    files.flushDrafts();
+    expect(JSON.parse(storage.get(key)!).map((d: { id: string }) => d.id)).toEqual(['b']);
+    files.editFile('b', 'saved'); // back to the saved text: no longer dirty
+    expect(JSON.parse(storage.get(key)!)).toEqual([]);
+    files.editFile('b', 'again');
+    expect(JSON.parse(storage.get(key)!)).toEqual([]);
+    vi.advanceTimersByTime(files.DRAFT_SAVE_MS);
+    expect(JSON.parse(storage.get(key)!)[0].text).toBe('again');
   });
 
   it('the flush runs before a reload, when the window is hidden and when the app quits', () => {

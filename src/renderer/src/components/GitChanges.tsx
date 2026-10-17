@@ -4,7 +4,7 @@ import { useI18n } from '../i18n';
 import { askChoice, toast } from '../store';
 import { baseName, buildChangeTree, CONFLICT_LETTER, dirName, groupChanges, letterOf, newRequestId, sortChanges, type ChangeGroup, type ChangeNode, type ChangesSort, type ChangesView, type Letter } from '../../../shared/gitUi';
 import { ICheck, IChevron } from './icons';
-import { matchesShortcut, titleWithShortcut } from '../shortcuts';
+import { matchesShortcut, titleWithShortcut, useShortcutText } from '../shortcuts';
 
 type Source = 'working' | 'staged' | 'untracked';
 
@@ -27,6 +27,7 @@ interface Props {
 /** The Changes section: files grouped as conflicts, staged, changed and untracked, with stage / unstage and a commit box. */
 export function GitChanges({ projectId, status, busy, writable, programsNote, opts, run, onOpen, onMenu, view, sort }: Props) {
   const { tr } = useI18n();
+  useShortcutText(); // the commit shortcut in the tooltips follows the settings
   const [open, setOpen] = useState(true);
   const [message, setMessage] = useState('');
   const messageBox = useRef<HTMLTextAreaElement>(null);

@@ -1,4 +1,4 @@
-import { shortcutText, titleWithShortcut } from '../shortcuts';
+import { shortcutText, titleWithShortcut, useShortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { activeWorkspaceKey, workspaceOrder, reorderWorkspace } from '../../../shared/workspaceOrder';
@@ -23,6 +23,7 @@ import { activateSshView, closeSshView, sshHostMenuItems } from '../ssh';
 
 export const TitleBar = memo(function TitleBar() {
   const { tr } = useI18n();
+  useShortcutText(); // memoized: the shortcuts in the tooltips must still follow the settings
   const sidebarCollapsed = useStore((st) => st.s.sidebarCollapsed);
   const snippetsOpen = useStore((st) => st.s.snippetsOpen);
   const projectId = useStore((st) => activeProject(st.s)?.id);
@@ -54,6 +55,7 @@ const fileTabsKey = (documents: readonly FileDocument[]): string =>
 
 export const WorkspaceTabs = memo(function WorkspaceTabs() {
   const { tr } = useI18n();
+  useShortcutText(); // memoized: the shortcuts in the tooltips must still follow the settings
   const project = useStore((st) => activeProject(st.s));
   const profiles = useStore((st) => st.s.profiles);
   const lastProfileId = useStore((st) => st.s.settings.lastProfileId);
@@ -135,7 +137,7 @@ export const WorkspaceTabs = memo(function WorkspaceTabs() {
     setEdges((prev) => prev.canLeft === next.canLeft && prev.canRight === next.canRight ? prev : next);
   };
   // After the strip's content changed (tabs, names, badges, dirty marks); changes of its own size are the ResizeObserver's.
-  useLayoutEffect(measure, [project, countsOf, documents, editing, settingsTabOpen, sshOpen, orders]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(measure, [project, countsOf, documents, editing, settingsTabOpen, sshOpen, orders, tr]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const el = stripRef.current;
     if (!el) return;

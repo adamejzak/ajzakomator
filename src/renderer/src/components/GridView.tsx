@@ -1,11 +1,11 @@
-import { shortcutText } from '../shortcuts';
+import { useShortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { areaRects, type GridLayout } from '../../../shared/layout';
 import { activeProject, activeTab, getProfile, setTabLayout } from '../../../shared/state';
 import { createProject, quickTab, swapCellSlots } from '../actions';
 import { playCellMotion } from '../gridMotion';
-import { getUi, setUi, update, useStore } from '../store';
+import { setUi, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
 import { useCellDrag, type DragContext } from './useCellDrag';
 import { CellView } from './CellView';
@@ -15,7 +15,7 @@ import { ProjectIconView } from './ProjectIcon';
 
 /** The key of an action as a chip; nothing while the shortcut is switched off. */
 function Kbd({ id }: { id: string }) {
-  const text = shortcutText(id);
+  const text = useShortcutText()(id); // follows a rebound shortcut (the grid is memoized)
   return text ? <span className="kbd">{text}</span> : null;
 }
 
@@ -40,6 +40,10 @@ export const GridView = memo(function GridView() {
   const dragProfile = useStore((st) => {
     const moving = drag && activeTab(activeProject(st.s))?.cells.find((c) => c.id === drag.id);
     return moving ? getProfile(st.s, moving.profileId) : undefined;
+  });
+  const dragTitle = useStore((st) => {
+    const moving = drag && activeTab(activeProject(st.s))?.cells.find((c) => c.id === drag.id);
+    return moving?.session ? st.ui.sessionTitles[moving.session.id] : undefined;
   });
 
   // A drag belongs to one grid: leaving the tab or project, or maximizing a cell, aborts it.
@@ -100,7 +104,7 @@ export const GridView = memo(function GridView() {
   const canDrag = !maxCell && tab.cells.length > 1;
   const dragged = drag ? tab.cells.find((c) => c.id === drag.id) : undefined;
   const targetIndex = drag?.target ? tab.cells.findIndex((c) => c.id === drag.target) : -1;
-  const draggedLabel = dragged && (dragged.name ?? (dragged.session ? getUi().sessionTitles[dragged.session.id] : undefined) ?? dragProfile?.name);
+  const draggedLabel = dragged && (dragged.name ?? dragTitle ?? dragProfile?.name);
   return (
     <div ref={gridRef} className={`grid ${preview ? 'resizing' : ''} ${drag ? 'dragging' : ''}`}>
       {tab.cells.map((cell, i) => {
