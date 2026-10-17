@@ -82,15 +82,19 @@ describe('create_grid with a missing CLI', () => {
 
 describe('Codex delivery uses the detected binary', () => {
   it('passes the resolved command and PATH without changing how the message travels', async () => {
-    const seen: Array<{ file: string; env: Record<string, string> }> = [];
+    const seen: Array<{ file: string; args: string[]; env: Record<string, string> }> = [];
     vi.resetModules();
     vi.doMock('child_process', () => ({
-      execFile: (file: string, _args: string[], options: { env: Record<string, string> }, callback: (error: Error | null) => void) => { seen.push({ file, env: options.env }); callback(null); },
+      execFile: (file: string, args: string[], options: { env: Record<string, string> }, callback: (error: Error | null) => void) => { seen.push({ file, args, env: options.env }); callback(null); },
     }));
     const { queueCodexMessage: queue } = await import('../src/main/agentDelivery');
     await queue('s1', 'hello', { command: '/opt/x/codex', env: { PATH: '/opt/x:/usr/bin' } });
     expect(seen[0].env.PATH).toBe('/opt/x:/usr/bin');
-    expect(seen[0].env.UNIMUX_TASK_MESSAGE).toBe('hello');
-    if (process.platform !== 'win32') expect(seen[0].file).toBe('/opt/x/codex');
+    // Windows hands the message to PowerShell in the environment; elsewhere it is a plain argument of `codex queue`.
+    if (process.platform === 'win32') expect(seen[0].env.UNIMUX_TASK_MESSAGE).toBe('hello');
+    else {
+      expect(seen[0].file).toBe('/opt/x/codex');
+      expect(seen[0].args).toEqual(['queue', '--thread', 's1', '--message', 'hello']);
+    }
   });
 });
