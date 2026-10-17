@@ -1,6 +1,6 @@
 // Load node-pty with the packaged Electron runtime to catch ABI/architecture mismatches.
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const mac = process.platform === 'darwin';
@@ -13,6 +13,14 @@ const asar = resolve(resources, 'app.asar');
 const appRoot = existsSync(asar) ? asar : resolve(resources, 'app');
 const modulePath = existsSync(asar) ? resolve(asar, 'node_modules/node-pty') : resolve(resources, 'app/node_modules/node-pty');
 if (!existsSync(executable) || !(existsSync(asar) || existsSync(modulePath))) throw new Error('Packaged Electron or node-pty is missing');
+if (mac) {
+  // mac.files drops node-pty's Windows prebuilds and its build/ folder: the app must load the darwin prebuild of its arch.
+  for (const dropped of ['prebuilds/win32-x64', 'prebuilds/win32-arm64', 'build', 'third_party']) {
+    if (existsSync(resolve(modulePath, dropped))) throw new Error(`node-pty/${dropped} should not be packaged on macOS`);
+  }
+  const helper = resolve(modulePath, `prebuilds/darwin-${process.arch}/spawn-helper`);
+  if (!existsSync(helper) || !(statSync(helper).mode & 0o111)) throw new Error('node-pty spawn-helper is missing or not executable');
+}
 
 const script = `
   const fs = require('node:fs');
