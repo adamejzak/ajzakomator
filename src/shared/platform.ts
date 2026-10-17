@@ -35,3 +35,18 @@ export function normalizeProjectPath(path: string): string {
   const normalized = path.replace(/[\\/]+$/, '').replace(/\\/g, '/');
   return /^[a-z]:\//i.test(normalized) || normalized.startsWith('//') ? normalized.toLowerCase() : normalized;
 }
+
+/** The sandboxed preload has no `os` module: main passes the Windows build number on the renderer's command line. */
+export const WINDOWS_BUILD_ARG = '--mc-windows-build=';
+
+/** Windows build number from `os.release()` ("10.0.26200" -> 26200); 0 on other systems or when it cannot be read. */
+export function windowsBuildFromRelease(platform: string, release: string): number {
+  return platform === 'win32' ? Number(release.split('.')[2]) || 0 : 0;
+}
+
+/** The build number main put into `additionalArguments` (0 when missing or malformed). */
+export function windowsBuildFromArgv(argv: readonly string[]): number {
+  const arg = argv.find((value) => value.startsWith(WINDOWS_BUILD_ARG));
+  const build = arg ? Number(arg.slice(WINDOWS_BUILD_ARG.length)) : 0;
+  return Number.isInteger(build) && build > 0 ? build : 0;
+}

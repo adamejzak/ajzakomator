@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { release } from 'os';
 import type { McApi } from './api';
-import { appPlatform } from '../shared/platform';
+import { appPlatform, windowsBuildFromArgv } from '../shared/platform';
 
 // MessagePorts can't cross the context bridge; forward the pty data port to the page.
 ipcRenderer.on('pty-port', (e) => window.postMessage('mc:pty-port', '*', e.ports));
@@ -105,7 +104,8 @@ const api: McApi = {
   clipboardWrite: (text) => ipcRenderer.send('clipboard:write', text),
   clipboardWriteSecret: (text) => ipcRenderer.invoke('clipboard:writeSecret', text),
   reportError: (kind, message, stack) => ipcRenderer.send('app:reportError', String(kind).slice(0, 24), String(message).slice(0, 4000), stack === undefined ? undefined : String(stack).slice(0, 8000)),
-  windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || 0 : 0,
+  // The window is sandboxed (no Node modules here): main passes the Windows build number in additionalArguments.
+  windowsBuild: windowsBuildFromArgv(process.argv),
   getUpdate: () => ipcRenderer.invoke('update:get'),
   checkUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.send('update:install'),
