@@ -9,6 +9,8 @@ import { initBackgroundLoader } from './backgroundLoader';
 import { applyCliStatus, flushPendingSaves, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
 import { CommandPalette } from './components/CommandPalette';
 import { ContextMenuHost } from './components/ContextMenu';
+import { ErrorBoundary, PanelFallback, WindowFallback } from './components/ErrorBoundary';
+import { reportError } from './errorReport';
 import { GridView } from './components/GridView';
 import { LanguageSetup } from './components/LanguageSetup';
 import { LazyScreen } from './components/LazyScreen';
@@ -30,10 +32,35 @@ import { initSsh } from './ssh';
 import { useSshStore } from './sshStore';
 
 let booted = false;
+/** The listeners registered before the first state arrives; a retried boot must not add them twice. */
+let listening = false;
 
+/** Starts the window; a failure before the state arrived can be retried (the window would stay blank otherwise). */
 async function boot(): Promise<void> {
   if (booted) return;
   booted = true;
+  try {
+    await bootSteps();
+  } catch (error) {
+    reportError('boot', error);
+    if (!useStore.getState().ready) booted = false;
+    throw error;
+  }
+}
+
+async function bootSteps(): Promise<void> {
+  if (!listening) { listening = true; listenEarly(); }
+  // Listening first: the startup scan may finish before the first answer arrives.
+  const [snapshot, alive, mcpInfo, cliStatus] = await Promise.all([
+    window.mc.loadSnapshot(), window.mc.aliveCells(), window.mc.getMcpInfo(), window.mc.cliStatus().catch(() => ({})),
+  ]);
+  setAliveAtStart(alive);
+  setUi({ cliStatus });
+  useStore.getState().init(snapshot);
+  await bootRest(mcpInfo);
+}
+
+function listenEarly(): void {
   terminals.setWindowsBuild(window.mc.windowsBuild);
   window.mc.on('state:changed', (change) => useStore.getState().applyChange(change));
   // A cell that disappears from the state (closed by main, MCP, a resync) loses its terminal, whichever way the state arrived.
@@ -47,14 +74,10 @@ async function boot(): Promise<void> {
   window.addEventListener('beforeunload', flushPendingSaves);
   document.addEventListener('visibilitychange', () => { if (document.hidden) flushPendingSaves(); });
   window.mc.on('automation:start-cells', (ids) => ids.forEach(ensureStarted));
-  // Listening first: the startup scan may finish before the first answer arrives.
   window.mc.on('cli:changed', applyCliStatus);
-  const [snapshot, alive, mcpInfo, cliStatus] = await Promise.all([
-    window.mc.loadSnapshot(), window.mc.aliveCells(), window.mc.getMcpInfo(), window.mc.cliStatus().catch(() => ({})),
-  ]);
-  setAliveAtStart(alive);
-  setUi({ cliStatus });
-  useStore.getState().init(snapshot);
+}
+
+async function bootRest(mcpInfo: Awaited<ReturnType<typeof window.mc.getMcpInfo>>): Promise<void> {
   // Session states and open prompts of SSH cells (a reload finds them in main, R7).
   await initSsh().catch(() => undefined);
   setUi({ mcpInfo });
@@ -96,6 +119,11 @@ async function boot(): Promise<void> {
   window.mc.on('ptyhost:crashed', (resumes) => {
     // D1: SSH cells do not resume (D5), so the toast promises conversations only when a Claude or Codex cell was running.
     toast(tr(ptyHostRestartToast(resumes !== false)), 'error');
+    resetStarted();
+  });
+  // No restart by itself: the visible cells try to start and show why they cannot.
+  window.mc.on('ptyhost:fatal', () => {
+    toast(tr('Proces terminali wielokrotnie się wysypał.'), 'error');
     resetStarted();
   });
 
@@ -168,7 +196,8 @@ export function App() {
   const body = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState(window.innerWidth);
   const [live, setLive] = useState<Partial<Record<Panel, number>>>({});
-  useEffect(() => void boot(), []);
+  const [bootFailed, setBootFailed] = useState(false);
+  useEffect(() => { if (!bootFailed) boot().catch(() => setBootFailed(true)); }, [bootFailed]);
   useEffect(() => {
     if (!ready) return;
     // Not while the window is hidden, and the store is only touched when the answer differs (every cell reads mcpInfo).
@@ -193,7 +222,7 @@ export function App() {
     return () => observer.disconnect();
   }, [ready, languageChosen]);
   useShortcuts();
-  if (!ready) return <div className="app" />;
+  if (!ready) return bootFailed ? <WindowFallback message={tr('Nie udało się wczytać danych aplikacji.')} retry={() => setBootFailed(false)} /> : <div className="app" />;
   if (!languageChosen) return <LanguageSetup />;
   const widths = fitPanelWidths(available, live.sidebar ?? sidebarWidth, live.snippets ?? snippetsWidth, collapsed, snippetsOpen);
   const resizeProps = (panel: Panel) => ({
@@ -213,7 +242,7 @@ export function App() {
     <div className="app" style={{ '--sidebar-width': `${widths.sidebar}px`, '--snippets-width': `${widths.snippets}px` } as CSSProperties}>
       <TitleBar />
       <div className="app-body" ref={body}>
-        <Sidebar resize={resizeProps('sidebar')} />
+        <ErrorBoundary name="sidebar" fallback={(retry) => <PanelFallback retry={retry} className="sidebar" />}><Sidebar resize={resizeProps('sidebar')} /></ErrorBoundary>
         <div className="main">
           <WorkspaceTabs />
           <div className="workspace-content">
@@ -224,11 +253,11 @@ export function App() {
           </div>
           {automationOpen && <LazyScreen load={loadAutomationPanel} />}
         </div>
-        {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
+        {snippetsOpen && <ErrorBoundary name="snippets" fallback={(retry) => <PanelFallback retry={retry} />}><SnippetPanel resize={resizeProps('snippets')} /></ErrorBoundary>}
       </div>
-      <StatusBar />
-      <CommandPalette />
-      <Modals />
+      <ErrorBoundary name="statusbar" fallback={(retry) => <PanelFallback retry={retry} className="statusbar" />}><StatusBar /></ErrorBoundary>
+      <ErrorBoundary name="palette" fallback={() => null}><CommandPalette /></ErrorBoundary>
+      <ErrorBoundary name="modals" fallback={(retry) => <PanelFallback retry={() => { setUi({ modal: null }); retry(); }} className="modal-failed" />}><Modals /></ErrorBoundary>
       <ContextMenuHost />
       <Toast />
     </div>

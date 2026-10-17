@@ -9,6 +9,7 @@ import { getUi, setUi, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
 import { useCellDrag, type DragContext } from './useCellDrag';
 import { CellView } from './CellView';
+import { CellFallback, ErrorBoundary } from './ErrorBoundary';
 import { areaStyle, GridDividers } from './GridDividers';
 import { IHistory, IPlus, Logo } from './icons';
 import { ProjectIconView } from './ProjectIcon';
@@ -100,9 +101,12 @@ export function GridView() {
       {tab.cells.map((cell, i) => {
         if (maxCell && cell.id !== maxCell.id) return null;
         const rect = rects[i] ?? rects[rects.length - 1];
-        const style = maxCell ? { left: 0, top: 0, width: '100%', height: '100%' } : areaStyle(rect);
-        return <CellView key={cell.id} cell={cell} index={i} style={style} maximized={!!maxCell}
-          dragSource={drag?.id === cell.id} onHeadPointerDown={canDrag ? onHeadPointerDown : undefined} />;
+        const style = maxCell || !rect ? { left: 0, top: 0, width: '100%', height: '100%' } : areaStyle(rect);
+        // One cell that fails to draw keeps its box with a retry; the other cells and its terminal are unaffected.
+        return <ErrorBoundary key={cell.id} name="cell" fallback={(retry) => <CellFallback style={style} retry={retry} />}>
+          <CellView cell={cell} index={i} style={style} maximized={!!maxCell}
+            dragSource={drag?.id === cell.id} onHeadPointerDown={canDrag ? onHeadPointerDown : undefined} />
+        </ErrorBoundary>;
       })}
       {targetIndex >= 0 && rects[targetIndex] && (
         <div className="cell-drop-target" style={areaStyle(rects[targetIndex])}><span>{tr('Zamień miejscami')}</span></div>
