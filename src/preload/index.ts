@@ -101,6 +101,7 @@ const api: McApi = {
   // Electron removed `clipboard` from preload/renderer; main owns it.
   clipboardRead: () => ipcRenderer.invoke('clipboard:read'),
   clipboardWrite: (text) => ipcRenderer.send('clipboard:write', text),
+  reportError: (kind, message, stack) => ipcRenderer.send('app:reportError', String(kind).slice(0, 24), String(message).slice(0, 4000), stack === undefined ? undefined : String(stack).slice(0, 8000)),
   windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || 0 : 0,
   getUpdate: () => ipcRenderer.invoke('update:get'),
   checkUpdates: () => ipcRenderer.invoke('update:check'),

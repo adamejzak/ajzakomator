@@ -242,7 +242,14 @@ export class HookServer extends EventEmitter {
       });
     });
     this.server.requestTimeout = 5000;
-    await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve));
+    // A listen that fails (loopback blocked by security software) rejects instead of never settling.
+    const server = this.server;
+    await new Promise<void>((resolve, reject) => {
+      const fail = (error: Error) => { clearTimeout(timer); reject(error); };
+      const timer = setTimeout(() => { server.off('error', fail); reject(new Error('hook server did not start listening in time')); }, 10_000);
+      server.once('error', fail);
+      server.listen(0, '127.0.0.1', () => { clearTimeout(timer); server.off('error', fail); resolve(); });
+    });
     this.port = (this.server.address() as AddressInfo).port;
   }
 
