@@ -9,7 +9,7 @@ import type { SpawnCellRequest } from '../preload/api';
 import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
 import { buildLaunchCommand, type LaunchOptions } from '../shared/profiles';
-import { prepareCellMcp, removeClaudeMcpConfig } from './mcpCellConfig';
+import { endCellMcp, prepareCellMcp } from './mcpCellConfig';
 import type { AppState, Worktree } from '../shared/types';
 import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
@@ -515,7 +515,7 @@ const automation = new AutomationService(controller, {
     return profile ? missingCli(profile, cliDetector.snapshot()) ?? undefined : undefined;
   },
   stopCells: async (ids) => {
-    for (const id of ids) { noteKill(id); ssh?.killed(id); mcp.revokeCell(id); verifiedCodex.delete(id); alive.delete(id); automation.statuses.set(id, 'exited'); }
+    for (const id of ids) { noteKill(id); ssh?.killed(id); endCellMcp(mcp, MCP_DIR, id); verifiedCodex.delete(id); alive.delete(id); automation.statuses.set(id, 'exited'); }
     await Promise.all(ids.map((id) => ptyHost.killAndWait(id)));
   },
   isCellRunning: (cellId) => alive.has(cellId),
@@ -528,7 +528,7 @@ const automation = new AutomationService(controller, {
     const cwd = found.cell.worktree?.path ?? found.project.path;
     if (!(await pathExists(cwd))) return { restarted: false, reason: 'Project folder does not exist.' };
     if (!alive.has(cellId)) return { restarted: false, reason: 'Agent is not running.' };
-    mcp.revokeCell(cellId);
+    endCellMcp(mcp, MCP_DIR, cellId);
     verifiedCodex.delete(cellId);
     alive.delete(cellId);
     await ptyHost.killAndWait(cellId);
@@ -747,13 +747,13 @@ ptyHost.on('message', (m: HostToMain) => {
   else if (m.t === 'exit') {
     alive.delete(m.id);
     verifiedCodex.delete(m.id);
-    mcp.revokeCell(m.id);
+    endCellMcp(mcp, MCP_DIR, m.id);
     automation.statuses.set(m.id, 'exited');
     releasePrompt(m.id);
   } else if (m.t === 'spawnError') {
     releasePrompt(m.id);
     alive.delete(m.id);
-    mcp.revokeCell(m.id);
+    endCellMcp(mcp, MCP_DIR, m.id);
     automation.statuses.set(m.id, 'exited');
     send('cell:spawnError', m.id, m.message);
   }
@@ -765,7 +765,7 @@ function forgetHostTerminals(code: unknown, stderrTail: unknown): boolean {
   releaseAllPrompts();
   login.failActive('spawn');
   install.failActive();
-  for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
+  for (const id of alive) { endCellMcp(mcp, MCP_DIR, id); automation.statuses.set(id, 'exited'); }
   verifiedCodex.clear();
   ssh?.hostCrashed();
   const resumes = resumesConversation([...alive].map((id) => {
@@ -888,7 +888,7 @@ async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
     return await spawnRequestUnsafe(req);
   } catch (error) {
     crashLog.warn(`spawn of a cell failed: ${describeError(error)}`);
-    mcp.revokeCell(req.cellId);
+    endCellMcp(mcp, MCP_DIR, req.cellId);
     alive.delete(req.cellId);
     automation.statuses.set(req.cellId, 'exited');
     return { ok: false, error: tr('Nie udało się uruchomić terminala: {error}', { error: error instanceof Error ? error.message : String(error) }) };
@@ -905,7 +905,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
     // A definite "not installed" never spawns a shell that would only print "command not found"; unknown fails open.
     const status = await cliDetector.get(cli, { waitMs: CLI_WAIT_MS }).catch(() => undefined);
     if (!spawnDecision(req.profile, status).spawn) {
-      mcp.revokeCell(req.cellId);
+      endCellMcp(mcp, MCP_DIR, req.cellId);
       alive.delete(req.cellId);
       automation.statuses.set(req.cellId, 'exited');
       return { ok: false, error: tr('{name} nie jest zainstalowany', { name: CLI_NAMES[cli] }), cliMissing: cli, cliStatus: status };
@@ -935,10 +935,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   // Codex can only read it from a variable (see mcpCellConfig.ts).
   if (req.profile.cli !== 'shell' && findCell(state, req.cellId)?.cell.role && mcp.getInfo().running) {
     mcpConfig = prepareCellMcp(req.profile.cli, { dir: MCP_DIR, cellId: req.cellId, url: mcp.getInfo().url!, token: mcp.issueToken(req.cellId), env });
-  } else {
-    mcp.revokeCell(req.cellId);
-    removeClaudeMcpConfig(MCP_DIR, req.cellId);
-  }
+  } else endCellMcp(mcp, MCP_DIR, req.cellId);
   // Codex reports every finished turn (and its conversation id) to the local hook server through a per-process `notify`.
   let codexNotifyUrl: string | undefined;
   if (req.profile.cli === 'codex') {
@@ -959,7 +956,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
 ipcMain.on('cell:kill', (_e, id: string) => {
   noteKill(id);
   ssh?.killed(id);
-  mcp.revokeCell(id);
+  endCellMcp(mcp, MCP_DIR, id);
   verifiedCodex.delete(id);
   automation.statuses.set(id, 'exited');
   alive.delete(id);
@@ -968,7 +965,7 @@ ipcMain.on('cell:kill', (_e, id: string) => {
 ipcMain.handle('cell:killAndWait', async (_e, id: string) => {
   noteKill(id);
   ssh?.killed(id);
-  mcp.revokeCell(id);
+  endCellMcp(mcp, MCP_DIR, id);
   verifiedCodex.delete(id);
   automation.statuses.set(id, 'exited');
   alive.delete(id);

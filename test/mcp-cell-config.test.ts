@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { removeCellFiles } from '../src/main/cellFiles';
-import { MCP_TOKEN_ENV, prepareCellMcp, writeClaudeMcpConfig } from '../src/main/mcpCellConfig';
+import { endCellMcp, MCP_TOKEN_ENV, prepareCellMcp, writeClaudeMcpConfig } from '../src/main/mcpCellConfig';
 import { cleanEnv } from '../src/shared/env';
 import { buildCliCommand, DEFAULT_PROFILES } from '../src/shared/profiles';
 
@@ -88,5 +88,19 @@ describe('per-cell MCP token delivery', () => {
     await removeCellFiles(dirs, 'c1');
     expect(existsSync(file)).toBe(false);
     expect(readdirSync(dirs.mcp)).toEqual(['c2.json']);
+  });
+
+  it('ending the cell MCP access (exit, kill, failed spawn, spawn without MCP) revokes the token and deletes the file', () => {
+    const { dirs } = fakeData();
+    const file = writeClaudeMcpConfig(dirs.mcp, 'c1', URL, TOKEN);
+    writeClaudeMcpConfig(dirs.mcp, 'c2', URL, 'other');
+    const revoked: string[] = [];
+    endCellMcp({ revokeCell: (id) => revoked.push(id) }, dirs.mcp, 'c1');
+    expect(revoked).toEqual(['c1']);
+    expect(existsSync(file)).toBe(false);
+    expect(readdirSync(dirs.mcp)).toEqual(['c2.json']);
+    // A cell that never had a file (a Codex or shell cell) and a missing folder are fine.
+    endCellMcp({ revokeCell: (id) => revoked.push(id) }, join(dirs.mcp, 'missing'), 'c3');
+    expect(revoked).toEqual(['c1', 'c3']);
   });
 });

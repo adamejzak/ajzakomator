@@ -51,3 +51,12 @@ export function prepareCellMcp(cli: 'claude' | 'codex', opts: { dir: string; cel
   opts.env[MCP_TOKEN_ENV] = opts.token;
   return { url: opts.url, tokenEnv: MCP_TOKEN_ENV };
 }
+
+/**
+ * The cell's MCP access ends (its process exited or was killed, a spawn failed or runs without MCP): the token is revoked and
+ * the Claude config carrying it is removed, so no token file outlives the process that read it.
+ */
+export function endCellMcp(server: { revokeCell(cellId: string): void }, dir: string, cellId: string): void {
+  server.revokeCell(cellId);
+  removeClaudeMcpConfig(dir, cellId);
+}
