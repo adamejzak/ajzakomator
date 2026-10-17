@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SshHost, SshSessionState } from '../src/shared/ssh';
 import { filterHosts, formDirty, hostFormDirty, hostToDraft } from '../src/shared/ssh';
 import {
-  chooseSshSection, clickedDetail, DEFAULT_SSH_SECTION, detailKey, detailPaneOpen, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts,
+  askBeforeLeaving, chooseSshSection, clickedDetail, DEFAULT_SSH_SECTION, detailKey, detailPaneOpen, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts,
   newKeyDetail, paneDetail, paneEscape, paneLeaves, sectionChange, sectionForDetail, showGroupHeadings, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter, visibleSelection,
 } from '../src/shared/sshView';
 
@@ -224,5 +224,22 @@ describe('paneLeaves (0.9.3)', () => {
     expect(paneLeaves({ ...on, detail: null }, { ...on, detail: { kind: 'host', hostId: 'h2' } })).toBe(false);
     expect(paneLeaves({ ...on, section: 'keys' }, { ...on, section: 'hosts' })).toBe(false);
     expect(paneLeaves({ ...on, viewActive: false }, on)).toBe(false);
+  });
+});
+
+describe('askBeforeLeaving (0.9.3: connect and open as grid)', () => {
+  it('with unsaved edits and "Anuluj" opens no cell or grid', async () => {
+    const opened: boolean[] = [];
+    expect(await askBeforeLeaving(true, async () => false, (d) => opened.push(d))).toBe(false);
+    expect(opened).toEqual([]);
+  });
+  it('opens after "Odrzuć zmiany" (discarded) and at once without edits, asking only when dirty', async () => {
+    const opened: boolean[] = [];
+    let asked = 0;
+    const ask = async () => { asked++; return true; };
+    expect(await askBeforeLeaving(true, ask, (d) => opened.push(d))).toBe(true);
+    expect(await askBeforeLeaving(false, ask, (d) => opened.push(d))).toBe(true);
+    expect(opened).toEqual([true, false]);
+    expect(asked).toBe(1);
   });
 });

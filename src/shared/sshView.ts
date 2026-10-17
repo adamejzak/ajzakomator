@@ -157,3 +157,13 @@ export function paneLeaves(prev: PaneScreen, next: PaneScreen): boolean {
   const after = paneDetail(next.section, next.detail);
   return !after || detailKey(after) !== detailKey(before);
 }
+
+/**
+ * An action that leaves the view (connect, open as grid): with unsaved pane edits it asks first and does nothing after
+ * "Anuluj"; `go` learns whether edits were discarded. True when it ran.
+ */
+export async function askBeforeLeaving(dirty: boolean, ask: () => Promise<boolean>, go: (discarded: boolean) => void): Promise<boolean> {
+  if (dirty && !(await ask())) return false;
+  go(dirty);
+  return true;
+}

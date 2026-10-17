@@ -7,13 +7,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 import { activeProject, activeTab, duplicateSshHost, updateSshHost } from '../../../../shared/state';
 import { existingSelection, filterHosts, groupHosts, parseFoldedGroups, toggleSelection, userAtEndpoint, type SshHost } from '../../../../shared/ssh';
 import {
-  clickedDetail, detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, newKeyDetail, paneDetail, paneEscape, paneLeaves,
+  askBeforeLeaving, clickedDetail, detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, newKeyDetail, paneDetail, paneEscape, paneLeaves,
   showGroupHeadings, showGroupRow, toggleGroupFilter, visibleSelection, type NewKeyMode, type PaneScreen, type SshDetail,
 } from '../../../../shared/sshView';
 import type { MessageKey } from '../../../../shared/i18n';
-import { showTerminalTabs } from '../../files';
+import { showTerminalTabs, useFileStore } from '../../files';
 import { useI18n } from '../../i18n';
-import { askChoice, askText, getS, setUi, update, useStore } from '../../store';
+import { askChoice, askText, getS, getUi, setUi, update, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
 import { confirmRemoveSshHost, openHostInCell, openHostsAsGrid, showSshDetail } from '../../ssh';
 import { openMenu, openMenuAt, type MenuItem } from '../ContextMenu';
@@ -50,12 +50,20 @@ export function SshView() {
   const keys = vault?.keys ?? [];
   const detail = paneDetail(section, liveDetail(storedDetail, hosts, keys.map((k) => k.id)));
 
-  /** Connecting shows the grid: host key and password prompts appear in the cell. */
-  const connect = (hostId: string, target: 'cell' | 'tab') => { showTerminalTabs(); void openHostInCell(hostId, target); };
   /** Unsaved changes reported by the pane's editors (useReportDirty). */
   const dirty = useRef(new Map<string, boolean>());
   const reportDirty = useCallback((id: string, value: boolean) => { if (value) dirty.current.set(id, true); else dirty.current.delete(id); }, []);
   const askDiscard = async () => await askChoice(tr('Odrzucić niezapisane zmiany?'), '', [{ label: tr('Odrzuć zmiany'), value: 'yes', danger: true }]) === 'yes';
+  /**
+   * Showing the grid from the view (connect, open as grid): asked about unsaved pane edits first, so after "Anuluj" no cell
+   * or grid is opened behind the view. A discarded pane closes, like any other discarded leave.
+   */
+  const toGrid = (open: () => void) => void askBeforeLeaving(dirty.current.size > 0, askDiscard, (discarded) => {
+    withoutPaneGuard(() => { if (discarded) showSshDetail(null); showTerminalTabs(); });
+    open();
+  });
+  /** Connecting shows the grid: host key and password prompts appear in the cell. */
+  const connect = (hostId: string, target: 'cell' | 'tab') => toGrid(() => void openHostInCell(hostId, target));
   const askRef = useRef(askDiscard);
   askRef.current = askDiscard;
   /**
@@ -74,18 +82,26 @@ export function SshView() {
       asking = true;
       void askRef.current().then((yes) => { asking = false; if (yes) withoutPaneGuard(apply); });
     };
+    // What a leave changes outside the SSH store (the file in front, the side panel): put back after "Anuluj".
+    const others = () => ({ activeFileId: useFileStore.getState().activeFileId, sidebarView: getUi().sidebarView });
+    const setOthers = (o: ReturnType<typeof others>) => { useFileStore.setState({ activeFileId: o.activeFileId }); setUi({ sidebarView: o.sidebarView }); };
     const offSsh = useSshStore.subscribe((st, prev) => {
       if (paneGuardOff() || !dirty.current.size || !paneLeaves(prev, st) || !shownLive(prev)) return;
       const wanted = screen(st);
+      const kept = others();
       withoutPaneGuard(() => useSshStore.setState(screen(prev)));
-      ask(() => useSshStore.setState(wanted.viewActive && wanted.viewOpen ? wanted : { ...wanted, detail: null }));
+      // The caller may change the other stores right after the SSH one (showTerminalTabs, activateFile): undone once it ran.
+      let wantedOthers = kept;
+      queueMicrotask(() => { wantedOthers = others(); setOthers(kept); });
+      ask(() => { useSshStore.setState(wanted.viewActive && wanted.viewOpen ? wanted : { ...wanted, detail: null }); setOthers(wantedOthers); });
     });
     const offUi = useStore.subscribe((st, prev) => {
       if (!st.ui.settingsActive || prev.ui.settingsActive || paneGuardOff() || !dirty.current.size) return;
       const ssh = useSshStore.getState();
       if (!ssh.viewActive || !shownLive(ssh)) return;
-      setUi({ settingsActive: false });
-      ask(() => { showSshDetail(null); setUi({ settingsActive: true }); });
+      const tabOpen = st.ui.settingsTabOpen;
+      setUi({ settingsActive: false, settingsTabOpen: prev.ui.settingsTabOpen });
+      ask(() => { showSshDetail(null); setUi({ settingsActive: true, settingsTabOpen: tabOpen }); });
     });
     return () => { offSsh(); offUi(); };
   }, []);
@@ -124,7 +140,7 @@ export function SshView() {
         {collapsed && <SshNav compact />}
         {vault?.storage === 'unavailable' && <div className="ssh-banner-warn">{tr('Szyfrowanie systemowe jest niedostępne - klucze i hasła są trzymane tylko do zamknięcia aplikacji')}</div>}
         <div id="ssh-section" role="tabpanel" className="ssh-view-body" aria-label={tr(section === 'hosts' ? 'Hosty' : section === 'keys' ? 'Klucze' : 'Znane hosty')}>
-          {section === 'hosts' && <HostsSection detail={detail} onConnect={connect} onClosePane={closePane} />}
+          {section === 'hosts' && <HostsSection detail={detail} onConnect={connect} onGrid={toGrid} onClosePane={closePane} />}
           {section === 'keys' && <KeysSection detail={detail} onClosePane={closePane} />}
           {section === 'knownHosts' && <KnownHostsView />}
         </div>
@@ -155,7 +171,7 @@ function EmptyState({ icon, title, text, children }: { icon: ReactNode; title: s
   );
 }
 
-function HostsSection({ detail, onConnect, onClosePane }: { detail: SshDetail | null; onConnect: (hostId: string, target: 'cell' | 'tab') => void; onClosePane: () => Promise<void> }) {
+function HostsSection({ detail, onConnect, onGrid, onClosePane }: { detail: SshDetail | null; onConnect: (hostId: string, target: 'cell' | 'tab') => void; onGrid: (open: () => void) => void; onClosePane: () => Promise<void> }) {
   const { tr } = useI18n();
   const hosts = useStore((st) => st.s.sshHosts);
   const projects = useStore((st) => st.s.projects);
@@ -199,7 +215,7 @@ function HostsSection({ detail, onConnect, onClosePane }: { detail: SshDetail | 
       return kept.length === st.selectedHosts.length ? {} : { selectedHosts: kept };
     });
   };
-  const openGrid = (ids: string[]) => { showTerminalTabs(); void openHostsAsGrid(ids); useSshStore.setState({ selectedHosts: [] }); };
+  const openGrid = (ids: string[]) => onGrid(() => { void openHostsAsGrid(ids); useSshStore.setState({ selectedHosts: [] }); });
   const groupMenu = (e: MouseEvent, name: string | null, ids: string[]) => {
     e.preventDefault();
     openMenu(e.clientX, e.clientY, [

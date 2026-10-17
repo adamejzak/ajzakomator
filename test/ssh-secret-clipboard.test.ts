@@ -17,7 +17,7 @@ function fakeClipboard() {
   return { clip, timers, digests, fire, get: () => content, set: (text: string) => { content = text; } };
 }
 
-describe('copied private key leaves the clipboard (0.9.2, in main since 0.9.3)', async () => {
+describe('copied private key leaves the clipboard (0.9.2, in main since 0.9.3)', () => {
   it('clears the clipboard after a minute if it still holds the copied key', async () => {
     const f = fakeClipboard();
     await f.clip.copy('-----BEGIN OPENSSH PRIVATE KEY-----\nsecret');
