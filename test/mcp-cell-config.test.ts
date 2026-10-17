@@ -18,7 +18,7 @@ function fakeData() {
   return { root, dirs: { hooks: join(root, 'hooks'), prompts: join(root, 'prompts'), mcp: join(root, 'mcp') } };
 }
 /** The spawn environment the app builds for a cell, from a parent that itself runs inside an older unimux cell. */
-const spawnEnv = () => ({ ...cleanEnv({ PATH: '/usr/bin', HOME: '/tmp/fake-home', [MCP_TOKEN_ENV]: 'parent-token' }), MC_CELL_ID: 'c1' });
+const spawnEnv = (): Record<string, string> => ({ ...cleanEnv({ PATH: '/usr/bin', HOME: '/tmp/fake-home', [MCP_TOKEN_ENV]: 'parent-token' }), MC_CELL_ID: 'c1' });
 afterEach(() => { for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
 
 describe('per-cell MCP token delivery', () => {
