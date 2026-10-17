@@ -10,3 +10,23 @@ updates:
     groups:
       actions:
         patterns: ['*']
+  # npm: minor and patch updates only; majors (Electron, Vite, TypeScript, zod, @types/node) stay manual.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      # Chromium and the sanitizer/markdown path that renders untrusted text: reviewed and released quickly.
+      security-sensitive:
+        patterns: ['electron', 'dompurify', 'marked']
+      dev-tooling:
+        dependency-type: development
+        exclude-patterns: ['electron', 'dompurify', 'marked']
+      runtime:
+        dependency-type: production
