@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ssh2 from 'ssh2';
@@ -10,7 +10,7 @@ import { SshVault } from '../src/main/ssh/vault';
 import { layoutForCount } from '../src/shared/layout';
 import { addProject, addSshHost, addTab, defaultState } from '../src/shared/state';
 import type { AppState } from '../src/shared/types';
-import { fakeCipher, readableKeyPair } from './helpers/sshKeys';
+import { fakeCertificate, fakeCipher, ppkV2Rsa, readableKeyPair } from './helpers/sshKeys';
 
 const HOST = '00000000-0000-4000-8000-000000000001';
 const pair = readableKeyPair('ed25519', { passphrase: 'ipc-pass-phrase', cipher: 'aes256-ctr', rounds: 16 });
@@ -222,6 +222,8 @@ describe('ssh IPC handlers', () => {
       updateKey: { id: stored.key.id, label: 'renamed', passphrase: { save: 'ipc-pass-phrase' } },
       removeKey: { id: '00000000-0000-4000-8000-000000000077' },
       exportPrivateKey: { id: stored.key.id },
+      revealPrivateKey: { id: stored.key.id },
+      replacePrivateKey: { id: stored.key.id, privateKey: pair.private, passphrase: 'ipc-pass-phrase', savePassphrase: true },
       setPassword: { hostId: HOST, password: 'ipc-host-password' },
       clearPassword: { hostId: HOST },
       forgetPassphrases: undefined,
@@ -233,12 +235,16 @@ describe('ssh IPC handlers', () => {
       answer: { cellId, promptId: HOST, cancel: true },
     };
     for (const [channel, name] of Object.entries(SSH_CHANNELS)) {
+      // The explicit "Pokaż klucz prywatny" is the one allowed reveal path; it is checked on its own below.
+      if (name === 'revealPrivateKey') continue;
       const result = await (h[name] as (payload?: unknown) => Promise<unknown>)(payloads[name]);
       expect(result, channel).not.toEqual({ ok: false, error: 'invalid' });
       expect(leaks(result), channel).toEqual([]);
       expect(JSON.stringify(result ?? null), channel).not.toContain('PRIVATE KEY');
     }
     expect(written).toHaveLength(1);
+    // Only the reveal channel answers private key text, and only for the key that was asked for.
+    expect(JSON.stringify(await h.revealPrivateKey(payloads.revealPrivateKey))).toContain('PRIVATE KEY');
   });
 
   it('answers a fixed code when exporting the private key fails (fix round 1)', async () => {
@@ -252,5 +258,148 @@ describe('ssh IPC handlers', () => {
     const failedDialog = await h.exportPrivateKey({ id: generated.key.id });
     expect(failedDialog).toEqual({ ok: false, error: 'failed' });
     for (const r of [failedWrite, failedDialog]) expect(JSON.stringify(r)).not.toMatch(/EPERM|private/);
+  });
+
+  describe('private key reveal and replace (0.9.2)', () => {
+    const KEY_GONE = '00000000-0000-4000-8000-000000000099';
+    const generate = async (h: ReturnType<typeof createSshHandlers>, label = 'gen') => {
+      const r = await h.generateKey({ label, type: 'ed25519', savePassphrase: false });
+      if (!r.ok) throw new Error('generate');
+      return r.key;
+    };
+
+    it('reveals the stored text only on an explicit call with a valid id; an encrypted key stays encrypted', async () => {
+      const h = createSshHandlers(deps);
+      const key = await generate(h);
+      const r = await h.revealPrivateKey({ id: key.id });
+      expect(r).toMatchObject({ ok: true });
+      expect(r.ok && r.privateKey).toContain('BEGIN OPENSSH PRIVATE KEY');
+      expect(r.ok && r.privateKey).toBe(deps.vault.keySecret(key.id).ok && (deps.vault.keySecret(key.id) as { privateKey: string }).privateKey);
+      expect(await h.revealPrivateKey({ id: KEY_GONE })).toEqual({ ok: false, error: 'notFound' });
+      expect(await h.revealPrivateKey({ id: 'not-a-uuid' })).toEqual({ ok: false, error: 'notFound' });
+      expect(await h.revealPrivateKey({ id: key.id, extra: true })).toEqual({ ok: false, error: 'notFound' });
+      expect(await h.revealPrivateKey(undefined)).toEqual({ ok: false, error: 'notFound' });
+      // A passphrase-protected key is returned as stored: the encrypted text, never decrypted with the saved passphrase.
+      const draft = await h.draftFromText({ privateKey: pair.private });
+      if (!draft.ok) throw new Error('draft');
+      await h.unlockDraft({ draftId: draft.draftId, passphrase: 'ipc-pass-phrase' });
+      const enc = await h.commitDraft({ draftId: draft.draftId, label: 'enc', savePassphrase: true });
+      if (!enc.ok) throw new Error('commit');
+      const shown = await h.revealPrivateKey({ id: enc.key.id });
+      expect(shown).toEqual({ ok: true, privateKey: pair.private });
+      expect(JSON.stringify(shown)).not.toContain('ipc-pass-phrase');
+    });
+
+    it('answers locked for a key this computer cannot decrypt, and still reveals from a read-only vault', async () => {
+      const h = createSshHandlers(deps);
+      const key = await generate(h);
+      const vaultFile = join(dir, 'ssh', 'vault.json');
+      const locked = createSshHandlers({ ...deps, vault: new SshVault(vaultFile, fakeCipher({ broken: true })) });
+      expect(await locked.revealPrivateKey({ id: key.id })).toEqual({ ok: false, error: 'locked' });
+      writeFileSync(vaultFile, readFileSync(vaultFile, 'utf8').replace('"version": 1', '"version": 99'));
+      const readOnlyVault = new SshVault(vaultFile, fakeCipher());
+      expect(readOnlyVault.readOnly()).toBe(true);
+      expect(await createSshHandlers({ ...deps, vault: readOnlyVault }).revealPrivateKey({ id: key.id })).toMatchObject({ ok: true });
+    });
+
+    it('replaces the key material under the same id and reports whether the public key changed', async () => {
+      const h = createSshHandlers(deps);
+      const key = await generate(h, 'deploy');
+      state = { ...state, sshHosts: state.sshHosts.map((x) => ({ ...x, keyId: key.id })) };
+      const before = await h.revealPrivateKey({ id: key.id });
+      if (!before.ok) throw new Error('reveal');
+      // The same key again: nothing to update on the servers.
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: before.privateKey, savePassphrase: false })).toMatchObject({ ok: true, publicKeyChanged: false, key: { id: key.id, fingerprint: key.fingerprint } });
+      const next = readableKeyPair('ecdsa', { bits: 256, comment: 'next@check' });
+      const r = await h.replacePrivateKey({ id: key.id, privateKey: next.private, savePassphrase: false });
+      if (!r.ok) throw new Error(`replace: ${r.error}`);
+      expect(r.publicKeyChanged).toBe(true);
+      expect(r.key).toMatchObject({ id: key.id, label: 'deploy', type: 'ecdsa-sha2-nistp256', bits: 256, comment: 'next@check', encrypted: false, createdAt: key.createdAt });
+      expect(r.key.fingerprint).not.toBe(key.fingerprint);
+      expect(r.key.publicKey).toMatch(/^ecdsa-sha2-nistp256 \S+ next@check$/);
+      expect(JSON.stringify(r)).not.toContain('PRIVATE KEY');
+      expect(await h.revealPrivateKey({ id: key.id })).toEqual({ ok: true, privateKey: next.private });
+      expect(state.sshHosts[0].keyId).toBe(key.id);
+      expect(deps.vault.info().keys).toHaveLength(1);
+      expect(deps.vaultChanged).toHaveBeenCalled();
+      // Written encrypted, like every stored key.
+      expect(readFileSync(join(dir, 'ssh', 'vault.json'), 'utf8')).not.toContain('PRIVATE KEY');
+    });
+
+    it('stores an encrypted replacement only with the right passphrase and saves the passphrase only when asked', async () => {
+      const h = createSshHandlers(deps);
+      const key = await generate(h);
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: pair.private, savePassphrase: false })).toEqual({ ok: false, error: 'needsPassphrase' });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: pair.private, passphrase: 'wrong', savePassphrase: true })).toEqual({ ok: false, error: 'badPassphrase' });
+      expect(deps.vault.key(key.id)!.fingerprint).toBe(key.fingerprint);
+      const r = await h.replacePrivateKey({ id: key.id, privateKey: pair.private, passphrase: 'ipc-pass-phrase', savePassphrase: false });
+      expect(r).toMatchObject({ ok: true, publicKeyChanged: true, key: { encrypted: true, passphraseSaved: false } });
+      expect(leaks(r)).toEqual([]);
+      expect(deps.vault.keySecret(key.id)).toEqual({ ok: true, privateKey: pair.private });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: pair.private, passphrase: 'ipc-pass-phrase', savePassphrase: true })).toMatchObject({ ok: true, publicKeyChanged: false, key: { passphraseSaved: true } });
+      expect(deps.vault.keySecret(key.id)).toEqual({ ok: true, privateKey: pair.private, passphrase: 'ipc-pass-phrase' });
+    });
+
+    it('refuses invalid keys, PPK v3, public keys, wrong ids and malformed payloads with fixed codes', async () => {
+      const h = createSshHandlers(deps);
+      const key = await generate(h);
+      const update = vi.spyOn(deps.vault, 'replaceKey');
+      const ppk3 = 'PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nComment: x\nPublic-Lines: 1\nAAAA\nPrivate-Lines: 1\nAAAA\nPrivate-MAC: 00\n';
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: 'hello', savePassphrase: false })).toEqual({ ok: false, error: 'notAKey' });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: ppk3, savePassphrase: false })).toEqual({ ok: false, error: 'ppkV3' });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: key.publicKey, savePassphrase: false })).toEqual({ ok: false, error: 'publicOnly' });
+      expect(await h.replacePrivateKey({ id: KEY_GONE, privateKey: pair.private, passphrase: 'ipc-pass-phrase', savePassphrase: false })).toEqual({ ok: false, error: 'notFound' });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: '', savePassphrase: false })).toEqual({ ok: false, error: 'invalid' });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: 'x'.repeat(64 * 1024 + 1), savePassphrase: false })).toEqual({ ok: false, error: 'invalid' });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: pair.private, savePassphrase: false, label: 'x' })).toEqual({ ok: false, error: 'invalid' });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: pair.private })).toEqual({ ok: false, error: 'invalid' });
+      expect(update).not.toHaveBeenCalled();
+      // A PuTTY PPK v2 RSA key is accepted, like an import.
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: ppkV2Rsa('putty'), savePassphrase: false })).toMatchObject({ ok: true, publicKeyChanged: true, key: { type: 'ssh-rsa', comment: 'putty' } });
+    });
+
+    it('refuses a key that is already stored under another id, and a read-only vault', async () => {
+      const h = createSshHandlers(deps);
+      const a = await generate(h, 'a');
+      const b = await generate(h, 'b');
+      const bText = await h.revealPrivateKey({ id: b.id });
+      if (!bText.ok) throw new Error('reveal');
+      expect(await h.replacePrivateKey({ id: a.id, privateKey: bText.privateKey, savePassphrase: false })).toEqual({ ok: false, error: 'duplicate' });
+      const vaultFile = join(dir, 'ssh', 'vault.json');
+      writeFileSync(vaultFile, readFileSync(vaultFile, 'utf8').replace('"version": 1', '"version": 99'));
+      const before = readFileSync(vaultFile, 'utf8');
+      const ro = createSshHandlers({ ...deps, vault: new SshVault(vaultFile, fakeCipher()) });
+      const next = readableKeyPair('ed25519');
+      expect(await ro.replacePrivateKey({ id: a.id, privateKey: next.private, savePassphrase: false })).toEqual({ ok: false, error: 'readOnly' });
+      expect(readFileSync(vaultFile, 'utf8')).toBe(before);
+    });
+
+    it('answers failed when the vault cannot be written, and drops a certificate of the old public key', async () => {
+      const h = createSshHandlers(deps);
+      const key = await generate(h);
+      expect(await h.updateKey({ id: key.id, certificate: fakeCertificate(key.publicKey) })).toMatchObject({ ok: true });
+      const current = await h.revealPrivateKey({ id: key.id });
+      if (!current.ok) throw new Error('reveal');
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: current.privateKey, savePassphrase: false })).toMatchObject({ ok: true, key: { certificate: expect.any(String) } });
+      const next = readableKeyPair('ed25519');
+      const spy = vi.spyOn(deps.vault, 'replaceKey').mockImplementationOnce(() => { throw new Error('EACCES D:\\private\\vault.json'); });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: next.private, savePassphrase: false })).toEqual({ ok: false, error: 'failed' });
+      spy.mockRestore();
+      const r = await h.replacePrivateKey({ id: key.id, privateKey: next.private, savePassphrase: false });
+      expect(r.ok && r.key.certificate).toBeUndefined();
+    });
+
+    it('is registered behind the sender check like every ssh channel', async () => {
+      const handle = vi.fn();
+      const h = createSshHandlers(deps);
+      const key = await generate(h);
+      registerSshIpc({ handle, on: vi.fn() } as never, h, (event) => event.sender === 'app');
+      const reveal = handle.mock.calls.find((c) => c[0] === 'ssh:key:revealPrivate')![1];
+      const replace = handle.mock.calls.find((c) => c[0] === 'ssh:key:replacePrivate')![1];
+      expect(await reveal({ sender: 'evil' }, { id: key.id })).toBeUndefined();
+      expect(await replace({ sender: 'evil' }, { id: key.id, privateKey: readableKeyPair('ed25519').private, savePassphrase: false })).toBeUndefined();
+      expect(deps.vault.key(key.id)!.fingerprint).toBe(key.fingerprint);
+      expect(await reveal({ sender: 'app' }, { id: key.id })).toMatchObject({ ok: true });
+    });
   });
 });

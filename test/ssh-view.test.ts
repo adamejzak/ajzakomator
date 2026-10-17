@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { SshHost, SshSessionState } from '../src/shared/ssh';
+import { filterHosts } from '../src/shared/ssh';
 import {
-  chooseSshSection, DEFAULT_SSH_SECTION, detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts, newKeyDetail, paneDetail,
-  sectionChange, sectionForDetail, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter,
+  chooseSshSection, clickedDetail, DEFAULT_SSH_SECTION, detailKey, detailPaneOpen, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts,
+  newKeyDetail, paneDetail, paneEscape, sectionChange, sectionForDetail, showGroupHeadings, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter, visibleSelection,
 } from '../src/shared/sshView';
 
 const host = (id: string, label: string, group?: string): SshHost => ({ id, label, address: `${label}.example`, port: 22, username: 'u', createdAt: 0, updatedAt: 0, ...(group ? { group } : {}) });
@@ -101,11 +102,20 @@ describe('SSH mode sections (0.9.2)', () => {
 
 describe('group tiles (0.9.2)', () => {
   const hosts = [host('a', 'web-2', 'lab'), host('b', 'web-1', 'lab'), host('c', 'pi'), host('d', 'db', 'prod')];
-  it('counts the hosts per group, named groups first, then the hosts without a group', () => {
-    expect(groupTiles(hosts)).toEqual([{ key: 'lab', name: 'lab', count: 2 }, { key: 'prod', name: 'prod', count: 1 }, { key: '', name: null, count: 1 }]);
+  it('has one tile per named group and no "Bez grupy" tile (0.9.2 polish)', () => {
+    expect(groupTiles(hosts)).toEqual([{ key: 'lab', name: 'lab', count: 2 }, { key: 'prod', name: 'prod', count: 1 }]);
+    expect(groupTiles(hosts).some((t) => t.key === '')).toBe(false);
     expect(showGroupRow(groupTiles(hosts))).toBe(true);
-    expect(showGroupRow(groupTiles([host('c', 'pi')]))).toBe(false);
     expect(groupTiles([])).toEqual([]);
+  });
+
+  it('hides the group row and the list headings when no host has a group', () => {
+    const ungrouped = [host('c', 'pi'), host('e', 'nas')];
+    expect(groupTiles(ungrouped)).toEqual([]);
+    expect(showGroupRow(groupTiles(ungrouped))).toBe(false);
+    expect(showGroupHeadings(ungrouped)).toBe(false);
+    expect(showGroupHeadings(hosts)).toBe(true);
+    expect(showGroupHeadings([])).toBe(false);
   });
 
   it('filters by a group tile, toggles it off and forgets a group that has no hosts any more', () => {
@@ -119,5 +129,50 @@ describe('group tiles (0.9.2)', () => {
     expect(liveGroupFilter('gone', hosts)).toBeNull();
     expect(liveGroupFilter('', [host('a', 'x', 'lab')])).toBeNull();
     expect(liveGroupFilter(null, hosts)).toBeNull();
+  });
+});
+
+describe('details pane visibility (0.9.2 polish)', () => {
+  const h1 = { kind: 'host' as const, hostId: 'h1' };
+  const k1 = { kind: 'key' as const, keyId: 'k1' };
+  it('is open only while a host or key of the section is chosen (nothing chosen: the tiles use the whole width)', () => {
+    expect(detailPaneOpen('hosts', null)).toBe(false);
+    expect(detailPaneOpen('keys', null)).toBe(false);
+    expect(detailPaneOpen('hosts', h1)).toBe(true);
+    expect(detailPaneOpen('hosts', { kind: 'host' })).toBe(true); // "Nowy host"
+    expect(detailPaneOpen('keys', k1)).toBe(true);
+    expect(detailPaneOpen('keys', { kind: 'newKey', mode: 'paste' })).toBe(true); // "Nowy klucz"
+    expect(detailPaneOpen('keys', h1)).toBe(false);
+    expect(detailPaneOpen('hosts', k1)).toBe(false);
+    expect(detailPaneOpen('knownHosts', h1)).toBe(false);
+    expect(detailPaneOpen('knownHosts', k1)).toBe(false);
+    // A deleted host closes the pane.
+    expect(detailPaneOpen('hosts', liveDetail(h1, [host('h2', 'b')], []))).toBe(false);
+  });
+
+  it('closes again on a click on the tile it shows (deselect) and switches on any other tile', () => {
+    expect(clickedDetail(null, h1)).toEqual(h1);
+    expect(clickedDetail(h1, { kind: 'host', hostId: 'h1' })).toBeNull();
+    expect(clickedDetail(h1, { kind: 'host', hostId: 'h2' })).toEqual({ kind: 'host', hostId: 'h2' });
+    expect(clickedDetail({ kind: 'host' }, h1)).toEqual(h1);
+    expect(clickedDetail(k1, { kind: 'key', keyId: 'k1' })).toBeNull();
+    expect(clickedDetail({ kind: 'newKey' }, k1)).toEqual(k1);
+  });
+
+  it('closes on Esc only when the focus is in the pane and it shows something', () => {
+    expect(paneEscape(true, h1)).toBe(true);
+    expect(paneEscape(false, h1)).toBe(false);
+    expect(paneEscape(true, null)).toBe(false);
+  });
+});
+
+describe('search and the multi-selection (0.9.2 polish)', () => {
+  const hosts = [host('a', 'web-1', 'lab'), host('b', 'web-2', 'lab'), host('c', 'pi')];
+  it('keeps only the selected hosts the search still shows, so the grid count matches what is visible', () => {
+    expect(visibleSelection(['a', 'c'], filterHosts(hosts, 'pi'))).toEqual(['c']);
+    expect(visibleSelection(['a', 'b'], filterHosts(hosts, 'web'))).toEqual(['a', 'b']);
+    expect(visibleSelection(['a', 'b'], filterHosts(hosts, 'zzz'))).toEqual([]);
+    expect(visibleSelection(['a', 'c'], filterHosts(hosts, ''))).toEqual(['a', 'c']);
+    expect(visibleSelection([], hosts)).toEqual([]);
   });
 });

@@ -83,6 +83,28 @@ export function paneDetail(section: SshSection, detail: SshDetail | null): SshDe
 }
 
 /**
+ * The details pane is only on screen while it shows something (0.9.2 polish): with nothing selected the hosts or keys use the
+ * whole width. `detail` is the stored one; a deleted host or key (liveDetail) or a detail of another section closes it.
+ */
+export function detailPaneOpen(section: SshSection, detail: SshDetail | null): boolean {
+  return paneDetail(section, detail) !== null;
+}
+
+/** A click on a tile: the tile shown in the pane closes the pane again (deselect), any other tile is shown. */
+export function clickedDetail(current: SshDetail | null, clicked: SshDetail): SshDetail | null {
+  return current && detailKey(current) === detailKey(clicked) ? null : clicked;
+}
+
+/** Esc pressed with the focus inside the pane closes it; Esc elsewhere is not the pane's. */
+export const paneEscape = (focusInPane: boolean, detail: SshDetail | null): boolean => focusInPane && detail !== null;
+
+/** Typing in the host search keeps only the selected hosts that are still shown, so "Otwórz jako siatkę (n)" counts visible hosts. */
+export function visibleSelection(selected: readonly string[], shown: ReadonlyArray<Pick<SshHost, 'id'>>): string[] {
+  const ids = new Set(shown.map((h) => h.id));
+  return selected.filter((id) => ids.has(id));
+}
+
+/**
  * The store change for a click in the SSH mode navigation: the new section, the detail only if it belongs there (a new-key
  * draft or a host form of the old section is dropped) and the host selection only in Hosty. Nothing for SFTP or the same section.
  */
@@ -95,15 +117,18 @@ export function sectionChange(st: { section: SshSection; detail: SshDetail | nul
 /** SSH mode: the SSH view is the workspace on screen (Settings in front ends it). */
 export const sshModeActive = (ctx: { viewActive: boolean; settingsActive: boolean }): boolean => ctx.viewActive && !ctx.settingsActive;
 
-export interface GroupTile { key: string; name: string | null; count: number }
+export interface GroupTile { key: string; name: string; count: number }
 
-/** The "Grupy" row: one tile per group in the view's order (named groups by name, then the hosts without a group). */
+/** The "Grupy" row: one tile per named group, by name ("Wszystkie" comes first in the view; hosts without a group get no tile). */
 export function groupTiles(hosts: readonly SshHost[]): GroupTile[] {
-  return groupHosts(hosts).map((g) => ({ key: g.name ?? '', name: g.name, count: g.hosts.length }));
+  return groupHosts(hosts).flatMap((g) => (g.name === null ? [] : [{ key: g.name, name: g.name, count: g.hosts.length }]));
 }
 
 /** The row is only worth showing when at least one host has a group. */
-export const showGroupRow = (tiles: readonly GroupTile[]): boolean => tiles.some((t) => t.name !== null);
+export const showGroupRow = (tiles: readonly GroupTile[]): boolean => tiles.length > 0;
+
+/** The list shows group headings only when some host has a group; otherwise the hosts are one plain list without "Bez grupy". */
+export const showGroupHeadings = (hosts: ReadonlyArray<Pick<SshHost, 'group'>>): boolean => hosts.some((h) => !!h.group);
 
 /** Hosts of the chosen group tile ('' = without a group); null shows every host. */
 export function hostsInGroup(hosts: readonly SshHost[], groupKey: string | null): SshHost[] {

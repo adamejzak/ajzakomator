@@ -28,7 +28,6 @@ export const ISearch = () => <Svg><circle cx="7" cy="7" r="4.5" /><path d="M10.5
 export const IEdit = () => <Svg size={12}><path d="M10.5 2.5l3 3L6 13H3v-3z" /></Svg>;
 export const IBranch = () => <Svg size={11}><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="5.5" r="1.5" /><path d="M4.5 5v6M11.5 7c0 3-7 2-7 4" /></Svg>;
 export const IChangelog = () => <Svg><path d="M3 3.5h10M3 8h10M3 12.5h6" /><path d="M12 10.5v4M10 12.5h4" /></Svg>;
-export const ITerminalTab = () => <Svg><path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5z" /><path d="M5 6.5l2 1.5-2 1.5M8.5 10h2.5" /></Svg>;
 export const ICloud = () => <Svg size={12}><path d="M4.5 12.5a3 3 0 0 1-.4-5.97 4 4 0 0 1 7.7 1.07A2.5 2.5 0 0 1 11.5 12.5z" /></Svg>;
 export const ITag = () => <Svg size={11}><path d="M8.6 2H13a1 1 0 0 1 1 1v4.4a1 1 0 0 1-.3.7l-5.6 5.6a1 1 0 0 1-1.4 0L2.3 9.3a1 1 0 0 1 0-1.4l5.6-5.6a1 1 0 0 1 .7-.3z" /><path d="M11 5h.01" /></Svg>;
 export const IMore = () => <Svg><path d="M3.5 8h.01M8 8h.01M12.5 8h.01" strokeWidth="2.6" /></Svg>;

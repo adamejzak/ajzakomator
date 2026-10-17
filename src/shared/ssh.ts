@@ -105,6 +105,12 @@ export type KeyError = DraftError | 'notFound' | 'readOnly' | 'failed';
 export type KeyResult = { ok: true; key: SshKeyInfo; duplicate?: boolean } | { ok: false; error: KeyError };
 export interface GenerateKeyRequest { label: string; type: SshKeyType; bits?: number; comment?: string; passphrase?: string; savePassphrase: boolean }
 export interface UpdateKeyRequest { id: string; label?: string; certificate?: string | null; passphrase?: { save: string } | { forget: true } }
+/** "Zastąp klucz prywatny": new private key text for a stored key (its id, label and hosts stay). */
+export interface ReplaceKeyRequest { id: string; privateKey: string; passphrase?: string; savePassphrase: boolean }
+export type ReplaceKeyError = KeyError | 'needsPassphrase' | 'duplicate';
+export type ReplaceKeyResult = { ok: true; key: SshKeyInfo; publicKeyChanged: boolean } | { ok: false; error: ReplaceKeyError };
+/** "Pokaż klucz prywatny": the stored text (still encrypted when it has a passphrase). The only IPC answer that carries private key text. */
+export type RevealKeyResult = { ok: true; privateKey: string } | { ok: false; error: 'notFound' | 'locked' };
 export interface SshConnectCellRequest { cellId: string; hostId: string; cols: number; rows: number }
 
 /** `window.mc.ssh` (src/preload). Every call is validated in src/main/ssh/ipc.ts. */
@@ -120,6 +126,8 @@ export interface SshApi {
   updateKey(req: UpdateKeyRequest): Promise<KeyResult>;
   removeKey(id: string): Promise<{ ok: boolean }>;
   exportPrivateKey(id: string): Promise<{ ok: true } | { ok: false; error: 'cancelled' | 'locked' | 'notFound' | 'failed' }>;
+  revealPrivateKey(id: string): Promise<RevealKeyResult>;
+  replacePrivateKey(req: ReplaceKeyRequest): Promise<ReplaceKeyResult>;
   setPassword(hostId: string, password: string): Promise<{ ok: true; ephemeral: boolean } | { ok: false; error: 'notFound' | 'invalid' | 'readOnly' | 'failed' }>;
   clearPassword(hostId: string): Promise<{ ok: boolean }>;
   forgetPassphrases(): Promise<{ ok: boolean }>;
@@ -562,6 +570,14 @@ export function draftErrorKey(error: DraftError | KeyError | 'cancelled'): Messa
     case 'invalid': return 'Nieprawidłowe dane';
     default: return null;
   }
+}
+
+/** The message of a failed "Zastąp klucz prywatny" (the pasted text and passphrase are already cleared from the form). */
+export function replaceKeyErrorKey(error: ReplaceKeyError): MessageKey {
+  if (error === 'needsPassphrase') return 'Ten klucz jest zaszyfrowany - wklej go ponownie razem z hasłem';
+  if (error === 'duplicate') return 'Ten klucz już jest w sejfie';
+  if (error === 'failed') return 'Nie udało się zapisać zmian';
+  return draftErrorKey(error) ?? 'Nieprawidłowe dane';
 }
 
 /** Short text for any read-only vault (unreadable, damaged or newer); Settings > SSH explains the cause with the file path. */

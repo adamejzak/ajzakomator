@@ -62,7 +62,7 @@ function PaletteInner() {
       out.push({ kind: tr('Akcja'), title: tr("Nowy grid / preset…"), desc: keys('grid.new') || undefined, run: () => setUi({ modal: { kind: 'grid', projectId: project.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Nowy terminal (zakładka)"), desc: keys('terminal.new') || undefined, run: () => quickTab() });
       out.push(...ssh);
-      if (tab?.cells.some((c) => c.ssh)) out.push({ kind: tr('Akcja'), title: tr('SSH: wyślij do wszystkich'), run: () => setUi({ modal: { kind: 'broadcast', projectId: project.id, tabId: tab.id } }) });
+      if (tab?.cells.some((c) => c.ssh)) out.push({ kind: tr('Akcja'), title: tr('SSH: wysyłanie masowe'), run: () => setUi({ modal: { kind: 'broadcast', projectId: project.id, tabId: tab.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Historia projektu"), desc: keys('history.open') || undefined, run: () => setUi({ modal: { kind: 'history', projectId: project.id } }) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz folder projektu"), run: () => window.mc.openPath(project.path) });
       out.push({ kind: tr('Akcja'), title: tr("Otwórz projekt w Cursorze"), run: () => window.mc.openInEditor(project.path) });

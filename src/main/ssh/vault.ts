@@ -180,6 +180,35 @@ export class SshVault {
     return { ok: true, key: this.infoOf(updated) };
   }
 
+  /**
+   * "Zastąp klucz prywatny": new key material under the same id (label, hosts using it and createdAt stay). The public key,
+   * fingerprint, type and comment follow the new key; a certificate of another public key is dropped. A remembered or
+   * verified passphrase of the old key is forgotten.
+   */
+  replaceKey(id: string, k: Omit<NewKey, 'label' | 'certificate' | 'source'>): { ok: true; key: SshKeyInfo; publicKeyChanged: boolean } | { ok: false; error: 'notFound' | 'readOnly' | 'duplicate' | 'failed' } {
+    if (this.newer) return { ok: false, error: 'readOnly' };
+    const r = this.keys.find((x) => x.meta.id === id);
+    if (!r) return { ok: false, error: 'notFound' };
+    if (this.keys.some((x) => x !== r && x.meta.fingerprint === k.fingerprint)) return { ok: false, error: 'duplicate' };
+    // A stored key must stay stored: without encryption it would turn memory-only and vanish from the file on the next write.
+    if (r.secret !== null && !this.cipher.available()) return { ok: false, error: 'failed' };
+    const plain = { privateKey: k.privateKey, ...(k.encrypted && k.savePassphrase && k.passphrase ? { passphrase: k.passphrase } : {}) };
+    const secret = r.secret === null ? null : this.seal(JSON.stringify(plain));
+    const publicKeyChanged = r.meta.fingerprint !== k.fingerprint;
+    const { certificate, ...rest } = r.meta;
+    const updated: KeyRecord = {
+      meta: { ...rest, type: k.type, bits: k.bits, fingerprint: k.fingerprint, publicKey: k.publicKey, comment: k.comment, encrypted: k.encrypted,
+        passphraseSaved: !!plain.passphrase, ...(certificate && !publicKeyChanged ? { certificate } : {}) },
+      secret, plain: secret === null ? plain : null, locked: false,
+    };
+    const next = this.keys.map((x) => (x === r ? updated : x));
+    this.write(next, this.passwords);
+    this.keys = next;
+    this.rememberedPassphrases.delete(id);
+    this.verifiedPassphrases.delete(id);
+    return { ok: true, key: this.infoOf(updated), publicKeyChanged };
+  }
+
   removeKey(id: string): boolean {
     if (this.newer) return false;
     const next = this.keys.filter((k) => k.meta.id !== id);

@@ -1,14 +1,15 @@
 // IPC of the SSH feature (spec 8.1): zod-validated, size-capped, ids resolved against state and vault. Results never carry
-// private key text, passphrases or passwords; errors are fixed codes. Electron-free (except the IpcMain type) so it is unit tested.
+// private key text, passphrases or passwords (the one exception is revealPrivateKey, the explicit "Pokaż klucz prywatny");
+// errors are fixed codes. Electron-free (except the IpcMain type) so it is unit tested.
 import type { IpcMain } from 'electron';
 import { isAbsolute } from 'path';
 import { readFile, stat } from 'fs/promises';
 import { z } from 'zod';
 import { clearSshKeyRefs, findCell } from '../../shared/state';
-import { SSH_LIMITS, type DraftResult, type KeyResult, type KnownHostInfo, type SshErrorCode, type SshSessionsSnapshot, type SshStorageStatus, type SshVaultInfo } from '../../shared/ssh';
+import { SSH_LIMITS, type DraftResult, type KeyResult, type KnownHostInfo, type ReplaceKeyResult, type RevealKeyResult, type SshErrorCode, type SshSessionsSnapshot, type SshStorageStatus, type SshVaultInfo } from '../../shared/ssh';
 import type { AppState } from '../../shared/types';
 import type { SshCoordinator } from './coordinator';
-import { certificateCheck, checkPassphrase, generateKey, keyMetaFromPublic, type KeyDrafts } from './keys';
+import { certificateCheck, checkPassphrase, generateKey, keyMetaFromPublic, parsePrivateKey, type KeyDrafts } from './keys';
 import type { KnownHostsStore } from './knownHosts';
 import type { SshVault } from './vault';
 
@@ -41,6 +42,7 @@ const S = {
   commit: z.object({ draftId: id, label, savePassphrase: z.boolean() }).strict(),
   update: z.object({ id, label: label.optional(), certificate: text(20000).nullable().optional(), passphrase: z.union([z.object({ save: passphrase }).strict(), z.object({ forget: z.literal(true) }).strict()]).optional() }).strict(),
   byId: z.object({ id }).strict(),
+  replace: z.object({ id, privateKey: secret(SSH_LIMITS.privateKey), passphrase: passphrase.optional(), savePassphrase: z.boolean() }).strict(),
   setPassword: z.object({ hostId: id, password: secret(SSH_LIMITS.password) }).strict(),
   byHost: z.object({ hostId: id }).strict(),
   connect: z.object({ cellId: id, hostId: id, cols: z.number().int().min(2).max(2000), rows: z.number().int().min(1).max(1000) }).strict(),
@@ -158,6 +160,29 @@ export function createSshHandlers(deps: SshIpcDeps) {
       } catch { return { ok: false, error: 'failed' }; }
       return { ok: true };
     },
+    /** "Pokaż klucz prywatny" (an explicit, confirmed user action): the stored text as it is, never decrypted for display. */
+    async revealPrivateKey(raw: unknown): Promise<RevealKeyResult> {
+      const p = S.byId.safeParse(raw);
+      const key = p.success ? deps.vault.key(p.data.id) : undefined;
+      if (!p.success || !key) return { ok: false, error: 'notFound' };
+      const material = deps.vault.keySecret(key.id);
+      return material.ok ? { ok: true, privateKey: material.privateKey } : { ok: false, error: material.error === 'keyLocked' ? 'locked' : 'notFound' };
+    },
+    /** "Zastąp klucz prywatny": the new text is parsed like an import (PPK v3, public-only and unsupported keys are refused). */
+    async replacePrivateKey(raw: unknown): Promise<ReplaceKeyResult> {
+      const p = S.replace.safeParse(raw);
+      if (!p.success) return { ok: false, error: 'invalid' };
+      if (!deps.vault.key(p.data.id)) return { ok: false, error: 'notFound' };
+      if (deps.vault.readOnly()) return { ok: false, error: 'readOnly' };
+      const parsed = parsePrivateKey(p.data.privateKey, p.data.passphrase);
+      if (!parsed.ok) return { ok: false, error: parsed.error };
+      const { meta, encrypted } = parsed;
+      const r = guarded({ ok: false as const, error: 'failed' as const }, () => deps.vault.replaceKey(p.data.id, {
+        type: meta.type, bits: meta.bits, fingerprint: meta.fingerprint, publicKey: meta.publicKey, comment: meta.comment, encrypted,
+        privateKey: p.data.privateKey, passphrase: encrypted ? p.data.passphrase : undefined, savePassphrase: p.data.savePassphrase,
+      }));
+      return r.ok ? changed({ ok: true, key: r.key, publicKeyChanged: r.publicKeyChanged }) : { ok: false, error: r.error };
+    },
     async setPassword(raw: unknown): Promise<{ ok: true; ephemeral: boolean } | { ok: false; error: 'notFound' | 'invalid' | 'readOnly' | 'failed' }> {
       const p = S.setPassword.safeParse(raw);
       if (!p.success) return { ok: false, error: 'invalid' };
@@ -201,7 +226,7 @@ export type SshHandlers = ReturnType<typeof createSshHandlers>;
 export const SSH_CHANNELS = {
   'ssh:vault:info': 'vaultInfo', 'ssh:key:generate': 'generateKey', 'ssh:key:pickFile': 'pickKeyFile', 'ssh:key:draftFromFile': 'draftFromFile',
   'ssh:key:draftFromText': 'draftFromText', 'ssh:key:unlockDraft': 'unlockDraft', 'ssh:key:commitDraft': 'commitDraft', 'ssh:key:update': 'updateKey',
-  'ssh:key:remove': 'removeKey', 'ssh:key:exportPrivate': 'exportPrivateKey', 'ssh:password:set': 'setPassword', 'ssh:password:clear': 'clearPassword',
+  'ssh:key:remove': 'removeKey', 'ssh:key:exportPrivate': 'exportPrivateKey', 'ssh:key:revealPrivate': 'revealPrivateKey', 'ssh:key:replacePrivate': 'replacePrivateKey', 'ssh:password:set': 'setPassword', 'ssh:password:clear': 'clearPassword',
   'ssh:passphrases:forget': 'forgetPassphrases', 'ssh:storage:status': 'storageStatus', 'ssh:knownHosts:list': 'knownHosts', 'ssh:knownHosts:remove': 'removeKnownHost',
   'ssh:connect': 'connect', 'ssh:sessions': 'sessions', 'ssh:prompt:answer': 'answer',
 } as const satisfies Record<string, Exclude<keyof SshHandlers, 'discardDraft'>>;

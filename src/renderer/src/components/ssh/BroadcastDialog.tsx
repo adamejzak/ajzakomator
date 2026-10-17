@@ -1,4 +1,4 @@
-// "Wyślij do wszystkich" (spec 10.5, D10): one command to the checked SSH cells of a grid, over the existing data port.
+// "Wysyłanie masowe" (bulk send, spec 10.5, D10): one command to the checked SSH cells of a grid, over the existing data port.
 import { useMemo, useRef, useState } from 'react';
 import { broadcastProblem, broadcastRowState, broadcastSend, broadcastTargets, currentBroadcastResult, pushHistory, sshCellsOfTab, stampBroadcastResults, type StampedBroadcastResult } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
@@ -39,7 +39,7 @@ export function BroadcastDialog({ projectId, tabId }: { projectId: string; tabId
 
   return (
     <div className="modal ssh-broadcast" onMouseDown={(e) => e.stopPropagation()}>
-      <div className="modal-head"><h3>{tr('Wyślij do wszystkich')}{tab ? ` · ${tab.name}` : ''}</h3><button className="btn ghost icon" aria-label={tr('Zamknij')} onClick={closeModal}><IX /></button></div>
+      <div className="modal-head"><h3>{tr('Wysyłanie masowe: jedno polecenie do wielu sesji')}{tab ? ` · ${tab.name}` : ''}</h3><button className="btn ghost icon" aria-label={tr('Zamknij')} onClick={closeModal}><IX /></button></div>
       <div className="modal-body">
         {!cells.length ? <p className="muted">{tr('Ta siatka nie ma sesji SSH')}</p> : <>
           <textarea ref={area} className="input mono" rows={4} autoFocus spellCheck={false} value={text}

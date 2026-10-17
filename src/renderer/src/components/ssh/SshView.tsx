@@ -1,37 +1,34 @@
 // The SSH view (W3, SSH mode in 0.9.2): one workspace tab with three sections chosen in the side panel (SshNav): Hosty (group
-// tiles, host tiles by group, local shells), Klucze (key tiles) and Znane hosty (trusted host keys), with a details pane on the
-// right for hosts and keys. Opened by the SSH rail tile, the palette, "Edytuj host" and "Wszystkie hosty…" (Add and cell menus).
-// It stays mounted while its tab is open; the pane is "active" only while the view is on screen (D4: typed secrets go).
+// tiles, host tiles by group), Klucze (key tiles) and Znane hosty (trusted host keys). A details pane on the right shows a
+// host or key only while one is chosen; with nothing chosen the tiles use the whole width. Opened by the SSH rail tile, the
+// palette, "Edytuj host" and "Wszystkie hosty…" (Add and cell menus). It stays mounted while its tab is open; the pane is
+// "active" only while the view is on screen (D4: typed secrets go).
 import { useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { activeProject, activeTab, duplicateSshHost, updateSshHost } from '../../../../shared/state';
 import { existingSelection, filterHosts, groupHosts, parseFoldedGroups, toggleSelection, userAtEndpoint, type SshHost } from '../../../../shared/ssh';
 import {
-  detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, newKeyDetail, paneDetail, showGroupRow, toggleGroupFilter,
-  type NewKeyMode, type SshDetail, type SshSection,
+  clickedDetail, detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, newKeyDetail, paneDetail, paneEscape, showGroupHeadings,
+  showGroupRow, toggleGroupFilter, visibleSelection, type NewKeyMode, type SshDetail,
 } from '../../../../shared/sshView';
-import { describeLaunch, groupTerminalSources, listTerminalSources, type TerminalSource } from '../../../../shared/terminalSources';
 import type { MessageKey } from '../../../../shared/i18n';
-import { addAgent, quickTab } from '../../actions';
 import { showTerminalTabs } from '../../files';
 import { useI18n } from '../../i18n';
 import { askText, getS, setUi, update, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
 import { confirmRemoveSshHost, openHostInCell, openHostsAsGrid, showSshDetail } from '../../ssh';
 import { openMenu, openMenuAt, type MenuItem } from '../ContextMenu';
-import { IChevron, IKey, IPlus, IServer, ITerminalTab } from '../icons';
+import { IChevron, IKey, IPlus, IServer, IX } from '../icons';
 import { HostEditor } from './HostEditor';
 import { KeyEditor } from './KeyEditor';
 import { KnownHostsView } from './KnownHostsView';
 import { NewKeyEditor } from './NewKeyEditor';
 import { PaneActive } from './paneVisibility';
 import { SshNav } from './SshNav';
-import '../terminalPanel.css';
 import './ssh.css';
 
 const FOLD_KEY = 'mc-ssh-groups-v1';
 const shortType = (type: string) => type.replace('ssh-', '').replace('ecdsa-sha2-nist', 'ecdsa-');
 const STATE_LABEL = { connected: 'połączono', connecting: 'łączenie…', error: 'błąd połączenia', idle: 'rozłączono' } as const;
-const PANE_HINT: Record<Exclude<SshSection, 'knownHosts'>, MessageKey> = { hosts: 'Wybierz host, aby zobaczyć szczegóły.', keys: 'Wybierz klucz, aby zobaczyć szczegóły.' };
 
 /** "Nowy klucz > mode": always that mode, also when a new-key pane is already open (it is replaced by a fresh one). */
 const newKey = (mode: NewKeyMode) => showSshDetail(newKeyDetail(useSshStore.getState().detail, mode));
@@ -55,6 +52,20 @@ export function SshView() {
 
   /** Connecting shows the grid: host key and password prompts appear in the cell. */
   const connect = (hostId: string, target: 'cell' | 'tab') => { showTerminalTabs(); void openHostInCell(hostId, target); };
+  /** The pane closes (X, Esc in the pane): the tiles get the whole width back and the focus goes to the tile that was shown. */
+  const closePane = () => {
+    const shown = detail;
+    showSshDetail(null);
+    if (!shown || shown.kind === 'newKey') return;
+    const selector = shown.kind === 'host' ? (shown.hostId ? `.ssh-tile[data-host-id="${shown.hostId}"]` : null) : `.ssh-tile[data-key-id="${shown.keyId}"]`;
+    if (selector) requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus());
+  };
+  const onPaneKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || e.defaultPrevented || !paneEscape(true, detail)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closePane();
+  };
   /** Esc clears the multi-selection; with nothing selected it is left to the rest of the app. */
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key !== 'Escape' || !useSshStore.getState().selectedHosts.length) return;
@@ -75,12 +86,11 @@ export function SshView() {
           {section === 'knownHosts' && <KnownHostsView />}
         </div>
       </div>
-      {section !== 'knownHosts' && (
-        <aside className="ssh-view-detail" aria-label={tr('Szczegóły')}>
+      {detail && (
+        <aside className="ssh-view-detail" aria-label={tr('Szczegóły')} onKeyDown={onPaneKeyDown}>
+          <button type="button" className="btn ghost icon ssh-detail-close" aria-label={tr('Zamknij szczegóły')} title={tr('Zamknij szczegóły')} onClick={closePane}><IX /></button>
           <PaneActive.Provider value={viewActive && !settingsActive}>
-            {detail
-              ? <DetailPane key={detailKey(detail)} detail={detail} onConnect={connect} />
-              : <p className="ssh-card-hint ssh-view-empty">{tr(PANE_HINT[section])}</p>}
+            <DetailPane key={detailKey(detail)} detail={detail} onConnect={connect} />
           </PaneActive.Provider>
         </aside>
       )}
@@ -104,14 +114,11 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
   const { tr } = useI18n();
   const hosts = useStore((st) => st.s.sshHosts);
   const projects = useStore((st) => st.s.projects);
-  const profiles = useStore((st) => st.s.profiles);
-  const shell = useStore((st) => st.s.settings.shell);
   const activeGrid = useStore((st) => activeTab(activeProject(st.s)));
   const sessions = useSshStore((st) => st.sessions);
   const selectedIds = useSshStore((st) => st.selectedHosts);
   const selected = useMemo(() => existingSelection(selectedIds, hosts), [selectedIds, hosts]);
   const cells = useMemo(() => projects.flatMap((p) => p.tabs.flatMap((t) => t.cells)), [projects]);
-  const local = useMemo(() => groupTerminalSources(listTerminalSources({ profiles, platform: window.mc.platform, shell })).local, [profiles, shell]);
   const [query, setQuery] = useState('');
   const [chosenGroup, setGroup] = useState<string | null>(null);
   const [folded, setFolded] = useState<string[]>(() => parseFoldedGroups(localStorage.getItem(FOLD_KEY)));
@@ -119,6 +126,7 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
   const tiles = groupTiles(hosts);
   const group = liveGroupFilter(chosenGroup, hosts);
   const groups = groupHosts(filterHosts(hostsInGroup(hosts, group), query), !searching);
+  const headings = showGroupHeadings(hosts);
   const sshInGrid = activeGrid?.cells.filter((c) => c.ssh).length ?? 0;
 
   const toggleFold = (key: string) => {
@@ -137,6 +145,15 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
     setGroup(next);
     useSshStore.setState({ selectedHosts: [] });
   };
+  /** Typing in the search keeps only the selected hosts that stay visible ("Otwórz jako siatkę (n)" never counts hidden ones). */
+  const search = (next: string) => {
+    setQuery(next);
+    const visible = filterHosts(hostsInGroup(hosts, group), next);
+    useSshStore.setState((st) => {
+      const kept = visibleSelection(st.selectedHosts, visible);
+      return kept.length === st.selectedHosts.length ? {} : { selectedHosts: kept };
+    });
+  };
   const openGrid = (ids: string[]) => { showTerminalTabs(); void openHostsAsGrid(ids); useSshStore.setState({ selectedHosts: [] }); };
   const groupMenu = (e: MouseEvent, name: string | null, ids: string[]) => {
     e.preventDefault();
@@ -147,8 +164,10 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
   };
   const clickTile = (e: MouseEvent, h: SshHost) => {
     if (e.ctrlKey || e.metaKey) { useSshStore.setState((st) => ({ selectedHosts: toggleSelection(st.selectedHosts, h.id) })); return; }
+    // The second click of a double-click (connect) must not close the pane the first click opened.
+    if (e.detail > 1) return;
     useSshStore.setState({ selectedHosts: [] });
-    showSshDetail({ kind: 'host', hostId: h.id });
+    showSshDetail(clickedDetail(detail, { kind: 'host', hostId: h.id }));
   };
   const hostMenu = (e: MouseEvent, h: SshHost) => {
     e.preventDefault();
@@ -163,11 +182,6 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
       { label: tr('Usuń'), danger: true, onClick: () => void confirmRemoveSshHost(h.id) },
     ]);
   };
-  const openLocal = (source: TerminalSource, target: 'cell' | 'tab') => {
-    if (source.launch.type !== 'profile') return;
-    showTerminalTabs();
-    if (target === 'tab') quickTab(source.launch.profileId); else void addAgent(source.launch.profileId);
-  };
   const broadcast = () => {
     const project = activeProject(getS());
     if (project && activeGrid) setUi({ modal: { kind: 'broadcast', projectId: project.id, tabId: activeGrid.id } });
@@ -177,11 +191,11 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
     <>
       <div className="ssh-view-titlebar"><h2 className="ssh-view-title">{tr('Hosty')}</h2></div>
       <div className="ssh-view-head">
-        <input className="input ssh-search" placeholder={tr('Szukaj hostów...')} aria-label={tr('Szukaj hostów...')} value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className="input ssh-search" placeholder={tr('Szukaj hostów...')} aria-label={tr('Szukaj hostów...')} value={query} onChange={(e) => search(e.target.value)} />
         <div className="ssh-view-actions">
           <button className="btn primary" onClick={() => showSshDetail({ kind: 'host' })}><IPlus />{tr('Nowy host')}</button>
           <button className="btn" onClick={(e) => openMenuAt(e.currentTarget, newKeyItems(tr))}>{tr('Nowy klucz')} <IChevron /></button>
-          <button className="btn ssh-broadcast-open" disabled={!sshInGrid} onClick={broadcast}>{tr('Wyślij do wszystkich ({count})', { count: sshInGrid })}</button>
+          <button className="btn ssh-broadcast-open" disabled={!sshInGrid} onClick={broadcast}>{tr('Wysyłanie masowe ({count})', { count: sshInGrid })}</button>
         </div>
       </div>
       {selected.length > 0 && (
@@ -199,14 +213,13 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
         <>
           {showGroupRow(tiles) && (
             <section className="ssh-view-section" aria-label={tr('Grupy')}>
-              <h3 className="ssh-view-heading">{tr('Grupy')}</h3>
               <div className="ssh-group-tiles">
                 <button className={`ssh-group-tile${group === null ? ' on' : ''}`} aria-pressed={group === null} aria-label={tr('{name}, hosty: {count}', { name: tr('Wszystkie'), count: hosts.length })} onClick={() => chooseGroup(null)}>
                   <span className="ssh-group-tile-name">{tr('Wszystkie')}</span>
                   <span className="ssh-group-tile-count" aria-hidden="true">{hosts.length}</span>
                 </button>
                 {tiles.map((t) => {
-                  const name = t.name ?? tr('Bez grupy');
+                  const name = t.name;
                   return (
                     <button key={t.key} className={`ssh-group-tile${group === t.key ? ' on' : ''}`} data-group={t.key} aria-pressed={group === t.key}
                       aria-label={tr('{name}, hosty: {count}', { name, count: t.count })}
@@ -221,20 +234,20 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
             </section>
           )}
           <section className="ssh-view-section" aria-label={tr('Hosty')}>
-            {!groups.length ? <p className="terminal-empty">{tr('Nic nie znaleziono.')}</p> : groups.map((g) => {
+            {!groups.length ? <p className="ssh-view-none">{tr('Nic nie znaleziono.')}</p> : groups.map((g) => {
               const key = g.name ?? '';
-              const open = !folded.includes(key) || searching;
+              const open = !headings || !folded.includes(key) || searching;
               const ids = g.hosts.map((h) => h.id);
               return (
                 <div key={key} className="ssh-view-group">
-                  <div className="ssh-group-bar">
+                  {headings && <div className="ssh-group-bar">
                     <button className="ssh-group-head" aria-expanded={open} title={tr(open ? 'Zwiń grupę' : 'Rozwiń grupę')} onClick={() => toggleFold(key)} onContextMenu={(e) => groupMenu(e, g.name, ids)}>
                       <span className={open ? 'chev-down' : 'chev-right'}><IChevron /></span>
                       <span className="grow">{g.name ?? tr('Bez grupy')}</span>
                       <span className="muted">{g.hosts.length}</span>
                     </button>
                     <button className="btn small ghost ssh-group-open" onClick={() => openGrid(ids)}>{tr('Otwórz jako siatkę')}</button>
-                  </div>
+                  </div>}
                   {open && (
                     <div className="ssh-tiles">
                       {g.hosts.map((h) => {
@@ -259,24 +272,6 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
           </section>
         </>
       )}
-      <section className="ssh-view-section ssh-local" aria-label={tr('Lokalne powłoki')}>
-        <h3 className="ssh-view-heading">{tr('Lokalne powłoki')}</h3>
-        {local.map((source) => (
-          <div key={source.id} className="terminal-source" onContextMenu={(e) => {
-            e.preventDefault();
-            openMenu(e.clientX, e.clientY, [
-              { label: tr('Nowy terminal w aktywnej siatce'), onClick: () => openLocal(source, 'cell') },
-              { label: tr('Nowy terminal (zakładka)'), onClick: () => openLocal(source, 'tab') },
-            ]);
-          }}>
-            <button className="terminal-source-main" onClick={() => openLocal(source, 'cell')} title={`${tr('Nowy terminal w aktywnej siatce')} - ${describeLaunch(source.launch)}`}>
-              <span className="terminal-source-name">{source.label}</span>
-              {source.detail && <span className="terminal-source-detail">{source.detail}</span>}
-            </button>
-            <button className="btn ghost icon small" aria-label={tr('Nowy terminal (zakładka)')} title={tr('Nowy terminal (zakładka)')} onClick={() => openLocal(source, 'tab')}><ITerminalTab /></button>
-          </div>
-        ))}
-      </section>
     </>
   );
 }
@@ -306,7 +301,7 @@ function KeysSection({ detail }: { detail: SshDetail | null }) {
               const current = detail?.kind === 'key' && detail.keyId === k.id;
               return (
                 <button key={k.id} className={`ssh-tile ssh-key-tile${current ? ' current' : ''}`} data-key-id={k.id} aria-current={current ? 'true' : undefined}
-                  onClick={() => showSshDetail({ kind: 'key', keyId: k.id })} title={k.fingerprint}>
+                  onClick={(e) => { if (e.detail <= 1) showSshDetail(clickedDetail(detail, { kind: 'key', keyId: k.id })); }} title={k.fingerprint}>
                   <span className="ssh-tile-name">{k.label}{k.locked ? ' !' : ''}</span>
                   <span className="ssh-tile-detail"><span className="ssh-key-type">{shortType(k.type)}</span>{k.fingerprint}</span>
                 </button>
