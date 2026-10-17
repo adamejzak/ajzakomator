@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mock = vi.hoisted(() => ({ app: { isPackaged: true, once: vi.fn(), quit: vi.fn() }, check: vi.fn(), download: vi.fn(), install: vi.fn() }));
+const mock = vi.hoisted(() => ({ app: { isPackaged: true, once: vi.fn(), quit: vi.fn() }, check: vi.fn(), download: vi.fn(), install: vi.fn(), touched: vi.fn() }));
 vi.mock('electron', () => ({ app: mock.app }));
 const splash = vi.hoisted(() => ({ show: vi.fn(), stage: vi.fn(), abort: vi.fn() }));
 vi.mock('../src/main/updateSplash', () => ({ showUpdateWindow: splash.show, stageSplashRuntime: splash.stage, abortUpdateWindow: splash.abort }));
@@ -9,7 +9,7 @@ const strings = { title: 't' } as never;
 type Updater = EventEmitter & { requestHeaders?: Record<string, string>; autoDownload: boolean; autoInstallOnAppQuit: boolean; quitAndInstallCalled?: boolean; checkForUpdates: typeof mock.check; downloadUpdate: typeof mock.download; install: typeof mock.install };
 let updater: Updater;
 vi.mock('electron-updater', () => ({
-  get autoUpdater() { return updater; },
+  get autoUpdater() { mock.touched(); return updater; },
   CancellationToken: class { cancelled = false; listeners: Array<() => void> = []; cancel() { this.cancelled = true; this.listeners.forEach((l) => l()); } },
 }));
 const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -64,8 +64,18 @@ describe('updater lifecycle (Windows)', () => {
     expect(api.getUpdateState().status).toBe('current');
   });
 
+  it('loads electron-updater on the first check, not at startup', async () => {
+    const api = await setup();
+    expect(mock.touched).not.toHaveBeenCalled();
+    await api.checkForUpdates();
+    expect(mock.touched).toHaveBeenCalled();
+    expect(mock.check).toHaveBeenCalledTimes(1);
+  });
+
   it('never downloads or installs by itself', async () => {
-    await setup();
+    const api = await setup();
+    // Configured right after it loaded (on first use).
+    await api.checkForUpdates();
     expect(updater.autoDownload).toBe(false);
     expect(updater.autoInstallOnAppQuit).toBe(false);
     updater.emit('update-downloaded', { version: '0.5.0' });
@@ -77,8 +87,9 @@ describe('updater lifecycle (Windows)', () => {
     let finish!: (value: object) => void;
     mock.check.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const first = api.checkForUpdates(); const second = api.checkForUpdates();
-    expect(mock.check).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mock.check).toHaveBeenCalledTimes(1));
     finish(none()); await Promise.all([first, second]);
+    expect(mock.check).toHaveBeenCalledTimes(1);
   });
 
   it('available -> downloading (clamped progress) -> ready, one download', async () => {
@@ -164,9 +175,10 @@ describe('updater lifecycle (Windows)', () => {
 
   it('does not register duplicate listeners; an installer failing after it started is shown and can be retried', async () => {
     const api = await setup(); api.initUpdater(vi.fn());
-    expect(updater.listenerCount('error')).toBe(1);
     mock.check.mockResolvedValue(found('0.5.9'));
     await api.checkForUpdates(); await settle();
+    await api.checkForUpdates(); await settle();
+    expect(updater.listenerCount('error')).toBe(1);
     updater.emit('error', new Error('stray')); // not during a hand-over: only logged
     expect(api.getUpdateState().status).toBe('ready');
     expect(await api.handOver('0.5.9', vi.fn())).toBe(true);
@@ -206,9 +218,9 @@ describe('updater lifecycle (Windows)', () => {
   it('asks for fresh release data and remembers when the last check found nothing', async () => {
     vi.setSystemTime(new Date('2026-10-11T10:00:00Z'));
     const api = await setup();
-    expect(updater.requestHeaders).toMatchObject({ 'Cache-Control': 'no-cache' });
     mock.check.mockResolvedValue(none('0.5.5'));
     await api.checkForUpdates();
+    expect(updater.requestHeaders).toMatchObject({ 'Cache-Control': 'no-cache' });
     expect(api.getUpdateState()).toMatchObject({ status: 'current', version: '0.5.5', checkedAt: Date.parse('2026-10-11T10:00:00Z') });
   });
 

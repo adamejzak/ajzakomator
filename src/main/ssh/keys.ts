@@ -1,8 +1,20 @@
 // SSH key material in main (spec 7.1, 7.2): generation, parsing and import drafts. Private text never leaves main.
 import { randomUUID } from 'crypto';
-import { utils, type ParsedKey } from 'ssh2';
+import { createRequire } from 'module';
+import type { ParsedKey } from 'ssh2';
 import { DEFAULT_KEY_BITS, KEY_ALGOS, KEY_SIZES, SSH_LIMITS, type DraftError, type DraftResult, type SshKeyAlgo, type SshKeyType } from '../../shared/ssh';
 import { sha256Fingerprint } from './fingerprint';
+
+/**
+ * ssh2 (about 90 ms to load) is required on the first key operation, not at startup (0.9.4): the SSH sessions themselves run
+ * in the Pty Host. Synchronous on purpose, so the callers stay as they are.
+ */
+let ssh2Utils: typeof import('ssh2').utils | undefined;
+const utilsOf = (): typeof import('ssh2').utils => (ssh2Utils ??= (createRequire(import.meta.url)('ssh2') as typeof import('ssh2')).utils);
+const utils = {
+  parseKey: (...args: Parameters<typeof import('ssh2').utils.parseKey>) => utilsOf().parseKey(...args),
+  generateKeyPair: ((...args: unknown[]) => (utilsOf().generateKeyPair as (...a: unknown[]) => void)(...args)) as typeof import('ssh2').utils.generateKeyPair,
+};
 
 export interface KeyMeta { type: SshKeyAlgo; bits: number; fingerprint: string; publicKey: string; comment: string; blob: Buffer }
 

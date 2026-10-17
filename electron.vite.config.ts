@@ -13,6 +13,9 @@ export default defineConfig({
           ptyhost: resolve(__dirname, 'src/ptyhost/index.ts'),
           updatesplash: resolve(__dirname, 'src/updatesplash/index.ts'),
         },
+        // Lazy dependencies (MCP SDK, electron-updater) stay `require` behind a promise: the CommonJS builds they ship are loaded,
+        // never a second ESM copy through import().
+        output: { dynamicImportInCjs: false },
       },
     },
   },

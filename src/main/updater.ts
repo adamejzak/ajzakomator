@@ -1,6 +1,6 @@
 import { app } from 'electron';
 import { join } from 'path';
-import { autoUpdater, CancellationToken, type ProgressInfo } from 'electron-updater';
+import type { AppUpdater, ProgressInfo } from 'electron-updater';
 import type { UpdateState } from '../shared/types';
 import type { UpdateStrings } from '../shared/updateProgress';
 import { abortUpdateWindow, showUpdateWindow, stageSplashRuntime } from './updateSplash';
@@ -49,10 +49,24 @@ const macBackend: UpdateBackend = {
 };
 
 // ── Windows (installed and portable): electron-updater, driven explicitly (it never downloads or installs by itself) ──
+/**
+ * electron-updater (about 250 ms to load) is loaded on the first lookup, download or hand-over, never at startup (0.9.4);
+ * it is configured once, right after it loaded.
+ */
+let electronUpdater: Promise<typeof import('electron-updater')> | undefined;
+let loadedUpdater: AppUpdater | undefined;
+function loadElectronUpdater(): Promise<typeof import('electron-updater')> {
+  electronUpdater ??= import('electron-updater').then((module) => {
+    if (!loadedUpdater) { loadedUpdater = module.autoUpdater; wireElectronUpdater(module.autoUpdater); }
+    return module;
+  }).catch((error: unknown) => { electronUpdater = undefined; throw error; });
+  return electronUpdater;
+}
 /** What electron-updater's last look announced: it downloads exactly that, whatever the coordinator targets. */
 let windowsLooked: string | undefined;
 const windowsBackend: UpdateBackend = {
   async lookup() {
+    const { autoUpdater } = await loadElectronUpdater();
     const result = await autoUpdater.checkForUpdates();
     if (!result) throw new Error('Nie udało się uruchomić sprawdzania aktualizacji.');
     const version: string | undefined = result.updateInfo?.version;
@@ -65,6 +79,7 @@ const windowsBackend: UpdateBackend = {
       await this.lookup();
       if (windowsLooked !== version) throw new Error('Nie udało się sprawdzić aktualizacji.');
     }
+    const { autoUpdater, CancellationToken } = await loadElectronUpdater();
     const token = new CancellationToken();
     const cancel = () => token.cancel();
     if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, { once: true });
@@ -127,7 +142,6 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
   initialized = true;
   portable = !!(process.env.PORTABLE_EXECUTABLE_DIR || process.env.PORTABLE_EXECUTABLE_FILE);
   if (!updatesActive()) return;
-  if (!isMac()) wireElectronUpdater();
   const check = () => void checkForUpdates('background');
   // The start-up check may have just asked the feed; do not repeat it seconds later.
   const first = setTimeout(() => { if (Date.now() - coordinator.lastCheckAt() > 60_000) check(); }, 8000);
@@ -138,7 +152,7 @@ export function initUpdater(onChange: (s: UpdateState) => void, hooks: UpdaterHo
 }
 
 /** The Windows (installed) and portable updater: the coordinator asks electron-updater for lookups and downloads. */
-function wireElectronUpdater(): void {
+function wireElectronUpdater(autoUpdater: AppUpdater): void {
   if (devFeed) { autoUpdater.forceDevUpdateConfig = true; autoUpdater.setFeedURL({ provider: 'generic', url: devFeed }); }
   // The coordinator decides when to download; nothing is ever downloaded or installed behind its back.
   autoUpdater.autoDownload = false;
@@ -228,6 +242,9 @@ export async function handOver(version: string, hide: () => void, signal?: Abort
     macQuit();
     return true;
   }
+  // Loaded before anything is shown: the installer must start in the same tick as the hand-over commits.
+  let autoUpdater: AppUpdater;
+  try { autoUpdater = (await loadElectronUpdater()).autoUpdater; } catch { return giveUp(); }
   const shown = await showWindow(version);
   if (signal?.aborted) { if (shown) void abortUpdateWindow(); return giveUp(); }
   hide();
@@ -247,7 +264,7 @@ export async function handOver(version: string, hide: () => void, signal?: Abort
 function failInstall(error: unknown): void {
   handoverCommitted = false;
   coordinator.failHandover(error);
-  try { (autoUpdater as unknown as { quitAndInstallCalled?: boolean }).quitAndInstallCalled = false; } catch { /* only a retry is affected */ }
+  try { if (loadedUpdater) (loadedUpdater as unknown as { quitAndInstallCalled?: boolean }).quitAndInstallCalled = false; } catch { /* only a retry is affected */ }
 }
 
 // ── macOS flow ─────────────────────────────────────────────────────────────────────────────────
