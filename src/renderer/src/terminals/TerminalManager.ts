@@ -19,6 +19,7 @@ import { tr } from '../i18n';
 import { confirmTerminalLink } from '../terminalLinks';
 import { MAX_WEBGL_CONTEXTS, PENDING_OUTPUT_CHARS, SCROLLBACK_LINES } from '../../../shared/terminalLimits';
 import { planWebglSlot } from '../../../shared/webglPool';
+import { onWindowShown } from '../windowShown';
 
 // Campbell (Windows Terminal / PowerShell default) on a Cursor-like background.
 export const THEME: ITheme = {
@@ -95,6 +96,8 @@ class TerminalManager {
   private buildNumber = 0;
   private acks = new Map<string, number>();
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
+  /** False while the window is minimized or hidden: no terminal is drawn and no WebGL context is kept (output still buffers). */
+  private windowShown = true;
 
   constructor() {
     this.staging = document.createElement('div');
@@ -115,7 +118,39 @@ class TerminalManager {
     document.addEventListener('visibilitychange', environment);
     window.addEventListener('focus', environment);
     window.addEventListener('blur', environment);
+    onWindowShown((shown) => { this.setWindowShown(shown); environment(); });
   }
+
+  /**
+   * The window runs without background throttling (status ticks and output must not slow down while it is minimized), so
+   * drawing stops here instead: every terminal box is taken out of the layout, which pauses xterm's renderer, and the WebGL
+   * contexts are given back. xterm keeps writing into its buffer; showing the window again redraws and refits the cells.
+   */
+  private setWindowShown(shown: boolean): void {
+    if (shown === this.windowShown) return;
+    this.windowShown = shown;
+    if (!shown) {
+      for (const e of this.entries.values()) {
+        if (e.host.contains(document.activeElement)) this.refocus = e.id;
+        e.host.style.display = 'none';
+        e.webgl?.dispose();
+        e.webgl = null;
+      }
+      return;
+    }
+    for (const e of this.entries.values()) {
+      e.host.style.display = '';
+      if (!e.attachedTo) continue;
+      if (!e.webgl) this.acquireWebgl(e);
+      this.refit(e);
+    }
+    const refocus = this.refocus ? this.entries.get(this.refocus) : undefined;
+    this.refocus = null;
+    if (refocus?.attachedTo && (!document.activeElement || document.activeElement === document.body)) refocus.term.focus();
+  }
+
+  /** The terminal that had the keyboard focus when the window was minimized. */
+  private refocus: string | null = null;
 
   /** ConPTY (and its win32-input-mode) applies only to local terminals on Windows. */
   private conpty(e: Entry): boolean {
@@ -427,7 +462,8 @@ class TerminalManager {
     el.appendChild(e.host);
     e.attachedTo = el;
     e.shownAt = performance.now();
-    if (!e.webgl) this.acquireWebgl(e);
+    e.host.style.display = this.windowShown ? '' : 'none';
+    if (!e.webgl && this.windowShown) this.acquireWebgl(e);
     if (e.parkedSelection) {
       e.applySelection?.(e.parkedSelection);
       e.parkedSelection = null;
@@ -501,7 +537,7 @@ class TerminalManager {
   }
 
   private refit(e: Entry): void {
-    if (!e.attachedTo || !e.attachedTo.isConnected) return;
+    if (!e.attachedTo || !e.attachedTo.isConnected || !this.windowShown) return; // a hidden window refits on show
     const { clientWidth, clientHeight } = e.attachedTo;
     if (clientWidth < 20 || clientHeight < 20) return;
     try {
