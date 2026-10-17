@@ -148,14 +148,24 @@ function bindCodexSession(cellId: string): void {
   void window.mc.bindCodexSession(cellId, found.cell.worktree?.path ?? found.project.path);
 }
 
+// Parts without props, created once: when the app re-renders (a side panel edge dragged, a view switched) React skips them;
+// they follow the store through their own selectors.
+const titleBar = <TitleBar />;
+const workspaceTabs = <WorkspaceTabs />;
+const gridView = <GridView />;
+const statusBar = <StatusBar />;
+const commandPalette = <CommandPalette />;
+const modals = <Modals />;
+const contextMenuHost = <ContextMenuHost />;
+const toastView = <Toast />;
+
 export function App() {
   const { language } = useI18n();
-  const selectedFile = useFileStore((st) => st.activeFileId);
-  const documents = useFileStore((st) => st.documents);
   const projectId = useStore((st) => st.s.activeProjectId);
   const settingsActive = useStore((st) => st.ui.settingsActive);
   const settingsTabOpen = useStore((st) => st.ui.settingsTabOpen);
-  const fileOpen = documents.some((doc) => doc.id === selectedFile && doc.projectId === projectId);
+  // A boolean, not the documents: typing in the editor must not re-render the whole app.
+  const fileOpen = useFileStore((st) => st.documents.some((doc) => doc.id === st.activeFileId && doc.projectId === projectId));
   const sshViewActive = useSshStore((st) => st.viewActive);
   const sshViewOpen = useSshStore((st) => st.viewOpen);
   const ready = useStore((st) => st.ready);
@@ -211,13 +221,13 @@ export function App() {
   });
   return (
     <div className="app" style={{ '--sidebar-width': `${widths.sidebar}px`, '--snippets-width': `${widths.snippets}px` } as CSSProperties}>
-      <TitleBar />
+      {titleBar}
       <div className="app-body" ref={body}>
         <Sidebar resize={resizeProps('sidebar')} />
         <div className="main">
-          <WorkspaceTabs />
+          {workspaceTabs}
           <div className="workspace-content">
-            <div className="terminal-workspace" style={{ display: fileOpen || settingsActive || sshViewActive ? 'none' : 'flex' }}><GridView /></div>
+            <div className="terminal-workspace" style={{ display: fileOpen || settingsActive || sshViewActive ? 'none' : 'flex' }}>{gridView}</div>
             {settingsTabOpen && <div className="settings-workspace" style={{ display: settingsActive ? 'flex' : 'none' }}><LazyScreen load={loadSettingsPage} /></div>}
             {sshViewOpen && <div className="ssh-workspace" style={{ display: sshViewActive && !settingsActive ? 'flex' : 'none' }}><LazyScreen load={loadSshView} /></div>}
             {!settingsActive && !sshViewActive && fileOpen && <LazyScreen load={loadFileEditor} />}
@@ -226,11 +236,11 @@ export function App() {
         </div>
         {snippetsOpen && <SnippetPanel resize={resizeProps('snippets')} />}
       </div>
-      <StatusBar />
-      <CommandPalette />
-      <Modals />
-      <ContextMenuHost />
-      <Toast />
+      {statusBar}
+      {commandPalette}
+      {modals}
+      {contextMenuHost}
+      {toastView}
     </div>
   );
 }

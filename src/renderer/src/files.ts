@@ -179,8 +179,30 @@ export async function closeFile(id: string): Promise<boolean> {
   } finally { closing.delete(id); }
 }
 export function hasDirtyFiles(): boolean { return useFileStore.getState().documents.some(isFileDirty); }
-useFileStore.subscribe((s) => {
-  try { localStorage.setItem(storageKey, JSON.stringify(s.documents.filter(isFileDirty))); } catch { /* In-memory drafts still remain protected by close confirmation. */ }
+/**
+ * Unsaved drafts reach localStorage at most this long after a change (not on every keystroke: each write serializes every
+ * draft). flushDrafts writes at once; it runs before a reload, when the window is hidden and when the app quits.
+ */
+export const DRAFT_SAVE_MS = 700;
+let draftTimer: ReturnType<typeof setTimeout> | null = null;
+/** The dirty documents of the last write: the same objects again need no new write. */
+let writtenDrafts: FileDocument[] | null = null;
+function writeDrafts(): void {
+  if (draftTimer !== null) clearTimeout(draftTimer);
+  draftTimer = null;
+  const dirty = useFileStore.getState().documents.filter(isFileDirty);
+  const last = writtenDrafts;
+  if (last && dirty.length === last.length && dirty.every((d, i) => d === last[i])) return;
+  writtenDrafts = dirty;
+  try { localStorage.setItem(storageKey, JSON.stringify(dirty)); } catch { /* In-memory drafts still remain protected by close confirmation. */ }
+}
+/** Writes pending drafts now (no-op when nothing is waiting). */
+export function flushDrafts(): void {
+  if (draftTimer !== null) writeDrafts();
+}
+useFileStore.subscribe((s, prev) => {
+  if (s.documents === prev.documents || draftTimer !== null) return;
+  draftTimer = setTimeout(writeDrafts, DRAFT_SAVE_MS);
 });
 
 /** Open tabs follow renamed or moved files and folders (their text and unsaved changes stay untouched). */

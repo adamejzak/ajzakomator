@@ -124,12 +124,15 @@ export function CodeEditor({ path, text, wrap, onChange }: { path: string; text:
   const changed = useRef(onChange);
   changed.current = onChange;
   const wrapping = useRef(new Compartment());
+  /** The text the editor reported last: when it comes back as `text`, the editor already shows it (no second toString). */
+  const emitted = useRef<string | null>(null);
   useEffect(() => {
+    emitted.current = null;
     const editor = new EditorView({ parent: host.current!, state: EditorState.create({ doc: text, extensions: [
       basicSetup, theme, colors, languageForFile(path), indentUnit.of('  '), keymap.of([indentWithTab]),
       EditorView.contentAttributes.of({ 'aria-label': path, spellcheck: 'false' }),
       wrapping.current.of(wrap ? EditorView.lineWrapping : []),
-      EditorView.updateListener.of(update => { if (update.docChanged) changed.current(update.state.doc.toString()); }),
+      EditorView.updateListener.of(update => { if (update.docChanged) { const value = update.state.doc.toString(); emitted.current = value; changed.current(value); } }),
     ] }) });
     view.current = editor;
     // Opening or renaming a file from the Files panel keeps the keyboard in the tree (F2, Delete, Ctrl+C...), unless it was opened with Enter.
@@ -139,7 +142,8 @@ export function CodeEditor({ path, text, wrap, onChange }: { path: string; text:
   }, [path]);
   useEffect(() => {
     const editor = view.current;
-    if (editor && editor.state.doc.toString() !== text) editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: text } });
+    if (!editor || text === emitted.current) return;
+    if (editor.state.doc.toString() !== text) editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: text } });
   }, [text]);
   useEffect(() => { view.current?.dispatch({ effects: wrapping.current.reconfigure(wrap ? EditorView.lineWrapping : []) }); }, [wrap]);
   return <div ref={host} className="code-editor file-workspace-code" />;
