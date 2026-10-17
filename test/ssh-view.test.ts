@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SshHost, SshSessionState } from '../src/shared/ssh';
 import {
   chooseSshSection, DEFAULT_SSH_SECTION, detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts, newKeyDetail, paneDetail,
-  resolveSshSection, sectionForDetail, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter,
+  sectionChange, sectionForDetail, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter,
 } from '../src/shared/sshView';
 
 const host = (id: string, label: string, group?: string): SshHost => ({ id, label, address: `${label}.example`, port: 22, username: 'u', createdAt: 0, updatedAt: 0, ...(group ? { group } : {}) });
@@ -69,8 +69,7 @@ describe('SSH mode sections (0.9.2)', () => {
     expect(chooseSshSection('hosts', 'nope')).toBe('hosts');
     expect(chooseSshSection('hosts', 'knownHosts')).toBe('knownHosts');
     expect(chooseSshSection('knownHosts', 'keys')).toBe('keys');
-    for (const junk of [undefined, null, 5, '', 'sftp', 'Hosts', '__proto__']) expect(resolveSshSection(junk)).toBe('hosts');
-    expect(resolveSshSection('keys')).toBe('keys');
+    for (const junk of ['', 'sftp', 'Hosts', '__proto__', 'constructor']) expect(chooseSshSection('keys', junk)).toBe('keys');
   });
 
   it('puts a detail into its section and shows only the own detail of a section', () => {
@@ -82,6 +81,15 @@ describe('SSH mode sections (0.9.2)', () => {
     expect(paneDetail('hosts', { kind: 'newKey' })).toBeNull();
     expect(paneDetail('keys', { kind: 'host', hostId: 'h1' })).toBeNull();
     expect(paneDetail('knownHosts', { kind: 'key', keyId: 'k' })).toBeNull();
+  });
+
+  it('drops a new-key draft and the host selection when the section changes (selectSshSection)', () => {
+    const st = { section: 'keys' as const, detail: { kind: 'newKey' as const, mode: 'paste' as const }, selectedHosts: ['h1'] };
+    expect(sectionChange(st, 'hosts')).toEqual({ section: 'hosts', detail: null, selectedHosts: ['h1'] });
+    expect(sectionChange(st, 'knownHosts')).toEqual({ section: 'knownHosts', detail: null, selectedHosts: [] });
+    expect(sectionChange({ section: 'hosts', detail: { kind: 'host', hostId: 'h1' }, selectedHosts: ['h1', 'h2'] }, 'keys')).toEqual({ section: 'keys', detail: null, selectedHosts: [] });
+    expect(sectionChange(st, 'keys')).toEqual({});
+    expect(sectionChange(st, 'sftp')).toEqual({});
   });
 
   it('is SSH mode only while the view is in front and Settings is not', () => {

@@ -293,13 +293,28 @@ const PARTS = {
     let app;
     try {
       const hosts = [testHost(server.port, { label: 'web-1', group: 'lab' }), testHost(server.port, { label: 'web-2', group: 'lab' }), testHost(server.port, { label: 'db', group: 'prod' }), testHost(server.port, { label: 'pi' })];
-      writeState(root, sshState({ projectPath: join(root, 'project'), hosts }));
+      // The side panel starts folded; one grid tab (an idle SSH cell) and one file in the project.
+      const state = sshState({ projectPath: join(root, 'project'), hosts, cells: [hosts[3].id] });
+      state.sidebarCollapsed = true;
+      writeState(root, state);
+      writeFileSync(join(root, 'project', 'notes.txt'), 'notes\n');
       writeKnownHost(root, server);
       app = await launchApp(root);
       try {
         // A roomy window first (the narrow one comes at the end).
         await app.cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
         const navState = `[...document.querySelectorAll('.side-panel .ssh-nav-item')].map((b) => b.dataset.section + (b.disabled ? ':off' : '') + (b.classList.contains('on') ? ':on' : '')).join('|')`;
+        const folded = `window.__mc.useStore.getState().s.sidebarCollapsed === true`;
+        const sshHidden = `getComputedStyle(document.querySelector('.ssh-workspace')).display === 'none'`;
+        const showGrid = () => app.evaluate(`document.querySelector('.workspace-tabs .grid-tab').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
+        // Entering SSH mode from the tile keeps a folded side panel folded: the view shows its sections as a row instead.
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`!!document.querySelector('.ssh-view .ssh-tile[data-host-id]') && !document.querySelector('.side-panel') && !!document.querySelector('.ssh-view-main .ssh-nav.compact') && ${folded}`, 'SSH mode with the side panel still folded');
+        await showGrid();
+        await app.until(`${sshHidden} && ${folded}`, 'left SSH mode, the fold unchanged');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`!!document.querySelector('.ssh-nav.compact') && ${folded}`, 'SSH mode from its tab, still folded');
+        // In SSH mode the SSH tile unfolds the side panel (and folds it again later).
         await app.click('.rail-tiles [aria-label="SSH"]');
         await app.until(`!!document.querySelector('.ssh-view .ssh-tile[data-host-id]') && !!document.querySelector('.side-panel .ssh-nav')`, 'SSH mode with its navigation in the side panel');
         if (await app.evaluate(navState) !== 'hosts:on|keys|knownHosts|sftp:off') throw new Error(`side panel entries: ${await app.evaluate(navState)}`);
@@ -357,6 +372,17 @@ const PARTS = {
         await app.click('.workspace-tabs .ssh-tab');
         await app.until(`document.querySelector('.side-panel .ssh-nav-item.on')?.dataset.section === 'hosts'`, 'SSH mode again from its tab');
         await shot('back');
+        // "Pokaż w panelu plików" on a file tab ends SSH mode and reveals the file in the Files panel.
+        await showGrid();
+        await app.click('.rail-tiles [aria-label="Pliki"]');
+        await app.until(`!!document.querySelector('.file-entry[data-path="notes.txt"]')`, 'file in the Files panel');
+        await app.click('.file-entry[data-path="notes.txt"]');
+        await app.until(`!!document.querySelector('.workspace-tabs .file-tab')`, 'file tab');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`!!document.querySelector('.side-panel .ssh-nav')`, 'SSH mode before the reveal');
+        await app.evaluate(`document.querySelector('.workspace-tabs .file-tab').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 50 }))`);
+        await app.click('.menu .menu-item', 'Pokaż w panelu plików');
+        await app.until(`!document.querySelector('.side-panel .ssh-nav') && !!document.querySelector('#sidebar-files .file-entry[data-path="notes.txt"]') && ${sshHidden}`, 'file revealed, SSH mode ended');
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },

@@ -138,15 +138,23 @@ describe('SSH mode in the side panel (0.9.2)', () => {
     expect(sidePanelContent({ collapsed: true, viewMode: false, panelId: 'projects' })).toBeNull();
   });
 
-  it('enters view mode from the view tile, unfolding the side panel; the tile then folds and unfolds it', () => {
-    expect(railTileAction({ collapsed: true, view: 'files', viewMode: false }, view)).toEqual({ collapsed: false, view: 'files', openView: true, leaveView: false });
-    expect(railTileAction({ collapsed: false, view: 'files', viewMode: true }, view)).toEqual({ collapsed: true, view: 'files', openView: false, leaveView: false });
-    expect(railTileAction({ collapsed: true, view: 'files', viewMode: true }, view)).toEqual({ collapsed: false, view: 'files', openView: false, leaveView: false });
+  const on = { viewActive: true, settingsActive: false };
+  const off = { viewActive: false, settingsActive: false };
+  it('enters view mode from the view tile without touching the fold; the tile then folds and unfolds the side panel', () => {
+    expect(railTileAction({ collapsed: true, view: 'files', ...off }, view)).toEqual({ collapsed: true, view: 'files', openView: true, leaveView: false });
+    expect(railTileAction({ collapsed: false, view: 'files', ...off }, view)).toEqual({ collapsed: false, view: 'files', openView: true, leaveView: false });
+    expect(railTileAction({ collapsed: true, view: 'files', viewActive: true, settingsActive: true }, view)).toEqual({ collapsed: true, view: 'files', openView: true, leaveView: false });
+    expect(railTileAction({ collapsed: false, view: 'files', ...on }, view)).toEqual({ collapsed: true, view: 'files', openView: false, leaveView: false });
+    expect(railTileAction({ collapsed: true, view: 'files', ...on }, view)).toEqual({ collapsed: false, view: 'files', openView: false, leaveView: false });
   });
 
   it('leaves view mode from a panel tile and shows that panel, also the one that was open before (never folds it)', () => {
-    expect(railTileAction({ collapsed: false, view: 'projects', viewMode: true }, { id: 'projects' })).toEqual({ collapsed: false, view: 'projects', openView: false, leaveView: true });
-    expect(railTileAction({ collapsed: true, view: 'projects', viewMode: true }, { id: 'git' })).toEqual({ collapsed: false, view: 'git', openView: false, leaveView: true });
-    expect(railTileAction({ collapsed: false, view: 'projects', viewMode: false }, { id: 'projects' })).toEqual({ collapsed: true, view: 'projects', openView: false, leaveView: false });
+    expect(railTileAction({ collapsed: false, view: 'projects', ...on }, { id: 'projects' })).toEqual({ collapsed: false, view: 'projects', openView: false, leaveView: true });
+    expect(railTileAction({ collapsed: true, view: 'projects', ...on }, { id: 'git' })).toEqual({ collapsed: false, view: 'git', openView: false, leaveView: true });
+    expect(railTileAction({ collapsed: false, view: 'projects', ...off }, { id: 'projects' })).toEqual({ collapsed: true, view: 'projects', openView: false, leaveView: false });
+  });
+
+  it('sends a view that waits behind Settings to the background when a panel is chosen', () => {
+    expect(railTileAction({ collapsed: false, view: 'projects', viewActive: true, settingsActive: true }, { id: 'files' })).toEqual({ collapsed: false, view: 'files', openView: false, leaveView: true });
   });
 });
