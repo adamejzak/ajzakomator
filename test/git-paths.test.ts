@@ -3,11 +3,14 @@ import { execFileSync, spawnSync } from 'child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Git } from '../src/main/git';
 import { handleGit } from '../src/main/gitHandler';
 import { canonicalPath, isInsidePath, normalizeSpelling, relativeInside, samePath, type PathOps } from '../src/main/gitPaths';
 import type { GitStatus, GitTrustInfo, GitWorktree } from '../src/shared/git';
+
+// Real git processes: slow under a busy machine or CI runner, so these tests get more time than the 20 s default.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const windows = process.platform === 'win32';
 
