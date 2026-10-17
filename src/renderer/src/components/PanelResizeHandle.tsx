@@ -1,6 +1,7 @@
 import { useI18n } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { PANEL_LIMITS, type Panel } from '../../../shared/panels';
+import { terminals } from '../terminals/TerminalManager';
 
 export interface PanelResizeProps {
   panel: Panel;
@@ -18,6 +19,10 @@ export function PanelResizeHandle({ panel, width, maxWidth, onResize, onFinish }
   const drag = useRef<{ id: number; x: number; start: number; current: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const handle = useRef<HTMLDivElement>(null);
+  /** Terminals are fitted once when the drag ends, not while it runs (see TerminalManager.holdFits). */
+  const fitHold = useRef<(() => void) | null>(null);
+  const releaseFits = () => { fitHold.current?.(); fitHold.current = null; };
+  useEffect(() => releaseFits, []);
   const clamp = (value: number) => Math.round(Math.max(limits.min, Math.min(max, value)));
   const label = panel === 'sidebar' ? tr("Szerokość panelu projektów") : tr("Szerokość panelu snippetów");
 
@@ -37,11 +42,15 @@ export function PanelResizeHandle({ panel, width, maxWidth, onResize, onFinish }
     if (!current) return;
     drag.current = null;
     setDragging(false);
+    const release = fitHold.current;
+    fitHold.current = null;
     document.documentElement.classList.remove('panel-resizing');
     const el = handle.current;
     if (el?.hasPointerCapture(current.id)) el.releasePointerCapture(current.id);
     el?.blur();
     onFinish(cancel ? null : current.current);
+    // After the final width is rendered (a cancelled drag goes back), so each terminal is fitted once, to its final box.
+    if (release) setTimeout(release, 0);
   };
 
   return (
@@ -62,6 +71,8 @@ export function PanelResizeHandle({ panel, width, maxWidth, onResize, onFinish }
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
         drag.current = { id: e.pointerId, x: e.clientX, start: width, current: width };
+        releaseFits();
+        fitHold.current = terminals.holdFits();
         setDragging(true);
       }}
       onPointerMove={(e) => {
