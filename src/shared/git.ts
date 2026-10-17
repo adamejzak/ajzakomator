@@ -154,7 +154,8 @@ export interface GitMutation extends Base { requestId: string }
 export interface GitFetchRequest extends GitMutation {}
 export interface GitPullRequest extends GitMutation {}
 export interface GitPushRequest extends GitMutation { remote: string; branch: string; urlId: string }
-export interface GitTrustRequest extends Base {}
+/** `cached`: a display-only read (the Files tree marks) may use a scan of the last few seconds; every git run still checks itself. */
+export interface GitTrustRequest extends Base { cached?: boolean }
 export interface GitTrustGrantRequest extends GitMutation {}
 export interface GitPathsRequest extends GitMutation { paths: string[]; all?: boolean }
 export interface GitCommitRequest extends GitMutation { message: string }
@@ -269,8 +270,10 @@ export function validateGitRequest<C extends GitChannel>(channel: C, input: unkn
   switch (channel) {
     case 'status':
     case 'branches':
-    case 'trust':
       return done(base);
+    case 'trust':
+      if (input.cached !== undefined && typeof input.cached !== 'boolean') return invalid;
+      return done(input.cached ? { ...base, cached: true } : base);
     case 'log': {
       const skip = input.skip ?? 0;
       const count = input.count ?? GIT_LOG_PAGE;

@@ -9,7 +9,8 @@
 // nothing (log, show, branches, commit and staged diffs, worktree list) work without trust.
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { readdir, readFile, stat } from 'fs/promises';
 import { realpath as fsRealpath } from 'fs';
 import { promisify } from 'util';
 import { dirname, join, resolve } from 'path';
@@ -49,6 +50,15 @@ const OUTPUT_CAP = 4 * 1024 * 1024;
 const WRITE_OUTPUT_CAP = 64 * 1024 * 1024;
 const DIFF_CAP = 1024 * 1024;
 const SCAN_TTL_MS = 3000;
+const PUSH_TARGET_TTL_MS = 30_000;
+/** Per-folder caches of a long session (many projects and worktrees) keep at most this many entries, the oldest go first. */
+const CACHE_LIMIT = 100;
+
+function remember<K, V>(map: Map<K, V>, key: K, value: V): void {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > CACHE_LIMIT) map.delete(map.keys().next().value as K);
+}
 
 const INSTALL_HINT = 'Nie znaleziono polecenia git. Zainstaluj Git (git-scm.com) i uruchom aplikację ponownie.';
 const UNTRUSTED = 'To repozytorium ma w konfiguracji programy, które git może uruchomić. Zaufaj mu, aby użyć tej operacji.';
@@ -139,6 +149,12 @@ export class Git {
   private readonly roots = new Map<string, { root: string; at: number }>();
   private readonly dirs = new Map<string, GitDirs>();
   private readonly scans = new Map<string, { scan: RepoScan; at: number }>();
+  /** Where a push of a branch goes, per root and branch, while the local configuration file is unchanged (status only). */
+  private readonly pushTargets = new Map<string, { target: GitPushTarget | null; at: number; stamp: string }>();
+  /** Identical reads that are still running (a window focus asks the Files tree and the Git panel at once): they share one run. */
+  private readonly inflight = new Map<string, Promise<GitResult<unknown>>>();
+  /** Bumped by every write and trust change: part of the key of shared reads. */
+  private generation = 0;
   readonly trust: GitTrustStore;
 
   constructor(options: GitOptions = {}) {
@@ -251,6 +267,15 @@ export class Git {
     } catch { /* no lock, or it is not ours to remove */ }
   }
 
+  /** Runs `work` once for every caller that asks for the same `key` while it is still running. */
+  private shared<T>(key: string, work: () => Promise<GitResult<T>>): Promise<GitResult<T>> {
+    const running = this.inflight.get(key);
+    if (running) return running as Promise<GitResult<T>>;
+    const promise = work().finally(() => { if (this.inflight.get(key) === promise) this.inflight.delete(key); });
+    this.inflight.set(key, promise);
+    return promise;
+  }
+
   private async attempt<T>(work: () => Promise<GitResult<T>>): Promise<GitResult<T>> {
     try { return await work(); }
     catch (error) {
@@ -272,7 +297,7 @@ export class Git {
     }
     const root = out.stdout.trim();
     if (!root) throw new GitFailure('not-repo', NOT_REPO);
-    this.roots.set(dir, { root, at: Date.now() });
+    remember(this.roots, dir, { root, at: Date.now() });
     return root;
   }
 
@@ -284,7 +309,7 @@ export class Git {
     const [gitDir = '', common = ''] = out.stdout.split('\n').map((line) => line.trim());
     if (!gitDir) throw new GitFailure('not-repo', NOT_REPO);
     const dirs = { gitDir, commonDir: resolve(root, common || gitDir) };
-    this.dirs.set(root, dirs);
+    remember(this.dirs, root, dirs);
     return dirs;
   }
 
@@ -316,19 +341,20 @@ export class Git {
     }
 
     // Hooks git would run: any file that is not a ".sample" (on Windows git runs a hook by its shebang, so the executable bit says nothing).
+    // Read without blocking the main process (a hooks folder can sit on a slow or scanned drive).
     try {
-      for (const name of readdirSync(join(dirs.commonDir, 'hooks'))) {
+      for (const name of await readdir(join(dirs.commonDir, 'hooks'))) {
         if (name.endsWith('.sample')) continue;
         const file = join(dirs.commonDir, 'hooks', name);
-        const info = statSync(file);
+        const info = await stat(file);
         if (!info.isFile() || (process.platform !== 'win32' && (info.mode & 0o111) === 0)) continue;
         keys.add(`hooks/${name}`);
-        fingerprint.push(`hook:${name}:${createHash('sha256').update(info.size <= 1024 * 1024 ? readFileSync(file) : String(info.size)).digest('hex')}`);
+        fingerprint.push(`hook:${name}:${createHash('sha256').update(info.size <= 1024 * 1024 ? await readFile(file) : String(info.size)).digest('hex')}`);
       }
     } catch { /* no hooks folder */ }
 
     const scan = { keys: [...keys].sort(), hash: createHash('sha256').update(JSON.stringify(fingerprint.sort())).digest('hex') };
-    this.scans.set(root, { scan, at: Date.now() });
+    remember(this.scans, root, { scan, at: Date.now() });
     return scan;
   }
 
@@ -348,10 +374,18 @@ export class Git {
     return isInsidePath(scope, root);
   }
 
-  trustInfo(dir: string, scope?: string): Promise<GitResult<GitTrustInfo>> {
+  /**
+   * The trust state for the panel and the Files tree. `cached` (display only) accepts a scan of the last SCAN_TTL_MS; the trust
+   * dialog and every git run that can start a repository program scan for themselves.
+   */
+  trustInfo(dir: string, scope?: string, cached = false): Promise<GitResult<GitTrustInfo>> {
+    return this.shared(`trust\0${this.generation}\0${dir}\0${scope ?? ''}\0${cached}`, () => this.readTrust(dir, scope, !cached));
+  }
+
+  private readTrust(dir: string, scope: string | undefined, fresh: boolean): Promise<GitResult<GitTrustInfo>> {
     return this.attempt(async () => {
       const root = await this.root(dir);
-      const { state, scan } = await this.stateOf(root, true);
+      const { state, scan } = await this.stateOf(root, fresh);
       return ok({ state, keys: scan.keys, root, parent: scope ? !this.withinScope(scope, root) : false });
     });
   }
@@ -363,7 +397,8 @@ export class Git {
       const root = await this.root(dir);
       const { scan } = await this.stateOf(root, true);
       if (scan.keys.length) this.trust.set(root, scan.hash);
-      return this.trustInfo(dir, scope);
+      this.generation++;
+      return this.readTrust(dir, scope, true);
     });
   }
 
@@ -371,7 +406,8 @@ export class Git {
     return this.attempt(async () => {
       this.consume(requestId);
       this.trust.delete(await this.root(dir));
-      return this.trustInfo(dir, scope);
+      this.generation++;
+      return this.readTrust(dir, scope, true);
     });
   }
 
@@ -490,15 +526,34 @@ export class Git {
   // ---------- reads that need trust ----------
 
   status(dir: string, scope?: string): Promise<GitResult<GitStatus>> {
-    return this.attempt(async () => {
+    return this.shared(`status\0${this.generation}\0${dir}\0${scope ?? ''}`, () => this.attempt(async () => {
       const root = await this.root(dir);
       await this.requireTrust(root, false);
       const out = await this.run(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], { timeoutMs: this.readTimeout, read: true, allowTruncate: true });
       const parsed = parseStatusV2(out.stdout, GIT_MAX_FILES);
-      const push = parsed.branch && !parsed.initial ? await this.pushTarget(root, parsed.branch) : null;
+      const push = parsed.branch && !parsed.initial ? await this.cachedPushTarget(root, parsed.branch) : null;
       const parent = scope ? !this.withinScope(scope, root) : false;
       return ok({ ...parsed, truncated: parsed.truncated || out.truncated, root, push, parent, projectRelation: this.relation(scope, root) });
-    });
+    }));
+  }
+
+  /**
+   * The push target the status shows, remembered for PUSH_TARGET_TTL_MS while the repository's local configuration file is
+   * unchanged (a changed pushurl is seen at once). A push always asks git again and compares with what the user confirmed.
+   */
+  private async cachedPushTarget(root: string, branch: string): Promise<GitPushTarget | null> {
+    let stamp = '';
+    try {
+      const { commonDir } = await this.gitDirs(root);
+      const info = await stat(join(commonDir, 'config'));
+      stamp = `${info.mtimeMs}:${info.size}`;
+    } catch { stamp = 'none'; }
+    const key = `${root}\0${branch}`;
+    const hit = this.pushTargets.get(key);
+    if (hit && hit.stamp === stamp && Date.now() - hit.at < PUSH_TARGET_TTL_MS) return hit.target;
+    const target = await this.pushTarget(root, branch);
+    remember(this.pushTargets, key, { target, at: Date.now(), stamp });
+    return target;
   }
 
   /**
@@ -584,8 +639,13 @@ export class Git {
       this.consume(requestId);
       if (this.busy.has(key)) return fail('busy', 'Inna operacja git w tym repozytorium jeszcze trwa.');
       this.busy.add(key);
+      // Reads that started before (or during) a write never answer a request made after it.
+      this.generation++;
       try { return await work(root); }
-      finally { this.busy.delete(key); this.roots.delete(dir); this.scans.delete(root); }
+      finally {
+        this.busy.delete(key); this.roots.delete(dir); this.scans.delete(root); this.generation++;
+        for (const target of this.pushTargets.keys()) if (target.startsWith(`${root}\0`)) this.pushTargets.delete(target);
+      }
     });
   }
 
