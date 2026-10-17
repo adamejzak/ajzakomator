@@ -30,8 +30,19 @@ async function readSearchableText(path: string): Promise<{ text: string } | 'lar
   finally { await file.close(); }
 }
 
-/** Searches every small text file of the project; symlinks are never followed. */
-export async function searchProject(root: string, options: SearchOptions, now: () => number = Date.now): Promise<SearchResult> {
+/** One collator for every comparison (localeCompare with options builds one per call). */
+const collator = new Intl.Collator('pl', { numeric: true, sensitivity: 'base' });
+/** Files of one folder read at the same time; results are still taken in name order. */
+const READERS = 6;
+
+/** Results of a search that a newer one replaced (nobody shows them). */
+const cancelled = (): SearchResult => ({ ok: true, files: [], matches: 0, scanned: 0, skipped: 0, truncated: true });
+
+/**
+ * Searches every small text file of the project; symlinks are never followed. `signal` stops a search that a newer one
+ * replaced, between files.
+ */
+export async function searchProject(root: string, options: SearchOptions, now: () => number = Date.now, signal?: AbortSignal): Promise<SearchResult> {
   const pattern = buildPattern(options);
   if ('error' in pattern) return pattern.error ? { ok: false, error: `Nieprawidłowe wyrażenie regularne: ${pattern.error}` } : { ok: true, files: [], matches: 0, scanned: 0, skipped: 0, truncated: false };
   const include = compileGlobs(options.include);
@@ -42,11 +53,13 @@ export async function searchProject(root: string, options: SearchOptions, now: (
   const started = now();
   const stack: string[] = [''];
   while (stack.length && !truncated) {
+    if (signal?.aborted) return cancelled();
     const directory = stack.pop()!;
     let items;
     try { items = await readdir(join(base, directory), { withFileTypes: true }); } catch { continue; }
-    items.sort((a, b) => a.name.localeCompare(b.name, 'pl', { numeric: true, sensitivity: 'base' }));
+    items.sort((a, b) => collator.compare(a.name, b.name));
     const folders: string[] = [];
+    const candidates: string[] = [];
     for (const item of items) {
       const path = directory ? `${directory}/${item.name}` : item.name;
       if (item.isDirectory()) {
@@ -54,18 +67,43 @@ export async function searchProject(root: string, options: SearchOptions, now: (
         continue;
       }
       if (!item.isFile() || (include && !include(path)) || exclude?.(path)) continue;
-      if (scanned >= MAX_FILES || now() - started > TIME_BUDGET_MS) { truncated = true; break; }
+      candidates.push(path);
+    }
+    // A few readers fetch the folder's files ahead; the budget is checked before each file is started, in name order.
+    const reads: Array<Promise<Awaited<ReturnType<typeof readSearchableText>>> | undefined> = [];
+    const before = scanned;
+    let queued = 0;
+    const start = (): boolean => {
+      if (queued >= candidates.length || signal?.aborted) return false;
+      if (before + queued >= MAX_FILES || now() - started > TIME_BUDGET_MS) return false;
+      reads[queued] = readSearchableText(join(base, candidates[queued]));
+      queued++;
+      return true;
+    };
+    for (let i = 0; i < READERS && start(); i++) { /* fill the window */ }
+    for (let i = 0; i < candidates.length; i++) {
+      const pending = reads[i];
+      if (!pending) {
+        if (signal?.aborted) return cancelled();
+        truncated = true;
+        break;
+      }
+      const read = await pending;
+      reads[i] = undefined;
+      start();
       scanned++;
-      const read = await readSearchableText(join(base, path));
       if (read === null || read === 'large') { skipped++; continue; }
       const found = searchText(read.text, pattern.regex, MAX_MATCHES - matches);
-      if (found.matches.length) { files.push({ path, matches: found.matches }); matches += found.matches.length; }
+      if (found.matches.length) { files.push({ path: candidates[i], matches: found.matches }); matches += found.matches.length; }
       if (found.truncated || matches >= MAX_MATCHES) { truncated = true; break; }
     }
+    // Let reads that were started ahead finish (their handles close) before the result is returned.
+    await Promise.all(reads.filter(Boolean));
+    if (signal?.aborted) return cancelled();
     // Depth-first in name order: push in reverse so the first folder is searched first.
     for (const folder of folders.reverse()) stack.push(folder);
   }
-  files.sort((a, b) => a.path.localeCompare(b.path, 'pl', { numeric: true, sensitivity: 'base' }));
+  files.sort((a, b) => collator.compare(a.path, b.path));
   return { ok: true, files, matches, scanned, skipped, truncated };
 }
 

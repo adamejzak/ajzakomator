@@ -774,9 +774,16 @@ ipcMain.handle('fs:listProjectDirectories', (_e, projectId: string) => {
   const project = state.projects.find((p) => p.id === projectId);
   return project ? listProjectDirectories(project.path) : { ok: false, error: 'Projekt już nie istnieje.' };
 });
-ipcMain.handle('fs:searchProject', (_e, projectId: string, options: SearchOptions) => {
+/** The running search per window: a new one (typing goes on) stops the previous, whose answer nobody shows. */
+const searches = new Map<number, AbortController>();
+ipcMain.handle('fs:searchProject', async (e, projectId: string, options: SearchOptions) => {
   const project = state.projects.find((p) => p.id === projectId);
-  return project ? searchProject(project.path, options) : { ok: false, error: 'Projekt już nie istnieje.' };
+  if (!project) return { ok: false, error: 'Projekt już nie istnieje.' };
+  searches.get(e.sender.id)?.abort();
+  const controller = new AbortController();
+  searches.set(e.sender.id, controller);
+  try { return await searchProject(project.path, options, Date.now, controller.signal); }
+  finally { if (searches.get(e.sender.id) === controller) searches.delete(e.sender.id); }
 });
 ipcMain.handle('fs:replaceInProject', (_e, projectId: string, request: ReplaceRequest) => {
   const project = state.projects.find((p) => p.id === projectId);
