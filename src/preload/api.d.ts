@@ -129,6 +129,8 @@ export interface McApi {
   on(channel: 'auth:state', cb: (state: LoginState) => void): () => void;
   on(channel: 'install:state', cb: (state: InstallState) => void): () => void;
   on(channel: 'cli:changed', cb: (status: CliStatusMap) => void): () => void;
+  /** False while the main window is minimized or hidden (the page itself always counts as visible: no background throttling). */
+  on(channel: 'window:shown', cb: (shown: boolean) => void): () => void;
   on(channel: 'cell:restarted', cb: (cellId: string) => void): () => void;
   on(channel: 'cell:hook', cb: (cellId: string, event: HookEvent, info?: HookInfo) => void): () => void;
   on(channel: 'cell:session', cb: (cellId: string, session: CellSession) => void): () => void;

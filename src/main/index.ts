@@ -531,7 +531,14 @@ function createWindow(): void {
       ? { trafficLightPosition: { x: 12, y: 10 } }
       : { titleBarOverlay: { color: '#0d0d0d', symbolColor: '#8a8a8a', height: 36 } }),
     show: false,
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true },
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true,
+      // Status ticks and alerts keep their 400 ms cadence and output keeps flowing while the window is minimized or covered;
+      // the renderer stops drawing terminals on its own while minimized or hidden ('window:shown').
+      backgroundThrottling: false,
+      // A terminal app: no red underlines under paths and commands, no dictionary downloads.
+      spellcheck: false,
+    },
     // Off-screen, non-focusable window for automated screenshots (docs).
     ...(devEnv('MC_OFFSCREEN') ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
   });
@@ -548,10 +555,12 @@ function createWindow(): void {
   const created = win;
   // Async callbacks outlive the native window (shutdown, update hand-over); they must see "no window", not a destroyed one.
   created.once('closed', () => { install.dispose(); if (win === created) win = null; });
-  win.on('minimize', () => usage.setActive(false));
-  win.on('hide', () => usage.setActive(false));
-  win.on('restore', () => usage.setActive(true));
-  win.on('show', () => usage.setActive(true));
+  // Without background throttling the page always counts as visible, so the renderer learns from here when nobody can see it.
+  const sendShown = () => { if (isLive(created)) safeSend(created, 'window:shown', created.isVisible() && !created.isMinimized()); };
+  win.on('minimize', () => { usage.setActive(false); sendShown(); });
+  win.on('hide', () => { usage.setActive(false); sendShown(); });
+  win.on('restore', () => { usage.setActive(true); sendShown(); });
+  win.on('show', () => { usage.setActive(true); sendShown(); });
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
   // The install window lives in the renderer: a reload or crash must not leave an invisible install running.
   win.webContents.on('did-start-loading', () => install.dispose());
@@ -569,7 +578,7 @@ function createWindow(): void {
   // Windows ends the session without before-quit: the last changes are written now (the renderer was asked to send its own).
   win.on('query-session-end', () => { send('app:before-quit'); });
   win.on('session-end', () => { saver.flush(); });
-  win.webContents.on('did-finish-load', () => { hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); } });
+  win.webContents.on('did-finish-load', () => { hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); sendShown(); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };

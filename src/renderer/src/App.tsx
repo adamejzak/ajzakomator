@@ -30,6 +30,7 @@ const loadSettingsPage = () => import('./components/SettingsPage').then((m) => (
 import { useFileStore } from './files';
 import { initSsh } from './ssh';
 import { useSshStore } from './sshStore';
+import { isWindowShown, onWindowShown } from './windowShown';
 
 let booted = false;
 /** The listeners registered before the first state arrives; a retried boot must not add them twice. */
@@ -75,6 +76,7 @@ function listenEarly(): void {
   window.mc.on('app:before-quit', flushPendingSaves);
   window.addEventListener('beforeunload', flushPendingSaves);
   document.addEventListener('visibilitychange', () => { if (document.hidden) flushPendingSaves(); });
+  onWindowShown((shown) => { if (!shown) flushPendingSaves(); });
   window.mc.on('automation:start-cells', (ids) => ids.forEach(ensureStarted));
   window.mc.on('cli:changed', applyCliStatus);
 }
@@ -220,14 +222,15 @@ export function App() {
     if (!ready) return;
     // Not while the window is hidden, and the store is only touched when the answer differs (every cell reads mcpInfo).
     const refresh = () => {
-      if (document.hidden) return;
+      if (!isWindowShown()) return;
       void window.mc.getMcpInfo().then((mcpInfo) => {
         if (JSON.stringify(mcpInfo) !== JSON.stringify(getUi().mcpInfo)) setUi({ mcpInfo });
       }).catch(() => {});
     };
     const timer = window.setInterval(refresh, 3000);
     document.addEventListener('visibilitychange', refresh);
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
+    const offShown = onWindowShown(refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); offShown(); };
   }, [ready]);
   useEffect(() => {
     document.documentElement.lang = language;

@@ -3,6 +3,7 @@ import { BackgroundLoader, planBackgroundLoad } from '../../shared/backgroundLoa
 import { activeProject, activeTab } from '../../shared/state';
 import { isStarted, needsBackgroundStart, onCellStart, startCellInBackground } from './actions';
 import { getS, getUi, setUi, useStore } from './store';
+import { isWindowShown, onWindowShown } from './windowShown';
 
 let loader: BackgroundLoader | null = null;
 let lastActivity = -Infinity;
@@ -31,7 +32,7 @@ export function initBackgroundLoader(): void {
     setTimer: (fn, ms) => window.setTimeout(fn, ms),
     clearTimer: (handle) => window.clearTimeout(handle as number),
     idle,
-    windowVisible: () => document.visibilityState === 'visible',
+    windowVisible: isWindowShown,
     lastActivityAt: () => lastActivity,
     start: startCellInBackground,
     needsStart: needsBackgroundStart,
@@ -46,7 +47,8 @@ export function initBackgroundLoader(): void {
   loader = instance;
   // A grid opened by the user starts its cells: they leave the queue (and the limit hint) without waiting for a re-plan.
   onCellStart(() => queueMicrotask(() => instance.refresh()));
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') instance.wake(); });
+  document.addEventListener('visibilitychange', () => { if (isWindowShown()) instance.wake(); });
+  onWindowShown(() => { if (isWindowShown()) instance.wake(); });
 
   const first = getS().activeProjectId;
   if (first) recency.push(first);
