@@ -4,6 +4,7 @@ import { translate } from '../../../shared/i18n';
 import { detectLanguage, isLanguage, LANGUAGES } from '../../../shared/languages';
 import { updateSettings } from '../../../shared/state';
 import { update } from '../store';
+import { pickLanguage } from '../i18n';
 import { Logo } from './icons';
 
 export function LanguageSetup() {
@@ -24,7 +25,8 @@ export function LanguageSetup() {
           <div className="field">
             <label htmlFor="setup-language">{tr('Wybierz język')}</label>
             <Select id="setup-language" className="select" autoFocus value={language} onChange={(event) => {
-              if (isLanguage(event.target.value)) setLanguage(event.target.value);
+              // The preview switches once the language's texts have loaded (the system language is loaded at start).
+              if (isLanguage(event.target.value)) pickLanguage(event.target.value, setLanguage);
             }}>
               {LANGUAGES.map((option) => <option key={option.code} value={option.code} lang={option.code}>{option.name}</option>)}
             </Select>

@@ -1,4 +1,4 @@
-import { tr, useI18n } from './i18n';
+import { chosenLanguage, loadLanguage, tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, RAIL_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
@@ -60,6 +60,8 @@ async function bootSteps(): Promise<void> {
   ]);
   setAliveAtStart(alive);
   setUi({ cliStatus });
+  // The translations of the chosen language load before the first real render: no untranslated texts at start.
+  await loadLanguage(snapshot.state.settings.language ?? chosenLanguage()).catch((error) => reportError('boot', error));
   useStore.getState().init(snapshot);
   await bootRest(mcpInfo);
 }
@@ -218,7 +220,10 @@ export function App() {
   const [available, setAvailable] = useState(window.innerWidth);
   const [live, setLive] = useState<Partial<Record<Panel, number>>>({});
   const [bootFailed, setBootFailed] = useState(false);
-  useEffect(() => { if (!bootFailed) boot().catch(() => setBootFailed(true)); }, [bootFailed]);
+  useEffect(() => {
+    // The retry card is translated too: its language loads first (the state may not have arrived, so the system language).
+    if (!bootFailed) boot().catch(() => loadLanguage(chosenLanguage()).catch(() => undefined).then(() => setBootFailed(true)));
+  }, [bootFailed]);
   useEffect(() => {
     if (!ready) return;
     // Not while the window is hidden, and the store is only touched when the answer differs (every cell reads mcpInfo).

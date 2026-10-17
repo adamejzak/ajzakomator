@@ -3,7 +3,7 @@ import { SettingRow, SettingsGroup } from './SettingRow';
 import { ColorPicker } from './ColorPicker';
 import { ProfileOptions } from './ProfileOptions';
 import { useId, useRef, useState } from 'react';
-import { useI18n } from '../i18n';
+import { pickLanguage, useI18n } from '../i18n';
 import { update, useStore, toast } from '../store';
 import { updateSettings, upsertProfile, removeProfile, uid } from '../../../shared/state';
 import type { CliKind, ShellKind } from '../../../shared/types';
@@ -65,7 +65,8 @@ export function SettingsPage() {
       {section === 0 && <SettingsGroup>
         <SettingRow title={tr('Język aplikacji')} htmlFor="settings-language" hint={tr('Zmiana języka działa od razu.')}>
           <Select id="settings-language" className="select" value={language} onChange={(event) => {
-            if (isLanguage(event.target.value)) setSetting({ language: event.target.value });
+            // The new language's texts load first, so the page never shows untranslated keys.
+            if (isLanguage(event.target.value)) pickLanguage(event.target.value, (language) => setSetting({ language }));
           }}>
             {LANGUAGES.map((option) => <option key={option.code} value={option.code} lang={option.code}>{option.name}</option>)}
           </Select>

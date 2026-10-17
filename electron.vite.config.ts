@@ -1,6 +1,7 @@
 import { resolve } from 'path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import { splitMessages } from './electron.vite.messages';
 
 export default defineConfig({
   main: {
@@ -28,7 +29,8 @@ export default defineConfig({
     },
   },
   renderer: {
-    plugins: [react()],
+    // splitMessages: each language's translations are a chunk of their own, only the active one is loaded.
+    plugins: [react(), splitMessages()],
     // The renderer used to ship unminified (2.2 MB for the main chunk, 1.5 MB for the editor): minified it loads and parses much faster.
     build: { minify: 'esbuild', cssMinify: true },
   },
