@@ -15,7 +15,7 @@ import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
 import { applyDockIcon, windowIcon } from './appIcon';
-import { LARGE_VIEW_BYTES, listProjectDirectories, listProjectDirectory, readProjectFile, writeProjectFile } from './files';
+import { LARGE_VIEW_BYTES, listProjectDirectories, listProjectDirectory, listProjectDirectoryBatch, readProjectFile, writeProjectFile } from './files';
 import { registerFileOpsIpc } from './filesIpc';
 import { registerGitIpc } from './gitIpc';
 import { replaceInProject, searchProject } from './search';
@@ -768,6 +768,10 @@ ipcMain.handle('fs:pathKinds', async (_e, paths: unknown): Promise<Array<'dir' |
 ipcMain.handle('fs:listProjectDirectory', (_e, projectId: string, path: string) => {
   const project = state.projects.find((p) => p.id === projectId);
   return project ? listProjectDirectory(project.path, path) : { ok: false, error: 'Projekt już nie istnieje.' };
+});
+ipcMain.handle('fs:listProjectDirectoryBatch', (_e, projectId: string, paths: unknown) => {
+  const project = state.projects.find((p) => p.id === projectId);
+  return project ? listProjectDirectoryBatch(project.path, paths) : {};
 });
 ipcMain.handle('fs:listProjectDirectories', (_e, projectId: string) => {
   const project = state.projects.find((p) => p.id === projectId);

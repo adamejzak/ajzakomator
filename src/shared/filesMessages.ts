@@ -6,6 +6,7 @@ export const filesMessages = {
   'Nowy folder': ['New folder', 'Neuer Ordner', 'Nueva carpeta', 'Nouveau dossier', 'Nova pasta'],
   'Nazwa nowego pliku': ['Name of the new file', 'Name der neuen Datei', 'Nombre del nuevo archivo', 'Nom du nouveau fichier', 'Nome do novo ficheiro'],
   'Nazwa nowego folderu': ['Name of the new folder', 'Name des neuen Ordners', 'Nombre de la nueva carpeta', 'Nom du nouveau dossier', 'Nome da nova pasta'],
+  'Foldery nadrzędne': ['Parent folders', 'Übergeordnete Ordner', 'Carpetas superiores', 'Dossiers parents', 'Pastas superiores'],
   'Nowa nazwa': ['New name', 'Neuer Name', 'Nuevo nombre', 'Nouveau nom', 'Novo nome'],
   'Duplikuj': ['Duplicate', 'Duplizieren', 'Duplicar', 'Dupliquer', 'Duplicar'],
   'Wytnij': ['Cut', 'Ausschneiden', 'Cortar', 'Couper', 'Cortar'],

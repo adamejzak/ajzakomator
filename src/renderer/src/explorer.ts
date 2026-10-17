@@ -45,7 +45,7 @@ const platform = () => window.mc.platform;
 function refocusTree(): void {
   window.setTimeout(() => {
     if (document.activeElement && document.activeElement !== document.body) return;
-    document.querySelector<HTMLElement>('.explorer-tree .file-entry.selected')?.focus({ preventScroll: true });
+    document.querySelector<HTMLElement>('.explorer-tree .tree-rows .file-entry.selected')?.focus({ preventScroll: true });
   }, 120);
 }
 

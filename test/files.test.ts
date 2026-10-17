@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'fs/pr
 import { tmpdir } from 'os';
 import { isAbsolute, join, relative } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { listProjectDirectory, PREVIEW_BYTES, readProjectFile, writeProjectFile } from '../src/main/files';
+import { BATCH_LIMIT, listProjectDirectories, listProjectDirectory, listProjectDirectoryBatch, PREVIEW_BYTES, readProjectFile, writeProjectFile } from '../src/main/files';
 
 let fixture: string;
 let root: string;
@@ -71,6 +71,30 @@ describe('project file browsing', () => {
     expect(await readProjectFile(root, 'missing.txt')).toMatchObject({ kind: 'error', message: expect.stringContaining('nie istnieje') });
     expect(await listProjectDirectory(root, 'missing')).toMatchObject({ ok: false });
     expect(await readProjectFile(root, 'nested')).toMatchObject({ kind: 'error' });
+  });
+});
+
+describe('tree listings in batches', () => {
+  it('lists many folders in one call, each like a single listing', async () => {
+    const result = await listProjectDirectoryBatch(root, ['', 'nested', 'missing', '../', 'nested']);
+    expect(Object.keys(result).sort()).toEqual(['', '../', 'missing', 'nested']);
+    expect(result['']).toEqual(await listProjectDirectory(root, ''));
+    expect(result.nested).toMatchObject({ ok: true, entries: [{ path: 'nested/hello.txt' }] });
+    expect(result.missing).toMatchObject({ ok: false });
+    expect(result['../']).toMatchObject({ ok: false });
+  });
+
+  it('ignores malformed input and caps the number of folders', async () => {
+    expect(await listProjectDirectoryBatch(root, 'nested')).toEqual({});
+    expect(Object.keys(await listProjectDirectoryBatch(root, [1, null, 'nested']))).toEqual(['nested']);
+    const many = Array.from({ length: BATCH_LIMIT + 5 }, (_, i) => `missing-${i}`);
+    expect(Object.keys(await listProjectDirectoryBatch(root, many))).toHaveLength(BATCH_LIMIT);
+  });
+
+  it('walks every folder breadth first in natural order (read level by level in parallel)', async () => {
+    const walk = join(fixture, 'walk');
+    for (const dir of ['b/x', 'a10', 'a2/y/z', 'node_modules/pkg']) await mkdir(join(walk, dir), { recursive: true });
+    expect(await listProjectDirectories(walk)).toEqual({ ok: true, paths: ['a2', 'a10', 'b', 'a2/y', 'b/x', 'a2/y/z'], truncated: false });
   });
 });
 
