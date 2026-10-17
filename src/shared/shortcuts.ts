@@ -265,6 +265,9 @@ export function reservedReason(combo: Combo, platform: AppPlatform, scope: Short
     if (alt && !ctrl && ['F4', 'Tab', 'Escape', 'Space'].includes(key)) return 'Ten skrót należy do systemu.';
   } else if (meta && !ctrl && !alt && ['Q', 'H', 'M', 'W', 'Tab', 'Space', '`'].includes(key)) {
     return 'Ten skrót należy do systemu.';
+  } else if (meta && alt && !ctrl && key === 'H') {
+    // Option+Cmd+H hides the other apps (the app menu's role).
+    return 'Ten skrót należy do systemu.';
   }
   // AltGr (Ctrl+Alt) and Option type characters.
   if (isPrintable(key) && ((!mac && ctrl && alt && !meta) || (mac && alt && !ctrl && !meta))) {

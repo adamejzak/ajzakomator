@@ -1,4 +1,4 @@
-// Main process work that must not block or repeat: hook commands, the editor lookup, existence checks, the accounts file and
+// Main process work that must not block or repeat: hook commands, existence checks, the accounts file and
 // the registry PATH cache.
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { createServer } from 'net';
@@ -7,7 +7,6 @@ import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { claudeHookCommand, claudeHookSettings, HookServer } from '../src/main/hooks';
 import { codexNotifyArgv } from '../src/shared/codexHooks';
-import { createEditorFinder } from '../src/main/editor';
 import { pathExists } from '../src/main/fsProbe';
 import { AccountsStore } from '../src/main/accounts/store';
 import { CliDetector, REGISTRY_TTL_MS } from '../src/main/cliDetect';
@@ -57,25 +56,6 @@ describe('Claude hook commands', () => {
       blocker.close();
       server.stop();
     }
-  });
-});
-
-describe('editor lookup', () => {
-  it('asks once per session for a found editor and again after a failed start or when none was found', async () => {
-    const asked: string[] = [];
-    let installed = new Set<string>();
-    const finder = createEditorFinder(async (cmd) => { asked.push(cmd); return installed.has(cmd); });
-    expect(await finder.find()).toBeNull();
-    expect(asked).toEqual(['cursor', 'code']);
-    installed = new Set(['code']);
-    expect(await finder.find()).toBe('code');
-    expect(await finder.find()).toBe('code');
-    expect(asked).toEqual(['cursor', 'code', 'cursor', 'code']);
-    finder.forget();
-    installed = new Set(['cursor', 'code']);
-    const [a, b] = await Promise.all([finder.find(), finder.find()]);
-    expect([a, b]).toEqual(['cursor', 'cursor']);
-    expect(asked.slice(4)).toEqual(['cursor']); // concurrent clicks share one lookup
   });
 });
 

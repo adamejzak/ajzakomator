@@ -17,6 +17,7 @@ import { shortcutMessages } from './shortcutMessages';
 import { sshMessages } from './sshMessages';
 import { sshModeMessages } from './sshModeMessages';
 import { sshViewMessages } from './sshViewMessages';
+import { stabilityMessages } from './stabilityMessages';
 import { statusMessages } from './statusMessages';
 import { swapMessages } from './swapMessages';
 import { termMessages } from './termMessages';
@@ -36,6 +37,7 @@ export const messages = {
   ...gridMessages,
   ...macUpdateMessages,
   ...perfMessages,
+  ...stabilityMessages,
   ...railMessages,
   ...settingsMessages,
   ...shortcutMessages,
@@ -317,7 +319,6 @@ export const messages = {
   'Projekt już nie istnieje.': ['The project no longer exists.', 'Das Projekt existiert nicht mehr.', 'El proyecto ya no existe.', 'Le projet n’existe plus.', 'O projeto já não existe.'],
   'Nie udało się znaleźć wolnej nazwy dla worktree': ['Could not find an available worktree name', 'Kein freier Worktree-Name gefunden', 'No se encontró un nombre libre para el worktree', 'Aucun nom disponible pour le worktree', 'Não foi encontrado um nome disponível para o worktree'],
   'Wybierz folder projektu': ['Choose project folder', 'Projektordner auswählen', 'Elegir carpeta del proyecto', 'Choisir le dossier du projet', 'Escolher pasta do projeto'],
-  'Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.': ['The terminal process crashed repeatedly. Restart the app.', 'Der Terminalprozess ist mehrfach abgestürzt. Starte die App neu.', 'El proceso de terminales falló repetidamente. Reinicia la aplicación.', 'Le processus des terminaux a échoué plusieurs fois. Redémarrez l’application.', 'O processo dos terminais falhou várias vezes. Reinicie a aplicação.'],
   'Pobieranie aktualizacji w tle': ['Downloading update in the background', 'Update wird im Hintergrund heruntergeladen', 'Descargando actualización en segundo plano', 'Téléchargement de la mise à jour en arrière-plan', 'A descarregar atualização em segundo plano'],
   'Pobieranie {version}… {percent}%': ['Downloading {version}… {percent}%', '{version} wird heruntergeladen… {percent}%', 'Descargando {version}… {percent}%', 'Téléchargement de {version}… {percent}%', 'A descarregar {version}… {percent}%'],
   'Otwórz stronę pobierania': ['Open download page', 'Downloadseite öffnen', 'Abrir página de descarga', 'Ouvrir la page de téléchargement', 'Abrir página de transferência'],

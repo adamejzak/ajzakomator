@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync } from 'fs';
 import { dirname } from 'path';
 import type { RefreshLimit, RefreshLimits } from './refresh';
+import { atomicWriteFileSync } from '../atomicWrite';
 
 /** An entry is forgotten this long after its window ended (its failure count only matters while the limiter is still engaged). */
 const KEEP_AFTER_MS = 2 * 60 * 60_000;
@@ -26,7 +27,7 @@ export function createRefreshLimits(file: string | undefined, now: () => number 
     for (const [key, entry] of entries) if (entry.until + KEEP_AFTER_MS < now()) entries.delete(key);
     try {
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify(Object.fromEntries(entries)));
+      atomicWriteFileSync(file, JSON.stringify(Object.fromEntries(entries)));
     } catch { /* the in-memory copy still protects this run */ }
   };
   return {

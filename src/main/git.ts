@@ -24,6 +24,7 @@ import {
 } from '../shared/git';
 import { canonicalPath, isInsidePath, relativeInside, samePath } from './gitPaths';
 import { pathExists } from './fsProbe';
+import { atomicWriteFileSync } from './atomicWrite';
 import { attributeDrivers, configuredAttributeDrivers, dangerousConfigKeys, parseConfigList, type ConfigEntry } from '../shared/gitTrust';
 
 export interface GitOptions {
@@ -127,9 +128,7 @@ export class GitTrustStore {
     if (!this.file) return;
     try {
       mkdirSync(dirname(this.file), { recursive: true });
-      const temporary = `${this.file}.tmp`;
-      writeFileSync(temporary, JSON.stringify(Object.fromEntries(this.map), null, 2));
-      renameSync(temporary, this.file);
+      atomicWriteFileSync(this.file, JSON.stringify(Object.fromEntries(this.map), null, 2));
     } catch { /* trust then lasts until the app closes */ }
   }
 }

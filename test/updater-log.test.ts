@@ -29,6 +29,16 @@ describe('updater log', () => {
     expect(readFileSync(file, 'utf8')).toContain('fresh');
   });
 
+  it('moves a full file aside instead of emptying it when asked to rotate (crash.log)', () => {
+    const file = join(dir, 'crash.log');
+    const old = join(dir, 'crash.old.log');
+    writeFileSync(file, 'before the crash\n' + 'x'.repeat(250 * 1024));
+    createUpdaterLogger(file, { rotateTo: old }).error('after');
+    expect(readFileSync(old, 'utf8')).toContain('before the crash');
+    expect(readFileSync(file, 'utf8')).toContain('after');
+    expect(statSync(file).size).toBeLessThan(200);
+  });
+
   it('never throws, even when the file cannot be written', () => {
     expect(() => createUpdaterLogger(join(dir, 'missing', 'nested', 'updater.log')).info('ignored')).not.toThrow();
   });

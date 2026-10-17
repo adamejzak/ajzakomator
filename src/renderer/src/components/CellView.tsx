@@ -1,7 +1,8 @@
 import { changeAgentRole } from '../agentRoles';
 import { shortcutText, titleWithShortcut, useShortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { propsEqualWithStyle } from '../../../shared/renderEquality';
 import { errorPhrase, failureLabel } from '../../../shared/alerts';
 import { getProfile, PROJECT_COLORS, updateCell } from '../../../shared/state';
 import { missingCardCli } from '../../../shared/cliStatus';
@@ -28,7 +29,8 @@ export const SNIPPET_MIME = 'application/x-mc-snippet';
 
 
 
-export function CellView({ cell, index, style, maximized, dragSource, onHeadPointerDown }: {
+/** Memoized: the grid re-renders a cell only when its cell object, slot, style values or drag props changed. */
+export const CellView = memo(function CellView({ cell, index, style, maximized, dragSource, onHeadPointerDown }: {
   cell: Cell; index: number; style: CSSProperties; maximized: boolean;
   /** This cell is being dragged to another slot. */
   dragSource?: boolean;
@@ -292,4 +294,4 @@ export function CellView({ cell, index, style, maximized, dragSource, onHeadPoin
       )}
     </div>
   );
-}
+}, propsEqualWithStyle);

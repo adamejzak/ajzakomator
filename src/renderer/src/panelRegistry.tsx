@@ -11,13 +11,19 @@ import type { ComponentType, ReactNode } from 'react';
 import type { MessageKey } from '../../shared/i18n';
 import { gitPanelReason, type PanelContext, type PanelDef } from '../../shared/sidebarPanels';
 import { FilesPanel } from './components/FilesPanel';
-import { GitPanel } from './components/GitPanel';
 import { TFiles, TGit, TProjects, TTerminal } from './components/icons';
 import type { PanelResizeProps } from './components/PanelResizeHandle';
+import { LazyScreen } from './components/LazyScreen';
 import { ProjectsPanel } from './components/ProjectsPanel';
 import { openSshView } from './ssh';
+import './components/gitPanel.css';
 
 export interface PanelProps { resize: PanelResizeProps }
+
+// The Git panel (history, graph, changes) loads when it is first opened: it is not needed at startup. Its styles stay in
+// the main bundle (imported above): the Files tree uses the same change letters (.git-letter).
+const loadGitPanel = () => import('./components/GitPanel').then((m) => ({ default: m.GitPanel }));
+function GitPanelLazy() { return <LazyScreen load={loadGitPanel} />; }
 
 export interface SidebarPanel extends Omit<PanelDef, 'unavailableReason'> {
   label: MessageKey;
@@ -33,6 +39,6 @@ export const SIDEBAR_PANELS: readonly SidebarPanel[] = [
   { id: 'projects', label: 'Projekty', icon: TProjects, component: ProjectsPanel },
   { id: 'files', label: 'Pliki', icon: TFiles, component: FilesPanel, unavailableReason: (ctx) => (ctx.hasProject ? null : 'Najpierw dodaj projekt') },
   // Git needs a project that is a repository (the tile is disabled, with the reason as its tooltip, otherwise). SSH: opens the SSH view in the main area (W3).
-  { id: 'git', label: 'Git', icon: TGit, component: GitPanel, unavailableReason: gitPanelReason },
+  { id: 'git', label: 'Git', icon: TGit, component: GitPanelLazy, unavailableReason: gitPanelReason },
   { id: 'terminal', label: 'SSH', icon: TTerminal, opensView: true, onActivate: () => openSshView() },
 ];

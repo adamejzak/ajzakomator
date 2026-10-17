@@ -1,6 +1,7 @@
 // src/main/accounts/store.ts
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, statSync } from 'fs';
+import { atomicWriteFileSync } from '../atomicWrite';
 import { join } from 'path';
 import {
   identityFields, isAccountId, type AccountCustody, type AccountIdentity, type AccountNotice, type AccountNoticeKind,
@@ -222,13 +223,6 @@ export class AccountsStore {
   private write(file: StoreFile): void {
     this.cached = undefined;
     mkdirSync(this.root, { recursive: true });
-    const temp = `${this.file}.${process.pid}.tmp`;
     const body = { version: file.version, claude: file.claude, ...(file.live ? { live: file.live } : {}), ...(file.notices.length ? { notices: file.notices } : {}) };
-    try {
-      writeFileSync(temp, JSON.stringify(body, null, 2));
-      renameSync(temp, this.file);
-    } catch (error) {
-      rmSync(temp, { force: true });
-      throw error;
-    }
+    atomicWriteFileSync(this.file, JSON.stringify(body, null, 2));
   }}

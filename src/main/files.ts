@@ -13,15 +13,18 @@ function isInside(root: string, target: string): boolean {
 }
 
 /** Check both the requested path and its real target, including directory junctions. */
-async function projectFilePath(projectRoot: string, relativePath: string): Promise<string> {
-  if (isAbsolute(relativePath) || relativePath.includes('\0')) throw new Error('Ścieżka jest poza projektem.');
+async function projectFilePath(projectRoot: string, relativePath: string, rootReal?: Promise<string>): Promise<string> {
+  if (typeof relativePath !== 'string' || isAbsolute(relativePath) || relativePath.includes('\0')) throw new Error('Ścieżka jest poza projektem.');
   const root = resolve(projectRoot);
   const requested = resolve(root, relativePath);
   if (!isInside(root, requested)) throw new Error('Ścieżka jest poza projektem.');
-  const [realRoot, target] = await Promise.all([realpath(root), realpath(requested)]);
+  const [realRoot, target] = await Promise.all([rootReal ?? realpath(root), realpath(requested)]);
   if (!isInside(realRoot, target)) throw new Error('Ten link prowadzi poza folder projektu.');
   return target;
 }
+
+/** Natural, case-insensitive order of names (one collator: much faster than localeCompare with a locale per call). */
+const nameOrder = new Intl.Collator('pl', { numeric: true, sensitivity: 'base' });
 
 function fileError(error: unknown): string {
   const code = (error as NodeJS.ErrnoException).code;
@@ -30,12 +33,12 @@ function fileError(error: unknown): string {
   return error instanceof Error ? error.message : 'Nie udało się odczytać pliku lub folderu.';
 }
 
-export async function listProjectDirectory(root: string, path = ''): Promise<ProjectDirectory> {
+export async function listProjectDirectory(root: string, path = '', rootReal?: Promise<string>): Promise<ProjectDirectory> {
   try {
-    const target = await projectFilePath(root, path);
+    const target = await projectFilePath(root, path, rootReal);
     const items = await readdir(target, { withFileTypes: true });
     const entries = items.filter((item) => item.isDirectory() || item.isFile() || item.isSymbolicLink())
-      .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name, 'pl', { numeric: true, sensitivity: 'base' }))
+      .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || nameOrder.compare(a.name, b.name))
       .slice(0, DIRECTORY_LIMIT)
       .map((item) => ({
         name: item.name,
@@ -48,6 +51,30 @@ export async function listProjectDirectory(root: string, path = ''): Promise<Pro
   }
 }
 
+const LIST_CONCURRENCY = 24;
+/** At most this many folders per batch request of the tree. */
+export const BATCH_LIMIT = 500;
+
+/** `fn` over `items` with at most `limit` running at once; results in the order of `items`. */
+async function mapLimited<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; results[i] = await fn(items[i]); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/** Listings of many folders in one call (the tree loads every open folder at once instead of one request per folder). */
+export async function listProjectDirectoryBatch(root: string, paths: unknown): Promise<Record<string, ProjectDirectory>> {
+  const list = Array.isArray(paths) ? [...new Set(paths.filter((p): p is string => typeof p === 'string'))].slice(0, BATCH_LIMIT) : [];
+  const rootReal = realpath(resolve(root));
+  rootReal.catch(() => undefined);
+  const listings = await mapLimited(list, LIST_CONCURRENCY, (path) => listProjectDirectory(root, path, rootReal));
+  const result: Record<string, ProjectDirectory> = {};
+  list.forEach((path, i) => { result[path] = listings[i]; });
+  return result;
+}
+
 export type ProjectDirectories = { ok: true; paths: string[]; truncated: boolean } | { ok: false; error: string };
 
 /** Every folder of the project (dependency and build folders excluded), breadth first, for "expand all". */
@@ -55,19 +82,22 @@ export async function listProjectDirectories(root: string, limit = 2500): Promis
   try {
     const base = await projectFilePath(root, '');
     const paths: string[] = [];
-    const queue = [''];
-    while (queue.length) {
-      const directory = queue.shift()!;
-      let items;
-      try { items = await readdir(resolve(base, directory), { withFileTypes: true }); } catch { continue; }
-      items.sort((a, b) => a.name.localeCompare(b.name, 'pl', { numeric: true, sensitivity: 'base' }));
-      for (const item of items) {
-        if (!item.isDirectory() || IGNORED_FOLDERS.has(item.name)) continue;
-        if (paths.length >= limit) return { ok: true, paths, truncated: true };
-        const path = directory ? `${directory}/${item.name}` : item.name;
-        paths.push(path);
-        queue.push(path);
+    // Level by level; the folders of one level are read in parallel, the order stays breadth first and sorted.
+    let level = [''];
+    while (level.length) {
+      const listed = await mapLimited(level, LIST_CONCURRENCY, (directory) => readdir(resolve(base, directory), { withFileTypes: true }).catch(() => []));
+      const next: string[] = [];
+      for (let i = 0; i < level.length; i++) {
+        const directory = level[i];
+        const items = listed[i].filter((item) => item.isDirectory() && !IGNORED_FOLDERS.has(item.name)).sort((a, b) => nameOrder.compare(a.name, b.name));
+        for (const item of items) {
+          if (paths.length >= limit) return { ok: true, paths, truncated: true };
+          const path = directory ? `${directory}/${item.name}` : item.name;
+          paths.push(path);
+          next.push(path);
+        }
       }
+      level = next;
     }
     return { ok: true, paths, truncated: false };
   } catch (error) {

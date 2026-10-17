@@ -1,8 +1,12 @@
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { ErrorBoundary, WindowFallback } from './components/ErrorBoundary';
+import { installErrorReporting } from './errorReport';
 import './styles.css';
 
-createRoot(document.getElementById('root')!).render(<App />);
+installErrorReporting();
+// The last resort: a render error no inner boundary caught leaves a "reload the window" card, not a blank window.
+createRoot(document.getElementById('root')!).render(<ErrorBoundary name="window" fallback={() => <WindowFallback />}><App /></ErrorBoundary>);
 
 // Handle for automated smoke tests driven over the DevTools protocol.
 import * as actions from './actions';

@@ -3,8 +3,7 @@
 // is dropped on "Ukryj klucz", when the pane goes hidden or closes, on another key and after 2 minutes. "Zastąp klucz prywatny"
 // sends a pasted key to main, which parses and stores it; the form is cleared on submit.
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { PaneActive, useClearWhenHidden, useReportDirty } from './paneVisibility';
-import { secretClipboard } from './secretClipboard';
+import { PaneActive, useClearWhenHidden, useReportDirty, withoutPaneGuard } from './paneVisibility';
 import { draftErrorKey, formDirty, READ_ONLY_VAULT_HINT, hostsUsingKey, labelFieldValue, replaceKeyErrorKey, type KeyError, type SshKeyInfo } from '../../../../shared/ssh';
 import type { MessageKey } from '../../../../shared/i18n';
 import { useI18n } from '../../i18n';
@@ -55,7 +54,7 @@ export function KeyEditor({ keyId }: { keyId: string }) {
   const remove = async () => {
     const title = hosts.length ? tr('Klucz jest używany przez {count} hostów. Usunąć go?', { count: hosts.length }) : tr('Usunąć klucz {name}?', { name: key.label });
     if (await askChoice(title, '', [{ label: tr('Usuń klucz'), value: 'yes', danger: true }]) !== 'yes') return;
-    if ((await window.mc.ssh.removeKey(key.id)).ok) showSshDetail(null);
+    if ((await window.mc.ssh.removeKey(key.id)).ok) withoutPaneGuard(() => showSshDetail(null));
     else setError(tr('Nie udało się zapisać zmian'));
   };
   const copyPublic = () => { window.mc.clipboardWrite(key.publicKey); toast(tr('Skopiowano klucz publiczny')); };
@@ -157,7 +156,12 @@ function PrivateKeySection({ keyInfo, readOnly, onExport }: { keyInfo: SshKeyInf
     if (r.ok) { setError(null); setRevealed(r.privateKey); }
     else setError(tr(r.error === 'locked' ? 'Nie można odczytać klucza na tym komputerze' : 'Klucz przypisany do hosta nie istnieje'));
   };
-  const copy = () => { if (revealed !== null) void secretClipboard.copy(revealed).then(() => toast(tr('Skopiowano klucz prywatny'))); };
+  const copy = () => {
+    if (revealed === null) return;
+    window.mc.clipboardWriteSecret(revealed)
+      .then((ok) => { if (ok) toast(tr('Skopiowano klucz prywatny')); else throw new Error('refused'); })
+      .catch(() => toast(tr('Nie udało się skopiować klucza prywatnego'), 'error'));
+  };
   const cancelReplace = () => { setReplacing(false); setText(''); setPassphrase(''); setSavePassphrase(false); };
   const replace = async () => {
     if (!text.trim() || busy) return;

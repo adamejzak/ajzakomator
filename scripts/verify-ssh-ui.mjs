@@ -450,6 +450,44 @@ const PARTS = {
         await app.until(discardAsked, 'a second click asks too');
         await app.click('.modal-foot button', 'Odrzuć zmiany');
         await app.until(fullWidth, 'pane closed after discarding');
+        // 0.9.3: another tile or another section with unsaved edits asks too; "Anuluj" keeps the item and the edit.
+        const labelIs = (v) => `document.querySelector('.ssh-view-detail [data-field=label]')?.value === ${JSON.stringify(v)}`;
+        const noModal = `!document.querySelector('.modal-foot')`;
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(labelIs('web-1'), 'host form for the switch');
+        await app.setValue('.ssh-view-detail [data-field=label]', 'web-1 edited');
+        await app.click('.ssh-tile[data-host-id]', 'web-2');
+        await app.until(discardAsked, 'another tile asks before dropping the edit');
+        await app.click('.modal-foot button', 'Anuluj');
+        await app.until(`${noModal} && ${labelIs('web-1 edited')} && document.querySelector('.ssh-tile.current')?.textContent.includes('web-1')`, 'Anuluj keeps the item and the edit');
+        await app.click('.ssh-nav-item[data-section="keys"]');
+        await app.until(discardAsked, 'another section asks too');
+        await app.click('.modal-foot button', 'Anuluj');
+        await app.until(`${noModal} && ${labelIs('web-1 edited')} && document.querySelector('.ssh-nav-item.on')?.dataset.section === 'hosts'`, 'Anuluj keeps the section');
+        await app.click('.ssh-tile[data-host-id]', 'web-2');
+        await app.until(discardAsked, 'asked again');
+        await app.click('.modal-foot button', 'Odrzuć zmiany');
+        await app.until(`${noModal} && ${labelIs('web-2')}`, 'the other tile after discarding');
+        // A clean form switches without a question.
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`${noModal} && ${labelIs('web-1')}`, 'clean form switched silently');
+        // Leaving the view (a grid tab) with unsaved edits asks as well.
+        const sshShown = `getComputedStyle(document.querySelector('.ssh-workspace')).display !== 'none'`;
+        await app.setValue('.ssh-view-detail [data-field=label]', 'web-1 edited');
+        await showGrid();
+        await app.until(discardAsked, 'leaving the view asks');
+        await app.click('.modal-foot button', 'Anuluj');
+        await app.until(`${noModal} && ${sshShown} && ${labelIs('web-1 edited')}`, 'Anuluj stays in the view with the edit');
+        await showGrid();
+        await app.until(discardAsked, 'leaving asks again');
+        await app.click('.modal-foot button', 'Odrzuć zmiany');
+        await app.until(`${noModal} && !(${sshShown})`, 'grid in front after discarding');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`${sshShown} && ${fullWidth}`, 'back in the view, the discarded pane closed');
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(labelIs('web-1'), 'clean host form again');
+        await app.click('.ssh-view-detail .ssh-detail-close');
+        await app.until(fullWidth, 'pane closed after the switch checks');
         // A clean form closes without a question.
         await app.click('.ssh-tile[data-host-id]', 'web-1');
         await app.until(`document.querySelector('.ssh-view-detail [data-field=label]')?.value === 'web-1'`, 'clean host form');

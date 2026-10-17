@@ -3,17 +3,17 @@
 // host or key only while one is chosen; with nothing chosen the tiles use the whole width. Opened by the SSH rail tile, the
 // palette, "Edytuj host" and "Wszystkie hosty…" (Add and cell menus). It stays mounted while its tab is open; the pane is
 // "active" only while the view is on screen (D4: typed secrets go).
-import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { activeProject, activeTab, duplicateSshHost, updateSshHost } from '../../../../shared/state';
 import { existingSelection, filterHosts, groupHosts, parseFoldedGroups, toggleSelection, userAtEndpoint, type SshHost } from '../../../../shared/ssh';
 import {
-  clickedDetail, detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, newKeyDetail, paneDetail, paneEscape, showGroupHeadings,
-  showGroupRow, toggleGroupFilter, visibleSelection, type NewKeyMode, type SshDetail,
+  askBeforeLeaving, clickedDetail, detailKey, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, newKeyDetail, paneDetail, paneEscape, paneLeaves,
+  showGroupHeadings, showGroupRow, toggleGroupFilter, visibleSelection, type NewKeyMode, type PaneScreen, type SshDetail,
 } from '../../../../shared/sshView';
 import type { MessageKey } from '../../../../shared/i18n';
-import { showTerminalTabs } from '../../files';
+import { showTerminalTabs, useFileStore } from '../../files';
 import { useI18n } from '../../i18n';
-import { askChoice, askText, getS, setUi, update, useStore } from '../../store';
+import { askChoice, askText, getS, getUi, setUi, update, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
 import { confirmRemoveSshHost, openHostInCell, openHostsAsGrid, showSshDetail } from '../../ssh';
 import { openMenu, openMenuAt, type MenuItem } from '../ContextMenu';
@@ -22,7 +22,7 @@ import { HostEditor } from './HostEditor';
 import { KeyEditor } from './KeyEditor';
 import { KnownHostsView } from './KnownHostsView';
 import { NewKeyEditor } from './NewKeyEditor';
-import { PaneActive, PaneDirty } from './paneVisibility';
+import { PaneActive, PaneDirty, paneGuardOff, withoutPaneGuard } from './paneVisibility';
 import { SshNav } from './SshNav';
 import './ssh.css';
 
@@ -50,21 +50,71 @@ export function SshView() {
   const keys = vault?.keys ?? [];
   const detail = paneDetail(section, liveDetail(storedDetail, hosts, keys.map((k) => k.id)));
 
-  /** Connecting shows the grid: host key and password prompts appear in the cell. */
-  const connect = (hostId: string, target: 'cell' | 'tab') => { showTerminalTabs(); void openHostInCell(hostId, target); };
   /** Unsaved changes reported by the pane's editors (useReportDirty). */
   const dirty = useRef(new Map<string, boolean>());
   const reportDirty = useCallback((id: string, value: boolean) => { if (value) dirty.current.set(id, true); else dirty.current.delete(id); }, []);
+  const askDiscard = async () => await askChoice(tr('Odrzucić niezapisane zmiany?'), '', [{ label: tr('Odrzuć zmiany'), value: 'yes', danger: true }]) === 'yes';
+  /**
+   * Showing the grid from the view (connect, open as grid): asked about unsaved pane edits first, so after "Anuluj" no cell
+   * or grid is opened behind the view. A discarded pane closes, like any other discarded leave.
+   */
+  const toGrid = (open: () => void) => void askBeforeLeaving(dirty.current.size > 0, askDiscard, (discarded) => {
+    withoutPaneGuard(() => { if (discarded) showSshDetail(null); showTerminalTabs(); });
+    open();
+  });
+  /** Connecting shows the grid: host key and password prompts appear in the cell. */
+  const connect = (hostId: string, target: 'cell' | 'tab') => toGrid(() => void openHostInCell(hostId, target));
+  const askRef = useRef(askDiscard);
+  askRef.current = askDiscard;
+  /**
+   * 0.9.3: another tile, another section, leaving the view (a grid, a file, a panel, Settings) or closing its tab never drops
+   * unsaved edits of the pane silently. The change is undone at once and asked about; "Odrzuć zmiany" applies it (leaving
+   * also closes the pane, so nothing half-cleared waits in the hidden view), "Anuluj" keeps the item and its edits.
+   */
+  useEffect(() => {
+    let asking = false;
+    const screen = (st: PaneScreen & { selectedHosts: string[] }) => ({ viewOpen: st.viewOpen, viewActive: st.viewActive, section: st.section, detail: st.detail, selectedHosts: st.selectedHosts });
+    // A deleted host or key is not an edit to keep (its editor asked before deleting).
+    const shownLive = (st: PaneScreen & { vault: { keys: Array<{ id: string }> } | null }) =>
+      liveDetail(paneDetail(st.section, st.detail), getS().sshHosts, (st.vault?.keys ?? []).map((k) => k.id)) !== null;
+    const ask = (apply: () => void) => {
+      if (asking) return;
+      asking = true;
+      void askRef.current().then((yes) => { asking = false; if (yes) withoutPaneGuard(apply); });
+    };
+    // What a leave changes outside the SSH store (the file in front, the side panel): put back after "Anuluj".
+    const others = () => ({ activeFileId: useFileStore.getState().activeFileId, sidebarView: getUi().sidebarView });
+    const setOthers = (o: ReturnType<typeof others>) => { useFileStore.setState({ activeFileId: o.activeFileId }); setUi({ sidebarView: o.sidebarView }); };
+    const offSsh = useSshStore.subscribe((st, prev) => {
+      if (paneGuardOff() || !dirty.current.size || !paneLeaves(prev, st) || !shownLive(prev)) return;
+      const wanted = screen(st);
+      const kept = others();
+      withoutPaneGuard(() => useSshStore.setState(screen(prev)));
+      // The caller may change the other stores right after the SSH one (showTerminalTabs, activateFile): undone once it ran.
+      let wantedOthers = kept;
+      queueMicrotask(() => { wantedOthers = others(); setOthers(kept); });
+      ask(() => { useSshStore.setState(wanted.viewActive && wanted.viewOpen ? wanted : { ...wanted, detail: null }); setOthers(wantedOthers); });
+    });
+    const offUi = useStore.subscribe((st, prev) => {
+      if (!st.ui.settingsActive || prev.ui.settingsActive || paneGuardOff() || !dirty.current.size) return;
+      const ssh = useSshStore.getState();
+      if (!ssh.viewActive || !shownLive(ssh)) return;
+      const tabOpen = st.ui.settingsTabOpen;
+      setUi({ settingsActive: false, settingsTabOpen: prev.ui.settingsTabOpen });
+      ask(() => { showSshDetail(null); setUi({ settingsActive: true, settingsTabOpen: tabOpen }); });
+    });
+    return () => { offSsh(); offUi(); };
+  }, []);
   /**
    * The pane closes (X, Esc in the pane, a second click on its tile): the tiles get the whole width back and the focus goes to
    * the tile that was shown. Unsaved changes are never dropped silently: the user is asked first.
    */
   const closePane = async () => {
     const shown = detail;
-    if (dirty.current.size && await askChoice(tr('Odrzucić niezapisane zmiany?'), '', [{ label: tr('Odrzuć zmiany'), value: 'yes', danger: true }]) !== 'yes') return;
+    if (dirty.current.size && !await askDiscard()) return;
     // Another item may have been chosen while the question was open.
     if (useSshStore.getState().detail !== storedDetail) return;
-    showSshDetail(null);
+    withoutPaneGuard(() => showSshDetail(null));
     if (!shown || shown.kind === 'newKey') return;
     const selector = shown.kind === 'host' ? (shown.hostId ? `.ssh-tile[data-host-id="${shown.hostId}"]` : null) : `.ssh-tile[data-key-id="${shown.keyId}"]`;
     if (selector) requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus());
@@ -90,7 +140,7 @@ export function SshView() {
         {collapsed && <SshNav compact />}
         {vault?.storage === 'unavailable' && <div className="ssh-banner-warn">{tr('Szyfrowanie systemowe jest niedostępne - klucze i hasła są trzymane tylko do zamknięcia aplikacji')}</div>}
         <div id="ssh-section" role="tabpanel" className="ssh-view-body" aria-label={tr(section === 'hosts' ? 'Hosty' : section === 'keys' ? 'Klucze' : 'Znane hosty')}>
-          {section === 'hosts' && <HostsSection detail={detail} onConnect={connect} onClosePane={closePane} />}
+          {section === 'hosts' && <HostsSection detail={detail} onConnect={connect} onGrid={toGrid} onClosePane={closePane} />}
           {section === 'keys' && <KeysSection detail={detail} onClosePane={closePane} />}
           {section === 'knownHosts' && <KnownHostsView />}
         </div>
@@ -121,7 +171,7 @@ function EmptyState({ icon, title, text, children }: { icon: ReactNode; title: s
   );
 }
 
-function HostsSection({ detail, onConnect, onClosePane }: { detail: SshDetail | null; onConnect: (hostId: string, target: 'cell' | 'tab') => void; onClosePane: () => Promise<void> }) {
+function HostsSection({ detail, onConnect, onGrid, onClosePane }: { detail: SshDetail | null; onConnect: (hostId: string, target: 'cell' | 'tab') => void; onGrid: (open: () => void) => void; onClosePane: () => Promise<void> }) {
   const { tr } = useI18n();
   const hosts = useStore((st) => st.s.sshHosts);
   const projects = useStore((st) => st.s.projects);
@@ -165,7 +215,7 @@ function HostsSection({ detail, onConnect, onClosePane }: { detail: SshDetail | 
       return kept.length === st.selectedHosts.length ? {} : { selectedHosts: kept };
     });
   };
-  const openGrid = (ids: string[]) => { showTerminalTabs(); void openHostsAsGrid(ids); useSshStore.setState({ selectedHosts: [] }); };
+  const openGrid = (ids: string[]) => onGrid(() => { void openHostsAsGrid(ids); useSshStore.setState({ selectedHosts: [] }); });
   const groupMenu = (e: MouseEvent, name: string | null, ids: string[]) => {
     e.preventDefault();
     openMenu(e.clientX, e.clientY, [

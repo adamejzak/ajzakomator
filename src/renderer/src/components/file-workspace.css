@@ -34,8 +34,26 @@
   color: var(--text);
   background: var(--bg-hover);
 }
-.file-workspace-explorer .explorer-tree { padding-top: 2px; }
-.file-workspace-explorer .file-entry { height: 27px; gap: 6px; }
+.file-workspace-explorer .explorer-tree { padding: 0; overflow-x: hidden; overflow-y: auto; }
+.file-workspace-explorer .file-entry { gap: 6px; }
+/* The tree is a virtual list: fixed-height rows placed absolutely, only the rows in view exist. */
+.tree-rows { position: relative; margin-bottom: 12px; }
+.tree-rows > .file-entry, .tree-rows > .tree-row-message, .tree-sticky-rows > .file-entry { position: absolute; left: 0; right: 0; width: auto; }
+/* Sticky scroll: the parent folders of the first visible row stay pinned at the top. */
+.tree-sticky { position: sticky; top: 0; z-index: 3; height: 0; }
+.tree-sticky-rows { position: absolute; top: 0; left: 0; right: 0; overflow: hidden; background: var(--bg-1); box-shadow: 0 4px 6px -3px rgba(0, 0, 0, .7); }
+.tree-sticky-rows > .file-entry { z-index: 1; background: var(--bg-1); }
+.tree-sticky-rows > .file-entry:last-child { z-index: 0; }
+.tree-sticky-rows > .file-entry:hover { background: var(--bg-hover); }
+.tree-sticky-rows > .file-entry.selected { background: color-mix(in srgb, var(--accent) 16%, var(--bg-1)); }
+/* Indent guides: one thin line per parent level (deep levels are packed closer, see shared/treeRows.ts). */
+.tree-guides { position: absolute; top: 0; bottom: 0; left: 0; width: 0; pointer-events: none; }
+.tree-guides > span { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, .09); }
+.file-entry:hover .tree-guides > span, .file-entry.selected .tree-guides > span { background: rgba(255, 255, 255, .14); }
+.tree-row-message { display: flex; align-items: center; gap: 8px; padding-top: 0; padding-bottom: 0; white-space: nowrap; overflow: hidden; }
+.tree-row-message.error { flex-direction: row; align-items: center; }
+.tree-row-message .tree-message-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tree-row-message .btn.small { flex: none; height: 20px; }
 .file-type-icon, .explorer-folder-icon {
   display: inline-flex;
   align-items: center;

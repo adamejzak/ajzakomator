@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { SshHost, SshSessionState } from '../src/shared/ssh';
 import { filterHosts, formDirty, hostFormDirty, hostToDraft } from '../src/shared/ssh';
 import {
-  chooseSshSection, clickedDetail, DEFAULT_SSH_SECTION, detailKey, detailPaneOpen, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts,
-  newKeyDetail, paneDetail, paneEscape, sectionChange, sectionForDetail, showGroupHeadings, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter, visibleSelection,
+  askBeforeLeaving, chooseSshSection, clickedDetail, DEFAULT_SSH_SECTION, detailKey, detailPaneOpen, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts,
+  newKeyDetail, paneDetail, paneEscape, paneLeaves, sectionChange, sectionForDetail, showGroupHeadings, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter, visibleSelection,
 } from '../src/shared/sshView';
 
 const host = (id: string, label: string, group?: string): SshHost => ({ id, label, address: `${label}.example`, port: 22, username: 'u', createdAt: 0, updatedAt: 0, ...(group ? { group } : {}) });
@@ -205,5 +205,41 @@ describe('host form after Zapisz (0.9.2 final)', () => {
     expect(hostFormDirty(saved, { ...hostToDraft(saved), label: '' }, { tag: '', password: '' })).toBe(false);
     expect(hostFormDirty(saved, { ...hostToDraft(saved), port: '022' }, { tag: '', password: '' })).toBe(false);
     expect(hostFormDirty(saved, { ...hostToDraft(saved), port: 'x' }, { tag: '', password: '' })).toBe(true);
+  });
+});
+
+describe('paneLeaves (0.9.3)', () => {
+  const on = { viewOpen: true, viewActive: true, section: 'hosts' as const, detail: { kind: 'host' as const, hostId: 'h1' } };
+  it('another tile, a section without the item, leaving or closing the view take the item away', () => {
+    expect(paneLeaves(on, { ...on, detail: { kind: 'host', hostId: 'h2' } })).toBe(true);
+    expect(paneLeaves(on, { ...on, detail: { kind: 'key', keyId: 'k1' } })).toBe(true);
+    expect(paneLeaves(on, { ...on, section: 'keys' })).toBe(true);
+    expect(paneLeaves(on, { ...on, section: 'knownHosts' })).toBe(true);
+    expect(paneLeaves(on, { ...on, detail: null })).toBe(true);
+    expect(paneLeaves(on, { ...on, viewActive: false })).toBe(true);
+    expect(paneLeaves({ ...on, viewActive: false }, { ...on, viewActive: false, viewOpen: false, detail: null })).toBe(true);
+  });
+  it('the same item, an empty pane or a view coming back keep it', () => {
+    expect(paneLeaves(on, { ...on, detail: { kind: 'host', hostId: 'h1' } })).toBe(false);
+    expect(paneLeaves({ ...on, detail: null }, { ...on, detail: { kind: 'host', hostId: 'h2' } })).toBe(false);
+    expect(paneLeaves({ ...on, section: 'keys' }, { ...on, section: 'hosts' })).toBe(false);
+    expect(paneLeaves({ ...on, viewActive: false }, on)).toBe(false);
+  });
+});
+
+describe('askBeforeLeaving (0.9.3: connect and open as grid)', () => {
+  it('with unsaved edits and "Anuluj" opens no cell or grid', async () => {
+    const opened: boolean[] = [];
+    expect(await askBeforeLeaving(true, async () => false, (d) => opened.push(d))).toBe(false);
+    expect(opened).toEqual([]);
+  });
+  it('opens after "Odrzuć zmiany" (discarded) and at once without edits, asking only when dirty', async () => {
+    const opened: boolean[] = [];
+    let asked = 0;
+    const ask = async () => { asked++; return true; };
+    expect(await askBeforeLeaving(true, ask, (d) => opened.push(d))).toBe(true);
+    expect(await askBeforeLeaving(false, ask, (d) => opened.push(d))).toBe(true);
+    expect(opened).toEqual([true, false]);
+    expect(asked).toBe(1);
   });
 });

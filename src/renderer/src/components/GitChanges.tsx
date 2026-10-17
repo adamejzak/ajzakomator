@@ -1,10 +1,10 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { GitFileChange, GitOpResult, GitResult, GitStatus } from '../../../shared/git';
 import { useI18n } from '../i18n';
 import { askChoice, toast } from '../store';
 import { baseName, buildChangeTree, CONFLICT_LETTER, dirName, groupChanges, letterOf, newRequestId, sortChanges, type ChangeGroup, type ChangeNode, type ChangesSort, type ChangesView, type Letter } from '../../../shared/gitUi';
 import { ICheck, IChevron } from './icons';
-import { matchesShortcut, titleWithShortcut } from '../shortcuts';
+import { matchesShortcut, titleWithShortcut, useShortcutText } from '../shortcuts';
 
 type Source = 'working' | 'staged' | 'untracked';
 
@@ -27,12 +27,13 @@ interface Props {
 /** The Changes section: files grouped as conflicts, staged, changed and untracked, with stage / unstage and a commit box. */
 export function GitChanges({ projectId, status, busy, writable, programsNote, opts, run, onOpen, onMenu, view, sort }: Props) {
   const { tr } = useI18n();
+  useShortcutText(); // the commit shortcut in the tooltips follows the settings
   const [open, setOpen] = useState(true);
   const [message, setMessage] = useState('');
   const messageBox = useRef<HTMLTextAreaElement>(null);
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const toggleDir = (key: string) => setClosed((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
-  const groups = groupChanges(status.files);
+  const groups = useMemo(() => groupChanges(status.files), [status.files]);
   const total = status.files.length;
   const staged = groups.staged.length;
 
@@ -119,6 +120,18 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
     );
   };
 
+  // The file rows are built again only when what they show changed: typing the commit message re-renders just the box.
+  const list = useMemo(() => (
+    <div className="git-changes-body">
+      {!total && <p className="git-note muted">{tr('Brak zmian.')}</p>}
+      {group('conflict', tr('Konflikty'), groups.conflict)}
+      {group('staged', tr('Do zatwierdzenia'), groups.staged)}
+      {group('unstaged', tr('Niedodane'), groups.unstaged)}
+      {group('untracked', tr('Nieśledzone'), groups.untracked)}
+      {status.truncated && <p className="git-note muted">{tr('Pokazano pierwsze {count} zmian.', { count: status.files.length })}</p>}
+    </div>
+  ), [groups, total, status.truncated, status.files.length, view, sort, closed, busy, writable, tr, onOpen, onMenu, run, projectId, opts]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <section className={`git-changes ${open ? '' : 'collapsed'}`} aria-label={tr('Zmiany')}>
       {writable && (
@@ -149,16 +162,7 @@ export function GitChanges({ projectId, status, busy, writable, programsNote, op
           <button className="btn ghost icon small git-bar-action" disabled={busy || !total} onClick={() => void commitFromHeader()} title={titleWithShortcut(tr('Zatwierdź zmiany (commit)'), 'git.commit')} aria-label={tr('Zatwierdź zmiany (commit)')}><ICheck /></button>
         )}
       </div>
-      {open && (
-        <div className="git-changes-body">
-          {!total && <p className="git-note muted">{tr('Brak zmian.')}</p>}
-          {group('conflict', tr('Konflikty'), groups.conflict)}
-          {group('staged', tr('Do zatwierdzenia'), groups.staged)}
-          {group('unstaged', tr('Niedodane'), groups.unstaged)}
-          {group('untracked', tr('Nieśledzone'), groups.untracked)}
-          {status.truncated && <p className="git-note muted">{tr('Pokazano pierwsze {count} zmian.', { count: status.files.length })}</p>}
-        </div>
-      )}
+      {open && list}
     </section>
   );
 }

@@ -35,6 +35,7 @@ const api: McApi = {
   pathKinds: (paths) => ipcRenderer.invoke('fs:pathKinds', paths),
   pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   listProjectDirectory: (projectId, path = '') => ipcRenderer.invoke('fs:listProjectDirectory', projectId, path),
+  listProjectDirectoryBatch: (projectId, paths) => ipcRenderer.invoke('fs:listProjectDirectoryBatch', projectId, paths),
   writeProjectFile: (projectId, path, text, expectedText) => ipcRenderer.invoke('fs:writeProjectFile', projectId, path, text, expectedText),
   readProjectFile: (projectId, path, large) => ipcRenderer.invoke('fs:readProjectFile', projectId, path, large),
   listProjectDirectories: (projectId) => ipcRenderer.invoke('fs:listProjectDirectories', projectId),
@@ -102,6 +103,8 @@ const api: McApi = {
   // Electron removed `clipboard` from preload/renderer; main owns it.
   clipboardRead: () => ipcRenderer.invoke('clipboard:read'),
   clipboardWrite: (text) => ipcRenderer.send('clipboard:write', text),
+  clipboardWriteSecret: (text) => ipcRenderer.invoke('clipboard:writeSecret', text),
+  reportError: (kind, message, stack) => ipcRenderer.send('app:reportError', String(kind).slice(0, 24), String(message).slice(0, 4000), stack === undefined ? undefined : String(stack).slice(0, 8000)),
   windowsBuild: process.platform === 'win32' ? Number(release().split('.')[2]) || 0 : 0,
   getUpdate: () => ipcRenderer.invoke('update:get'),
   checkUpdates: () => ipcRenderer.invoke('update:check'),

@@ -1,6 +1,6 @@
 // Host details (spec 10.2). A new host is stored on "Zapisz" only; the password is write-only (D6).
 import { useMemo, useState } from 'react';
-import { useClearWhenHidden, useReportDirty } from './paneVisibility';
+import { useClearWhenHidden, useReportDirty, withoutPaneGuard } from './paneVisibility';
 import { hostFormDirty, hostToDraft, READ_ONLY_VAULT_HINT, validateHostDraft, type HostDraftField, type SshHostDraft } from '../../../../shared/ssh';
 import { addSshHost, uid, updateSshHost } from '../../../../shared/state';
 import type { MessageKey } from '../../../../shared/i18n';
@@ -40,18 +40,19 @@ export function HostEditor({ paneId, hostId }: { paneId: string; hostId?: string
       id = uid();
       const created = { id, ...r.value, createdAt: now, updatedAt: now };
       update((s) => addSshHost(s, created));
-      showSshDetail({ kind: 'host', hostId: id });
+      // Saved: the form is clean once it re-renders, so moving on must not ask about the edits just stored.
+      withoutPaneGuard(() => showSshDetail({ kind: 'host', hostId: id }));
     }
     if (connect && id) {
       // The new cell asks for the host key and the password in the grid: show the grid (the SSH tab stays open).
-      showTerminalTabs();
+      withoutPaneGuard(showTerminalTabs);
       void openHostInCell(id, 'cell');
     }
   };
 
   const remove = async () => {
     if (!host) { showSshDetail(null); return; }
-    if (await confirmRemoveSshHost(host.id)) showSshDetail(null);
+    if (await confirmRemoveSshHost(host.id)) withoutPaneGuard(() => showSshDetail(null));
   };
 
   const setPw = async () => {

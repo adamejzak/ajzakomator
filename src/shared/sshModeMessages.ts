@@ -64,6 +64,7 @@ export const sshModeMessages = {
   'Pokaż': ['Show', 'Anzeigen', 'Mostrar', 'Afficher', 'Mostrar'],
   'Ukryj klucz': ['Hide key', 'Schlüssel ausblenden', 'Ocultar clave', 'Masquer la clé', 'Ocultar chave'],
   'Skopiowano klucz prywatny': ['Private key copied', 'Privater Schlüssel kopiert', 'Clave privada copiada', 'Clé privée copiée', 'Chave privada copiada'],
+  'Nie udało się skopiować klucza prywatnego': ['Could not copy the private key', 'Der private Schlüssel konnte nicht kopiert werden', 'No se pudo copiar la clave privada', 'Impossible de copier la clé privée', 'Não foi possível copiar a chave privada'],
   'Klucz jest chroniony hasłem, więc pokazany tekst jest zaszyfrowany.': [
     'The key is protected by a passphrase, so the text shown is encrypted.',
     'Der Schlüssel ist mit einer Passphrase geschützt, daher ist der angezeigte Text verschlüsselt.',

@@ -16,7 +16,7 @@ import { sessionSearchPaths } from '../../shared/sessionTrack';
 import { sshSpecName } from '../../shared/ssh';
 import type { CellSession, Profile, SessionInfo, Snippet, Tab, Worktree } from '../../shared/types';
 import { askChoice, getS, getUi, setUi, toast, update } from './store';
-import { showTerminalTabs } from './files';
+import { flushDrafts, showTerminalTabs } from './files';
 import { connectOnMount, reconnectCell, startSshCell } from './ssh';
 import { terminals } from './terminals/TerminalManager';
 
@@ -63,9 +63,10 @@ function commitFontSize(cellId: string): void {
   fontSizeSaves.delete(cellId);
   update((s) => updateCell(s, cellId, { fontSize: save.size }));
 }
-/** Sends debounced edits now (window hidden, reload, app quitting), so the last wheel notch is not lost. */
+/** Sends debounced edits now (window hidden, reload, app quitting), so the last wheel notch or keystroke is not lost. */
 export function flushPendingSaves(): void {
   for (const cellId of [...fontSizeSaves.keys()]) commitFontSize(cellId);
+  flushDrafts(); // unsaved editor drafts (written with a delay while typing)
 }
 
 export function ensureTerminal(cellId: string): void {
@@ -189,11 +190,17 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
     return { cellErrors: rest };
   });
   const { cols, rows } = terminals.size(cellId);
-  const r = await window.mc.spawnCell({
-    cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId, ...(forcedCells.has(cellId) ? { force: true } : {}),
-    sessionConfirmed: mode === 'resume' && cell.session?.confirmed === true,
-    startupPrompt: mode === 'new' && profile.cli !== 'shell' ? cell.startupPrompt : undefined,
-  });
+  let r: Awaited<ReturnType<typeof window.mc.spawnCell>>;
+  try {
+    r = await window.mc.spawnCell({
+      cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId, ...(forcedCells.has(cellId) ? { force: true } : {}),
+      sessionConfirmed: mode === 'resume' && cell.session?.confirmed === true,
+      startupPrompt: mode === 'new' && profile.cli !== 'shell' ? cell.startupPrompt : undefined,
+    });
+  } catch (error) {
+    // The call itself failed (main threw): the cell says so instead of staying blank.
+    r = { ok: false, error: tr('Nie udało się uruchomić terminala: {error}', { error: error instanceof Error ? error.message : String(error) }) };
+  }
   // The startup prompt is a one-shot: later restarts must not send it again.
   if (r.ok && cell.startupPrompt && mode === 'new') update((s) => updateCell(s, cellId, { startupPrompt: undefined }));
   if (!r.ok && r.cliMissing) {
@@ -349,8 +356,13 @@ export function refreshSessionTitles(projectPath: string | undefined, delay = 0)
     const lists = await Promise.all(sessionSearchPaths(projectPath, getS()).map((p) => window.mc.listSessions(p).catch(() => [])));
     if (titlesRequests.get(projectPath) !== request) return; // a newer refresh superseded this one
     setUi((ui) => {
-      const sessionTitles = { ...ui.sessionTitles };
-      for (const list of lists) for (const x of list) sessionTitles[x.id] = x.title;
+      // Copied only when a title is new or changed: an unchanged answer (the 20 s refresh) leaves the store as it is.
+      let sessionTitles = ui.sessionTitles;
+      for (const list of lists) for (const x of list) {
+        if (sessionTitles[x.id] === x.title) continue;
+        if (sessionTitles === ui.sessionTitles) sessionTitles = { ...ui.sessionTitles };
+        sessionTitles[x.id] = x.title;
+      }
       return { sessionTitles };
     });
   }, delay));

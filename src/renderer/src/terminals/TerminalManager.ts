@@ -309,13 +309,15 @@ class TerminalManager {
     });
     term.onBinary((d) => entry.replaying === 0 && this.post({ t: 'write', id: cellId, data: d }));
 
+    // A wheel gesture sends many events: the size follows each one, the fit (reflow + pty resize) runs once per frame.
+    let zoomFrame = 0;
     host.addEventListener('wheel', (ev) => {
       if (!ev.ctrlKey && !(window.mc.platform === 'darwin' && ev.metaKey)) return;
       ev.preventDefault();
       ev.stopPropagation();
       const size = Math.max(8, Math.min(32, (term.options.fontSize ?? 13) + (ev.deltaY < 0 ? 1 : -1)));
       term.options.fontSize = size;
-      this.refit(entry);
+      if (!zoomFrame) zoomFrame = requestAnimationFrame(() => { zoomFrame = 0; this.refit(entry); });
       opts.onFontSize?.(size);
     }, { passive: false, capture: true });
 
@@ -434,10 +436,34 @@ class TerminalManager {
     let t: number | undefined;
     e.resizeObs = new ResizeObserver(() => {
       clearTimeout(t);
-      t = window.setTimeout(() => this.refit(e), 25);
+      if (this.fitHolds > 0) { this.heldFits.add(e); return; }
+      t = window.setTimeout(() => { if (this.fitHolds > 0) this.heldFits.add(e); else this.refit(e); }, 25);
     });
     e.resizeObs.observe(el);
     this.refit(e);
+  }
+
+  private fitHolds = 0;
+  /** Terminals whose box changed while fits were held: each is fitted once when the last hold ends. */
+  private heldFits = new Set<Entry>();
+
+  /**
+   * Holds the fitting of shown terminals while a panel edge or a grid divider is dragged: a fit reflows the whole
+   * scrollback and makes the agent redraw, so it happens once when the drag ends instead of at every pause of the pointer.
+   * Returns the release (calling it again does nothing).
+   */
+  holdFits(): () => void {
+    this.fitHolds++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.fitHolds = Math.max(0, this.fitHolds - 1);
+      if (this.fitHolds > 0) return;
+      const held = [...this.heldFits];
+      this.heldFits.clear();
+      for (const e of held) this.refit(e);
+    };
   }
 
   /** Gives a shown terminal a WebGL renderer, within MAX_WEBGL_CONTEXTS: the least recently shown parked terminal pays for it. */
@@ -467,6 +493,7 @@ class TerminalManager {
     if (!e || e.attachedTo !== el) return;
     e.resizeObs?.disconnect();
     e.resizeObs = null;
+    this.heldFits.delete(e);
     e.shownAt = performance.now();
     // The WebGL context stays with the parked terminal (xterm pauses it while hidden), so showing the grid again is instant.
     this.parking.appendChild(e.host);
@@ -609,6 +636,7 @@ class TerminalManager {
     const e = this.entries.get(cellId);
     if (!e) return;
     e.resizeObs?.disconnect();
+    this.heldFits.delete(e);
     e.term.dispose();
     e.host.remove();
     this.entries.delete(cellId);

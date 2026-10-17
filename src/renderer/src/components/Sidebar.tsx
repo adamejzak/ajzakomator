@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { useI18n } from '../i18n';
 import { activeProject } from '../../../shared/state';
 import { useGitProbe, useGitProbeSync } from '../git/gitProbe';
@@ -38,6 +38,19 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
   const Content = active.component ?? (() => null);
   const sshMode = sshModeActive({ viewActive: sshActive, settingsActive });
   const content = sidePanelContent({ collapsed, viewMode: sshMode, panelId: active.id });
+  // While the edge is dragged the app re-renders with a new width on every move; the panel content and the usage box
+  // keep the same elements (the content reads the latest resize props through this stable object), so they are skipped.
+  const latest = useRef(resize);
+  latest.current = resize;
+  const contentResize = useMemo<PanelResizeProps>(() => ({
+    get panel() { return latest.current.panel; },
+    get width() { return latest.current.width; },
+    get maxWidth() { return latest.current.maxWidth; },
+    onResize: (width) => latest.current.onResize(width),
+    onFinish: (width) => latest.current.onFinish(width),
+  }), []);
+  const contentElement = useMemo(() => <Content resize={contentResize} />, [Content, contentResize]);
+  const usage = useMemo(() => <UsagePanel />, []);
 
   const choose = (panel: SidebarPanel) => {
     const next = railTileAction({ collapsed, view, viewActive: sshActive, settingsActive }, panel);
@@ -83,22 +96,22 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
             );
           })}
         </div>
-        {collapsed && <div className="rail-foot"><UsagePanel /></div>}
+        {collapsed && <div className="rail-foot">{usage}</div>}
       </div>
       {content?.kind === 'view' && (
         <div className="side-panel" id="sidebar-ssh">
           <PanelResizeHandle {...resize} />
           <div className="side-panel-title">{tr('SSH')}</div>
           <SshNav />
-          <UsagePanel />
+          {usage}
         </div>
       )}
       {content?.kind === 'panel' && (
         <div className="side-panel" id={`sidebar-${active.id}`} role="tabpanel" aria-labelledby={`${active.id}-view`}>
           <PanelResizeHandle {...resize} />
           <div className="side-panel-title">{tr(active.label)}</div>
-          <Content resize={resize} />
-          <UsagePanel />
+          {contentElement}
+          {usage}
         </div>
       )}
     </aside>

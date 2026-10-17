@@ -27,7 +27,9 @@ const BACKGROUND_HINT: Record<BackgroundLoadMode, MessageKey> = {
 const sections = ["Ustawienia aplikacji", "Terminal", "Powiadomienia i dźwięki", "Aktualizacje", "Konta AI", "Profile agentów", "Skróty klawiszowe", "SSH"] as const;
 export function SettingsPage() {
   const { tr, language } = useI18n();
-  const s = useStore((st) => st.s);
+  // Only the slices shown here: the page stays mounted (hidden) after a visit and must not re-render on every state edit.
+  const settings = useStore((st) => st.s.settings);
+  const profiles = useStore((st) => st.s.profiles);
   const [section, setSection] = useState(0);
   const settingsId = useId();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -36,7 +38,7 @@ export function SettingsPage() {
     setSection(index);
     contentRef.current?.scrollTo({ top: 0 });
   };
-  const setSetting = (patch: Partial<typeof s.settings>) => update((st) => updateSettings(st, patch));
+  const setSetting = (patch: Partial<typeof settings>) => update((st) => updateSettings(st, patch));
   return <div className="settings-page">
     <nav className="settings-nav" aria-label={tr('Ustawienia')}>
       <div className="settings-nav-title"><TSettings />{tr('Ustawienia')}</div>
@@ -71,16 +73,16 @@ export function SettingsPage() {
       </SettingsGroup>}
       {section === 1 && <SettingsGroup>
           <SettingRow title={tr("Rozmiar czcionki terminala (nowe komórki)")} htmlFor="settings-font-size" hint={tr('Dotyczy nowo otwieranych komórek terminala.')}>
-            <input id="settings-font-size" className="input" type="number" min={8} max={32} value={s.settings.fontSize} style={{ width: 72 }}
+            <input id="settings-font-size" className="input" type="number" min={8} max={32} value={settings.fontSize} style={{ width: 72 }}
               onChange={(e) => setSetting({ fontSize: Math.max(8, Math.min(32, Number(e.target.value) || 13)) })} />
           </SettingRow>
           <SettingRow title={tr("Shell")} htmlFor="settings-shell" hint={tr('Powłoka uruchamiana w nowych komórkach shell.')}>
-            <Select id="settings-shell" className="select" value={s.settings.shell} onChange={(e) => setSetting({ shell: e.target.value as ShellKind })}>
+            <Select id="settings-shell" className="select" value={settings.shell} onChange={(e) => setSetting({ shell: e.target.value as ShellKind })}>
               {shellsForPlatform(window.mc.platform).map((shell) => <option key={shell.code} value={shell.code}>{shell.name}</option>)}
             </Select>
           </SettingRow>
-        <SettingRow title={tr('Wczytywanie sesji w tle po uruchomieniu')} htmlFor="settings-background-load" hint={tr(BACKGROUND_HINT[s.settings.backgroundLoad], { max: BACKGROUND_MAX_CELLS })}>
-          <Select id="settings-background-load" className="select" value={s.settings.backgroundLoad}
+        <SettingRow title={tr('Wczytywanie sesji w tle po uruchomieniu')} htmlFor="settings-background-load" hint={tr(BACKGROUND_HINT[settings.backgroundLoad], { max: BACKGROUND_MAX_CELLS })}>
+          <Select id="settings-background-load" className="select" value={settings.backgroundLoad}
             onChange={(e) => setSetting({ backgroundLoad: normalizeBackgroundLoad(e.target.value) })}>
             {BACKGROUND_LOAD_MODES.map((mode) => <option key={mode} value={mode}>{tr(BACKGROUND_LABEL[mode])}</option>)}
           </Select>
@@ -91,8 +93,8 @@ export function SettingsPage() {
         <SettingRow title={tr('Sposób instalowania aktualizacji')} htmlFor="settings-updates" hint={{
             manual: tr('Aplikacja startuje od razu. Aktualizacje pobierają się w tle, a przycisk w stopce zainstaluje je, gdy zechcesz.'),
             ask: tr('Przy starcie aplikacja sprawdza aktualizacje i pyta, czy zainstalować od razu. Pobieranie rusza w tle już podczas pytania. „Później” uruchamia obecną wersję, a przycisk w stopce zainstaluje aktualizację.'),
-          }[s.settings.updateMode]}>
-          <Select id="settings-updates" className="select" value={s.settings.updateMode}
+          }[settings.updateMode]}>
+          <Select id="settings-updates" className="select" value={settings.updateMode}
             onChange={(e) => setSetting({ updateMode: normalizeUpdateMode(e.target.value) })}>
             <option value="ask">{tr('Automatycznie')}</option>
             <option value="manual">{tr('Ręcznie')}</option>
@@ -101,10 +103,10 @@ export function SettingsPage() {
       </SettingsGroup>}
       {section === 4 && <SettingsGroup>
         <SettingRow title={tr('Pokazuj limity kont AI')} htmlFor="settings-ai-usage" hint={tr('Pasek zużycia limitów Claude i Codex w panelu bocznym.')}>
-          <input id="settings-ai-usage" className="setting-switch" type="checkbox" role="switch" checked={s.settings.showAiUsage} onChange={(e) => setSetting({ showAiUsage: e.target.checked })} />
+          <input id="settings-ai-usage" className="setting-switch" type="checkbox" role="switch" checked={settings.showAiUsage} onChange={(e) => setSetting({ showAiUsage: e.target.checked })} />
         </SettingRow>
         <SettingRow title={tr('Odświeżanie limitów')} htmlFor="settings-usage-interval" hint={tr('Jak często odświeżać zużycie limitów.')}>
-          <Select id="settings-usage-interval" className="select" value={s.settings.usageIntervalMinutes}
+          <Select id="settings-usage-interval" className="select" value={settings.usageIntervalMinutes}
             onChange={(e) => setSetting({ usageIntervalMinutes: Number(e.target.value) })}>
             {USAGE_INTERVALS_MINUTES.map((minutes) => <option key={minutes} value={minutes}>{tr('co {count} min', { count: minutes })}</option>)}
           </Select>
@@ -112,7 +114,7 @@ export function SettingsPage() {
       </SettingsGroup>}
       {section === 5 && <>
         <p className="settings-group-desc">{tr('Profil to gotowy sposób uruchamiania agenta: wybierasz polecenie (Claude, Codex lub zwykła powłoka), nazwę, kolor i opcje startowe. Każda nowa komórka z tym profilem startuje z tymi opcjami.')}</p>
-        {s.profiles.map((p) => (
+        {profiles.map((p) => (
           <SettingsGroup key={p.id}>
             <div className="profile-card" role="group" aria-label={p.name || tr('Nowy profil')}>
               <div className="profile-head">
