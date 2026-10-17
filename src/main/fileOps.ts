@@ -8,7 +8,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'pat
 import type { AppPlatform } from '../shared/platform';
 import {
   copyName, joinPath, LARGE_COPY_BYTES, LARGE_COPY_ENTRIES, MAX_OP_PATH_LENGTH, parentPath, toPosix, topLevelPaths, validPathList, validateEntryName,
-  type ConflictPolicy, type CreateResult, type DeleteResult, type FileConflict, type FileMoveRecord, type FileOpFailure,
+  type CreateResult, type DeleteResult, type FileConflict, type FileMoveRecord, type FileOpFailure,
   type FileOpProgress, type FileOpRequest, type FileOpResult, type RenameResult,
 } from '../shared/fileOps';
 

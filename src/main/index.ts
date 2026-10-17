@@ -54,7 +54,7 @@ import { readManagedIdentity } from './accounts/identity';
 import { migrateAccounts, type MigrationDeps } from './accounts/migrate';
 import { LoginManager } from './auth/login';
 import { identityRewritten, restoreProfile, snapshotProfile } from './auth/profileSnapshot';
-import { custodyOf, identityFields, isAccountId, type AccountIdentity, type LoginRequest } from '../shared/accounts';
+import { custodyOf, identityFields, type AccountIdentity, type LoginRequest } from '../shared/accounts';
 import { claudeCredentialsStamp, profileSource, readClaudeCredentials, readClaudeIdentity, readCodexCredentials, readLiveClaudeIdentity, systemCredentialSource } from './usage/credentials';
 import { fetchClaude, fetchCodex, type FetcherDeps } from './usage/fetchers';
 import { UsageService } from './usage/service';

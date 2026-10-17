@@ -8,7 +8,7 @@ import {
   projectRelativePath, type GitBranch, type GitFileChange, type GitOpResult, type GitResult, type GitTrustInfo, type GitWorktree,
 } from '../../../shared/git';
 import { useI18n } from '../i18n';
-import { askChoice, setUi, toast, useStore } from '../store';
+import { askChoice, toast, useStore } from '../store';
 import { openDiffTab, openFile } from '../files';
 import { locateInFiles } from '../explorer';
 import { useGitProbe } from '../git/gitProbe';

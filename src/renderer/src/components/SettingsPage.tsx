@@ -4,7 +4,7 @@ import { ColorPicker } from './ColorPicker';
 import { ProfileOptions } from './ProfileOptions';
 import { useId, useRef, useState } from 'react';
 import { pickLanguage, useI18n } from '../i18n';
-import { update, useStore, toast } from '../store';
+import { update, useStore } from '../store';
 import { updateSettings, upsertProfile, removeProfile, uid } from '../../../shared/state';
 import type { CliKind, ShellKind } from '../../../shared/types';
 import { normalizeUpdateMode } from '../../../shared/updateMode';

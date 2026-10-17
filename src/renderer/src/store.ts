@@ -10,7 +10,6 @@ import { patchChanges } from '../../shared/renderEquality';
 import type { McpInfo } from '../../shared/automation';
 import type { LoginTarget } from '../../shared/accounts';
 import type { CliId, CliStatusMap } from '../../shared/cliStatus';
-import type { GitDiffSource } from '../../shared/git';
 
 export type Modal =
   | { kind: 'grid'; projectId: string }

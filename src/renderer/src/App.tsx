@@ -22,7 +22,7 @@ import { StatusBar } from './components/StatusBar';
 import { TitleBar, WorkspaceTabs } from './components/TitleBar';
 import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
-import { statusLog, terminals } from './terminals/TerminalManager';
+import { terminals } from './terminals/TerminalManager';
 // Rarely used screens load on demand: the editor alone (CodeMirror, language packs, Markdown preview) is about a third of the bundle.
 const loadAutomationPanel = () => import('./components/AutomationPanel').then((m) => ({ default: m.AutomationPanel }));
 const loadFileEditor = () => import('./components/FileEditor').then((m) => ({ default: m.FileEditor }));

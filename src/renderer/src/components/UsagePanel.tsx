@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { AccountNotice, LoginTarget } from '../../../shared/accounts';
-import { adoptCopyOffered, claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, makeMainOffered, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { adoptCopyOffered, claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, makeMainOffered, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { cswapNoteText, noticeText, setAsideText, usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
 import { swapErrorKey, swapErrorText } from '../../../shared/swapMessages';
