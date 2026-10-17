@@ -1,6 +1,7 @@
-import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { dividerBox, dividers, resetDivider, resizeDivider, type Divider, type GridLayout, type Rect } from '../../../shared/layout';
 import { useI18n } from '../i18n';
+import { terminals } from '../terminals/TerminalManager';
 
 /** Snap shared edges to CSS pixels, then reserve a 1px grid line. Fractional
  * origins blur a thin frame, especially on the bottom/right after a resize. */
@@ -26,6 +27,9 @@ export function GridDividers({ layout, onPreview, onCommit }: {
 }) {
   const { tr } = useI18n();
   const drag = useRef<{ base: GridLayout; divider: Divider; start: number; extent: number; current: GridLayout } | null>(null);
+  /** The cells are fitted once when the drag ends (see TerminalManager.holdFits). */
+  const fitHold = useRef<(() => void) | null>(null);
+  useEffect(() => () => { fitHold.current?.(); fitHold.current = null; }, []);
 
   const begin = (e: PointerEvent<HTMLDivElement>, d: Divider) => {
     if (e.button !== 0) return;
@@ -37,6 +41,8 @@ export function GridDividers({ layout, onPreview, onCommit }: {
     };
     e.currentTarget.setPointerCapture(e.pointerId);
     e.preventDefault();
+    fitHold.current?.();
+    fitHold.current = terminals.holdFits();
   };
   const move = (e: PointerEvent<HTMLDivElement>) => {
     const g = drag.current;
@@ -49,6 +55,9 @@ export function GridDividers({ layout, onPreview, onCommit }: {
     const g = drag.current;
     drag.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    const release = fitHold.current;
+    fitHold.current = null;
+    if (release) setTimeout(release, 0); // after the committed layout is rendered
     if (!g) return;
     onPreview(null);
     if (g.current !== g.base) onCommit(g.current);
@@ -80,6 +89,7 @@ export function GridDividers({ layout, onPreview, onCommit }: {
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
+        onLostPointerCapture={end}
         onKeyDown={(e) => key(e, d)}
         onDoubleClick={() => onCommit(resetDivider(layout, d))}
       />;

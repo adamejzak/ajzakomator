@@ -5,6 +5,8 @@ import type { AppState } from '../../shared/types';
 import type { StateSnapshot } from '../../shared/stateEdits';
 import type { StateChange } from '../../shared/statePatch';
 import { StateSync } from '../../shared/stateSync';
+import { shareStructure } from '../../shared/structuralShare';
+import { patchChanges } from '../../shared/renderEquality';
 import type { McpInfo } from '../../shared/automation';
 import type { LoginTarget } from '../../shared/accounts';
 import type { CliId, CliStatusMap } from '../../shared/cliStatus';
@@ -79,7 +81,13 @@ interface Store {
 const sync = new StateSync({ state: defaultState(window.mc.platform), revision: -1 }, {
   transport: { applyEdit: (edit) => window.mc.applyStateEdit(edit), loadSnapshot: () => window.mc.loadSnapshot() },
   setTimer: (fn, ms) => setTimeout(fn, ms),
-  onState: (s) => useStore.setState({ s }),
+  // Main's echo of an edit (and an ack) rebuilds objects the screen already shows: unchanged parts keep their identity,
+  // and a state equal to the shown one changes nothing, so components re-render only for what really changed.
+  onState: (s) => {
+    const shown = useStore.getState().s;
+    const next = shareStructure(shown, s);
+    if (next !== shown) useStore.setState({ s: next });
+  },
   onError: (error) => toast(String(error), 'error'),
 });
 
@@ -119,7 +127,11 @@ export const useStore = create<Store>((set, get) => ({
     sync.submit(edit);
   },
   setUi(patch) {
-    set((st) => ({ ui: { ...st.ui, ...(typeof patch === 'function' ? patch(st.ui) : patch) } }));
+    const ui = get().ui;
+    const changes = typeof patch === 'function' ? patch(ui) : patch;
+    // A patch that changes nothing (focusing the focused cell on every click) does not notify the listeners.
+    if (!patchChanges(ui, changes)) return;
+    set((st) => ({ ui: { ...st.ui, ...changes } }));
   },
   init(snapshot) {
     set({ s: sync.init(snapshot), ready: true });

@@ -1,9 +1,11 @@
 import { shortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
 import { useState } from 'react';
-import { activeProject, moveProject, PROJECT_COLORS, renameTab, updateProject, type DropEdge } from '../../../shared/state';
+import { moveProject, PROJECT_COLORS, renameTab, updateProject, type DropEdge } from '../../../shared/state';
 import { PANEL_LIMITS } from '../../../shared/panels';
-import { aggregate, type CellStatus } from '../../../shared/status';
+import type { StatusCounts } from '../../../shared/status';
+import { projectCountsKey } from '../../../shared/statusCounts';
+import { useStatusCounts } from '../statusCounts';
 import { describeLayout } from '../../../shared/layout';
 import type { Project } from '../../../shared/types';
 import { closeTab, createProject, relocateProject, removeProject, selectTab, switchProject } from '../actions';
@@ -20,7 +22,7 @@ const INACTIVE_TABS = 3;
 const PROJECT_MIME = 'application/x-mc-project';
 
 /** Open grids of a project: all for the active one, the last few for the others. */
-function TabList({ project, active, statuses }: { project: Project; active: boolean; statuses: Record<string, CellStatus> }) {
+function TabList({ project, active, countsOf }: { project: Project; active: boolean; countsOf: (key: string) => StatusCounts }) {
   const { tr } = useI18n();
   const tabs = active ? project.tabs : project.tabs.slice(-INACTIVE_TABS);
   const hidden = project.tabs.length - tabs.length;
@@ -28,7 +30,7 @@ function TabList({ project, active, statuses }: { project: Project; active: bool
   return (
     <>
       {tabs.map((t) => {
-        const counts = aggregate(t.cells.map((c) => statuses[c.id] ?? 'idle'));
+        const counts = countsOf(t.id);
         const on = active && project.activeTabId === t.id;
         return (
           <div
@@ -69,15 +71,18 @@ function TabList({ project, active, statuses }: { project: Project; active: bool
 
 export function ProjectsPanel({ resize }: PanelProps) {
   const { tr } = useI18n();
-  const s = useStore((st) => st.s);
-  const statuses = useStore((st) => st.ui.statuses);
+  // The slices this list shows, and badge counts instead of every cell status (a flip that changes no count re-renders nothing).
+  const projects = useStore((st) => st.s.projects);
+  const activeProjectId = useStore((st) => st.s.activeProjectId);
+  const snippetsOpen = useStore((st) => st.s.snippetsOpen);
+  const countsOf = useStatusCounts();
   const missing = useStore((st) => st.ui.missingPaths);
-  const project = activeProject(s);
+  const project = projects.find((p) => p.id === activeProjectId) ?? null;
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string | null; edge: DropEdge } | null>(null);
   const endDrag = () => { setDragId(null); setOver(null); };
   const openFiles = (p: Project) => {
-    if (s.activeProjectId !== p.id) switchProject(p.id);
+    if (activeProjectId !== p.id) switchProject(p.id);
     update((st) => ({ ...st, sidebarCollapsed: false }));
     useSshStore.setState({ viewActive: false }); // SSH mode ends, so the Files panel shows
     setUi({ sidebarView: 'files' });
@@ -98,7 +103,7 @@ export function ProjectsPanel({ resize }: PanelProps) {
         update((st) => ({ ...st, snippetsOpen: true }));
         setUi({ modal: { kind: 'snippet', snippetId: null } });
       } },
-      { label: s.snippetsOpen ? tr("Ukryj snippety") : tr("Pokaż snippety"), hint: shortcutText('snippets.toggle') || undefined, onClick: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) },
+      { label: snippetsOpen ? tr("Ukryj snippety") : tr("Pokaż snippety"), hint: shortcutText('snippets.toggle') || undefined, onClick: () => update((st) => ({ ...st, snippetsOpen: !st.snippetsOpen })) },
       { sep: true },
       { label: tr("Przywróć szerokość panelu"), onClick: () => resize.onFinish(PANEL_LIMITS.sidebar.default) },
     ]);
@@ -107,7 +112,7 @@ export function ProjectsPanel({ resize }: PanelProps) {
   const menu = (e: React.MouseEvent, p: Project) => {
     e.preventDefault();
     e.stopPropagation();
-    const index = s.projects.findIndex((item) => item.id === p.id);
+    const index = projects.findIndex((item) => item.id === p.id);
     openMenu(e.clientX, e.clientY, [
       { header: p.name },
       { label: tr("Edytuj projekt (nazwa, ikona)…"), onClick: () => setUi({ modal: { kind: 'project', projectId: p.id } }) },
@@ -116,8 +121,8 @@ export function ProjectsPanel({ resize }: PanelProps) {
         if (name?.trim()) update((st) => updateProject(st, p.id, { name: name.trim() }));
       } },
       { colors: PROJECT_COLORS, onPick: (color) => update((st) => updateProject(st, p.id, { color })) },
-      ...(index > 0 ? [{ label: tr("Przesuń wyżej"), onClick: () => update((st) => moveProject(st, p.id, s.projects[index - 1].id, 'before')) }] : []),
-      ...(index < s.projects.length - 1 ? [{ label: tr("Przesuń niżej"), onClick: () => update((st) => moveProject(st, p.id, s.projects[index + 1].id, 'after')) }] : []),
+      ...(index > 0 ? [{ label: tr("Przesuń wyżej"), onClick: () => update((st) => moveProject(st, p.id, projects[index - 1].id, 'before')) }] : []),
+      ...(index < projects.length - 1 ? [{ label: tr("Przesuń niżej"), onClick: () => update((st) => moveProject(st, p.id, projects[index + 1].id, 'after')) }] : []),
       { sep: true },
       { label: tr("Przeglądaj pliki projektu"), onClick: () => openFiles(p) },
       { label: tr("Otwórz folder"), onClick: () => window.mc.openPath(p.path) },
@@ -147,9 +152,9 @@ export function ProjectsPanel({ resize }: PanelProps) {
           endDrag();
         }}
       >
-        {s.projects.map((p) => {
-          const counts = aggregate(p.tabs.flatMap((t) => t.cells.map((c) => statuses[c.id] ?? 'idle')));
-          const active = p.id === s.activeProjectId;
+        {projects.map((p) => {
+          const counts = countsOf(projectCountsKey(p.id));
+          const active = p.id === activeProjectId;
           return (
             <div key={p.id} data-project-id={p.id} className={`project-group ${dragId === p.id ? 'dragging' : ''} ${over?.id === p.id && dragId !== p.id ? `drop-${over.edge}` : ''}`}
               onDragOver={(e) => {
@@ -190,7 +195,7 @@ export function ProjectsPanel({ resize }: PanelProps) {
                 <span className="name">{p.name}</span>
                 <StatusBadges counts={counts} />
               </div>
-              <TabList project={p} active={active} statuses={statuses} />
+              <TabList project={p} active={active} countsOf={countsOf} />
               {active && (
                 <>
                   {missing[p.id] && (
@@ -206,9 +211,9 @@ export function ProjectsPanel({ resize }: PanelProps) {
             </div>
           );
         })}
-      {s.projects.length > 0 && <button className="btn project-add-inline" onClick={() => void createProject()} title={tr('Dodaj projekt')} aria-label={tr('Dodaj projekt')}><IPlus />{tr('Dodaj projekt')}</button>}
-      {s.projects.length > 0 && <div className={`project-drop-space ${over?.id === null ? 'drop-end' : ''}`} aria-hidden="true" />}
-      {!s.projects.length && (
+      {projects.length > 0 && <button className="btn project-add-inline" onClick={() => void createProject()} title={tr('Dodaj projekt')} aria-label={tr('Dodaj projekt')}><IPlus />{tr('Dodaj projekt')}</button>}
+      {projects.length > 0 && <div className={`project-drop-space ${over?.id === null ? 'drop-end' : ''}`} aria-hidden="true" />}
+      {!projects.length && (
         <div className="empty-state">
           <div className="es-icon"><IFolder /></div>
           <div className="es-title">{tr("Brak projektów")}</div>

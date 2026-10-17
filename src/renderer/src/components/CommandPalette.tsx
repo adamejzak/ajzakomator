@@ -112,7 +112,8 @@ function PaletteInner() {
     return out;
   }, [s, sessions, project, tr, cliStatus, keys]);
 
-  const results = fuzzyFilter(items, q, (i) => `${i.title} ${i.kind} ${i.desc ?? ''}`, 80);
+  // Only a new query or new items filter again; moving the highlight (mouse, arrows) just re-renders the list.
+  const results = useMemo(() => fuzzyFilter(items, q, (i) => `${i.title} ${i.kind} ${i.desc ?? ''}`, 80), [items, q]);
   useEffect(() => setSel(0), [q]);
   useEffect(() => {
     listRef.current?.querySelector('.palette-item.sel')?.scrollIntoView({ block: 'nearest' });
@@ -141,7 +142,7 @@ function PaletteInner() {
         />
         <div className="palette-list" ref={listRef}>
           {results.map((item, i) => (
-            <div key={i} className={`palette-item ${i === sel ? 'sel' : ''}`} onMouseMove={() => setSel(i)} onClick={(e) => run(item, e.shiftKey)}>
+            <div key={i} className={`palette-item ${i === sel ? 'sel' : ''}`} onMouseMove={() => { if (i !== sel) setSel(i); }} onClick={(e) => run(item, e.shiftKey)}>
               <span className="kind">{item.kind}</span>
               <span className="ptitle">{item.title}</span>
               {item.desc && <span className="pdesc">{item.desc}</span>}

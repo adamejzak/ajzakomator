@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatAgo } from '../../../shared/i18n';
-import { GIT_LOG_PAGE, layoutGraph, type GitCommit, type GitCommitDetails, type GitRef } from '../../../shared/git';
+import { GIT_LOG_PAGE, layoutGraph, type GitCommit, type GitCommitDetails, type GitRef, type GraphRow } from '../../../shared/git';
+import type { Language } from '../../../shared/languages';
+import { rowSlots, rowWindow, type RowWindow } from '../../../shared/virtualRows';
 import { useI18n } from '../i18n';
 import { openDiffTab } from '../files';
 import { baseName, chipRefs, dirName, letterOf } from '../../../shared/gitUi';
 import { openMenu } from './ContextMenu';
-import { GitGraph, graphLanes } from './GitGraph';
+import { GitGraph, GRAPH_ROW, graphLanes } from './GitGraph';
 import { IBranch, IChevron, ICloud, ITag, IX } from './icons';
 
 /** Loaded rows stop here: the list stays light, a filter or the search finds older commits. */
 const MAX_LOADED = 3000;
+/** Rows rendered above and below the visible ones (every row is GRAPH_ROW px high, see .git-rows in gitPanel.css). */
+const OVERSCAN = 12;
 
 /** `historyKey` changes when HEAD or the branches moved (the list then starts again); `initial`: the repository has no commit yet. */
 interface Props { projectId: string; historyKey: string; initial: boolean; opts: { worktree?: string }; nonce: number; collapsed?: boolean; onToggle?(): void; height?: number | null }
@@ -21,7 +25,8 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce, collap
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  /** The text of the search field, kept while a commit's details are shown (the field itself is HistorySearch). */
+  const searchText = useRef('');
   const [query, setQuery] = useState('');
   const [all, setAll] = useState(false);
   const [selected, setSelected] = useState<GitCommit | null>(null);
@@ -45,11 +50,6 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce, collap
       .finally(() => { if (mine === sequence.current) setLoading(false); });
   }, [key, projectId, query, all, worktree]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setQuery(search.trim()), 300);
-    return () => window.clearTimeout(timer);
-  }, [search]);
-
   const loadMore = useCallback(() => {
     if (loadingMore.current || !hasMore || commits.length >= MAX_LOADED) return;
     loadingMore.current = true;
@@ -69,6 +69,30 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce, collap
   // Filters hide commits, so the graph of a filtered list would show lanes that do not connect: only the full history draws it.
   const graph = !query;
 
+  // Only the rows in view (plus OVERSCAN) are rendered; the others are spacers of the same height.
+  const logRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<RowWindow>({ start: 0, end: 2 * OVERSCAN });
+  const [focusedHash, setFocusedHash] = useState<string | null>(null);
+  const measure = useCallback(() => {
+    const log = logRef.current;
+    const list = rowsRef.current;
+    if (!log || !list) return;
+    const offset = list.getBoundingClientRect().top - log.getBoundingClientRect().top + log.scrollTop;
+    const next = rowWindow(log.scrollTop - offset, log.clientHeight, GRAPH_ROW, commits.length, OVERSCAN);
+    setView((prev) => (prev.start === next.start && prev.end === next.end ? prev : next));
+  }, [commits.length]);
+  useLayoutEffect(measure, [measure, collapsed, selected, error, loading]);
+  useEffect(() => {
+    const log = logRef.current;
+    if (!log) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(log);
+    return () => observer.disconnect();
+  }, [measure, collapsed, selected]);
+  const focusedIndex = focusedHash ? commits.findIndex((c) => c.hash === focusedHash) : -1;
+  const slots = rowSlots(view, commits.length, focusedIndex >= 0 ? [focusedIndex] : []);
+
   if (selected) return <GitCommitView projectId={projectId} commit={selected} opts={opts} onBack={() => setSelected(null)} />;
 
   return (
@@ -83,48 +107,20 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce, collap
         </button>}
       </div>
       {!collapsed && <>
-      <div className="git-search">
-        <input className="input" value={search} placeholder={tr('Szukaj w opisach commitów…')} aria-label={tr('Szukaj w opisach commitów…')} onChange={(e) => setSearch(e.target.value)} />
-        {search && <button className="btn ghost icon small" aria-label={tr('Wyczyść')} title={tr('Wyczyść')} onClick={() => setSearch('')}><IX /></button>}
-      </div>
+      <HistorySearch initial={searchText.current} onText={(text) => { searchText.current = text; }} onQuery={setQuery} />
       <div
+        ref={logRef}
         className="git-log"
-        onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore(); }}
+        onScroll={(e) => { const el = e.currentTarget; measure(); if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) loadMore(); }}
       >
         {error && <p className="git-note error">{errorText(error)}</p>}
         {!error && !loading && !commits.length && <p className="git-note muted">{initial ? tr('Repozytorium nie ma jeszcze commitów.') : tr('Brak commitów.')}</p>}
-        {commits.map((commit, i) => {
-          const { shown, more } = chipRefs(commit.refs);
-          return (
-            <div
-              key={commit.hash}
-              className="git-commit"
-              role="button"
-              tabIndex={0}
-              title={`${commit.subject}\n${commit.short} · ${commit.author} · ${formatAgo(language, commit.at * 1000)}`}
-              onClick={() => setSelected(commit)}
-              onKeyDown={(e) => { if (e.key === 'Enter') setSelected(commit); }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                openMenu(e.clientX, e.clientY, [
-                  { label: tr('Pokaż szczegóły'), onClick: () => setSelected(commit) },
-                  { label: tr('Kopiuj hash'), onClick: () => window.mc.clipboardWrite(commit.hash) },
-                ]);
-              }}
-            >
-              {graph && rows[i] && <GitGraph row={rows[i]} lanes={lanes} />}
-              <div className="git-commit-text">
-                <div className="git-commit-subject">
-                  <span className="git-subject-text">{commit.subject}</span>
-                  <span className="git-chips">
-                    {shown.map((ref) => <RefChip key={`${ref.kind}:${ref.name}`} gitRef={ref} />)}
-                    {more > 0 && <span className="git-chip more" title={tr('Pokaż commity wszystkich gałęzi')}>+{more}</span>}
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        <div ref={rowsRef} className="git-rows">
+          {slots.map((slot) => slot.kind === 'gap'
+            ? <div key={`gap:${slots.indexOf(slot)}`} style={{ height: slot.rows * GRAPH_ROW }} aria-hidden />
+            : <CommitRow key={commits[slot.index].hash} commit={commits[slot.index]} row={graph ? rows[slot.index] : undefined} lanes={lanes}
+                language={language} onSelect={setSelected} onFocusRow={setFocusedHash} />)}
+        </div>
         {loading && <p className="git-note muted">{tr('Wczytywanie…')}</p>}
         {!loading && hasMore && <button className="btn small git-more" onClick={loadMore}>{tr('Wczytaj więcej')}</button>}
       </div>
@@ -132,6 +128,63 @@ export function GitHistory({ projectId, historyKey, initial, opts, nonce, collap
     </section>
   );
 }
+
+/** The search field: its text lives here, so typing re-renders only the field; the query follows 300 ms after the last key. */
+function HistorySearch({ initial, onText, onQuery }: { initial: string; onText(text: string): void; onQuery(query: string): void }) {
+  const { tr } = useI18n();
+  const [search, setSearch] = useState(initial);
+  useEffect(() => {
+    onText(search);
+    const timer = window.setTimeout(() => onQuery(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div className="git-search">
+      <input className="input" value={search} placeholder={tr('Szukaj w opisach commitów…')} aria-label={tr('Szukaj w opisach commitów…')} onChange={(e) => setSearch(e.target.value)} />
+      {search && <button className="btn ghost icon small" aria-label={tr('Wyczyść')} title={tr('Wyczyść')} onClick={() => setSearch('')}><IX /></button>}
+    </div>
+  );
+}
+
+/** One history row (memoized: scrolling renders only the rows that come into view). */
+const CommitRow = memo(function CommitRow({ commit, row, lanes, language, onSelect, onFocusRow }: {
+  commit: GitCommit; row: GraphRow | undefined; lanes: number; language: Language;
+  onSelect(commit: GitCommit): void; onFocusRow(hash: string | null): void;
+}) {
+  const { tr } = useI18n();
+  const { shown, more } = chipRefs(commit.refs);
+  return (
+    <div
+      className="git-commit"
+      role="button"
+      tabIndex={0}
+      // The tooltip is built when the pointer arrives, so its relative time is current although the row is memoized.
+      onMouseEnter={(e) => { e.currentTarget.title = `${commit.subject}\n${commit.short} · ${commit.author} · ${formatAgo(language, commit.at * 1000)}`; }}
+      onClick={() => onSelect(commit)}
+      onKeyDown={(e) => { if (e.key === 'Enter') onSelect(commit); }}
+      onFocus={() => onFocusRow(commit.hash)}
+      onBlur={() => onFocusRow(null)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openMenu(e.clientX, e.clientY, [
+          { label: tr('Pokaż szczegóły'), onClick: () => onSelect(commit) },
+          { label: tr('Kopiuj hash'), onClick: () => window.mc.clipboardWrite(commit.hash) },
+        ]);
+      }}
+    >
+      {row && <GitGraph row={row} lanes={lanes} />}
+      <div className="git-commit-text">
+        <div className="git-commit-subject">
+          <span className="git-subject-text">{commit.subject}</span>
+          <span className="git-chips">
+            {shown.map((ref) => <RefChip key={`${ref.kind}:${ref.name}`} gitRef={ref} />)}
+            {more > 0 && <span className="git-chip more" title={tr('Pokaż commity wszystkich gałęzi')}>+{more}</span>}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 /** A branch or tag of a commit: local branches and tags show their name, remote ones only a cloud (the name is in the tooltip). */
 function RefChip({ gitRef }: { gitRef: GitRef }) {

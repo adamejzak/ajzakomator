@@ -1,11 +1,11 @@
-import { shortcutText } from '../shortcuts';
+import { useShortcutText } from '../shortcuts';
 import { useI18n } from '../i18n';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { areaRects, type GridLayout } from '../../../shared/layout';
 import { activeProject, activeTab, getProfile, setTabLayout } from '../../../shared/state';
 import { createProject, quickTab, swapCellSlots } from '../actions';
 import { playCellMotion } from '../gridMotion';
-import { getUi, setUi, update, useStore } from '../store';
+import { setUi, update, useStore } from '../store';
 import { profileOptionLabel } from '../cliUi';
 import { useCellDrag, type DragContext } from './useCellDrag';
 import { CellView } from './CellView';
@@ -16,16 +16,18 @@ import { ProjectIconView } from './ProjectIcon';
 
 /** The key of an action as a chip; nothing while the shortcut is switched off. */
 function Kbd({ id }: { id: string }) {
-  const text = shortcutText(id);
+  const text = useShortcutText()(id); // follows a rebound shortcut (the grid is memoized)
   return text ? <span className="kbd">{text}</span> : null;
 }
 
-export function GridView() {
+// Memoized and fed by narrow selectors: a change elsewhere in the state (snippets, settings, another project) or a
+// re-render of the app (a side panel being resized) does not re-render the grid and its cells.
+export const GridView = memo(function GridView() {
   const { tr } = useI18n();
-  const s = useStore((st) => st.s);
+  const project = useStore((st) => activeProject(st.s));
+  const profiles = useStore((st) => st.s.profiles);
   const maximized = useStore((st) => st.ui.maximizedCellId);
   const cliStatus = useStore((st) => st.ui.cliStatus);
-  const project = activeProject(s);
   const tab = activeTab(project);
   const [preview, setPreview] = useState<{ tabId: string; layout: GridLayout } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -36,6 +38,14 @@ export function GridView() {
       : null),
     swapCellSlots,
   );
+  const dragProfile = useStore((st) => {
+    const moving = drag && activeTab(activeProject(st.s))?.cells.find((c) => c.id === drag.id);
+    return moving ? getProfile(st.s, moving.profileId) : undefined;
+  });
+  const dragTitle = useStore((st) => {
+    const moving = drag && activeTab(activeProject(st.s))?.cells.find((c) => c.id === drag.id);
+    return moving?.session ? st.ui.sessionTitles[moving.session.id] : undefined;
+  });
 
   // A drag belongs to one grid: leaving the tab or project, or maximizing a cell, aborts it.
   useEffect(() => { cancel(); }, [cancel, project?.id, tab?.id, maximized]);
@@ -70,7 +80,7 @@ export function GridView() {
           <div className="sub">{tr("Otwórz grid terminali albo pojedynczy terminal z wybranym agentem.")}</div>
           <button className="btn white lg" onClick={() => setUi({ modal: { kind: 'grid', projectId: project.id } })}><IPlus />  {tr("Nowy grid")}</button>
           <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
-            {s.profiles.map((p) => (
+            {profiles.map((p) => (
               <button key={p.id} className="btn" onClick={() => quickTab(p.id)} title={tr("Nowa zakładka z jednym terminalem")}>
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} /> {profileOptionLabel(p, cliStatus, tr)}
               </button>
@@ -95,7 +105,7 @@ export function GridView() {
   const canDrag = !maxCell && tab.cells.length > 1;
   const dragged = drag ? tab.cells.find((c) => c.id === drag.id) : undefined;
   const targetIndex = drag?.target ? tab.cells.findIndex((c) => c.id === drag.target) : -1;
-  const draggedLabel = dragged && (dragged.name ?? (dragged.session ? getUi().sessionTitles[dragged.session.id] : undefined) ?? getProfile(s, dragged.profileId).name);
+  const draggedLabel = dragged && (dragged.name ?? dragTitle ?? dragProfile?.name);
   return (
     <div ref={gridRef} className={`grid ${preview ? 'resizing' : ''} ${drag ? 'dragging' : ''}`}>
       {tab.cells.map((cell, i) => {
@@ -113,7 +123,7 @@ export function GridView() {
       )}
       {dragged && (
         <div className="cell-ghost" ref={ghostRef}>
-          <span className="pchip" style={{ background: getProfile(s, dragged.profileId).color }} />
+          <span className="pchip" style={{ background: dragProfile?.color }} />
           <b>{tab.cells.indexOf(dragged) + 1}</b>
           <span className="name">{draggedLabel}</span>
         </div>
@@ -127,4 +137,4 @@ export function GridView() {
       )}
     </div>
   );
-}
+});
