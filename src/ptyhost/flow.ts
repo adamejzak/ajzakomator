@@ -1,5 +1,8 @@
 // Pure helpers for the pty output path: a bounded replay tail, renderer back-pressure and the coalescing delay.
 
+/** Stored pieces of a tail before they are joined into one string. */
+export const MAX_TAIL_CHUNKS = 256;
+
 /** Keeps roughly the newest `limit` characters of a stream without re-copying the whole tail on every chunk. */
 export class TailBuffer {
   private chunks: string[] = [];
@@ -15,6 +18,20 @@ export class TailBuffer {
     while (this.chunks.length > 1 && this.length - this.chunks[0].length >= this.limit) {
       this.length -= this.chunks.shift()!.length;
     }
+    // Many tiny chunks (echoes, spinners) cost far more as separate strings than their characters: join them now and then.
+    if (this.chunks.length > MAX_TAIL_CHUNKS) this.compact();
+  }
+
+  /** Number of stored pieces (tests). */
+  get pieces(): number {
+    return this.chunks.length;
+  }
+
+  private compact(): void {
+    const all = this.chunks.join('');
+    const kept = all.length > this.limit ? all.slice(-this.limit) : all;
+    this.chunks = [kept];
+    this.length = kept.length;
   }
 
   /** The newest `limit` characters (same result as repeatedly doing `(tail + data).slice(-limit)`). */
@@ -82,4 +99,14 @@ const ECHO_WINDOW_MS = 150;
 
 export function coalesceDelay(now: number, lastWrite: number): number {
   return now - lastWrite < ECHO_WINDOW_MS ? ECHO_COALESCE_MS : BULK_COALESCE_MS;
+}
+
+/**
+ * The bulk delay moved onto a shared BULK_COALESCE_MS grid (between half and one and a half periods, one period on average),
+ * so busy terminals flush in the same timer turn and their output leaves the host as one message.
+ */
+export function alignedDelay(now: number, delay: number): number {
+  if (delay !== BULK_COALESCE_MS) return delay;
+  const next = BULK_COALESCE_MS - (now % BULK_COALESCE_MS);
+  return next < BULK_COALESCE_MS / 2 ? next + BULK_COALESCE_MS : next;
 }

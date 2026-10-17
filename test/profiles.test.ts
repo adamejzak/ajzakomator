@@ -58,6 +58,9 @@ describe('buildCliCommand', () => {
     expect(codex).toContain("'mcp_servers.unimux.url=\"http://127.0.0.1:12345/mcp\"'");
     expect(codex).toContain("'mcp_servers.unimux.bearer_token_env_var=\"UNIMUX_MCP_TOKEN\"'");
     expect(buildCliCommand(P.codex, { mode: 'new', shell: 'cmd', mcp })).toContain("mcp_servers.unimux.url='http://127.0.0.1:12345/mcp'");
+    // A long create_grid (worktrees) or close_grid must not hit Codex's default 60 s tool timeout.
+    for (const shell of ['pwsh', 'cmd', 'bash'] as const) expect(buildCliCommand(P.codex, { mode: 'new', shell, mcp })).toContain('-c mcp_servers.unimux.tool_timeout_sec=180');
+    expect(buildCliCommand(P.codex, { mode: 'new' })).not.toContain('tool_timeout_sec');
     expect(buildCliCommand(P.claude, { mode: 'new', shell: 'bash', mcp })).toContain("'C:/User'\"'\"'s files/mcp.json'");
   });
 

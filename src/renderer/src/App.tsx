@@ -4,6 +4,7 @@ import { fitPanelWidths, MIN_WORKSPACE_WIDTH, RAIL_WIDTH, type Panel } from '../
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
 import { isAuxPtyId } from '../../shared/cliInstall';
 import { ptyHostRestartToast } from '../../shared/ssh';
+import type { McpInfo } from '../../shared/automation';
 import { alertForStatus } from './alerts';
 import { initBackgroundLoader } from './backgroundLoader';
 import { applyCliStatus, flushPendingSaves, ensureStarted, focusCell, hasBlockedCells, recheckCli, refreshSessionTitles, resetStarted, releaseCellTerminal, setAliveAtStart } from './actions';
@@ -219,15 +220,17 @@ export function App() {
   useEffect(() => {
     if (!ready) return;
     // Not while the window is hidden, and the store is only touched when the answer differs (every cell reads mcpInfo).
+    const apply = (mcpInfo: McpInfo) => { if (JSON.stringify(mcpInfo) !== JSON.stringify(getUi().mcpInfo)) setUi({ mcpInfo }); };
     const refresh = () => {
       if (document.hidden) return;
-      void window.mc.getMcpInfo().then((mcpInfo) => {
-        if (JSON.stringify(mcpInfo) !== JSON.stringify(getUi().mcpInfo)) setUi({ mcpInfo });
-      }).catch(() => {});
+      void window.mc.getMcpInfo().then(apply).catch(() => {});
     };
-    const timer = window.setInterval(refresh, 3000);
+    // Main pushes every change; the slow poll only catches a connection that went quiet (it expires without an event).
+    const off = window.mc.on('mcp:info', apply);
+    refresh();
+    const timer = window.setInterval(refresh, 15000);
     document.addEventListener('visibilitychange', refresh);
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
+    return () => { off(); window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
   }, [ready]);
   useEffect(() => {
     document.documentElement.lang = language;

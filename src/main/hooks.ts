@@ -11,7 +11,7 @@ import { SESSION_ID } from '../shared/sessionTrack';
 import type { HookEvent, HookInfo } from '../shared/status';
 
 /** URL events: the status events plus SubagentStop, which reaches the tracker as a "subagent" busy hook, and Codex's notify. */
-type HookUrlEvent = HookEvent | 'subagent' | 'codex';
+export type HookUrlEvent = HookEvent | 'subagent' | 'codex';
 const EVENTS: HookUrlEvent[] = ['prompt', 'stop', 'stopbg', 'notify', 'busy', 'fail', 'subagent', 'codex'];
 /** Notification types that do not mean "the agent needs you now" (idle_prompt follows Stop, or fires mid-work). */
 const IGNORED_NOTIFICATIONS = new Set(['idle_prompt', 'auth_success']);
@@ -62,16 +62,21 @@ function isWorkflow(t: unknown): boolean {
   return typeof type === 'string' && LONG_TASK.test(type);
 }
 
+type Payload = Record<string, unknown> | null;
+/** A Stop body can be up to 512 KB: the helpers take it parsed once (or as text, then they parse it). */
+const payload = (body: string | Payload): Payload => (typeof body === 'string' ? parseObject(body) : body);
+
 /** True when a Stop payload lists a running background task of agent-like (or unknown) type; crons and shell tasks do not count. */
-export function hasActiveBackgroundWork(body: string): boolean {
-  const tasks = parseObject(body)?.background_tasks;
+export function hasActiveBackgroundWork(body: string | Payload): boolean {
+  const tasks = payload(body)?.background_tasks;
   return Array.isArray(tasks) && tasks.some(holdsCell);
 }
 
 /** Diagnostics for a Stop payload: task counts and the distinct status strings (never ids, names, commands or text). */
-export function stopInfo(body: string): HookInfo {
-  const tasks = parseObject(body)?.background_tasks;
-  const continuation = parseObject(body)?.stop_hook_active === true;
+export function stopInfo(body: string | Payload): HookInfo {
+  const parsed = payload(body);
+  const tasks = parsed?.background_tasks;
+  const continuation = parsed?.stop_hook_active === true;
   if (!Array.isArray(tasks)) return { tasks: 0, active: 0, statuses: [], types: [], continuation, workflows: 0, tasksUnknown: true };
   const statuses = new Set<string>();
   const types = new Set<string>();
@@ -225,7 +230,8 @@ export class HookServer extends EventEmitter {
         if (event === 'notify' && !isAttentionNotification(body)) return;
         if (event === 'stop') {
           logStopDebug(!!this.debugDir, this.debugDir ?? '', cellId, body);
-          this.emit('hook', cellId, hasActiveBackgroundWork(body) ? 'stopbg' : 'stop', stopInfo(body));
+          const parsed = parseObject(body);
+          this.emit('hook', cellId, hasActiveBackgroundWork(parsed) ? 'stopbg' : 'stop', stopInfo(parsed));
           return;
         }
         if (event === 'fail') {
@@ -250,6 +256,8 @@ export class HookServer extends EventEmitter {
       server.once('error', fail);
       server.listen(0, '127.0.0.1', () => { clearTimeout(timer); server.off('error', fail); resolve(); });
     });
+    // Later errors of a running server are not fatal for the app.
+    server.on('error', () => undefined);
     this.port = (this.server.address() as AddressInfo).port;
   }
 
@@ -274,23 +282,46 @@ export class HookServer extends EventEmitter {
   writeClaudeSettings(dir: string, cellId: string): string {
     mkdirSync(dir, { recursive: true });
     this.nonces.set(cellId, randomBytes(8).toString('hex')); // invalidates hooks of the previous process
-    // Only Notification, Stop (background_tasks), StopFailure (error) and SessionStart need their payload (JSON on stdin); tool hooks would upload whole files.
-    const withBody = new Set<HookUrlEvent>(['notify', 'stop', 'fail', 'session']);
-    const hook = (event: HookUrlEvent) => [
-      { hooks: [{ type: 'command', command: `curl -s -m 2 -X POST ${withBody.has(event) ? '--data-binary @- ' : ''}${this.url(cellId, event)}` }] },
-    ];
-    // PreToolUse/PostToolUse/SubagentStop mark "still busy": the agent keeps working after a Stop
-    // that only ended a turn (background tasks) or after a permission prompt was answered.
-    const settings = { hooks: {
-      UserPromptSubmit: hook('prompt'), Stop: hook('stop'), Notification: hook('notify'),
-      PreToolUse: hook('busy'), PostToolUse: hook('busy'), SubagentStop: hook('subagent'),
-      // /resume and /clear start a different conversation; the payload carries its session_id.
-      SessionStart: hook('session'),
-      // A turn that ends with an API error (rate limit, billing, auth...) fires StopFailure, never Stop.
-      StopFailure: hook('fail'),
-    } };
     const path = join(dir, `claude-${cellId}.json`);
-    writeFileSync(path, JSON.stringify(settings, null, 2));
+    writeFileSync(path, JSON.stringify(claudeHookSettings((event) => this.url(cellId, event)), null, 2));
     return path;
   }
+
+  /** The cell is gone for good: its nonce goes too (late hooks of its last process are dropped like unknown ones). */
+  forget(cellId: string): void {
+    this.nonces.delete(cellId);
+  }
+}
+
+/**
+ * The curl command of one Claude hook. `--noproxy '*'`: the cell keeps the user's proxy variables, and a proxy must never
+ * see (or swallow) the request to 127.0.0.1 - the same as the Codex notify hook. The quoting is POSIX: Claude Code runs hook
+ * commands with a POSIX shell (Git Bash on Windows).
+ */
+export function claudeHookCommand(url: string, withBody: boolean): string {
+  return `curl -s --noproxy '*' -m 2 -X POST ${withBody ? '--data-binary @- ' : ''}${url}`;
+}
+
+/** Hooks that only say "still busy": fire-and-forget, so no tool call waits for a process start. */
+const ASYNC_EVENTS = new Set<HookUrlEvent>(['busy', 'subagent']);
+/** Only Notification, Stop (background_tasks), StopFailure (error) and SessionStart need their payload (JSON on stdin); tool hooks would upload whole files. */
+const WITH_BODY = new Set<HookUrlEvent>(['notify', 'stop', 'fail', 'session']);
+
+/** The `hooks` settings of a Claude cell (pure, for the tests). */
+export function claudeHookSettings(url: (event: HookUrlEvent) => string): { hooks: Record<string, unknown[]> } {
+  const hook = (event: HookUrlEvent) => [
+    { hooks: [{ type: 'command', command: claudeHookCommand(url(event), WITH_BODY.has(event)), ...(ASYNC_EVENTS.has(event) ? { async: true } : {}) }] },
+  ];
+  // PreToolUse/PostToolUse/SubagentStop mark "still busy": the agent keeps working after a Stop that only ended a turn
+  // (background tasks) or after a permission prompt was answered. They run in the background (`async`): the tracker already
+  // ignores a busy that trails a Stop or a permission prompt, so their order relative to the other hooks does not matter.
+  // Prompt, Stop, Notification, StopFailure and SessionStart stay synchronous: they carry the status and their order counts.
+  return { hooks: {
+    UserPromptSubmit: hook('prompt'), Stop: hook('stop'), Notification: hook('notify'),
+    PreToolUse: hook('busy'), PostToolUse: hook('busy'), SubagentStop: hook('subagent'),
+    // /resume and /clear start a different conversation; the payload carries its session_id.
+    SessionStart: hook('session'),
+    // A turn that ends with an API error (rate limit, billing, auth...) fires StopFailure, never Stop.
+    StopFailure: hook('fail'),
+  } };
 }

@@ -11,6 +11,7 @@ export type { SessionInfo };
 const HEAD_BYTES = 256 * 1024;
 const TAIL_BYTES = 64 * 1024;
 const MAX_CODEX_FILES = 600;
+const CONCURRENCY = 4;
 
 /** Claude stores sessions under ~/.claude/projects/<path with every non-alphanumeric char → '-'>. */
 export const claudeProjectDirName = (projectPath: string) => projectPath.replace(/[^a-zA-Z0-9]/g, '-');
@@ -25,6 +26,17 @@ function readSlice(file: string, start: number, length: number): string {
     return buf.subarray(0, n).toString('utf8');
   } finally {
     closeSync(fd);
+  }
+}
+
+async function readSliceAsync(file: string, start: number, length: number): Promise<string> {
+  const fh = await open(file, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    const { bytesRead } = await fh.read(buf, 0, length, start);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await fh.close();
   }
 }
 
@@ -43,6 +55,7 @@ function parseLines(text: string): any[] {
 
 const clip = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 140);
 const isInjected = (s: string) => /^\s*(<|# AGENTS\.md)/.test(s);
+const byUpdated = (a: SessionInfo, b: SessionInfo) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 // ── Claude ──────────────────────────────────────────────────────────────────
 
@@ -53,65 +66,111 @@ function claudeText(entry: any): string | null {
   return text && !isInjected(text) ? text : null;
 }
 
-interface FileStat { size: number; mtimeMs: number; birthtimeMs: number }
+interface FileStat { size: number; mtimeMs: number; birthtimeMs: number; ino?: number }
 
-async function readSliceAsync(file: string, start: number, length: number): Promise<string> {
-  const fh = await open(file, 'r');
-  try {
-    const buf = Buffer.alloc(length);
-    const { bytesRead } = await fh.read(buf, 0, length, start);
-    return buf.subarray(0, bytesRead).toString('utf8');
-  } finally {
-    await fh.close();
-  }
+/** What the head of a transcript says; it never changes once the file is at least as long as the head slice. */
+interface ClaudeHead {
+  id?: string;
+  cwd: string;
+  firstTs?: string;
+  prompt?: string;
+  /** The latest /rename and generated titles inside the head slice. */
+  custom?: string;
+  ai?: string;
+  /** The file was at least HEAD_BYTES long when the head was read, so later appends never touch it. */
+  complete: boolean;
 }
 
-/** Parses a Claude session file from its head (and tail when the file is larger than the head slice). */
-function parseClaudeSession(headText: string, tailText: string, st: FileStat): SessionInfo | null {
-  const head = parseLines(headText);
-  const tail = parseLines(tailText);
-  const all = [...head, ...tail];
-  const id = all.find((e) => typeof e?.sessionId === 'string')?.sessionId;
+interface ClaudeTail { id?: string; custom?: string; ai?: string }
+
+const lastString = (entries: any[], type: string, key: string): string | undefined => {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e?.type === type && typeof e[key] === 'string' && e[key]) return e[key];
+  }
+  return undefined;
+};
+
+function parseClaudeHead(text: string, size: number): ClaudeHead {
+  const head = parseLines(text);
+  return {
+    id: head.find((e) => typeof e?.sessionId === 'string')?.sessionId,
+    cwd: head.find((e) => e?.cwd)?.cwd ?? '',
+    firstTs: head.find((e) => e?.timestamp)?.timestamp,
+    prompt: head.map(claudeText).find(Boolean) ?? undefined,
+    custom: lastString(head, 'custom-title', 'customTitle'),
+    ai: lastString(head, 'ai-title', 'aiTitle'),
+    complete: size >= HEAD_BYTES,
+  };
+}
+
+/** The tail is only read for titles (and an id the head lacked): every other line is skipped before JSON.parse. */
+function parseClaudeTail(text: string, needId: boolean): ClaudeTail {
+  const wanted: any[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.includes('-title') && !(needId && line.includes('sessionId'))) continue;
+    try { wanted.push(JSON.parse(line)); } catch { /* partial line at a slice boundary or garbage - skip */ }
+  }
+  return {
+    id: needId ? wanted.find((e) => typeof e?.sessionId === 'string')?.sessionId : undefined,
+    custom: lastString(wanted, 'custom-title', 'customTitle'),
+    ai: lastString(wanted, 'ai-title', 'aiTitle'),
+  };
+}
+
+function claudeInfo(head: ClaudeHead, tail: ClaudeTail, st: FileStat): SessionInfo | null {
+  const id = head.id ?? tail.id;
   if (!id) return null;
   // A title the user gave with /rename wins over the generated one; the latest entry of either kind counts.
-  const newest = (type: string, key: string) => [...all].reverse().find((e) => e?.type === type && typeof e[key] === 'string' && e[key])?.[key];
-  const title = newest('custom-title', 'customTitle') ?? newest('ai-title', 'aiTitle') ?? head.map(claudeText).find(Boolean);
+  const title = tail.custom ?? head.custom ?? tail.ai ?? head.ai ?? head.prompt;
   if (!title) return null; // sessions without any user prompt are noise
-  const firstTs = head.find((e) => e?.timestamp)?.timestamp;
   return {
     cli: 'claude',
     id,
-    cwd: head.find((e) => e?.cwd)?.cwd ?? '',
+    cwd: head.cwd,
     title: clip(title),
-    startedAt: firstTs ? Date.parse(firstTs) : st.birthtimeMs,
+    startedAt: head.firstTs ? Date.parse(head.firstTs) : st.birthtimeMs,
     updatedAt: st.mtimeMs,
   };
 }
 
 const tailStart = (st: FileStat) => Math.max(0, st.size - TAIL_BYTES);
 
-function readClaudeSession(file: string, st: FileStat): SessionInfo | null {
-  claudeParses++;
-  const tail = st.size > HEAD_BYTES ? readSlice(file, tailStart(st), TAIL_BYTES) : '';
-  return parseClaudeSession(readSlice(file, 0, HEAD_BYTES), tail, st);
+/** `birthtimeMs` and `ino` tell a replaced transcript (same path, new file) from one that only grew. */
+interface ClaudeEntry { mtimeMs: number; size: number; birthtimeMs: number; ino?: number; info: SessionInfo | null; head: ClaudeHead }
+
+/** A grown transcript whose head was complete only needs its tail again (a running agent appends all the time). */
+const canReuseHead = (hit: ClaudeEntry | undefined, st: FileStat): hit is ClaudeEntry =>
+  !!hit && hit.head.complete && st.size >= hit.size && hit.birthtimeMs === st.birthtimeMs && hit.ino === st.ino;
+
+function readClaudeSession(file: string, st: FileStat, hit?: ClaudeEntry): ClaudeEntry {
+  let head: ClaudeHead;
+  if (canReuseHead(hit, st)) { head = hit.head; claudeTailReads++; }
+  else { head = parseClaudeHead(readSlice(file, 0, HEAD_BYTES), st.size); claudeParses++; }
+  const tail = st.size > HEAD_BYTES ? parseClaudeTail(readSlice(file, tailStart(st), TAIL_BYTES), !head.id) : {};
+  return { mtimeMs: st.mtimeMs, size: st.size, birthtimeMs: st.birthtimeMs, ino: st.ino, head, info: claudeInfo(head, tail, st) };
 }
 
-async function readClaudeSessionAsync(file: string, st: FileStat): Promise<SessionInfo | null> {
-  claudeParses++;
-  const [head, tail] = await Promise.all([
-    readSliceAsync(file, 0, HEAD_BYTES),
+async function readClaudeSessionAsync(file: string, st: FileStat, hit?: ClaudeEntry): Promise<ClaudeEntry> {
+  const reuse = canReuseHead(hit, st);
+  if (reuse) claudeTailReads++; else claudeParses++;
+  const [headText, tailText] = await Promise.all([
+    reuse ? Promise.resolve('') : readSliceAsync(file, 0, HEAD_BYTES),
     st.size > HEAD_BYTES ? readSliceAsync(file, tailStart(st), TAIL_BYTES) : Promise.resolve(''),
   ]);
-  return parseClaudeSession(head, tail, st);
+  const head = reuse ? hit!.head : parseClaudeHead(headText, st.size);
+  const tail = st.size > HEAD_BYTES ? parseClaudeTail(tailText, !head.id) : {};
+  return { mtimeMs: st.mtimeMs, size: st.size, birthtimeMs: st.birthtimeMs, ino: st.ino, head, info: claudeInfo(head, tail, st) };
 }
 
 // Parsed sessions keyed by file; reused while mtime and size are unchanged. Pruned per listed folder.
-const claudeCache = new Map<string, { mtimeMs: number; size: number; info: SessionInfo | null }>();
+const claudeCache = new Map<string, ClaudeEntry>();
 let claudeParses = 0;
+let claudeTailReads = 0;
 
-/** Test hook: how many files were parsed since start and how many are cached. */
-export const claudeCacheStats = () => ({ parses: claudeParses, cached: claudeCache.size });
-export const clearClaudeCache = () => { claudeCache.clear(); claudeParses = 0; };
+/** Test hook: how many files were parsed in full (with the head) and tail-only since start, and how many are cached. */
+export const claudeCacheStats = () => ({ parses: claudeParses, tailReads: claudeTailReads, cached: claudeCache.size });
+export const clearClaudeCache = () => { claudeCache.clear(); claudeParses = 0; claudeTailReads = 0; };
 
 const claudeDir = (home: string, projectPath: string) => join(home, '.claude', 'projects', claudeProjectDirName(projectPath));
 const cachedClaude = (file: string, st: FileStat) => {
@@ -141,7 +200,7 @@ export function listClaudeSessions(home: string, projectPath: string): SessionIn
       seen.add(file);
       let entry = cachedClaude(file, st);
       if (!entry) {
-        entry = { mtimeMs: st.mtimeMs, size: st.size, info: readClaudeSession(file, st) };
+        entry = readClaudeSession(file, st, claudeCache.get(file));
         claudeCache.set(file, entry);
       }
       if (entry.info) out.push(entry.info);
@@ -150,10 +209,8 @@ export function listClaudeSessions(home: string, projectPath: string): SessionIn
     }
   }
   pruneClaudeCache(dir, seen);
-  return out.sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out.sort(byUpdated);
 }
-
-const CONCURRENCY = 4;
 
 /** Same result as listClaudeSessions, but never blocks the event loop on file IO. */
 export async function listClaudeSessionsAsync(home: string, projectPath: string): Promise<SessionInfo[]> {
@@ -176,7 +233,7 @@ export async function listClaudeSessionsAsync(home: string, projectPath: string)
         seen.add(file);
         let entry = cachedClaude(file, st);
         if (!entry) {
-          entry = { mtimeMs: st.mtimeMs, size: st.size, info: await readClaudeSessionAsync(file, st) };
+          entry = await readClaudeSessionAsync(file, st, claudeCache.get(file));
           claudeCache.set(file, entry);
         }
         if (entry.info) out.push(entry.info);
@@ -187,7 +244,7 @@ export async function listClaudeSessionsAsync(home: string, projectPath: string)
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, names.length) }, worker));
   pruneClaudeCache(dir, seen);
-  return out.sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out.sort(byUpdated);
 }
 
 // ── Codex ───────────────────────────────────────────────────────────────────
@@ -198,23 +255,25 @@ interface CodexMeta {
   timestamp?: string;
 }
 
-// Parsed heads keyed by path; reused while the file's mtime is unchanged.
-const metaCache = new Map<string, { mtimeMs: number; meta: CodexMeta | null; title: string | null | undefined }>();
+interface CodexEntry { file: string; mtimeMs: number; meta: CodexMeta | null; title: string | null | undefined }
 
-function cachedCodex(file: string): { mtimeMs: number; meta: CodexMeta | null; entry: { title: string | null | undefined } } {
-  const mtimeMs = statSync(file).mtimeMs;
-  let entry = metaCache.get(file);
-  if (!entry || entry.mtimeMs !== mtimeMs) {
-    entry = { mtimeMs, meta: codexMeta(file), title: undefined };
-    metaCache.set(file, entry);
-  }
-  return { mtimeMs, meta: entry.meta, entry };
-}
+// Parsed heads keyed by path; reused while the file's mtime is unchanged. Pruned to the files of the latest full listing.
+const metaCache = new Map<string, CodexEntry>();
+/** Listings of session folders keyed by path, reused while the folder's mtime is unchanged (old day folders never change). */
+const dirCache = new Map<string, { mtimeMs: number; dirs: string[]; files: string[] }>();
+/** The newest rollout files with their heads, shared by every listing within INDEX_TTL_MS (one refresh asks once per worktree). */
+let codexIndex: { home: string; at: number; entries: Promise<CodexEntry[]> } | null = null;
+const INDEX_TTL_MS = 2000;
+let codexDirReads = 0;
 
-function codexMeta(file: string): CodexMeta | null {
+/** Test hooks. */
+export const codexCacheStats = () => ({ dirReads: codexDirReads, cachedDirs: dirCache.size, cachedFiles: metaCache.size });
+export const clearCodexCache = () => { metaCache.clear(); dirCache.clear(); codexIndex = null; codexDirReads = 0; };
+
+async function codexMeta(file: string): Promise<CodexMeta | null> {
   // The first line (session_meta) carries the id and cwd; it can be tens of KB.
   for (let size = 64 * 1024; size <= 1024 * 1024; size *= 4) {
-    const text = readSlice(file, 0, size);
+    const text = await readSliceAsync(file, 0, size);
     const nl = text.indexOf('\n');
     if (nl < 0 && text.length === size) continue;
     try {
@@ -230,8 +289,8 @@ function codexMeta(file: string): CodexMeta | null {
   return null;
 }
 
-function codexTitle(file: string): string | null {
-  for (const e of parseLines(readSlice(file, 0, HEAD_BYTES))) {
+async function codexTitle(file: string): Promise<string | null> {
+  for (const e of parseLines(await readSliceAsync(file, 0, HEAD_BYTES))) {
     if (e?.type === 'event_msg' && e.payload?.type === 'user_message' && typeof e.payload.message === 'string' && !isInjected(e.payload.message))
       return e.payload.message;
     if (e?.type === 'response_item' && e.payload?.type === 'message' && e.payload.role === 'user' && Array.isArray(e.payload.content)) {
@@ -242,76 +301,129 @@ function codexTitle(file: string): string | null {
   return null;
 }
 
-function codexFiles(home: string): string[] {
-  const root = join(home, '.codex', 'sessions');
-  if (!existsSync(root)) return [];
-  const files: string[] = [];
-  const walk = (dir: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith('.jsonl')) files.push(p);
-    }
-  };
-  walk(root);
-  // Paths are YYYY/MM/DD/rollout-<timestamp>-…, so lexical order is chronological.
-  return files.sort().reverse().slice(0, MAX_CODEX_FILES);
-}
+const descending = (a: string, b: string) => (a < b ? 1 : a > b ? -1 : 0);
 
-export function listCodexSessions(home: string, projectPath: string): SessionInfo[] {
-  const want = normPath(projectPath);
-  const out: SessionInfo[] = [];
-  for (const file of codexFiles(home)) {
-    try {
-      const { meta, entry, mtimeMs } = cachedCodex(file);
-      if (!meta || normPath(meta.cwd) !== want) continue;
-      if (entry.title === undefined) entry.title = codexTitle(file);
-      const title = entry.title;
-      if (!title) continue;
-      const st = { mtimeMs, birthtimeMs: mtimeMs };
-      out.push({
-        cli: 'codex',
-        id: meta.id,
-        cwd: meta.cwd,
-        title: clip(title),
-        startedAt: meta.timestamp ? Date.parse(meta.timestamp) : st.birthtimeMs,
-        updatedAt: st.mtimeMs,
-      });
-    } catch {
-      // skip
-    }
+async function listDir(dir: string): Promise<{ dirs: string[]; files: string[] }> {
+  const { mtimeMs } = await stat(dir);
+  const hit = dirCache.get(dir);
+  if (hit && hit.mtimeMs === mtimeMs) return hit;
+  codexDirReads++;
+  const dirs: string[] = [];
+  const files: string[] = [];
+  for (const e of await readdir(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) dirs.push(e.name);
+    else if (e.name.endsWith('.jsonl')) files.push(e.name);
   }
-  return out.sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const entry = { mtimeMs, dirs: dirs.sort(descending), files: files.sort(descending) };
+  dirCache.set(dir, entry);
+  return entry;
 }
 
 /**
- * Codex session for `cwd` written within the last `windowMs` and not bound elsewhere - called right
- * after a Codex cell finished a turn, when its rollout file was just appended to.
+ * The newest `limit` rollout files. Paths are YYYY/MM/DD/rollout-<timestamp>-..., so walking every level in descending name
+ * order yields them newest first, and the walk stops as soon as it has enough (old day folders are not even listed).
  */
-export function findRecentCodexSession(home: string, cwd: string, windowMs: number, exclude: Set<string>): string | null {
+async function codexFiles(home: string, limit: number): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    let listing;
+    try { listing = await listDir(dir); } catch { dirCache.delete(dir); return; }
+    for (const name of listing.files) {
+      if (out.length >= limit) return;
+      out.push(join(dir, name));
+    }
+    for (const name of listing.dirs) {
+      if (out.length >= limit) return;
+      await walk(join(dir, name));
+    }
+  };
+  await walk(join(home, '.codex', 'sessions'));
+  return out;
+}
+
+async function codexEntry(file: string): Promise<CodexEntry | null> {
+  try {
+    const { mtimeMs } = await stat(file);
+    let entry = metaCache.get(file);
+    if (!entry || entry.mtimeMs !== mtimeMs) {
+      entry = { file, mtimeMs, meta: await codexMeta(file), title: undefined };
+      metaCache.set(file, entry);
+    }
+    return entry;
+  } catch {
+    metaCache.delete(file);
+    return null;
+  }
+}
+
+async function readCodexEntries(home: string, limit: number): Promise<CodexEntry[]> {
+  const files = await codexFiles(home, limit);
+  const entries: Array<CodexEntry | null> = new Array(files.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < files.length) {
+      const i = next++;
+      entries[i] = await codexEntry(files[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
+  if (limit >= MAX_CODEX_FILES) {
+    const seen = new Set(files);
+    for (const key of metaCache.keys()) if (!seen.has(key)) metaCache.delete(key);
+  }
+  return entries.filter((e): e is CodexEntry => !!e);
+}
+
+/** The shared index of the newest MAX_CODEX_FILES sessions (rebuilt at most every INDEX_TTL_MS; concurrent callers share it). */
+function codexIndexFor(home: string): Promise<CodexEntry[]> {
+  const now = Date.now();
+  if (codexIndex && codexIndex.home === home && now - codexIndex.at < INDEX_TTL_MS) return codexIndex.entries;
+  const entries = readCodexEntries(home, MAX_CODEX_FILES);
+  const current = { home, at: now, entries };
+  codexIndex = current;
+  entries.catch(() => { if (codexIndex === current) codexIndex = null; });
+  return entries;
+}
+
+export async function listCodexSessionsAsync(home: string, projectPath: string): Promise<SessionInfo[]> {
+  const want = normPath(projectPath);
+  const out: SessionInfo[] = [];
+  for (const entry of await codexIndexFor(home)) {
+    const { meta } = entry;
+    if (!meta || normPath(meta.cwd) !== want) continue;
+    if (entry.title === undefined) {
+      try { entry.title = await codexTitle(entry.file); } catch { continue; }
+    }
+    if (!entry.title) continue;
+    out.push({
+      cli: 'codex',
+      id: meta.id,
+      cwd: meta.cwd,
+      title: clip(entry.title),
+      startedAt: meta.timestamp ? Date.parse(meta.timestamp) : entry.mtimeMs,
+      updatedAt: entry.mtimeMs,
+    });
+  }
+  return out.sort(byUpdated);
+}
+
+/**
+ * Codex session for `cwd` written within the last `windowMs` and not bound elsewhere - called right after a Codex cell
+ * finished a turn, when its rollout file was just appended to (so it reads the newest files itself, never the shared index).
+ */
+export async function findRecentCodexSession(home: string, cwd: string, windowMs: number, exclude: Set<string>): Promise<string | null> {
   const want = normPath(cwd);
   const since = Date.now() - windowMs;
   let best: { id: string; mtimeMs: number } | null = null;
-  for (const file of codexFiles(home).slice(0, 80)) {
-    try {
-      const { meta, mtimeMs } = cachedCodex(file);
-      if (mtimeMs < since || !meta || exclude.has(meta.id) || normPath(meta.cwd) !== want) continue;
-      if (!best || mtimeMs > best.mtimeMs) best = { id: meta.id, mtimeMs };
-    } catch {
-      // skip
-    }
+  for (const { meta, mtimeMs } of await readCodexEntries(home, 80)) {
+    if (mtimeMs < since || !meta || exclude.has(meta.id) || normPath(meta.cwd) !== want) continue;
+    if (!best || mtimeMs > best.mtimeMs) best = { id: meta.id, mtimeMs };
   }
   return best?.id ?? null;
 }
 
-export function listSessions(home: string, projectPath: string): SessionInfo[] {
-  return [...listClaudeSessions(home, projectPath), ...listCodexSessions(home, projectPath)].sort(
-    (a, b) => b.updatedAt - a.updatedAt,
-  );
-}
-
-/** Non-blocking variant for the IPC handler (Codex listing is cached and only stats files). */
+/** Non-blocking listing for the IPC handler. */
 export async function listSessionsAsync(home: string, projectPath: string): Promise<SessionInfo[]> {
-  const claude = await listClaudeSessionsAsync(home, projectPath);
-  return [...claude, ...listCodexSessions(home, projectPath)].sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const [claude, codex] = await Promise.all([listClaudeSessionsAsync(home, projectPath), listCodexSessionsAsync(home, projectPath)]);
+  return [...claude, ...codex].sort(byUpdated);
 }

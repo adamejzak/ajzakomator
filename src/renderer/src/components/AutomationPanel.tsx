@@ -3,10 +3,10 @@ import { RoleSelect } from './RoleSelect';
 import { changeAgentRole } from '../agentRoles';
 import { useEffect, useState } from 'react';
 import { activeProject, getProfile } from '../../../shared/state';
-import { taskPrompt, type AgentRuntimeStatus, type AutomationInput, type AutomationOperation, type TaskStatus } from '../../../shared/automation';
+import { isClosedTask, taskPrompt, type AgentRuntimeStatus, type AutomationInput, type AutomationOperation, type TaskStatus } from '../../../shared/automation';
 import { focusCell } from '../actions';
 import { useI18n } from '../i18n';
-import { setUi, toast, useStore } from '../store';
+import { askChoice, setUi, toast, useStore } from '../store';
 import { IX } from './icons';
 
 const taskLabels = { queued: 'W kolejce', in_progress: 'W trakcie', blocked: 'Zablokowane', completed: 'Ukończone', cancelled: 'Anulowane' } as const;
@@ -44,8 +44,10 @@ export function AutomationPanel() {
       } catch { /* The project may have been removed while the request was pending. */ }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
-    return () => { disposed = true; clearInterval(timer); };
+    // Main pushes every status change; the slow poll is only a fallback.
+    const off = window.mc.on('automation:statuses', (statuses) => { if (!disposed) setRuntime(statuses); });
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => { disposed = true; off(); clearInterval(timer); };
   }, [project?.id]);
 
   const run = async <K extends AutomationOperation,>(operation: K, args: AutomationInput<K>): Promise<boolean> => {
@@ -55,12 +57,33 @@ export function AutomationPanel() {
     finally { setBusy(false); }
   };
   const copy = (text: string) => { window.mc.clipboardWrite(text); toast(tr('Skopiowano. Wklej do wybranego agenta.')); };
+  /** Removes finished items: the given ones, or every closed task / read message of the project. */
+  const remove = (kind: 'task' | 'message', ids?: string[]) => {
+    if (!project) return;
+    void run('remove_items', { projectId: project.id, kind, ...(ids ? { ids } : {}) }).then((ok) => { if (ok && kind === 'task' && ids) setSelectedTaskId(null); });
+  };
+  /** Closed tasks an open task still depends on stay (main keeps them), so they are neither counted nor offered for removal. */
+  const needed = new Set(state.automation.tasks.filter((task) => !isClosedTask(task)).flatMap((task) => task.dependsOn ?? []));
+  const removable = (task: (typeof tasks)[number]) => isClosedTask(task) && !needed.has(task.id);
+  const finishedTasks = tasks.filter(removable).length;
+  const readMessages = messages.filter((message) => message.readAt).length;
+  /** Removing all finished items asks first (like removing a project). */
+  const removeAll = async (kind: 'task' | 'message') => {
+    const count = kind === 'task' ? finishedTasks : readMessages;
+    const choice = await askChoice(
+      kind === 'task' ? tr('Usunąć {count} zakończonych zadań?', { count }) : tr('Usunąć {count} przeczytanych wiadomości?', { count }),
+      tr('Tego nie można cofnąć. Otwarte zadania i nieprzeczytane wiadomości zostają.'),
+      [{ label: tr(kind === 'task' ? 'Usuń zakończone' : 'Usuń przeczytane'), value: 'yes', danger: true }],
+    );
+    if (choice === 'yes') remove(kind);
+  };
   const delivery = (value: string) => tr(value === 'native' ? 'Przekazano do sesji' : value === 'startup' ? 'Prompt startowy' : 'W skrzynce agenta');
 
   return <section className="automation-panel" aria-label={tr('Zadania i wiadomości agentów')}>
     <div className="automation-head">
       <strong>{tr('Zespół AI')}</strong>
       <span className={`mcp-state ${info.running ? 'connected' : ''}`} title={info.error ?? info.url}>{info.running ? tr('Serwer MCP działa') : tr('MCP niedostępne')}</span>
+      {!info.running && <button className="btn small" disabled={busy} onClick={() => { setBusy(true); void window.mc.retryMcp().then((mcpInfo) => setUi({ mcpInfo })).catch(() => {}).finally(() => setBusy(false)); }}>{tr('Spróbuj ponownie')}</button>}
       <span className="grow" />
       {tab === 'tasks' && <button className="btn small" onClick={() => { setComposing((v) => !v); setSelectedTaskId(null); }}>{composing ? tr('Zamknij') : '+ ' + tr('Nowe zadanie')}</button>}
       <button className={`btn small ${state.automation.paused ? 'paused' : ''}`} disabled={busy} onClick={() => void run('set_paused', { paused: !state.automation.paused })}>
@@ -112,6 +135,10 @@ export function AutomationPanel() {
         {tab === 'tasks' && <>
           {selectedTaskId && <button className="btn small task-back" onClick={() => setSelectedTaskId(null)}>← {tr('Wróć do zadań')}</button>}
           {!tasks.length && <p className="automation-empty">{tr('Brak zadań. Przydziel pierwsze zadanie agentowi.')}</p>}
+          {!selectedTaskId && finishedTasks > 0 && <div className="row wrap">
+            <span className="muted grow">{tr('Zakończone zadania i przeczytane wiadomości starsze niż 7 dni są usuwane automatycznie.')}</span>
+            <button className="btn small" disabled={busy} onClick={() => void removeAll('task')}>{tr('Usuń zakończone')} ({finishedTasks})</button>
+          </div>}
           <div className={selectedTaskId ? 'task-detail-list' : 'task-card-grid'}>
           {[...tasks].reverse().filter((task) => !selectedTaskId || task.id === selectedTaskId).map((task) => <article className={`automation-card task-${task.status} ${selectedTaskId ? 'task-detail' : 'task-summary'}`} key={task.id}>
             {!selectedTaskId ? <button className="task-open" onClick={() => { setSelectedTaskId(task.id); setComposing(false); }}>
@@ -137,6 +164,7 @@ export function AutomationPanel() {
                 {task.delivery === 'pending' && <button className="btn small" disabled={busy || state.automation.paused} onClick={() => void run('deliver_task', { taskId: task.id })}>{tr('Ponów dostarczenie')}</button>}
                 <button className="btn small" disabled={busy} onClick={() => void run('update_task', { taskId: task.id, status: 'cancelled' })}>{tr('Anuluj zadanie')}</button>
               </>}
+              {removable(task) && <button className="btn small" disabled={busy} onClick={() => remove('task', [task.id])}>{tr('Usuń')}</button>}
             </div>
           </>}
           </article>)}
@@ -144,6 +172,10 @@ export function AutomationPanel() {
         </>}
         {tab === 'messages' && <>
           {!messages.length && <p className="automation-empty">{tr('Brak wiadomości')}</p>}
+          {readMessages > 0 && <div className="row wrap">
+            <span className="muted grow">{tr('Zakończone zadania i przeczytane wiadomości starsze niż 7 dni są usuwane automatycznie.')}</span>
+            <button className="btn small" disabled={busy} onClick={() => void removeAll('message')}>{tr('Usuń przeczytane')} ({readMessages})</button>
+          </div>}
           {[...messages].reverse().map((message) => <article className="automation-card" key={message.id}>
             <div className="row"><strong>{label(message.fromCellId)} → {label(message.toCellId)}</strong><span className="grow" /><span className="muted">{message.readAt ? tr('Przeczytane') : delivery(message.delivery)}</span></div>
             <p className="automation-text">{message.text}</p>
@@ -152,6 +184,7 @@ export function AutomationPanel() {
               <button className="btn small" onClick={() => copy(`[Unimux message ${message.id}]\n${message.text}\nUse read_inbox with acknowledge:true to mark it read.`)}>{tr('Kopiuj prompt')}</button>
               {message.delivery === 'pending' && !message.readAt && <button className="btn small" disabled={busy || state.automation.paused} onClick={() => void run('deliver_message', { messageId: message.id })}>{tr('Ponów dostarczenie')}</button>}
               {!message.readAt && <button className="btn small" disabled={busy} onClick={() => void run('acknowledge_message', { messageId: message.id })}>{tr('Oznacz jako przeczytane')}</button>}
+              {message.readAt && <button className="btn small" disabled={busy} onClick={() => remove('message', [message.id])}>{tr('Usuń')}</button>}
             </div>
           </article>)}
         </>}

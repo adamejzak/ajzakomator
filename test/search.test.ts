@@ -133,6 +133,24 @@ describe('project search and replace', () => {
     expect(slow.ok && slow.truncated).toBe(true);
   });
 
+  it('stops a search that a newer one replaced and still finds everything when reading files in parallel', async () => {
+    for (let i = 0; i < 40; i++) put(`bulk/f${i}.txt`, i % 3 ? 'nothing\n' : `token ${i}\n`);
+    const full = await searchProject(root, { query: 'token' });
+    expect(full.ok && full.files.filter((f) => f.path.startsWith('bulk/')).map((f) => f.path))
+      .toEqual(Array.from({ length: 40 }, (_, i) => i).filter((i) => i % 3 === 0).map((i) => `bulk/f${i}.txt`).sort((a, b) => a.localeCompare(b, 'pl', { numeric: true })));
+    expect(full.ok && full.scanned).toBeGreaterThanOrEqual(40);
+
+    const before = new AbortController();
+    before.abort();
+    expect(await searchProject(root, { query: 'token' }, Date.now, before.signal)).toEqual({ ok: true, files: [], matches: 0, scanned: 0, skipped: 0, truncated: true });
+
+    // Aborted while running (the clock is read once per started file): the rest of the project is not read.
+    const during = new AbortController();
+    let calls = 0;
+    const stopped = await searchProject(root, { query: 'token' }, () => { if (++calls === 3) during.abort(); return 0; }, during.signal);
+    expect(stopped).toMatchObject({ ok: true, files: [], truncated: true });
+  });
+
   it('replaces in every matching file and keeps line endings', async () => {
     const result = await replaceInProject(root, { options: { query: 'token' }, replacement: 'key', scope: { kind: 'all' } });
     expect(result).toMatchObject({ ok: true, replaced: 5 });

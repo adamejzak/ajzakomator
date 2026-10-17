@@ -70,3 +70,11 @@ export type HostToRenderer =
   | { t: 'data'; id: string; data: string }
   | { t: 'replay'; id: string; data: string }
   | { t: 'exit'; id: string; code: number };
+
+/** What travels on the port: single messages, or the output of several terminals flushed in the same tick ([id, data] pairs, in order). */
+export type HostToRendererPort = HostToRenderer | { t: 'dataBatch'; items: Array<[string, string]> };
+
+/** Unpacks a port message into the single messages the renderer handles. */
+export function unpackHostMessage(m: HostToRendererPort): HostToRenderer[] {
+  return m.t === 'dataBatch' ? m.items.map(([id, data]) => ({ t: 'data' as const, id, data })) : [m];
+}

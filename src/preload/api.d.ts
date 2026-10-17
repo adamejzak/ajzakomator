@@ -2,7 +2,7 @@ import type { HookEvent, HookInfo } from '../shared/status';
 import type { CellStatus, StatusReason } from '../shared/status';
 import type { CliId, CliStatus, CliStatusMap, InstallMethod } from '../shared/cliStatus';
 import type { InstallOptions, InstallRequest, InstallStartResult, InstallState } from '../shared/cliInstall';
-import type { AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
+import type { AgentRuntimeStatus, AutomationInput, AutomationOperation, McpInfo } from '../shared/automation';
 import type { StateEdit, StateSnapshot } from '../shared/stateEdits';
 import type { StateAck, StateChange } from '../shared/statePatch';
 import type { AppPlatform } from '../shared/platform';
@@ -39,6 +39,8 @@ export interface McApi {
   loadSnapshot(): Promise<StateSnapshot>;
   applyStateEdit(edit: StateEdit): Promise<StateAck>;
   getMcpInfo(): Promise<McpInfo>;
+  /** Starts the MCP server again when it is not running (it failed to start); answers with the new info. */
+  retryMcp(): Promise<McpInfo>;
   automation<K extends AutomationOperation>(operation: K, input: AutomationInput<K>): Promise<unknown>;
   /** `cliMissing` = the profile's CLI is not installed: nothing was spawned. */
   spawnCell(req: SpawnCellRequest): Promise<{ ok: true } | { ok: false; error: string; cliMissing?: CliId; cliStatus?: CliStatus }>;
@@ -147,6 +149,10 @@ export interface McApi {
   on(channel: 'state:changed', cb: (change: StateChange) => void): () => void;
   on(channel: 'fs:progress', cb: (progress: FileOpProgress) => void): () => void;
   on(channel: 'automation:start-cells', cb: (cellIds: string[]) => void): () => void;
+  /** Pushed when the MCP server info changes (tokens issued or revoked, an agent connected, the server started). */
+  on(channel: 'mcp:info', cb: (info: McpInfo) => void): () => void;
+  /** Pushed when an agent's runtime status changes: every known cell's status. */
+  on(channel: 'automation:statuses', cb: (statuses: Record<string, AgentRuntimeStatus>) => void): () => void;
 }
 
 declare global {

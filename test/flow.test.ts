@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BULK_COALESCE_MS, coalesceDelay, ECHO_COALESCE_MS, FlowGate, HIGH_WATER, LOW_WATER, TailBuffer } from '../src/ptyhost/flow';
+import { alignedDelay, BULK_COALESCE_MS, coalesceDelay, ECHO_COALESCE_MS, FlowGate, HIGH_WATER, LOW_WATER, MAX_TAIL_CHUNKS, TailBuffer } from '../src/ptyhost/flow';
+import { OutputBatcher } from '../src/ptyhost/batch';
+import { unpackHostMessage, type HostToRendererPort } from '../src/shared/ipc';
 
 describe('TailBuffer', () => {
   it('matches the naive (tail + data).slice(-limit) for random chunks', () => {
@@ -83,5 +85,60 @@ describe('coalesceDelay', () => {
     expect(coalesceDelay(1000, 900)).toBe(ECHO_COALESCE_MS);
     expect(coalesceDelay(1000, 100)).toBe(BULK_COALESCE_MS);
     expect(coalesceDelay(1000, -Infinity)).toBe(BULK_COALESCE_MS);
+  });
+});
+
+describe('alignedDelay', () => {
+  it('puts bulk flushes on a shared grid and leaves the echo delay alone', () => {
+    expect(alignedDelay(1000, ECHO_COALESCE_MS)).toBe(ECHO_COALESCE_MS);
+    for (let now = 0; now < 50; now++) {
+      const delay = alignedDelay(now, BULK_COALESCE_MS);
+      expect((now + delay) % BULK_COALESCE_MS).toBe(0);
+      expect(delay).toBeGreaterThanOrEqual(BULK_COALESCE_MS / 2);
+      expect(delay).toBeLessThanOrEqual(BULK_COALESCE_MS * 1.5);
+    }
+  });
+});
+
+describe('TailBuffer with many tiny chunks', () => {
+  it('joins them into one piece and keeps the same text', () => {
+    const buf = new TailBuffer(100_000);
+    let naive = '';
+    for (let i = 0; i < 5000; i++) { buf.push('x' + (i % 10)); naive += 'x' + (i % 10); }
+    expect(buf.pieces).toBeLessThanOrEqual(MAX_TAIL_CHUNKS);
+    expect(buf.toString()).toBe(naive.slice(-100_000));
+    const small = new TailBuffer(50);
+    let tail = '';
+    for (let i = 0; i < 2000; i++) { small.push(String(i)); tail = (tail + String(i)).slice(-50); }
+    expect(small.toString()).toBe(tail);
+  });
+});
+
+describe('OutputBatcher', () => {
+  it('posts one message per turn, single output unchanged, several as a batch in order', () => {
+    const posted: HostToRendererPort[] = [];
+    const queue: Array<() => void> = [];
+    const batcher = new OutputBatcher((m) => posted.push(m), (fn) => queue.push(fn));
+    batcher.data('a', 'one');
+    queue.shift()!();
+    expect(posted).toEqual([{ t: 'data', id: 'a', data: 'one' }]);
+    batcher.data('a', 'two');
+    batcher.data('b', 'three');
+    batcher.data('a', 'four');
+    expect(queue).toHaveLength(1);
+    queue.shift()!();
+    expect(posted[1]).toEqual({ t: 'dataBatch', items: [['a', 'two'], ['b', 'three'], ['a', 'four']] });
+    expect(unpackHostMessage(posted[1])).toEqual([
+      { t: 'data', id: 'a', data: 'two' }, { t: 'data', id: 'b', data: 'three' }, { t: 'data', id: 'a', data: 'four' },
+    ]);
+    // An explicit flush (before an exit) empties the queue; the scheduled one then has nothing left.
+    batcher.data('c', 'last');
+    batcher.flush();
+    queue.shift()!();
+    expect(posted).toHaveLength(3);
+    batcher.data('d', 'gone');
+    batcher.drop();
+    queue.shift()!();
+    expect(posted).toHaveLength(3);
   });
 });

@@ -7,6 +7,7 @@ import { normalizeSshHosts } from '../shared/ssh';
 /** Main is the single writer. Renderer edits rebase; MCP operations mutate the latest state. */
 export class StateController {
   private revision = 0;
+  private readonly listeners = new Set<() => void>();
   constructor(private state: AppState, private readonly changed: (snapshot: StateSnapshot) => void) {}
   get(): AppState { return this.state; }
   snapshot(): StateSnapshot { return { state: this.state, revision: this.revision }; }
@@ -14,7 +15,13 @@ export class StateController {
     this.state = fn(this.state);
     const snapshot = { state: this.state, revision: ++this.revision, editId };
     this.changed(snapshot);
+    for (const listener of [...this.listeners]) listener();
     return snapshot;
+  }
+  /** Hears every change after it was applied (wait_for wakes on it instead of polling). */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
   }
   apply(edit: StateEdit): StateSnapshot {
     return this.change((state) => {

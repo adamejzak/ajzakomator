@@ -18,7 +18,8 @@ async function load(projectId: string): Promise<void> {
   try {
     if (!getGitProbe(projectId)) await refreshGitProbe(projectId);
     if (getGitProbe(projectId) === 'repo') {
-      const trust = await window.mc.git.trust(projectId, {});
+      // Display only: a scan of the last few seconds will do (the status checks the trust again by itself).
+      const trust = await window.mc.git.trust(projectId, { cached: true });
       if (trust.ok && trust.data.state !== 'untrusted') {
         const status = await window.mc.git.status(projectId, {});
         if (status.ok) next = buildBadges(status.data.files, status.data.projectRelation, window.mc.platform === 'win32');

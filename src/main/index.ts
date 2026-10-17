@@ -4,7 +4,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir, hostname } from 'os';
 import { isAbsolute, join } from 'path';
-import { stat } from 'fs/promises';
+import { rm, stat } from 'fs/promises';
 import type { SpawnCellRequest } from '../preload/api';
 import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
@@ -14,6 +14,8 @@ import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
+import { pathExists } from './fsProbe';
+import { PromptFiles, pruneCellFiles, removeCellFiles } from './cellFiles';
 import { applyDockIcon, windowIcon } from './appIcon';
 import { LARGE_VIEW_BYTES, listProjectDirectories, listProjectDirectory, listProjectDirectoryBatch, readProjectFile, writeProjectFile } from './files';
 import { registerFileOpsIpc } from './filesIpc';
@@ -160,6 +162,13 @@ crashLogger = createUpdaterLogger(join(DATA_DIR, 'crash.log'), { rotateTo: join(
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
+const cellFileDirs = { hooks: HOOKS_DIR, prompts: PROMPTS_DIR, mcp: MCP_DIR };
+// The shell read the startup prompt when it started the agent; the task text does not stay on disk.
+const prompts = new PromptFiles((file) => { void rm(file, { force: true }).catch(() => undefined); });
+let promptSeq = 0;
+const queuePrompt = (cellId: string, file: string | null) => prompts.queue(cellId, file);
+const releasePrompt = (cellId: string) => prompts.release(cellId);
+const releaseAllPrompts = () => prompts.releaseAll();
 app.setPath('userData', DATA_DIR);
 // Matches build.appId, which the installer also stamps on the shortcuts. A run from the repository (npm run dev, a clone of the
 // project) gets its own identity: it must never share the taskbar entry (and its icon) with the installed app.
@@ -461,9 +470,32 @@ const install = new InstallManager({
   commandOverride: app.isPackaged ? undefined : () => process.env.MC_INSTALL_COMMAND_OVERRIDE || undefined,
 });
 
+/** Ids of the cells of every project's grids (and, unless `tabsOnly`, its archive), optionally filtered. */
+function cellIdsOf(s: AppState, tabsOnly: boolean, keep: (cell: AppState['projects'][number]['tabs'][number]['cells'][number]) => boolean = () => true): Set<string> {
+  const ids = new Set<string>();
+  for (const project of s.projects) for (const tab of tabsOnly ? project.tabs : [...project.tabs, ...project.archive]) {
+    for (const cell of tab.cells) if (keep(cell)) ids.add(cell.id);
+  }
+  return ids;
+}
+/** A cell left the state for good (archive emptied, project removed): its per-cell bookkeeping goes too. */
+function forgetCell(id: string): void {
+  // killCount stays: a spawn still waiting for its CLI lookup compares against it (a few bytes per removed cell).
+  codexHooked.delete(id);
+  verifiedCodex.delete(id);
+  // A process that still runs keeps its hook settings and MCP config (Claude may read them again); the next start prunes them.
+  if (alive.has(id)) return;
+  hooks.forget(id);
+  void removeCellFiles(cellFileDirs, id);
+  automation.forgetCell(id);
+}
 const controller = new StateController(state, (snapshot) => {
-  for (const project of state.projects) for (const tab of project.tabs) for (const cell of tab.cells) {
-    if (cell.role && !findCell(snapshot.state, cell.id)?.cell.role) mcp.revokeCell(cell.id);
+  if (snapshot.state.projects !== state.projects) {
+    // One pass over each state (a lookup per cell was quadratic in the number of cells).
+    const roles = cellIdsOf(snapshot.state, true, (cell) => !!cell.role);
+    for (const id of cellIdsOf(state, true, (cell) => !!cell.role)) if (!roles.has(id)) mcp.revokeCell(id);
+    const kept = cellIdsOf(snapshot.state, false);
+    for (const id of cellIdsOf(state, false)) if (!kept.has(id)) forgetCell(id);
   }
   const previous = state;
   state = snapshot.state;
@@ -493,7 +525,8 @@ const automation = new AutomationService(controller, {
     const session = found.cell.session;
     if (!session || session.cli !== profile.cli || !session.confirmed) return { restarted: false, reason: 'Choose a compatible conversation from History before restarting through MCP.' };
     const cwd = found.cell.worktree?.path ?? found.project.path;
-    if (!existsSync(cwd)) return { restarted: false, reason: 'Project folder does not exist.' };
+    if (!(await pathExists(cwd))) return { restarted: false, reason: 'Project folder does not exist.' };
+    if (!alive.has(cellId)) return { restarted: false, reason: 'Agent is not running.' };
     mcp.revokeCell(cellId);
     verifiedCodex.delete(cellId);
     alive.delete(cellId);
@@ -515,7 +548,28 @@ const automation = new AutomationService(controller, {
     });
   },
 });
-const mcp = new UnimuxMcpServer(automation);
+const mcp = new UnimuxMcpServer(automation, { log: (message) => crashLog.warn(message) });
+const mcpInfo = (): McpInfo => ({ ...mcp.getInfo(), error: mcpError });
+/** Tells the renderer what changed instead of being polled (the renderer keeps a slow fallback poll). */
+const pushLater = (push: () => void) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return () => { timer ??= setTimeout(() => { timer = undefined; push(); }, 250); };
+};
+mcp.onChange(pushLater(() => send('mcp:info', mcpInfo())));
+automation.statuses.onChange = pushLater(() => send('automation:statuses', Object.fromEntries(automation.statuses)));
+/** Starts the MCP server; a failed listen (security software, a busy port range) is retried twice in the background. */
+async function startMcp(retries = 2): Promise<void> {
+  try {
+    await mcp.start();
+    mcpError = undefined;
+  } catch (error) {
+    mcpError = error instanceof Error ? error.message : String(error);
+    crashLog.warn(`MCP server did not start: ${mcpError}`);
+    if (retries > 0) setTimeout(() => void startMcp(retries - 1), 1000);
+  }
+  send('mcp:info', mcpInfo());
+}
+ipcMain.handle('mcp:retry', async () => { if (!mcp.getInfo().running) await startMcp(0); return mcpInfo(); });
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -552,6 +606,7 @@ function createWindow(): void {
   win.on('hide', () => usage.setActive(false));
   win.on('restore', () => usage.setActive(true));
   win.on('show', () => usage.setActive(true));
+  win.on('focus', () => cliDetector.invalidateRegistry());
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
   // The install window lives in the renderer: a reload or crash must not leave an invisible install running.
   win.webContents.on('did-start-loading', () => install.dispose());
@@ -684,7 +739,9 @@ ptyHost.on('message', (m: HostToMain) => {
     verifiedCodex.delete(m.id);
     mcp.revokeCell(m.id);
     automation.statuses.set(m.id, 'exited');
+    releasePrompt(m.id);
   } else if (m.t === 'spawnError') {
+    releasePrompt(m.id);
     alive.delete(m.id);
     mcp.revokeCell(m.id);
     automation.statuses.set(m.id, 'exited');
@@ -695,6 +752,7 @@ ptyHost.on('message', (m: HostToMain) => {
 function forgetHostTerminals(code: unknown, stderrTail: unknown): boolean {
   const tail = typeof stderrTail === 'string' && stderrTail.trim() ? `\n${stderrTail.trim()}` : '';
   crashLog.error(`pty host exited (code ${String(code)})${tail}`);
+  releaseAllPrompts();
   login.failActive('spawn');
   install.failActive();
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
@@ -785,14 +843,15 @@ function boundCodexIds(): Set<string> {
  * Codex picks its own session id. The renderer calls this right after a Codex cell finished a
  * turn: its rollout file was just written, so the freshest unclaimed one in that cwd is the cell's.
  */
-ipcMain.handle('codex:bind', (_e, cellId: string, cwd: string) => {
+ipcMain.handle('codex:bind', async (_e, cellId: string, cwd: string) => {
   const peers = state.projects.flatMap((p) => p.tabs.flatMap((t) => t.cells
     .filter((c) => alive.has(c.id) && getProfile(state, c.profileId).cli === 'codex' && (c.worktree?.path ?? p.path) === cwd)));
   // Shared-directory simultaneous starts are ambiguous. Never guess a message recipient.
   if (peers.length !== 1 || peers[0].id !== cellId) return null;
   if (codexHooked.has(cellId)) return null; // its notify hook binds the exact thread; a timestamp guess must never overwrite it
-  const id = findRecentCodexSession(homedir(), cwd, 20_000, boundCodexIds());
-  if (!id) return null;
+  const id = await findRecentCodexSession(homedir(), cwd, 20_000, boundCodexIds());
+  // Re-checked after the file reads: the cell may have been closed, hooked or the id claimed meanwhile.
+  if (!id || !alive.has(cellId) || codexHooked.has(cellId) || boundCodexIds().has(id)) return null;
   claimedCodex.add(id);
   send('cell:session', cellId, { cli: 'codex', id, confirmed: false });
   return id;
@@ -804,7 +863,7 @@ ipcMain.handle('state:load', () => state);
 ipcMain.handle('state:snapshot', () => controller.snapshot());
 // The answer is an acknowledgement; the new state reaches the renderer once, as the patch `state:changed` carries.
 ipcMain.handle('state:edit', (_e, edit: StateEdit) => { const { revision, editId } = controller.apply(edit); return { revision, editId }; });
-ipcMain.handle('mcp:info', (): McpInfo => ({ ...mcp.getInfo(), error: mcpError }));
+ipcMain.handle('mcp:info', (): McpInfo => mcpInfo());
 ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input: unknown) => {
   if (!Object.hasOwn(automationSchemas, operation)) throw new Error('Unknown operation.');
   return automation.execute(operation, input);
@@ -827,8 +886,9 @@ async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
 }
 async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   if (ptyHost.isFatal()) return { ok: false, error: tr('Proces terminali nie działa. Uruchom aplikację ponownie.') };
-  if (!existsSync(req.cwd)) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
+  // Taken before the first await: a kill while the folder or the CLI is being checked must not be undone by this spawn.
   const killsBefore = killCount.get(req.cellId) ?? 0;
+  if (!(await pathExists(req.cwd))) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const cli = cliForProfile(req.profile);
   // `force`: the user chose "start anyway" on the install card (the detection may be wrong, e.g. an alias).
   if (cli && req.force !== true) {
@@ -855,7 +915,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   let initialPrompt: { file: string; text: string } | undefined;
   if (mode === 'new' && req.startupPrompt?.trim()) {
     mkdirSync(PROMPTS_DIR, { recursive: true });
-    const file = join(PROMPTS_DIR, `${req.cellId}.txt`);
+    const file = join(PROMPTS_DIR, `${req.cellId}-${(++promptSeq).toString(36)}.txt`);
     writeFileSync(file, req.startupPrompt, 'utf8');
     initialPrompt = { file, text: req.startupPrompt };
   }
@@ -884,6 +944,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   automation.runtimeStarted(req.cellId);
   automation.statuses.set(req.cellId, 'starting');
   alive.add(req.cellId);
+  queuePrompt(req.cellId, initialPrompt?.file ?? null);
   ptyHost.spawn({ id: req.cellId, cwd: req.cwd, cols: req.cols, rows: req.rows, env, shell: state.settings.shell, command });
   return { ok: true };
 }
@@ -941,7 +1002,7 @@ ipcMain.handle('sound:pick', async () => {
 // The path is never taken from the renderer: only the saved setting of that event (set from the dialog result) is read.
 ipcMain.handle('sound:load', (_e, event?: unknown, knownKey?: unknown) => loadEventSound(state.settings.alerts, event, knownKey));
 ipcMain.on('sound:beep', () => shell.beep());
-ipcMain.handle('fs:exists',(_e, p: string) => existsSync(p));
+ipcMain.handle('fs:exists', (_e, p: string) => pathExists(p));
 /** Files dropped from the system file manager: whether each absolute path is a folder, a file or gone. */
 ipcMain.handle('fs:pathKinds', async (_e, paths: unknown): Promise<Array<'dir' | 'file' | null>> => {
   if (!Array.isArray(paths) || paths.length > 200) return [];
@@ -962,9 +1023,16 @@ ipcMain.handle('fs:listProjectDirectories', (_e, projectId: string) => {
   const project = state.projects.find((p) => p.id === projectId);
   return project ? listProjectDirectories(project.path) : { ok: false, error: 'Projekt już nie istnieje.' };
 });
-ipcMain.handle('fs:searchProject', (_e, projectId: string, options: SearchOptions) => {
+/** The running search per window: a new one (typing goes on) stops the previous, whose answer nobody shows. */
+const searches = new Map<number, AbortController>();
+ipcMain.handle('fs:searchProject', async (e, projectId: string, options: SearchOptions) => {
   const project = state.projects.find((p) => p.id === projectId);
-  return project ? searchProject(project.path, options) : { ok: false, error: 'Projekt już nie istnieje.' };
+  if (!project) return { ok: false, error: 'Projekt już nie istnieje.' };
+  searches.get(e.sender.id)?.abort();
+  const controller = new AbortController();
+  searches.set(e.sender.id, controller);
+  try { return await searchProject(project.path, options, Date.now, controller.signal); }
+  finally { if (searches.get(e.sender.id) === controller) searches.delete(e.sender.id); }
 });
 ipcMain.handle('fs:replaceInProject', (_e, projectId: string, request: ReplaceRequest) => {
   const project = state.projects.find((p) => p.id === projectId);
@@ -1282,9 +1350,11 @@ function openInstallWindow(): void {
 }
 
 async function startMainApp(): Promise<void> {
+  // Before any cell can start: files of removed cells and old startup prompts go.
+  await pruneCellFiles(cellFileDirs, cellIdsOf(state, false)).catch(() => 0);
   // Without the hook server (loopback blocked by security software) the app still starts: agent states fall back to heuristics.
   try { await hooks.start(); } catch (error) { crashLog.error(`hook server did not start: ${describeError(error)}`); }
-  try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
+  await startMcp();
   ptyHost.start();
   startSsh();
   // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another:

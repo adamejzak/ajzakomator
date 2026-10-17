@@ -5,7 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
-import type { HostToRenderer, RendererToHost } from '../../../shared/ipc';
+import { unpackHostMessage, type HostToRenderer, type HostToRendererPort, type RendererToHost } from '../../../shared/ipc';
 import type { BoundThread } from '../../../shared/codexHooks';
 import { screenWaitsForBackground } from '../../../shared/backgroundWait';
 import { AgentInference, keySequence, type InferredAgent, type ScreenLine, type ScreenState } from '../../../shared/agentInfer';
@@ -133,7 +133,7 @@ class TerminalManager {
     this.acks.clear();
     if (this.ackTimer) clearTimeout(this.ackTimer);
     this.ackTimer = null;
-    port.onmessage = (e) => this.onHostMessage(e.data as HostToRenderer);
+    port.onmessage = (e) => { for (const m of unpackHostMessage(e.data as HostToRendererPort)) this.onHostMessage(m); };
     port.start();
     // Tell the host about the sizes we already know (e.g. after a host restart).
     for (const e of this.entries.values()) this.post({ t: 'resize', id: e.id, cols: e.term.cols, rows: e.term.rows });

@@ -27,7 +27,7 @@ const RUNNERS: { [C in GitChannel]: (git: Git, dir: string, req: GitRequestMap[C
   unstage: (git, dir, req, scope) => git.unstage(dir, req, scope),
   commit: (git, dir, req, scope) => git.commit(dir, req, scope),
   checkout: (git, dir, req, scope) => git.checkout(dir, req, scope),
-  trust: (git, dir, _req, scope) => git.trustInfo(dir, scope),
+  trust: (git, dir, req, scope) => git.trustInfo(dir, scope, req.cached === true),
   trustGrant: (git, dir, req, scope) => git.grantTrust(dir, req.requestId, scope),
   trustRevoke: (git, dir, req, scope) => git.revokeTrust(dir, req.requestId, scope),
 };
