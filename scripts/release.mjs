@@ -54,7 +54,8 @@ const releaseFiles = ['package.json', 'package-lock.json', notes];
 
 if (!existsSync(notes)) fail(`Write the release notes first: ${notes}`);
 if (out('git', ['tag', '--list', tag])) fail(`Tag ${tag} already exists. Never reuse or move a published tag; release the next version.`);
-const dirty = out('git', ['status', '--porcelain', '--no-renames']).split('\n').filter(Boolean).map((line) => line.slice(3).replace(/^"|"$/g, ''));
+// Raw output: out() trims, which would cut the leading status column of the first line (' M file' -> 'M file').
+const dirty = run('git', ['status', '--porcelain', '--no-renames']).split('\n').filter(Boolean).map((line) => line.slice(3).replace(/^"|"$/g, ''));
 const unexpected = dirty.filter((file) => !releaseFiles.includes(file));
 if (unexpected.length) fail(`Commit or stash these files first:\n  ${unexpected.join('\n  ')}`);
 console.log(`Releasing ${tag} on ${repository}: "release: ${next} with ${title}"`);
