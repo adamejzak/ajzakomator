@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountsStore } from '../src/main/accounts/store';
-import { isSwapRunning, nodeSwapFs, recoverInterruptedSwap, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
+import { isSwapRunning, nodeSwapFs, swapMainAccount, type SwapDeps, type SwapFs } from '../src/main/accounts/swap';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 const FUTURE = NOW + 3_600_000;

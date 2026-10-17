@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createDialogLimiter, decideUncaught, handoffWatchdogAction, HANDOFF_QUIT_WAIT_MAX_MS, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from '../src/main/safeWindow';
 
 const fakeWindow = (state: { win?: boolean; contents?: boolean } = {}) => {

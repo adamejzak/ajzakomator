@@ -116,6 +116,8 @@ class TerminalManager {
   private webglLimit = new WebglLimit(MAX_WEBGL_CONTEXTS);
   /** When the last WebGL context was created. */
   private lastGrantAt = -Infinity;
+  /** The 400 ms status tick runs only while there are terminals: an empty window (first run, no project) never wakes up for it. */
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.staging = document.createElement('div');
@@ -127,7 +129,6 @@ class TerminalManager {
     window.addEventListener('message', (e) => {
       if (e.data === 'mc:pty-port' && e.ports[0]) this.setPort(e.ports[0]);
     });
-    setInterval(() => this.tickStatuses(), 400);
     // Minimize / restore / hide / show / focus changes make agents redraw: that output is not work (see StatusTracker.environment).
     const environment = () => {
       const now = performance.now();
@@ -322,6 +323,7 @@ class TerminalManager {
     entry.tracker.onBind = (thread) => this.bindListeners.forEach((l) => l(cellId, thread));
     entry.tracker.bgGuard = () => this.screenWaits(entry);
     this.entries.set(cellId, entry);
+    this.statusTimer ??= setInterval(() => this.tickStatuses(), 400);
     this.deferParkedSelection(entry);
 
     // ConPTY asks its host terminal for win32-input-mode with CSI ? 9001 h.
@@ -789,6 +791,7 @@ class TerminalManager {
     this.entries.delete(cellId);
     this.pending.delete(cellId);
     this.disposed.add(cellId);
+    if (!this.entries.size && this.statusTimer) { clearInterval(this.statusTimer); this.statusTimer = null; }
   }
 
   // ── statuses ──────────────────────────────────────────────────────────────

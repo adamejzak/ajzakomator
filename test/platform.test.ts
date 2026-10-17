@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultShell, fullProjectPath, normalizeProjectPath, shellsForPlatform, shortcutLabel } from '../src/shared/platform';
+import { defaultShell, fullProjectPath, normalizeProjectPath, shellsForPlatform, shortcutLabel, windowsBuildFromRelease } from '../src/shared/platform';
 import { defaultState, normalizeState } from '../src/shared/state';
 import { resolveShell } from '../src/ptyhost/manager';
 
@@ -40,5 +40,12 @@ describe('platform support', () => {
   it('displays Command and Option on macOS', () => {
     expect(shortcutLabel('darwin', 'Ctrl+Shift+G · Ctrl+Alt+Arrows')).toBe('Cmd+Shift+G · Cmd+Option+Arrows');
     expect(shortcutLabel('win32', 'Ctrl+K')).toBe('Ctrl+K');
+  });
+
+  it('reads the Windows build number from the OS version the sandboxed preload gets', () => {
+    expect(windowsBuildFromRelease('win32', '10.0.26200')).toBe(26200);
+    expect(windowsBuildFromRelease('win32', 'garbage')).toBe(0);
+    expect(windowsBuildFromRelease('darwin', '24.1.0')).toBe(0);
+    expect(windowsBuildFromRelease('win32', '')).toBe(0);
   });
 });

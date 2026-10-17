@@ -35,3 +35,9 @@ export function normalizeProjectPath(path: string): string {
   const normalized = path.replace(/[\\/]+$/, '').replace(/\\/g, '/');
   return /^[a-z]:\//i.test(normalized) || normalized.startsWith('//') ? normalized.toLowerCase() : normalized;
 }
+
+/** Windows build number from an OS version ("10.0.26200" -> 26200); 0 on other systems or when it cannot be read. */
+export function windowsBuildFromRelease(platform: string, release: string): number {
+  return platform === 'win32' ? Number(release.split('.')[2]) || 0 : 0;
+}
+

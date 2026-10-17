@@ -7,8 +7,7 @@ import {
 } from '../../shared/fileOps';
 import { fullProjectPath } from '../../shared/platform';
 import { forgetDeletedFiles, holdTreeFocus, openFile, refreshReplacedFiles, retargetOpenFiles } from './files';
-import { tr } from './i18n';
-import { translateError } from '../../shared/i18n';
+import { errorText, tr } from './i18n';
 import { askChoice, askText, getS, setUi, toast, update } from './store';
 import { useSshStore } from './sshStore';
 import { switchProject } from './actions';
@@ -34,11 +33,6 @@ export const useExplorer = create<ExplorerStore>(() => ({
 }));
 const set = useExplorer.setState;
 const get = useExplorer.getState;
-const language = () => getS().settings.language;
-const errorText = (message: string) => {
-  const lang = language();
-  return lang ? translateError(lang, message) : message;
-};
 const platform = () => window.mc.platform;
 
 /** The shown tree scrolls its selected row into view and focuses it (the list is virtual: the row may not exist yet). */

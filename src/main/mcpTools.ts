@@ -44,7 +44,6 @@ const int = (description?: string) => ({ type: 'integer', ...(description ? { de
 const oneOf = (values: string[], description?: string) => ({ type: 'string', enum: values, ...(description ? { description } : {}) });
 const strings = (description?: string) => ({ type: 'array', items: { type: 'string' }, ...(description ? { description } : {}) });
 const obj = (properties: Record<string, unknown>, required?: string[]) => ({ type: 'object' as const, properties, ...(required?.length ? { required } : {}) });
-const loose = z.object({}).strict();
 
 // --- result shaping ---
 const clip = (text: string | undefined, max: number, hint: string): string | undefined =>

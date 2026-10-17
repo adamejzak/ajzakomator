@@ -24,8 +24,16 @@ describe('ssh2 packaging', () => {
     expect(pkg.dependencies['@types/ssh2']).toBeUndefined();
   });
 
-  it('keeps the optional native parts of ssh2 out of both file lists', () => {
-    for (const list of [pkg.build.files, pkg.build.win.files]) for (const rule of EXCLUDED) expect(list, rule).toContain(rule);
+  it('keeps the optional native parts of ssh2 out of every file list', () => {
+    for (const list of [pkg.build.files, pkg.build.win.files, pkg.build.mac.files]) for (const rule of EXCLUDED) expect(list, rule).toContain(rule);
+  });
+
+  it('the Windows and macOS file lists are the shared list plus their own node-pty prebuild exclusions', () => {
+    // electron-builder picks the app files from the platform list alone, so each one repeats the shared list; this keeps them in step.
+    for (const list of [pkg.build.win.files, pkg.build.mac.files]) {
+      expect(list.slice(0, pkg.build.files.length)).toEqual(pkg.build.files);
+      for (const rule of list.slice(pkg.build.files.length)) expect(rule.startsWith('!**/node_modules/node-pty/prebuilds/'), rule).toBe(true);
+    }
   });
 
   it('has the Electron runtime smoke test script', () => {

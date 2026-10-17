@@ -53,7 +53,6 @@ export function GridDialog({ projectId }: { projectId: string }) {
     setSelected(new Set());
   };
   const setCell = (i: number, patch: Partial<PresetCell>) => setCells((cs) => cs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
-  const setAll = (patch: Partial<PresetCell>) => setCells((cs) => cs.map((x) => ({ ...x, ...patch })));
   /** Prompt and worktree do not apply to SSH cells (spec 10.4), so bulk changes of them skip those cells. */
   const setAllAgents = (patch: Partial<PresetCell>) => setCells((cs) => cs.map((x) => (x.sshHostId ? x : { ...x, ...patch })));
   const sourcePatch = (value: string, previous?: PresetCell): Partial<PresetCell> => cellSourcePatch(value, previous, hosts, shellProfileId);

@@ -8,7 +8,7 @@ import {
 import { fuzzyFilter } from '../../../shared/fuzzy';
 import type { ProjectIcon, SessionInfo, Snippet } from '../../../shared/types';
 import { restoreArchived, resumeSession } from '../actions';
-import { closeDialog, closeModal, setUi, toast, update, useStore, type Dialog } from '../store';
+import { closeDialog, closeModal, setUi, update, useStore, type Dialog } from '../store';
 import { AuthModal } from './AuthModal';
 import { closeInstall, InstallModal } from './InstallModal';
 import { ChangelogModal } from './Changelog';

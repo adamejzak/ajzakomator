@@ -9,7 +9,7 @@
 // nothing (log, show, branches, commit and staged diffs, worktree list) work without trust.
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { createHash } from 'crypto';
-import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, statSync, unlinkSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
 import { realpath as fsRealpath } from 'fs';
 import { promisify } from 'util';

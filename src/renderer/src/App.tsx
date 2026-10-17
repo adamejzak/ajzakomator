@@ -1,4 +1,4 @@
-import { tr, useI18n } from './i18n';
+import { chosenLanguage, loadLanguage, tr, useI18n } from './i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { fitPanelWidths, MIN_WORKSPACE_WIDTH, RAIL_WIDTH, type Panel } from '../../shared/panels';
 import { activeProject, activeTab, findCell, getProfile, updateCell } from '../../shared/state';
@@ -22,7 +22,7 @@ import { StatusBar } from './components/StatusBar';
 import { TitleBar, WorkspaceTabs } from './components/TitleBar';
 import { useShortcuts } from './shortcuts';
 import { getS, getUi, setUi, toast, update, useStore } from './store';
-import { statusLog, terminals } from './terminals/TerminalManager';
+import { terminals } from './terminals/TerminalManager';
 // Rarely used screens load on demand: the editor alone (CodeMirror, language packs, Markdown preview) is about a third of the bundle.
 const loadAutomationPanel = () => import('./components/AutomationPanel').then((m) => ({ default: m.AutomationPanel }));
 const loadFileEditor = () => import('./components/FileEditor').then((m) => ({ default: m.FileEditor }));
@@ -60,6 +60,8 @@ async function bootSteps(): Promise<void> {
   ]);
   setAliveAtStart(alive);
   setUi({ cliStatus });
+  // The translations of the chosen language load before the first real render: no untranslated texts at start.
+  await loadLanguage(snapshot.state.settings.language ?? chosenLanguage()).catch((error) => reportError('boot', error));
   useStore.getState().init(snapshot);
   await bootRest(mcpInfo);
   window.mc.startupMark?.('renderer-boot');
@@ -109,7 +111,11 @@ async function bootRest(mcpInfo: Awaited<ReturnType<typeof window.mc.getMcpInfo>
   });
 
   // A conversation renamed inside the CLI (/rename) shows its new title in the cell header: look again now and then while the window is in use.
-  window.setInterval(() => { if (document.hasFocus()) refreshSessionTitles(activeProject(useStore.getState().s)?.path); }, 20000);
+  // Titles show only on cells bound to a conversation: a project without any skips the periodic read.
+  window.setInterval(() => {
+    const project = activeProject(useStore.getState().s);
+    if (document.hasFocus() && project?.tabs.some((t) => t.cells.some((c) => c.session))) refreshSessionTitles(project.path);
+  }, 20000);
   window.addEventListener('focus', () => refreshSessionTitles(activeProject(useStore.getState().s)?.path, 800));
 
   // Coming back to the app (after installing a CLI in another window) is the moment to look again, but only if a cell waits for it.
@@ -219,7 +225,10 @@ export function App() {
   const [available, setAvailable] = useState(window.innerWidth);
   const [live, setLive] = useState<Partial<Record<Panel, number>>>({});
   const [bootFailed, setBootFailed] = useState(false);
-  useEffect(() => { if (!bootFailed) boot().catch(() => setBootFailed(true)); }, [bootFailed]);
+  useEffect(() => {
+    // The retry card is translated too: its language loads first (the state may not have arrived, so the system language).
+    if (!bootFailed) boot().catch(() => loadLanguage(chosenLanguage()).catch(() => undefined).then(() => setBootFailed(true)));
+  }, [bootFailed]);
   useEffect(() => {
     if (!ready) return;
     // Not while the window is hidden, and the store is only touched when the answer differs (every cell reads mcpInfo).
@@ -248,7 +257,8 @@ export function App() {
   }, [ready, languageChosen]);
   useShortcuts();
   if (!ready) return bootFailed ? <WindowFallback message={tr('Nie udało się wczytać danych aplikacji.')} retry={() => setBootFailed(false)} /> : <div className="app" />;
-  if (!languageChosen) return <LanguageSetup />;
+  // The toast too: a language that fails to load in the preview says so.
+  if (!languageChosen) return <><LanguageSetup />{toastView}</>;
   const widths = fitPanelWidths(available, live.sidebar ?? sidebarWidth, live.snippets ?? snippetsWidth, collapsed, snippetsOpen);
   const resizeProps = (panel: Panel) => ({
     panel,
