@@ -62,6 +62,7 @@ async function bootSteps(): Promise<void> {
   setUi({ cliStatus });
   useStore.getState().init(snapshot);
   await bootRest(mcpInfo);
+  window.mc.startupMark?.('renderer-boot');
 }
 
 function listenEarly(): void {

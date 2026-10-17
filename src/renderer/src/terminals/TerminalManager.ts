@@ -82,6 +82,8 @@ export interface EnsureOptions {
 class TerminalManager {
   private entries = new Map<string, Entry>();
   private port: MessagePort | null = null;
+  /** The first terminal output of this window was reported for startup.log. */
+  private firstOutput = false;
   private pending = new Map<string, Array<{ data: string; replay: boolean }>>();
   private exited = new Set<string>();
   private disposed = new Set<string>();
@@ -179,6 +181,7 @@ class TerminalManager {
   }
 
   private onHostMessage(m: HostToRenderer): void {
+    if (m.t === 'data' && !this.firstOutput) { this.firstOutput = true; window.mc?.startupMark?.('first-output'); }
     if (m.t === 'exit') {
       this.exited.add(m.id);
       const e = this.entries.get(m.id);
