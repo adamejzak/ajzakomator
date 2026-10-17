@@ -68,14 +68,17 @@ export interface RailAction extends RailState {
 
 /**
  * A click on a tile, also in view mode (the SSH view in front, its navigation in the side panel):
- * - a view tile opens its view and unfolds the side panel; in view mode it folds and unfolds the side panel like an open panel's tile;
- * - a panel tile in view mode leaves the view and shows that panel (never folds it); otherwise railClick.
+ * - a view tile opens its view and leaves the fold of the side panel as it is (like the palette and the view's tab);
+ *   in view mode it folds and unfolds the side panel like an open panel's tile;
+ * - a panel tile in view mode leaves the view and shows that panel (never folds it); otherwise railClick, and a view that
+ *   waits behind Settings goes to the background too (choosing a panel ends view mode).
  */
-export function railTileAction(state: RailState & { viewMode: boolean }, def: Pick<PanelDef, 'id' | 'opensView'>): RailAction {
-  const { collapsed, view, viewMode } = state;
-  if (def.opensView) return viewMode ? { collapsed: !collapsed, view, openView: false, leaveView: false } : { collapsed: false, view, openView: true, leaveView: false };
+export function railTileAction(state: RailState & { viewActive: boolean; settingsActive: boolean }, def: Pick<PanelDef, 'id' | 'opensView'>): RailAction {
+  const { collapsed, view, viewActive, settingsActive } = state;
+  const viewMode = viewActive && !settingsActive;
+  if (def.opensView) return viewMode ? { collapsed: !collapsed, view, openView: false, leaveView: false } : { collapsed, view, openView: true, leaveView: false };
   if (viewMode) return { collapsed: false, view: def.id, openView: false, leaveView: true };
-  return { ...railClick({ collapsed, view }, def.id), openView: false, leaveView: false };
+  return { ...railClick({ collapsed, view }, def.id), openView: false, leaveView: viewActive };
 }
 
 /** What the side panel next to the rail shows: nothing when folded, the view's navigation in view mode, otherwise the panel. */

@@ -35,7 +35,7 @@ export function SshSettings() {
               <tr key={k.id}>
                 <td>{k.display}</td><td>{k.keyType}</td><td><code className="ssh-fingerprint">{k.fingerprint}</code></td>
                 <td>{k.addedAt ? new Date(k.addedAt).toLocaleDateString(language) : '-'}</td>
-                <td><button className="btn small" disabled={hostsReadOnly} onClick={() => remove(k.id)}>{tr('Usuń')}</button></td>
+                <td><button className="btn small" disabled={hostsReadOnly} aria-label={tr('Usuń {host}', { host: k.display })} onClick={() => remove(k.id)}>{tr('Usuń')}</button></td>
               </tr>
             ))}
           </tbody>

@@ -131,6 +131,12 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
     if (next === undefined || next === name) return;
     update((s) => s.sshHosts.filter((h) => h.group === name).reduce((acc, h) => updateSshHost(acc, h.id, { group: next || undefined }), s));
   };
+  /** A different group filter clears the selection, so "Otwórz jako siatkę (n)" never counts hosts that are not shown. */
+  const chooseGroup = (next: string | null) => {
+    if (next === group) return;
+    setGroup(next);
+    useSshStore.setState({ selectedHosts: [] });
+  };
   const openGrid = (ids: string[]) => { showTerminalTabs(); void openHostsAsGrid(ids); useSshStore.setState({ selectedHosts: [] }); };
   const groupMenu = (e: MouseEvent, name: string | null, ids: string[]) => {
     e.preventDefault();
@@ -195,18 +201,19 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
             <section className="ssh-view-section" aria-label={tr('Grupy')}>
               <h3 className="ssh-view-heading">{tr('Grupy')}</h3>
               <div className="ssh-group-tiles">
-                <button className={`ssh-group-tile${group === null ? ' on' : ''}`} aria-pressed={group === null} onClick={() => setGroup(null)}>
+                <button className={`ssh-group-tile${group === null ? ' on' : ''}`} aria-pressed={group === null} aria-label={tr('{name}, hosty: {count}', { name: tr('Wszystkie'), count: hosts.length })} onClick={() => chooseGroup(null)}>
                   <span className="ssh-group-tile-name">{tr('Wszystkie')}</span>
-                  <span className="ssh-group-tile-count" aria-label={tr('Hosty: {count}', { count: hosts.length })}>{hosts.length}</span>
+                  <span className="ssh-group-tile-count" aria-hidden="true">{hosts.length}</span>
                 </button>
                 {tiles.map((t) => {
                   const name = t.name ?? tr('Bez grupy');
                   return (
                     <button key={t.key} className={`ssh-group-tile${group === t.key ? ' on' : ''}`} data-group={t.key} aria-pressed={group === t.key}
-                      title={tr('Pokaż tylko grupę {name}', { name })} onClick={() => setGroup((g) => toggleGroupFilter(liveGroupFilter(g, hosts), t.key))}
+                      aria-label={tr('{name}, hosty: {count}', { name, count: t.count })}
+                      title={tr('Pokaż tylko grupę {name}', { name })} onClick={() => chooseGroup(toggleGroupFilter(group, t.key))}
                       onContextMenu={(e) => groupMenu(e, t.name, hostsInGroup(hosts, t.key).map((h) => h.id))}>
                       <span className="ssh-group-tile-name">{name}</span>
-                      <span className="ssh-group-tile-count" aria-label={tr('Hosty: {count}', { count: t.count })}>{t.count}</span>
+                      <span className="ssh-group-tile-count" aria-hidden="true">{t.count}</span>
                     </button>
                   );
                 })}

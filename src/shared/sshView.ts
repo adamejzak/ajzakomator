@@ -65,12 +65,6 @@ export const SSH_NAV: readonly SshNavEntry[] = [
 
 export const DEFAULT_SSH_SECTION: SshSection = 'hosts';
 
-/** A stored or unknown value as a section: an enabled entry of the navigation, otherwise Hosty. */
-export function resolveSshSection(wanted: unknown): SshSection {
-  const entry = SSH_NAV.find((e) => e.id === wanted && !e.disabled);
-  return entry ? (entry.id as SshSection) : DEFAULT_SSH_SECTION;
-}
-
 /** A click on a navigation entry: an enabled one becomes the section, a disabled or unknown one changes nothing. */
 export function chooseSshSection(current: SshSection, clicked: string): SshSection {
   const entry = SSH_NAV.find((e) => e.id === clicked);
@@ -86,6 +80,16 @@ export function sectionForDetail(detail: SshDetail | null): SshSection | null {
 /** What the details pane of a section shows: only a detail of that section (Znane hosty has no pane). */
 export function paneDetail(section: SshSection, detail: SshDetail | null): SshDetail | null {
   return detail && sectionForDetail(detail) === section ? detail : null;
+}
+
+/**
+ * The store change for a click in the SSH mode navigation: the new section, the detail only if it belongs there (a new-key
+ * draft or a host form of the old section is dropped) and the host selection only in Hosty. Nothing for SFTP or the same section.
+ */
+export function sectionChange(st: { section: SshSection; detail: SshDetail | null; selectedHosts: string[] }, clicked: string): Partial<{ section: SshSection; detail: SshDetail | null; selectedHosts: string[] }> {
+  const section = chooseSshSection(st.section, clicked);
+  if (section === st.section) return {};
+  return { section, detail: paneDetail(section, st.detail), selectedHosts: section === 'hosts' ? st.selectedHosts : [] };
 }
 
 /** SSH mode: the SSH view is the workspace on screen (Settings in front ends it). */

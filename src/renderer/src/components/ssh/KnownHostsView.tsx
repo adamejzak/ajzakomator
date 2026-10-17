@@ -31,7 +31,7 @@ export function KnownHostsView() {
                 <span className="ssh-known-date">{k.addedAt ? tr('Dodano {date}', { date: new Date(k.addedAt).toLocaleDateString(language) }) : ''}</span>
               </div>
               <code className="ssh-fingerprint">{k.fingerprint}</code>
-              <button className="btn small" disabled={readOnly} onClick={() => remove(k.id)}>{tr('Usuń')}</button>
+              <button className="btn small" disabled={readOnly} aria-label={tr('Usuń {host}', { host: k.display })} onClick={() => remove(k.id)}>{tr('Usuń')}</button>
             </li>
           ))}
         </ul>

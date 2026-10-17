@@ -8,6 +8,7 @@ import { describeLayout } from '../../../shared/layout';
 import type { Project } from '../../../shared/types';
 import { closeTab, createProject, relocateProject, removeProject, selectTab, switchProject } from '../actions';
 import { askText, setUi, update, useStore } from '../store';
+import { useSshStore } from '../sshStore';
 import { openMenu } from './ContextMenu';
 import { IFolder, IGrid, IHistory, IPlus } from './icons';
 import { dropEdge, scrollDragList } from './listDrag';
@@ -78,6 +79,7 @@ export function ProjectsPanel({ resize }: PanelProps) {
   const openFiles = (p: Project) => {
     if (s.activeProjectId !== p.id) switchProject(p.id);
     update((st) => ({ ...st, sidebarCollapsed: false }));
+    useSshStore.setState({ viewActive: false }); // SSH mode ends, so the Files panel shows
     setUi({ sidebarView: 'files' });
   };
 

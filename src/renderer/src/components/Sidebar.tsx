@@ -40,7 +40,7 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
   const content = sidePanelContent({ collapsed, viewMode: sshMode, panelId: active.id });
 
   const choose = (panel: SidebarPanel) => {
-    const next = railTileAction({ collapsed, view, viewMode: sshMode }, panel);
+    const next = railTileAction({ collapsed, view, viewActive: sshActive, settingsActive }, panel);
     if (next.collapsed !== collapsed) update((st) => ({ ...st, sidebarCollapsed: next.collapsed }));
     if (next.openView) panel.onActivate?.();
     if (next.leaveView) leaveSshMode();

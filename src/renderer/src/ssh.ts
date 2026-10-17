@@ -4,7 +4,7 @@
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell, removeSshHost } from '../../shared/state';
 import { connectingNotice, hostEndpoint, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshPrompt, type SshSessionState } from '../../shared/ssh';
-import { chooseSshSection, menuHosts, paneDetail, sectionForDetail, type SshDetail } from '../../shared/sshView';
+import { menuHosts, sectionChange, sectionForDetail, type SshDetail } from '../../shared/sshView';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
 import type { MenuItem } from './components/ContextMenu';
@@ -177,18 +177,17 @@ export function openSshView(detail?: SshDetail): void {
   setUi({ settingsActive: false });
 }
 
-/** SSH mode ends: the view goes to the background (it stays open as a tab) and the grid or file in front of it comes back. */
+/**
+ * SSH mode ends: the view goes to the background (it stays open as a tab) and the grid or file under it comes back, also
+ * when Settings is in front of it (a panel chosen there is what the user wants to see next).
+ */
 export function leaveSshMode(): void {
-  if (!getUi().settingsActive) useSshStore.setState({ viewActive: false });
+  useSshStore.setState({ viewActive: false });
 }
 
 /** A click in the SSH mode navigation: a detail of another section and the host selection go (drafts are not kept, R12). */
 export function selectSshSection(clicked: string): void {
-  useSshStore.setState((st) => {
-    const section = chooseSshSection(st.section, clicked);
-    if (section === st.section) return {};
-    return { section, detail: paneDetail(section, st.detail), selectedHosts: section === 'hosts' ? st.selectedHosts : [] };
-  });
+  useSshStore.setState((st) => sectionChange(st, clicked));
 }
 
 export function activateSshView(): void {

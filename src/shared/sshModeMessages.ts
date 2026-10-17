@@ -4,7 +4,6 @@ export const sshModeMessages = {
   'SFTP': ['SFTP', 'SFTP', 'SFTP', 'SFTP', 'SFTP'],
   'Grupy': ['Groups', 'Gruppen', 'Grupos', 'Groupes', 'Grupos'],
   'Wszystkie': ['All', 'Alle', 'Todos', 'Tous', 'Todos'],
-  'Hosty: {count}': ['Hosts: {count}', 'Hosts: {count}', 'Hosts: {count}', 'Hôtes : {count}', 'Anfitriões: {count}'],
   'Pokaż tylko grupę {name}': ['Show only the group {name}', 'Nur die Gruppe {name} anzeigen', 'Mostrar solo el grupo {name}', 'Afficher uniquement le groupe {name}', 'Mostrar apenas o grupo {name}'],
   'Nie masz jeszcze hostów': ['No hosts yet', 'Noch keine Hosts', 'Todavía no hay hosts', 'Aucun hôte pour l’instant', 'Ainda não há anfitriões'],
   'Zapisz adres, użytkownika i sposób logowania, a potem łącz się jednym kliknięciem w dowolnej siatce.': [
@@ -31,6 +30,8 @@ export const sshModeMessages = {
   ],
   'Wybierz host, aby zobaczyć szczegóły.': ['Select a host to see its details.', 'Wähle einen Host, um die Details zu sehen.', 'Selecciona un host para ver sus detalles.', 'Sélectionnez un hôte pour voir ses détails.', 'Selecione um anfitrião para ver os detalhes.'],
   'Wybierz klucz, aby zobaczyć szczegóły.': ['Select a key to see its details.', 'Wähle einen Schlüssel, um die Details zu sehen.', 'Selecciona una clave para ver sus detalles.', 'Sélectionnez une clé pour voir ses détails.', 'Selecione uma chave para ver os detalhes.'],
+  'Usuń {host}': ['Remove {host}', '{host} entfernen', 'Eliminar {host}', 'Supprimer {host}', 'Remover {host}'],
+  '{name}, hosty: {count}': ['{name}, hosts: {count}', '{name}, Hosts: {count}', '{name}, hosts: {count}', '{name}, hôtes : {count}', '{name}, anfitriões: {count}'],
   'Dodano {date}': ['Added {date}', 'Hinzugefügt am {date}', 'Añadido el {date}', 'Ajouté le {date}', 'Adicionado em {date}'],
   'Przesyłanie plików przez SFTP pojawi się w jednej z kolejnych wersji.': [
     'File transfer over SFTP is coming in a later version.',

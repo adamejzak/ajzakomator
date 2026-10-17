@@ -10,6 +10,7 @@ import { forgetDeletedFiles, holdTreeFocus, openFile, refreshReplacedFiles, reta
 import { tr } from './i18n';
 import { translateError } from '../../shared/i18n';
 import { askChoice, askText, getS, setUi, toast, update } from './store';
+import { useSshStore } from './sshStore';
 import { switchProject } from './actions';
 
 export interface Selection { paths: string[]; anchor: string | null }
@@ -75,6 +76,8 @@ export const selectedPaths = (projectId: string): string[] => get().selection[pr
 export function locateInFiles(projectId: string, path: string): void {
   if (getS().activeProjectId !== projectId) switchProject(projectId);
   update((st) => st.sidebarCollapsed ? { ...st, sidebarCollapsed: false } : st);
+  // SSH mode ends (the side panel would show the SSH navigation instead of Files); the SSH view stays open as a tab.
+  useSshStore.setState({ viewActive: false });
   setUi({ sidebarView: 'files' });
   expandAncestors(projectId, path);
   selectPaths(projectId, [path], path);
