@@ -1,4 +1,5 @@
 // The renderer's ErrorBoundary with no DOM: a render error shows the fallback (with a retry) and is reported to main.
+import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 let mod: any;
@@ -40,5 +41,13 @@ describe('ErrorBoundary', () => {
     expect(html).toContain('class="cell cell-failed"');
     expect(html).toContain('left:50%');
     expect(html).toContain('<button');
+  });
+
+  it('fallback cards read the language reactively (the hoisted status bar, palette and modal boundaries in App.tsx never re-render)', () => {
+    const source = readFileSync('src/renderer/src/components/ErrorBoundary.tsx', 'utf8');
+    expect(source).toMatch(/function PanelFallback[^\n]*\n\s+const \{ tr \} = useI18n\(\);/);
+    expect(source).toMatch(/function CellFallback[^\n]*\n\s+const \{ tr \} = useI18n\(\);/);
+    const app = readFileSync('src/renderer/src/App.tsx', 'utf8');
+    expect(app).toMatch(/^const statusBar = <ErrorBoundary name="statusbar" fallback=\{\(retry\) => <PanelFallback /m);
   });
 });
