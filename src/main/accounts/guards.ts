@@ -1,5 +1,5 @@
 // src/main/accounts/guards.ts
-import { custodyOf, isAccountId, type LiveIdentity, type ManagedAccount, type SwapError } from '../../shared/accounts';
+import { compareIdentity, custodyOf, isAccountId, type AdoptCopyError, type LiveIdentity, type ManagedAccount, type SwapError } from '../../shared/accounts';
 import type { CswapRoster } from './cswap';
 import { renewRule } from './refs';
 import { AccountsReadOnlyError } from './store';
@@ -104,4 +104,45 @@ export function gateFamilyRefresh<R>(
     if (!record || custodyOf(record) === 'quarantined') return Promise.resolve(blocked);
     return renewRule(record, store.live(), cswap()) === 'allowed' ? refresh(dir) : Promise.resolve(blocked);
   };
+}
+
+export interface AdoptCopyDeps extends GuardDeps {
+  get(id: string): ManagedAccount | undefined;
+  live(): LiveIdentity | null;
+  setFamily(id: string, family: 'own'): void;
+  /** Called after the record became app-owned (reads that account's limits now, which renews it when needed). */
+  onAdopted(id: string): void;
+}
+
+/**
+ * The server-side checks of `accounts:adoptCopy` (the renderer's choice is never trusted): the record exists, is not set
+ * aside, is held by the app (`app` custody) and is provably not the account signed in to Claude Code.
+ */
+export function adoptCopyRefusal(record: ManagedAccount | undefined, live: LiveIdentity | null): 'invalid' | 'live' | null {
+  if (!record || custodyOf(record) !== 'app') return 'invalid';
+  if (live && (live.recordId === record.id || compareIdentity(record, live) !== 'different')) return 'live';
+  return null;
+}
+
+/**
+ * IPC handler body for `accounts:adoptCopy`: the user confirmed that a saved copy cswap also lists is the app's own login,
+ * so its family becomes `own` and `renewRule` lets the app renew it from now on. Only from the app window (`trusted`).
+ */
+export async function handleAdoptCopy(deps: AdoptCopyDeps, trusted: boolean, id: unknown): Promise<{ ok: boolean; error?: AdoptCopyError }> {
+  if (!trusted || !isAccountId(id)) return { ok: false, error: 'invalid' };
+  if (deps.readOnly?.()) return { ok: false, error: 'readOnly' };
+  const block = await accountMutationBlock(deps);
+  if (block) return { ok: false, error: block };
+  // Checked after the wait, right before the write: a swap or reconcile may have changed the roles meanwhile.
+  if (deps.readOnly?.()) return { ok: false, error: 'readOnly' };
+  const refusal = adoptCopyRefusal(deps.get(id), deps.live());
+  if (refusal) return { ok: false, error: refusal };
+  try {
+    deps.setFamily(id, 'own');
+  } catch (error) {
+    if (error instanceof AccountsReadOnlyError) return { ok: false, error: 'readOnly' };
+    return { ok: false, error: 'write' };
+  }
+  try { deps.onAdopted(id); } catch { /* the next scheduled read renews it */ }
+  return { ok: true };
 }

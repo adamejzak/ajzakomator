@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { AccountNotice, LoginTarget } from '../../../shared/accounts';
-import { claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, makeMainOffered, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
+import { adoptCopyOffered, claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, makeMainOffered, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
 import { noticeText, setAsideText, usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
 import { swapErrorKey, swapErrorText } from '../../../shared/swapMessages';
@@ -19,7 +19,12 @@ const HELD_NOTE = {
   'switched-out': 'To konto zostało przełączone poza aplikacją (cswap lub /login). Kopia logowania w aplikacji może być nieaktualna, więc nie jest odnawiana. Przełącz je tam, gdzie jest aktywne, albo zaloguj się tu ponownie.',
 } as const;
 /** A saved card whose tokens cswap may hold too (every 0.9.0 card cswap lists): never renewed here; swapped in only while fresh. */
-const CSWAP_HINT = 'cswap też trzyma kopię tego logowania, więc aplikacja nigdy jej nie odnawia. Ustawienie jako główne działa, dopóki kopia jest świeża; potem przełącz konto w cswap albo zaloguj się do niego tu ponownie.';
+const CSWAP_HINT = 'cswap też trzyma kopię tego logowania, więc aplikacja jej nie odnawia. Jeśli logowano się do tego konta w unimuxie, wybierz „Odświeżaj tę kopię w unimuxie”. Ustawienie jako główne działa, dopóki kopia jest świeża; potem przełącz konto w cswap albo zaloguj się do niego tu ponownie.';
+const ADOPT_LABEL = 'Odświeżaj tę kopię w unimuxie';
+const ADOPT_BODY = 'Od teraz unimux będzie sam odnawiał tę kopię logowania.\n\nTo bezpieczne, jeśli logowano się do tego konta w unimuxie. Jeśli kopia pochodzi z „Ustaw jako główne” w starszej wersji, cswap może stracić swój token dla tego konta - wtedy wystarczy raz zalogować się do niego ponownie w cswap.\n\n„Zaloguj ponownie” pozostaje dostępne dla logowań, które naprawdę wygasły.';
+const ADOPT_FAILED = 'Nie udało się zmienić sposobu odnawiania tej kopii.';
+const ADOPT_LIVE = 'To konto jest teraz zalogowane w Claude Code - jego logowanie odnawia Claude Code, nie unimux.';
+const ADOPT_READ_ONLY = 'Nie można teraz zmieniać kont: pliku kont aplikacji nie da się bezpiecznie odczytać (szczegóły w panelu limitów).';
 const NAMES: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
 const READ_ONLY_REMOVE = 'Nie można teraz usuwać kont: pliku kont aplikacji nie da się bezpiecznie odczytać (szczegóły w panelu limitów).';
 const LIVE_REMOVE = 'Konta głównego nie można usunąć. Najpierw ustaw jako główne inne konto.';
@@ -96,6 +101,24 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
     await removeSaved(usage.accountId.replace(/^claude:/, ''), tr);
   };
 
+  // "Renew this copy in unimux": only after the user confirms; the main process checks the record again.
+  const canAdopt = adoptCopyOffered(usage) && claudeLoginActions(window.mc.platform, true).managedAccounts;
+  const adoptCopy = async () => {
+    const choice = await askChoice(tr('Odświeżać kopię konta {name} w unimuxie?', { name }), tr(ADOPT_BODY), [{ label: tr(ADOPT_LABEL), value: 'yes', primary: true }]);
+    if (choice !== 'yes') return;
+    try {
+      const result = await window.mc.adoptAccountCopy(usage.accountId.replace(/^claude:/, ''));
+      if (result.ok) toast(tr('unimux odnawia teraz kopię konta {name}.', { name }));
+      else if (result.error === 'readOnly') toast(tr(ADOPT_READ_ONLY), 'error');
+      else if (result.error === 'live') toast(tr(ADOPT_LIVE), 'error');
+      else if (result.error === 'busy' || result.error === 'pending') toast(tr(swapErrorKey(result.error)), 'error');
+      else toast(tr(ADOPT_FAILED), 'error');
+    } catch {
+      toast(tr(ADOPT_FAILED), 'error');
+    }
+  };
+  const adoptButton = canAdopt ? <button className="btn small primary" disabled={busy} onClick={() => void adoptCopy()}>{tr(ADOPT_LABEL)}</button> : null;
+
   const copyDiagnostics = () => {
     window.mc.clipboardWrite(usageDiagnostics(usage, Date.now(), diagnosticLabel(usage, savedIndex)));
     toast(tr('Skopiowano diagnostykę.'));
@@ -133,7 +156,12 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
         {usage.windows.length > 0 && <p className="usage-note">{tr('dane sprzed {age}', { age })}</p>}
         <p className="usage-note">{tr(HELD_NOTE[usage.heldBy ?? 'switched-out'])}</p>
-        {usage.heldBy !== 'live' && <button className="btn small" onClick={() => openAuth(usage.provider, reloginTarget(usage))}>{tr('Zaloguj ponownie')}</button>}
+        {usage.heldBy !== 'live' && (
+          <div className="usage-empty-buttons">
+            {adoptButton}
+            <button className="btn small" onClick={() => openAuth(usage.provider, reloginTarget(usage))}>{tr('Zaloguj ponownie')}</button>
+          </div>
+        )}
       </>
     );
   } else if (dormant) {
@@ -187,6 +215,7 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
             title={tr('Menu konta')}
             onClick={(e) => openMenuAt(e.currentTarget, [
               ...(canMakeMain ? [{ label: tr('Ustaw jako główne'), disabled: busy, onClick: () => onMakeMain(usage) }] : []),
+              ...(canAdopt ? [{ label: tr(ADOPT_LABEL), disabled: busy, onClick: () => void adoptCopy() }] : []),
               ...(canRelogin ? [{ label: tr('Zaloguj ponownie to konto'), disabled: busy, onClick: () => openAuth(usage.provider, reloginTarget(usage)) }] : []),
               { label: tr('Skopiuj diagnostykę'), onClick: copyDiagnostics },
               ...(usage.managed ? [{ label: tr('Usuń konto'), danger: true, disabled: busy, onClick: () => void removeAccount() }] : []),
@@ -195,7 +224,12 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         )}
       </div>
       {body}
-      {usage.heldBy === 'cswap' && usage.status !== 'elsewhere' && !expired && <p className="usage-note">{tr(CSWAP_HINT)}</p>}
+      {usage.heldBy === 'cswap' && usage.status !== 'elsewhere' && !expired && (
+        <>
+          <p className="usage-note">{tr(CSWAP_HINT)}</p>
+          {adoptButton && <div className="usage-empty-buttons">{adoptButton}</div>}
+        </>
+      )}
     </div>
   );
 }

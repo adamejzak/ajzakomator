@@ -980,7 +980,7 @@ body.cell-dragging, body.cell-dragging * { cursor: grabbing !important; user-sel
 .usage-expired { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .usage-warning { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px; margin-bottom: 6px; border: 1px solid var(--warn, #d9a441); border-radius: 6px; }
 .usage-empty { display: flex; flex-direction: column; gap: 6px; }
-.usage-empty-buttons { display: flex; gap: 6px; }
+.usage-empty-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .usage-empty-buttons .btn { display: inline-flex; align-items: center; gap: 5px; }
 .provider-icon { flex: none; }
 .usage-row { display: grid; grid-template-columns: 44px 1fr 32px; align-items: center; column-gap: 6px; row-gap: 1px; }

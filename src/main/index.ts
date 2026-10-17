@@ -36,7 +36,7 @@ import { createRefreshLimits } from './accounts/refreshLimits';
 import { createTokenFetch } from './accounts/tokenTransport';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
-import { dismissAccountNotice, gateFamilyRefresh, gateProfileRefresh, handleRemoveAccount, loginBlock } from './accounts/guards';
+import { dismissAccountNotice, gateFamilyRefresh, gateProfileRefresh, handleAdoptCopy, handleRemoveAccount, loginBlock } from './accounts/guards';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
 import {
   activateAccount, activationJournalPending, checkActivationTarget, clearPendingActivation, isActivationRecoveryPending, recoverActivationWithRetry,
@@ -858,6 +858,14 @@ ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
   void pushSwapPending();
   return result;
 });
+/** "Renew this copy in unimux": the user confirmed that a saved copy cswap also lists is the app's own login. */
+ipcMain.handle('accounts:adoptCopy', (e, id: unknown) => handleAdoptCopy({
+  ...guardDeps,
+  get: (accountId) => accounts.get(accountId),
+  live: () => accounts.live(),
+  setFamily: (accountId, family) => accounts.setFamily(accountId, family),
+  onAdopted: (accountId) => { void usage.refresh(true, true, `claude:${accountId}`); },
+}, isLive(win) && e.sender === win!.webContents, id));
 ipcMain.handle('accounts:swapPending', () => hasPendingSwap(swapDeps()).catch(() => true));
 /** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
 ipcMain.handle('accounts:clearSwapPending', async () => {

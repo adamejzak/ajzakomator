@@ -74,6 +74,14 @@ export function makeMainOffered(usage: Pick<ProviderUsage, 'provider' | 'managed
   return usage.provider === 'claude' && !!usage.managed && !usage.active && (!usage.heldBy || usage.heldBy === 'cswap');
 }
 
+/**
+ * "Renew this copy in unimux" is offered only on a saved Claude card that is not the main one and that the app does not
+ * renew because cswap lists the account (`held-by-cswap`); an expired sign-in only offers signing in again.
+ */
+export function adoptCopyOffered(usage: Pick<ProviderUsage, 'provider' | 'managed' | 'active' | 'heldBy' | 'status'>): boolean {
+  return usage.provider === 'claude' && !!usage.managed && !usage.active && usage.heldBy === 'cswap' && usage.status !== 'expired';
+}
+
 /** A saved Claude card set aside after a failed restore of its previous sign-in (not renewed, not polled, not deleted). */
 export interface SetAsideAccount {
   recordId: string;

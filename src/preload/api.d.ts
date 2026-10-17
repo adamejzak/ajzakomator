@@ -9,7 +9,7 @@ import type { AppPlatform } from '../shared/platform';
 import type { ChangelogResult } from '../shared/changelog';
 import type { AlertEventId } from '../shared/alerts';
 import type { UsageState } from '../shared/usage';
-import type { LoginRequest, LoginState, SwapResult } from '../shared/accounts';
+import type { AdoptCopyResult, LoginRequest, LoginState, SwapResult } from '../shared/accounts';
 import type { ReplaceRequest, ReplaceResult, SearchOptions, SearchResult } from '../shared/search';
 import type { CreateResult, DeleteResult, FileOpProgress, FileOpRequest, FileOpResult, RenameResult } from '../shared/fileOps';
 import type { GitApi } from '../shared/git';
@@ -112,6 +112,8 @@ export interface McApi {
   /** `readOnly`: accounts.json cannot be read safely, nothing was removed. */
   removeAccount(id: string): Promise<{ ok: boolean; error?: 'busy' | 'pending' | 'readOnly' | 'live' }>;
   makeMainAccount(id: string): Promise<SwapResult>;
+  /** "Renew this copy in unimux": a saved copy cswap also lists becomes the app's own login (validated in the main process). */
+  adoptAccountCopy(id: string): Promise<AdoptCopyResult>;
   /** True while an interrupted swap is unresolved (swaps are blocked). Also pushed on the 'accounts:swapPending' channel. */
   swapPending(): Promise<boolean>;
   /** `locked`: the recovery of an interrupted activation waits for Claude Code's locks and is retried automatically. */

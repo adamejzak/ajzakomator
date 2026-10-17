@@ -125,6 +125,10 @@ export function isAccountId(value: unknown): value is string {
 export const SWAP_ERRORS = ['unsupported', 'invalid', 'busy', 'envToken', 'noMain', 'noTarget', 'sameAccount', 'duplicate', 'dead', 'transient', 'write', 'manual', 'pending', 'locked', 'foreign'] as const;
 export type SwapError = (typeof SWAP_ERRORS)[number];
 
+/** Why "renew this copy in unimux" (`accounts:adoptCopy`) was refused: fixed codes only, never a path, token or system message. */
+export type AdoptCopyError = 'invalid' | 'live' | 'readOnly' | 'busy' | 'pending' | 'write';
+export type AdoptCopyResult = { ok: true } | { ok: false; error: AdoptCopyError };
+
 export type SwapResult = { ok: true; email?: string } | { ok: false; error: SwapError; email?: string };
 
 export function isSwapError(value: unknown): value is SwapError {

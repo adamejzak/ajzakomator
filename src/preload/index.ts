@@ -111,6 +111,7 @@ const api: McApi = {
   cancelLogin: (id) => ipcRenderer.send('auth:cancel', id),
   removeAccount: (id) => ipcRenderer.invoke('accounts:remove', id),
   makeMainAccount: (id) => ipcRenderer.invoke('accounts:makeMain', id),
+  adoptAccountCopy: (id) => ipcRenderer.invoke('accounts:adoptCopy', id),
   swapPending: () => ipcRenderer.invoke('accounts:swapPending'),
   clearSwapPending: () => ipcRenderer.invoke('accounts:clearSwapPending'),
   dismissAccountNotice: (id) => ipcRenderer.invoke('accounts:dismissNotice', id),
