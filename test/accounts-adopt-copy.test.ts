@@ -25,6 +25,7 @@ const deps = (over: Partial<AdoptCopyDeps> = {}): AdoptCopyDeps & { adopted: str
   return {
     swapRunning: () => false,
     swapPending: async () => false,
+    loginActive: () => false,
     readOnly: () => store.readOnly(),
     get: (id) => store.get(id),
     live: () => store.live(),
@@ -99,6 +100,24 @@ describe('accounts:adoptCopy validation', () => {
     await expect(handleAdoptCopy(deps({ swapRunning: () => true }), true, copyId)).resolves.toEqual({ ok: false, error: 'busy' });
     await expect(handleAdoptCopy(deps({ swapPending: async () => true }), true, copyId)).resolves.toEqual({ ok: false, error: 'pending' });
     expect(store.get(copyId)?.family).toBeUndefined();
+  });
+
+  it('refuses with busy while a login window flow runs, before and after the wait', async () => {
+    await expect(handleAdoptCopy(deps({ loginActive: () => true }), true, copyId)).resolves.toEqual({ ok: false, error: 'busy' });
+    // A login that starts while the swap state is being read.
+    let login = false;
+    const d = deps({ loginActive: () => login, swapPending: async () => { login = true; return false; } });
+    await expect(handleAdoptCopy(d, true, copyId)).resolves.toEqual({ ok: false, error: 'busy' });
+    expect(store.get(copyId)?.family).toBeUndefined();
+    expect(d.adopted).toEqual([]);
+  });
+
+  it('refuses with busy when a swap starts during the wait, right before the write', async () => {
+    let swap = false;
+    const d = deps({ swapRunning: () => swap, swapPending: async () => { swap = true; return false; } });
+    await expect(handleAdoptCopy(d, true, copyId)).resolves.toEqual({ ok: false, error: 'busy' });
+    expect(store.get(copyId)?.family).toBeUndefined();
+    expect(d.adopted).toEqual([]);
   });
 
   it('reports a failed write with a fixed code and no message', async () => {

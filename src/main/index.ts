@@ -861,6 +861,7 @@ ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
 /** "Renew this copy in unimux": the user confirmed that a saved copy cswap also lists is the app's own login. */
 ipcMain.handle('accounts:adoptCopy', (e, id: unknown) => handleAdoptCopy({
   ...guardDeps,
+  loginActive: () => login.isActive(),
   get: (accountId) => accounts.get(accountId),
   live: () => accounts.live(),
   setFamily: (accountId, family) => accounts.setFamily(accountId, family),
