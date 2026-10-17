@@ -3,7 +3,7 @@
 // SSH_CHECK_LANGUAGE=en runs a part with the English UI (the `cell` part uses the TEXT table; screenshots get an -en suffix).
 // Only the local test server (scripts/ssh-test-server.mjs on 127.0.0.1) is used; scratch dirs are deleted afterwards.
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import ssh2 from 'ssh2';
 import { join } from 'node:path';
 import { childPids, connected, connectWithPassword, killTree, LANGUAGE, launchApp, sleep, scratchRoot, sshState, startTestServer, testHost, writeKnownHost, writeState } from './ssh-ui-lib.mjs';
@@ -204,7 +204,8 @@ const PARTS = {
       if (!readFileSync(join(root, 'data', 'state.json'), 'utf8').includes('"example.invalid"')) throw new Error('host not stored');
     } finally { rmSync(root, { recursive: true, force: true }); }
   },
-  /** Task 10, W3: the SSH tile opens the SSH view, hosts are tiles by group and searchable, folding, details and multi-select work, a group opens as a 3-cell grid. */
+  /** Task 10, W3: the SSH tile opens the SSH view, hosts are tiles by group and searchable, folding, details and multi-select work, a group opens as a 3-cell grid.
+   *  0.9.2 polish: no "Bez grupy" tile and no local shells, the details pane only while a host is chosen, search narrows the selection. */
   async panel() {
     const server = await startTestServer();
     const root = scratchRoot('ssh-panel');
@@ -226,11 +227,12 @@ const PARTS = {
         await app.until(`${railState} === 'true|false|0'`, 'SSH tile pressed again');
         const heads = await app.evaluate(`[...document.querySelectorAll('.ssh-group-head .grow')].map((e) => e.textContent)`);
         if (JSON.stringify(heads) !== JSON.stringify(['lab', 'Bez grupy'])) throw new Error(`groups: ${heads}`);
-        const sections = await app.evaluate(`[...document.querySelectorAll('.ssh-view-heading')].map((e) => e.textContent)`);
-        if (JSON.stringify(sections) !== JSON.stringify(['Grupy', 'Lokalne powłoki'])) throw new Error(`sections: ${sections}`);
-        // Group tiles: the counts, and a click filters to that group (a second click shows every host again).
+        if (await app.evaluate(`!!document.querySelector('.ssh-local, .terminal-source') || document.querySelector('.ssh-view').textContent.includes('Lokalne powłoki')`)) throw new Error('local shells are still listed in Hosty');
+        // Nothing chosen: no details pane, the tiles use the whole width.
+        if (await app.evaluate(`!!document.querySelector('.ssh-view-detail') || document.querySelector('.ssh-view-main').getBoundingClientRect().width !== document.querySelector('.ssh-view').getBoundingClientRect().width`)) throw new Error('a details pane is shown with nothing chosen');
+        // Group tiles: the counts (no "Bez grupy" tile), and a click filters to that group (a second click shows every host again).
         const groupTiles = await app.evaluate(`[...document.querySelectorAll('.ssh-group-tile')].map((e) => e.textContent).join('|')`);
-        if (groupTiles !== 'Wszystkie4|lab3|Bez grupy1') throw new Error(`group tiles: ${groupTiles}`);
+        if (groupTiles !== 'Wszystkie4|lab3') throw new Error(`group tiles: ${groupTiles}`);
         await app.click('.ssh-group-tile[data-group="lab"]');
         await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 3 && document.querySelector('.ssh-group-tile[data-group="lab"]').getAttribute('aria-pressed') === 'true'`, 'filtered to the lab group');
         await app.click('.ssh-group-tile[data-group="lab"]');
@@ -256,6 +258,11 @@ const PARTS = {
         await app.until(`document.querySelectorAll('.ssh-tile.selected').length === 2 && document.querySelector('.ssh-open-grid')?.textContent === 'Otwórz jako siatkę (2)'`, 'two hosts selected');
         await app.screenshot('ssh-view-selected.png');
         if (await app.evaluate(`[...document.querySelectorAll('.ssh-tile[aria-pressed=true]')].length + '|' + document.querySelector('.ssh-tile[aria-current=true]')?.textContent.includes('web-1')`) !== '2|true') throw new Error('aria-pressed / aria-current of the tiles');
+        // Typing in the search keeps only the selected hosts that stay visible: the grid button counts what is shown.
+        await app.setValue('.ssh-view-head .ssh-search', 'pi');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 1 && document.querySelector('.ssh-open-grid')?.textContent === 'Otwórz jako siatkę (1)'`, 'search narrowed the selection');
+        await app.setValue('.ssh-view-head .ssh-search', '');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 4 && document.querySelectorAll('.ssh-tile.selected').length === 1`, 'the hidden host stays unselected');
         await app.click('.ssh-view-selection button', 'Wyczyść zaznaczenie');
         await app.until(`!document.querySelector('.ssh-open-grid') && !document.querySelector('.ssh-tile.selected')`, 'selection cleared');
         // Esc clears a selection too (focus on a tile).
@@ -263,6 +270,19 @@ const PARTS = {
         await app.until(`document.querySelectorAll('.ssh-tile.selected').length === 1`, 'one host selected');
         await app.press('Escape');
         await app.until(`!document.querySelector('.ssh-tile.selected') && document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`, 'Esc cleared the selection, details kept');
+        // The pane closes: Esc with the focus in it, a second click on the shown tile, the X. Each time the tiles get the whole width back.
+        const paneGone = `!document.querySelector('.ssh-view-detail') && document.querySelector('.ssh-view-main').getBoundingClientRect().width === document.querySelector('.ssh-view').getBoundingClientRect().width`;
+        await app.evaluate(`document.querySelector('.ssh-view-detail [data-field=label]').focus()`);
+        await app.press('Escape');
+        await app.until(`${paneGone} && document.activeElement?.dataset.hostId === document.querySelector('.ssh-tile[data-host-id]')?.dataset.hostId`, 'Esc in the pane closed it, focus back on the tile');
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`, 'pane open again');
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(paneGone, 'a second click on the shown tile closed the pane');
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`!!document.querySelector('.ssh-view-detail .ssh-detail-close')`, 'pane with its X');
+        await app.click('.ssh-view-detail .ssh-detail-close');
+        await app.until(paneGone, 'the X closed the pane');
         // "Nowy klucz > mode" always switches an open new-key pane to that mode, also after the mode was changed inside it.
         // Nowy klucz from Hosty switches to Klucze (the key forms belong there); Klucze has its own Nowy klucz button.
         const pickKey = async (mode) => { await app.click('.ssh-view-main .ssh-view-actions button', 'Nowy klucz'); await app.click('.menu [role=menuitem]', mode); };
@@ -323,7 +343,7 @@ const PARTS = {
         // The disabled SFTP entry cannot be chosen.
         await app.click('.ssh-nav-item[data-section="sftp"]');
         await app.until(`${navState} === 'hosts:on|keys|knownHosts|sftp:off'`, 'SFTP not selectable');
-        await app.until(`document.querySelectorAll('.ssh-group-tile').length === 4`, 'group tiles');
+        await app.until(`document.querySelectorAll('.ssh-group-tile').length === 3 && !document.querySelector('.ssh-view-detail')`, 'group tiles, no details pane');
         await shot('hosts');
         // Klucze: the empty state, then a generated key as a tile with its editor.
         await app.click('.ssh-nav-item[data-section="keys"]');
@@ -385,6 +405,117 @@ const PARTS = {
         await app.until(`!document.querySelector('.side-panel .ssh-nav') && !!document.querySelector('#sidebar-files .file-entry[data-path="notes.txt"]') && ${sshHidden}`, 'file revealed, SSH mode ended');
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
+  /** 0.9.2 polish: the details pane only while something is chosen, the calmer Hosty, "Pokaż klucz prywatny" and "Zastąp klucz prywatny". */
+  async polish() {
+    const root = scratchRoot('polish');
+    const shot = (name) => app.screenshot(`092-polish-${name}.png`);
+    let app;
+    try {
+      const hosts = [testHost(2222, { label: 'web-1', group: 'lab' }), testHost(2222, { label: 'web-2', group: 'lab' }), testHost(2222, { label: 'db', group: 'prod' }), testHost(2222, { label: 'pi' }), testHost(2222, { label: 'nas' })];
+      // One grid tab with an idle SSH cell (it never connects by itself, D5), so the view can go to the background.
+      writeState(root, sshState({ projectPath: join(root, 'project'), hosts, cells: [hosts[4].id] }));
+      // A throwaway key for the replacement (never a real key of anybody).
+      const replacement = ssh2.utils.generateKeyPairSync('ed25519', { comment: 'replacement@check' });
+      const parsed = ssh2.utils.parseKey(replacement.public);
+      const newFingerprint = `SHA256:${createHash('sha256').update((Array.isArray(parsed) ? parsed[0] : parsed).getPublicSSH()).digest('base64').replace(/=+$/, '')}`;
+      app = await launchApp(root);
+      try {
+        await app.cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+        const fullWidth = `!document.querySelector('.ssh-view-detail') && document.querySelector('.ssh-view-main').getBoundingClientRect().width === document.querySelector('.ssh-view').getBoundingClientRect().width`;
+        const showGrid = () => app.evaluate(`document.querySelector('.workspace-tabs .grid-tab').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`document.querySelectorAll('.ssh-view .ssh-tile[data-host-id]').length === 5 && ${fullWidth}`, 'Hosty at full width without a pane');
+        const tiles = await app.evaluate(`[...document.querySelectorAll('.ssh-group-tile')].map((e) => e.textContent).join('|')`);
+        if (tiles !== 'Wszystkie5|lab2|prod1') throw new Error(`group tiles: ${tiles}`);
+        const heads = await app.evaluate(`[...document.querySelectorAll('.ssh-group-head .grow')].map((e) => e.textContent).join('|')`);
+        if (heads !== 'lab|prod|Bez grupy') throw new Error(`group headings: ${heads}`);
+        if (await app.evaluate(`document.querySelector('.ssh-broadcast-open').textContent`) !== 'Wysyłanie masowe (1)') throw new Error('bulk send button label');
+        await shot('hosts-empty');
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1' && document.querySelector('.ssh-view-main').getBoundingClientRect().width < document.querySelector('.ssh-view').getBoundingClientRect().width`, 'pane next to the tiles');
+        await shot('host-selected');
+        await app.click('.ssh-view-detail .ssh-detail-close');
+        await app.until(fullWidth, 'pane closed by its X');
+        // "Nowy host" opens the pane too.
+        await app.click('.ssh-view-actions button', 'Nowy host');
+        await app.until(`!!document.querySelector('.ssh-view-detail [data-field=address]')`, 'new host form in the pane');
+        await app.click('.ssh-view-detail .ssh-detail-close');
+        await app.until(fullWidth, 'new host form closed');
+        // Klucze: a generated key; the pane only after a click on its tile.
+        const generated = await app.evaluate(`window.mc.ssh.generateKey({ label: 'deploy', type: 'ed25519', savePassphrase: false })`);
+        if (!generated.ok) throw new Error(`key generation failed: ${JSON.stringify(generated)}`);
+        await app.click('.ssh-nav-item[data-section="keys"]');
+        await app.until(`document.querySelectorAll('.ssh-key-tile').length === 1 && ${fullWidth}`, 'Klucze at full width');
+        const openKey = async () => { await app.click('.ssh-key-tile', 'deploy'); await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'deploy' && !!document.querySelector('.ssh-view-detail .ssh-reveal')`, 'key editor'); };
+        const revealed = `document.querySelector('.ssh-view-detail .ssh-private-text')?.value ?? ''`;
+        const reveal = async () => {
+          await app.click('.ssh-view-detail .ssh-reveal');
+          await app.until(`[...document.querySelectorAll('.modal-foot button')].some((b) => b.textContent === 'Pokaż')`, 'reveal confirmation');
+          await app.click('.modal-foot button', 'Pokaż');
+          await app.until(`${revealed}.includes('BEGIN OPENSSH PRIVATE KEY')`, 'private key shown');
+        };
+        await openKey();
+        // Cancelling the confirmation shows nothing.
+        await app.click('.ssh-view-detail .ssh-reveal');
+        await app.until(`!!document.querySelector('.modal-foot')`, 'confirmation');
+        await app.click('.modal-foot button', 'Anuluj');
+        await sleep(300);
+        if (await app.evaluate(`!!document.querySelector('.ssh-view-detail .ssh-private-text')`)) throw new Error('the key was shown without the confirmation');
+        await reveal();
+        const stored = await app.evaluate(`window.mc.ssh.revealPrivateKey(${JSON.stringify(generated.key.id)}).then((r) => r.privateKey)`);
+        if (await app.evaluate(revealed) !== stored) throw new Error('the shown text is not the stored key');
+        await shot('keys-revealed');
+        await app.click('.ssh-view-detail .ssh-hide');
+        await app.until(`!document.querySelector('.ssh-view-detail .ssh-private-text')`, 'Ukryj klucz hides it');
+        // A section change drops it (the pane closes); the key reopened shows no text.
+        await reveal();
+        await app.click('.ssh-nav-item[data-section="hosts"]');
+        await app.until(`!!document.querySelector('.ssh-view .ssh-tile[data-host-id]') && !document.querySelector('.ssh-private-text')`, 'section change cleared it');
+        await app.click('.ssh-nav-item[data-section="keys"]');
+        await openKey();
+        if (await app.evaluate(`!!document.querySelector('.ssh-private-text')`)) throw new Error('the private key came back after a section change');
+        // The view in the background drops it too.
+        await reveal();
+        await showGrid();
+        await app.until(`getComputedStyle(document.querySelector('.ssh-workspace')).display === 'none'`, 'grid in front');
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'deploy' && !document.querySelector('.ssh-private-text')`, 'hidden pane cleared it');
+        // Esc in the pane closes it and drops the text.
+        await reveal();
+        await app.evaluate(`document.querySelector('.ssh-view-detail .ssh-private-text').focus()`);
+        await app.press('Escape');
+        await app.until(`${fullWidth} && !document.querySelector('.ssh-private-text')`, 'Esc closed the pane with the key');
+        // "Zastąp klucz prywatny" with a fresh test key: the fingerprint changes and the editor says the public key is different.
+        await openKey();
+        const before = await app.evaluate(`document.querySelector('.ssh-view-detail .ssh-fingerprint').textContent`);
+        await app.click('.ssh-view-detail .ssh-replace');
+        await app.until(`!!document.querySelector('.ssh-replace-form textarea')`, 'replace form');
+        await app.setValue('.ssh-replace-form textarea', replacement.private);
+        await app.click('.ssh-replace-form button.primary');
+        await app.until(`[...document.querySelectorAll('.modal-foot button')].some((b) => b.textContent === 'Zastąp klucz')`, 'replace confirmation');
+        await app.click('.modal-foot button', 'Zastąp klucz');
+        await app.until(`document.querySelector('.ssh-view-detail .ssh-fingerprint')?.textContent === ${JSON.stringify(newFingerprint)}`, 'fingerprint of the replacement');
+        if (before === newFingerprint) throw new Error('the fingerprint did not change');
+        await app.until(`document.querySelector('.ssh-view-detail .ssh-banner-warn[role=status]')?.textContent.includes('authorized_keys') && !document.querySelector('.ssh-replace-form') && document.querySelector('.ssh-key-tile').textContent.includes(${JSON.stringify(newFingerprint)})`, 'public key change reported, tile updated');
+        if (!(await app.evaluate(`document.querySelector('.ssh-view-detail .ssh-public').textContent.includes('replacement@check')`))) throw new Error('public key not updated');
+        await shot('key-replaced');
+        // A narrow window (1100x700): Hosty with and without the pane.
+        await app.cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 700, deviceScaleFactor: 1, mobile: false });
+        await app.click('.ssh-nav-item[data-section="hosts"]');
+        await sleep(400);
+        await shot('narrow-empty');
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`, 'host details in the narrow window');
+        if (await app.evaluate(`(() => { const m = document.querySelector('.ssh-view-main'); return m.scrollWidth > m.clientWidth + 1; })()`)) throw new Error('the host column overflows in a narrow window');
+        await shot('narrow');
+        await sleep(2500); // state.json is written debounced
+      } finally { await app.close(); }
+      for (const file of ['state.json', 'ssh/vault.json']) {
+        const text = readFileSync(join(root, 'data', file), 'utf8');
+        if (text.includes('PRIVATE KEY') || text.includes(replacement.private.split('\n')[1])) throw new Error(`${file} contains private key text`);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
   },
   /** Task 11: a saved preset with three SSH cells opens from the palette and connects; the grid dialog lists hosts. */
   async grid() {
@@ -480,10 +611,11 @@ const PARTS = {
         await app.click('.ssh-view-group .ssh-group-open');
         await connected(app, 3);
         await app.until(`${CELL_BUFFERS}.length === 3 && ${CELL_BUFFERS}.every((t) => t.includes('połączono') && t.includes('$'))`, 'three cells with a prompt');
-        // "Wyślij do wszystkich" in the SSH view's header targets the active grid.
+        // "Wysyłanie masowe" in the SSH view's header targets the active grid.
         const showGrid = () => app.evaluate(`[...document.querySelectorAll('.workspace-tabs .grid-tab')].find((t) => t.textContent.includes('lab')).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))`);
         await app.click('.workspace-tabs .ssh-tab');
-        await app.click('.ssh-view-head .ssh-broadcast-open', 'Wyślij do wszystkich (3)');
+        await app.click('.ssh-view-head .ssh-broadcast-open', 'Wysyłanie masowe (3)');
+        await app.until(`document.querySelector('.ssh-broadcast .modal-head h3')?.textContent.startsWith('Wysyłanie masowe: jedno polecenie do wielu sesji')`, 'bulk send dialog title');
         await app.until(`!!document.querySelector('.ssh-broadcast textarea')`, 'broadcast dialog');
         await app.until(`document.querySelectorAll('.ssh-targets li').length === 3 && document.querySelectorAll('.ssh-targets li.disabled').length === 0 && [...document.querySelectorAll('.ssh-targets input')].every((i) => i.checked)`, 'three connected cells, all checked');
         if (await app.evaluate(`document.querySelector('.ssh-broadcast .modal-foot .btn.white').disabled`) !== true) throw new Error('send button is enabled for an empty command');
@@ -511,7 +643,7 @@ const PARTS = {
         await app.click('.menu .menu-item', 'Rozłącz');
         await app.until(`document.querySelectorAll('.cell .ssh-bar').length === 1`, 'first cell disconnected');
         await app.click('.workspace-tabs .ssh-tab');
-        await app.click('.ssh-view-head .ssh-broadcast-open', 'Wyślij do wszystkich');
+        await app.click('.ssh-view-head .ssh-broadcast-open', 'Wysyłanie masowe');
         await app.until(`document.querySelectorAll('.ssh-targets li').length === 3 && document.querySelectorAll('.ssh-targets li.disabled').length === 1`, 'disconnected cell disabled in the dialog');
         const reason = await app.evaluate(`document.querySelector('.ssh-targets li.disabled .ssh-target-state').textContent`);
         if (reason !== 'rozłączono') throw new Error(`disabled row reason: ${reason}`);
