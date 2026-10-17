@@ -437,6 +437,25 @@ const PARTS = {
         await shot('host-selected');
         await app.click('.ssh-view-detail .ssh-detail-close');
         await app.until(fullWidth, 'pane closed by its X');
+        // Unsaved edits are never dropped silently: Esc and a second click ask; "Anuluj" keeps the edit, "Odrzuć zmiany" closes.
+        const discardAsked = `[...document.querySelectorAll('.modal-foot button')].some((b) => b.textContent === 'Odrzuć zmiany')`;
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`!!document.querySelector('.ssh-view-detail [data-field=label]')`, 'host form');
+        await app.setValue('.ssh-view-detail [data-field=label]', 'web-1 edited');
+        await app.press('Escape');
+        await app.until(discardAsked, 'Esc asks before dropping the edit');
+        await app.click('.modal-foot button', 'Anuluj');
+        await app.until(`!document.querySelector('.modal-foot') && document.querySelector('.ssh-view-detail [data-field=label]')?.value === 'web-1 edited'`, 'edit kept after Anuluj');
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(discardAsked, 'a second click asks too');
+        await app.click('.modal-foot button', 'Odrzuć zmiany');
+        await app.until(fullWidth, 'pane closed after discarding');
+        // A clean form closes without a question.
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`document.querySelector('.ssh-view-detail [data-field=label]')?.value === 'web-1'`, 'clean host form');
+        await app.evaluate(`document.querySelector('.ssh-view-detail [data-field=label]').focus()`);
+        await app.press('Escape');
+        await app.until(`${fullWidth} && !document.querySelector('.modal-foot')`, 'clean form closed by Esc without asking');
         // "Nowy host" opens the pane too.
         await app.click('.ssh-view-actions button', 'Nowy host');
         await app.until(`!!document.querySelector('.ssh-view-detail [data-field=address]')`, 'new host form in the pane');
@@ -508,7 +527,11 @@ const PARTS = {
         await app.click('.ssh-tile[data-host-id]', 'web-1');
         await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`, 'host details in the narrow window');
         if (await app.evaluate(`(() => { const m = document.querySelector('.ssh-view-main'); return m.scrollWidth > m.clientWidth + 1; })()`)) throw new Error('the host column overflows in a narrow window');
+        // Narrow: the search has its own line, the buttons sit under it; the Snippets panel is open next to the pane.
+        const layout = await app.evaluate(`(() => { const s = document.querySelector('.ssh-view-head .ssh-search').getBoundingClientRect(); const b = document.querySelector('.ssh-view-head .ssh-view-actions button').getBoundingClientRect(); return [b.top >= s.bottom, /snippety/i.test(document.body.innerText), Math.round(document.querySelector('.ssh-view-detail').getBoundingClientRect().width)]; })()`);
+        if (!layout[0] || !layout[1] || layout[2] < 260) throw new Error(`narrow layout: ${JSON.stringify(layout)}`);
         await shot('narrow');
+        await app.screenshot('092-final-narrow.png');
         await sleep(2500); // state.json is written debounced
       } finally { await app.close(); }
       for (const file of ['state.json', 'ssh/vault.json']) {
