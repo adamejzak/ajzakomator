@@ -2,6 +2,7 @@
 // terminal data flows directly to/from the renderer over a transferred MessagePort.
 import type { MessagePortMain } from 'electron';
 import type { HostToMain, HostToRenderer, MainToHost, RendererToHost } from '../shared/ipc';
+import { OutputBatcher } from './batch';
 import { PtyManager, type PtySink } from './manager';
 import { HostRouter } from './router';
 import { SshManager } from './ssh';
@@ -10,8 +11,12 @@ const parentPort = process.parentPort;
 let rendererPort: MessagePortMain | null = null;
 
 const toMain = (m: HostToMain) => parentPort.postMessage(m);
+/** Terminal output of one event-loop turn goes out as one message (16 busy terminals would otherwise be one message each). */
+const batcher = new OutputBatcher((m) => rendererPort?.postMessage(m));
 const toRenderer = (m: HostToRenderer): boolean => {
   if (!rendererPort) return false;
+  if (m.t === 'data') { batcher.data(m.id, m.data); return true; }
+  batcher.flush(); // output of a terminal always arrives before its exit
   rendererPort.postMessage(m);
   return true;
 };
@@ -45,6 +50,8 @@ const router = new HostRouter([manager, ssh]);
 
 function attachRenderer(port: MessagePortMain): void {
   rendererPort?.close();
+  // Queued output is part of the replay tails the new renderer gets below.
+  batcher.drop();
   rendererPort = port;
   port.on('message', (e) => {
     const m = e.data as RendererToHost;

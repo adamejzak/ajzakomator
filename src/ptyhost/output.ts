@@ -1,7 +1,7 @@
 // The output path of one terminal (pty or SSH channel): coalescing, replay tail, renderer back-pressure and the exit drain.
 // Extracted from PtyManager so both backends share it; the source is paused and resumed through `control`.
 import { PTY_REPLAY_CHARS } from '../shared/terminalLimits';
-import { coalesceDelay, FLUSH_NOW_CHARS, FlowGate, TailBuffer } from './flow';
+import { alignedDelay, coalesceDelay, FLUSH_NOW_CHARS, FlowGate, TailBuffer } from './flow';
 import type { PtySink } from './manager';
 
 /** A paused source is resumed anyway when no acknowledgement arrives for this long (renderer gone or stuck). */
@@ -34,7 +34,10 @@ export class OutputChannel {
     this.tail.push(data);
     this.buf += data;
     if (this.buf.length >= FLUSH_NOW_CHARS) this.flush();
-    else if (!this.timer) this.timer = setTimeout(() => this.flush(), coalesceDelay(Date.now(), this.lastWrite));
+    else if (!this.timer) {
+      const now = Date.now();
+      this.timer = setTimeout(() => this.flush(), alignedDelay(now, coalesceDelay(now, this.lastWrite)));
+    }
   }
 
   /** The user typed into this terminal (echoes are flushed faster). */
