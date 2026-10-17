@@ -16,6 +16,7 @@ import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
 import { createEditorFinder } from './editor';
 import { pathExists } from './fsProbe';
+import { pruneCellFiles, removeCellFiles } from './cellFiles';
 import { applyDockIcon, windowIcon } from './appIcon';
 import { LARGE_VIEW_BYTES, listProjectDirectories, listProjectDirectory, readProjectFile, writeProjectFile } from './files';
 import { registerFileOpsIpc } from './filesIpc';
@@ -109,6 +110,7 @@ if (!process.env.MC_DATA_DIR && !existsSync(join(DATA_DIR, 'state.json')) && exi
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
+const cellFileDirs = { hooks: HOOKS_DIR, prompts: PROMPTS_DIR, mcp: MCP_DIR };
 app.setPath('userData', DATA_DIR);
 // Matches build.appId, which the installer also stamps on the shortcuts. A run from the repository (npm run dev, a clone of the
 // project) gets its own identity: it must never share the taskbar entry (and its icon) with the installed app.
@@ -400,8 +402,11 @@ function forgetCell(id: string): void {
   // killCount stays: a spawn still waiting for its CLI lookup compares against it (a few bytes per removed cell).
   codexHooked.delete(id);
   verifiedCodex.delete(id);
+  // A process that still runs keeps its hook settings and MCP config (Claude may read them again); the next start prunes them.
+  if (alive.has(id)) return;
   hooks.forget(id);
-  if (!alive.has(id)) automation.forgetCell(id);
+  void removeCellFiles(cellFileDirs, id);
+  automation.forgetCell(id);
 }
 const controller = new StateController(state, (snapshot) => {
   if (snapshot.state.projects !== state.projects) {
@@ -581,6 +586,8 @@ ptyHost.on('message', (m: HostToMain) => {
     verifiedCodex.delete(m.id);
     mcp.revokeCell(m.id);
     automation.statuses.set(m.id, 'exited');
+    // The shell read the startup prompt when it started the agent; the task text does not stay on disk.
+    void removeCellFiles(cellFileDirs, m.id, ['prompts']);
   } else if (m.t === 'spawnError') {
     alive.delete(m.id);
     mcp.revokeCell(m.id);
@@ -1101,6 +1108,8 @@ function openInstallWindow(): void {
 }
 
 async function startMainApp(): Promise<void> {
+  // Before any cell can start: files of removed cells and old startup prompts go.
+  await pruneCellFiles(cellFileDirs, cellIdsOf(state, false)).catch(() => 0);
   // Without the hook server cells still run, only without exact status reports.
   try { await hooks.start(); } catch (error) { crashLog.warn(`hook server did not start: ${error instanceof Error ? error.message : String(error)}`); }
   await startMcp();
