@@ -10,7 +10,27 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request replaces its older run. Pushes to main, tags and manual runs are never cancelled
+# (the release script waits for the run on the tag and "Publish release" uses its artifacts).
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # The typecheck does not depend on the platform: it runs once, on the cheapest runner, next to the other jobs.
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      # No install scripts: tsc needs the packages' types only (no Electron binary, no native node-pty build on Linux).
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+
   # Pushes to main only need the fast checks; the three platform packages are built for tags, pull requests
   # and manual runs (a manual run is a full rehearsal of a release).
   quick:
@@ -26,7 +46,6 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      - run: npm run typecheck
       - run: npm test
 
   # Fails in seconds when a tag does not match package.json or has no release notes.
@@ -53,6 +72,10 @@ jobs:
             os: windows-latest
             command: npm run dist:win
             artifact: windows-x64
+            # Where electron-builder 26 keeps the Electron zip (@electron/get, no env override) and its tools (NSIS, ...).
+            download-cache: |
+              ~/AppData/Local/electron/Cache
+              ~/AppData/Local/electron-builder/Cache
             files: |
               release/*.exe
               release/*.exe.blockmap
@@ -61,6 +84,9 @@ jobs:
             os: macos-15
             command: npm run dist:mac -- --arm64
             artifact: macos-arm64
+            download-cache: |
+              ~/Library/Caches/electron
+              ~/Library/Caches/electron-builder
             files: |
               release/*-mac-arm64.dmg
               release/*-mac-arm64.zip
@@ -69,6 +95,9 @@ jobs:
             os: macos-15-intel
             command: npm run dist:mac -- --x64
             artifact: macos-x64
+            download-cache: |
+              ~/Library/Caches/electron
+              ~/Library/Caches/electron-builder
             files: |
               release/*-mac-x64.dmg
               release/*-mac-x64.zip
@@ -79,10 +108,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # The Electron zip and electron-builder's tools, per OS and architecture; a new lockfile (new Electron or
+      # electron-builder) starts a fresh entry, so old downloads do not pile up. Saved only after a green job.
+      - name: Cache Electron and electron-builder downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ matrix.download-cache }}
+          key: electron-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      - run: npm run typecheck
+      # Unit tests stay on every platform (a macOS-only failure caught a real platform difference in 0.9.3). They run
+      # before packaging, not next to it: timing-sensitive tests (git, pty) time out on a busy runner.
       - run: npm test
       - name: Package application
         run: ${{ matrix.command }}
