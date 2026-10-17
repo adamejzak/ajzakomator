@@ -73,6 +73,8 @@ export interface McApi {
   /** The absolute path of a File from a drop ('' when it has none). */
   pathForFile(file: File): string;
   listProjectDirectory(projectId: string, relativePath?: string): Promise<ProjectDirectory>;
+  /** Listings of many folders at once (empty when the project is gone). */
+  listProjectDirectoryBatch(projectId: string, relativePaths: string[]): Promise<Record<string, ProjectDirectory>>;
   /** `large`: the editor's read (images, Parquet tables and up to 8 MB of text); without it the small preview. */
   readProjectFile(projectId: string, relativePath: string, large?: boolean): Promise<ProjectFilePreview>;
   listProjectDirectories(projectId: string): Promise<{ ok: true; paths: string[]; truncated: boolean } | { ok: false; error: string }>;
