@@ -104,9 +104,9 @@ export interface McApi {
   clipboardWrite(text: string): void;
   /** A copied private key: main clears the clipboard after a minute (or on quit) if it still holds this text. False when refused. */
   clipboardWriteSecret(text: string): Promise<boolean>;
-  /** An error of the renderer for main's crash.log (rate-limited and cut there). `kind`: lowercase letters and dashes. */
   /** Startup timing (startup.log): the renderer finished booting or showed the first terminal output. */
   startupMark(name: 'renderer-boot' | 'first-output'): void;
+  /** An error of the renderer for main's crash.log (rate-limited and cut there). `kind`: lowercase letters and dashes. */
   reportError(kind: string, message: string, stack?: string): void;
   windowsBuild: number;
   getUpdate(): Promise<UpdateState & { currentVersion: string }>;
