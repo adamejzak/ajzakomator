@@ -8,7 +8,7 @@ import { toast } from '../../store';
 import { showSshDetail } from '../../ssh';
 import { useSshStore } from '../../sshStore';
 import { Select } from '../Select';
-import { useClearWhenHidden, useReportDirty } from './paneVisibility';
+import { useClearWhenHidden, useReportDirty, withoutPaneGuard } from './paneVisibility';
 
 type Mode = 'generate' | 'file' | 'paste';
 type Draft = Extract<DraftResult, { ok: true }>;
@@ -40,7 +40,7 @@ export function NewKeyEditor({ initialMode }: { initialMode?: Mode }) {
   // Unmount = the pane shows another item or the view closed (after a stored key draftRef is already null): drop the draft in main.
   useEffect(() => () => { if (draftRef.current) window.mc.ssh.discardDraft(draftRef.current); }, []);
 
-  const done = (keyId: string) => { draftRef.current = null; setDraft(null); showSshDetail({ kind: 'key', keyId }); };
+  const done = (keyId: string) => { draftRef.current = null; setDraft(null); withoutPaneGuard(() => showSshDetail({ kind: 'key', keyId })); };
   const takeDraft = (r: DraftResult | { ok: false; error: 'cancelled' }) => {
     if (!r.ok) { const key = draftErrorKey(r.error); setError(key ? tr(key) : null); return; }
     setError(null);

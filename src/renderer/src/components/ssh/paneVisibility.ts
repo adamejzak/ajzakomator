@@ -22,3 +22,14 @@ export function useClearWhenHidden(clear: () => void): void {
   latest.current = clear;
   useEffect(() => { if (!active) latest.current(); }, [active]);
 }
+
+let unguarded = 0;
+/**
+ * Runs a change of the pane's item that must not ask about unsaved edits (0.9.3): the editor saved or removed its item, or the
+ * user already chose "Odrzuć zmiany".
+ */
+export function withoutPaneGuard(fn: () => void): void {
+  unguarded++;
+  try { fn(); } finally { unguarded--; }
+}
+export const paneGuardOff = (): boolean => unguarded > 0;

@@ -142,3 +142,18 @@ export function liveGroupFilter(groupKey: string | null, hosts: readonly SshHost
 
 /** A click on a group tile filters to that group; a click on the chosen one shows every host again. */
 export const toggleGroupFilter = (current: string | null, clicked: string): string | null => (current === clicked ? null : clicked);
+
+/** What of the SSH store decides which item the details pane has on screen. */
+export interface PaneScreen { viewOpen: boolean; viewActive: boolean; section: SshSection; detail: SshDetail | null }
+
+/**
+ * 0.9.3: whether a store change takes the item of the details pane away (another tile, another section, the view left or its
+ * tab closed). With unsaved edits in the pane the change is asked about first, like Esc, X and a second click.
+ */
+export function paneLeaves(prev: PaneScreen, next: PaneScreen): boolean {
+  const before = paneDetail(prev.section, prev.detail);
+  if (!before) return false;
+  if ((prev.viewActive && !next.viewActive) || (prev.viewOpen && !next.viewOpen)) return true;
+  const after = paneDetail(next.section, next.detail);
+  return !after || detailKey(after) !== detailKey(before);
+}
