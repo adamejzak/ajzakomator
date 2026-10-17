@@ -4,7 +4,7 @@
 import { layoutForCount as layoutFor } from '../../shared/layout';
 import { activeProject, activeTab, addCell, ensureShellProfile, findCell, removeSshHost } from '../../shared/state';
 import { connectingNotice, hostEndpoint, promptNeedsToast, restoredPromptToasts, sshCellStart, sshCellVisible, sshGridName, sshNotice, sshSessionEnded, type SshPrompt, type SshSessionState } from '../../shared/ssh';
-import { menuHosts, type SshDetail } from '../../shared/sshView';
+import { chooseSshSection, menuHosts, paneDetail, sectionForDetail, type SshDetail } from '../../shared/sshView';
 import { createProject, ensureTerminal, focusCell, openTab } from './actions';
 import { useFileStore } from './files';
 import type { MenuItem } from './components/ContextMenu';
@@ -173,8 +173,22 @@ export async function confirmRemoveSshHost(hostId: string): Promise<boolean> {
 
 /** Opens the SSH workspace tab and brings it to the front; with a detail, the pane shows that host or key. */
 export function openSshView(detail?: SshDetail): void {
-  useSshStore.setState(detail ? { viewOpen: true, viewActive: true, detail } : { viewOpen: true, viewActive: true });
+  useSshStore.setState((st) => (detail ? { viewOpen: true, viewActive: true, detail, section: sectionForDetail(detail) ?? st.section } : { viewOpen: true, viewActive: true }));
   setUi({ settingsActive: false });
+}
+
+/** SSH mode ends: the view goes to the background (it stays open as a tab) and the grid or file in front of it comes back. */
+export function leaveSshMode(): void {
+  if (!getUi().settingsActive) useSshStore.setState({ viewActive: false });
+}
+
+/** A click in the SSH mode navigation: a detail of another section and the host selection go (drafts are not kept, R12). */
+export function selectSshSection(clicked: string): void {
+  useSshStore.setState((st) => {
+    const section = chooseSshSection(st.section, clicked);
+    if (section === st.section) return {};
+    return { section, detail: paneDetail(section, st.detail), selectedHosts: section === 'hosts' ? st.selectedHosts : [] };
+  });
 }
 
 export function activateSshView(): void {
@@ -186,6 +200,7 @@ export function closeSshView(): void {
   useSshStore.setState({ viewOpen: false, viewActive: false, detail: null, selectedHosts: [] });
 }
 
+/** Shows a host or key in the details pane, switching to its section (a new key from Hosty opens Klucze). */
 export function showSshDetail(detail: SshDetail | null): void {
-  useSshStore.setState({ detail });
+  useSshStore.setState((st) => ({ detail, section: sectionForDetail(detail) ?? st.section }));
 }

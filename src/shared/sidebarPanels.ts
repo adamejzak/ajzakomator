@@ -50,9 +50,38 @@ export function railClick(state: RailState, clicked: string): RailState {
 
 export interface RailTileContext { collapsed: boolean; activeId: string; viewActive: boolean; settingsActive: boolean }
 
-/** Whether a tile looks selected: a panel tile while its panel is open, a view tile while its view is on screen (not behind Settings). */
+/**
+ * Whether a tile looks selected: a panel tile while its panel is open, a view tile while its view is on screen (not behind
+ * Settings). While the view is on screen the side panel shows the view's navigation (SSH mode), so no panel tile is selected.
+ */
 export function railTileShown(def: Pick<PanelDef, 'id' | 'opensView'>, ctx: RailTileContext): boolean {
-  return def.opensView ? ctx.viewActive && !ctx.settingsActive : !ctx.collapsed && def.id === ctx.activeId;
+  const viewMode = ctx.viewActive && !ctx.settingsActive;
+  return def.opensView ? viewMode : !viewMode && !ctx.collapsed && def.id === ctx.activeId;
+}
+
+export interface RailAction extends RailState {
+  /** Bring the tile's view to the front (SSH mode starts). */
+  openView: boolean;
+  /** Send the view to the background, so the normal side panel and the grid or file come back (SSH mode ends). */
+  leaveView: boolean;
+}
+
+/**
+ * A click on a tile, also in view mode (the SSH view in front, its navigation in the side panel):
+ * - a view tile opens its view and unfolds the side panel; in view mode it folds and unfolds the side panel like an open panel's tile;
+ * - a panel tile in view mode leaves the view and shows that panel (never folds it); otherwise railClick.
+ */
+export function railTileAction(state: RailState & { viewMode: boolean }, def: Pick<PanelDef, 'id' | 'opensView'>): RailAction {
+  const { collapsed, view, viewMode } = state;
+  if (def.opensView) return viewMode ? { collapsed: !collapsed, view, openView: false, leaveView: false } : { collapsed: false, view, openView: true, leaveView: false };
+  if (viewMode) return { collapsed: false, view: def.id, openView: false, leaveView: true };
+  return { ...railClick({ collapsed, view }, def.id), openView: false, leaveView: false };
+}
+
+/** What the side panel next to the rail shows: nothing when folded, the view's navigation in view mode, otherwise the panel. */
+export function sidePanelContent(ctx: { collapsed: boolean; viewMode: boolean; panelId: string }): { kind: 'view' } | { kind: 'panel'; id: string } | null {
+  if (ctx.collapsed) return null;
+  return ctx.viewMode ? { kind: 'view' } : { kind: 'panel', id: ctx.panelId };
 }
 
 /** Roving focus along the rail: where the focus goes for an arrow / Home / End key (null: not a rail key). */

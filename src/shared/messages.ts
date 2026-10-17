@@ -15,6 +15,7 @@ import { railMessages } from './railMessages';
 import { settingsMessages } from './settingsMessages';
 import { shortcutMessages } from './shortcutMessages';
 import { sshMessages } from './sshMessages';
+import { sshModeMessages } from './sshModeMessages';
 import { sshViewMessages } from './sshViewMessages';
 import { statusMessages } from './statusMessages';
 import { swapMessages } from './swapMessages';
@@ -39,6 +40,7 @@ export const messages = {
   ...settingsMessages,
   ...shortcutMessages,
   ...sshMessages,
+  ...sshModeMessages,
   ...sshViewMessages,
   ...statusMessages,
   ...swapMessages,

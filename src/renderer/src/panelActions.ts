@@ -4,9 +4,10 @@ import { panelOpenable, visiblePanels } from '../../shared/sidebarPanels';
 import { getGitProbe } from './git/gitProbe';
 import { tr } from './i18n';
 import { SIDEBAR_PANELS } from './panelRegistry';
+import { leaveSshMode } from './ssh';
 import { getS, setUi, toast, update } from './store';
 
-/** Shows the panel (unfolding the sidebar when it is folded); a panel that cannot be opened now says why in a toast. Returns whether it opened. */
+/** Shows the panel (ending SSH mode, unfolding the sidebar when it is folded); a panel that cannot be opened now says why in a toast. Returns whether it opened. */
 export function openSidebarPanel(id: string): boolean {
   const project = activeProject(getS());
   const ctx = { hasProject: !!project, platform: window.mc.platform, git: getGitProbe(project?.id) };
@@ -18,6 +19,8 @@ export function openSidebarPanel(id: string): boolean {
     return false;
   }
   if (getS().sidebarCollapsed) update((s) => ({ ...s, sidebarCollapsed: false }));
+  // The side panel shows the SSH navigation while the SSH view is in front: opening a panel ends SSH mode.
+  leaveSshMode();
   setUi({ sidebarView: id });
   return true;
 }

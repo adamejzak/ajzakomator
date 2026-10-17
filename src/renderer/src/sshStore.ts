@@ -1,7 +1,7 @@
 // Renderer SSH state (R1): vault info, session states and open prompts per cell, the SSH view (W3). No imports of actions, files or terminals.
 import { create } from 'zustand';
 import { applySshSnapshot, type SshPrompt, type SshSessionState, type SshSessionsSnapshot, type SshVaultInfo } from '../../shared/ssh';
-import type { SshDetail } from '../../shared/sshView';
+import { DEFAULT_SSH_SECTION, type SshDetail, type SshSection } from '../../shared/sshView';
 
 interface SshStore {
   vault: SshVaultInfo | null;
@@ -15,6 +15,8 @@ interface SshStore {
   detail: SshDetail | null;
   /** Ctrl/Cmd+click selection of host tiles. */
   selectedHosts: string[];
+  /** The section of the view chosen in the SSH mode navigation (kept for this app session, like the other UI state). */
+  section: SshSection;
   setVault(vault: SshVaultInfo): void;
   setSession(state: SshSessionState): void;
   setPrompt(cellId: string, prompt: SshPrompt | null): void;
@@ -23,7 +25,7 @@ interface SshStore {
 }
 
 export const useSshStore = create<SshStore>((set) => ({
-  vault: null, sessions: {}, prompts: {}, viewOpen: false, viewActive: false, detail: null, selectedHosts: [],
+  vault: null, sessions: {}, prompts: {}, viewOpen: false, viewActive: false, detail: null, selectedHosts: [], section: DEFAULT_SSH_SECTION,
   setVault: (vault) => set({ vault }),
   setSession: (state) => set((st) => ({ sessions: { ...st.sessions, [state.cellId]: state } })),
   setPrompt: (cellId, prompt) => set((st) => {

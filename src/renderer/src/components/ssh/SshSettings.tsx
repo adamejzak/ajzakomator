@@ -1,30 +1,19 @@
 // Settings, section "SSH" (D12, spec 9 step 5): where secrets are kept, the trusted host keys, forgetting remembered passphrases.
-// A store that opened read-only (unreadable, wrong shape, malformed entry or a newer format) is explained here, with its file path.
-import { useEffect, useState } from 'react';
-import { knownHostsDescription, readOnlyStoreNote, storageLabel, type KnownHostInfo, type SshStorageStatus } from '../../../../shared/ssh';
+// The SSH view lists the same known hosts (Znane hosty, useKnownHosts). A store that opened read-only (unreadable, wrong shape, malformed entry or a newer format) is explained here, with its file path.
+import { knownHostsDescription, readOnlyStoreNote, storageLabel } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { toast } from '../../store';
 import { useSshStore } from '../../sshStore';
 import { SettingRow, SettingsGroup } from '../SettingRow';
+import { useKnownHosts } from './useKnownHosts';
 
 export function SshSettings() {
   const { tr, language } = useI18n();
   const vault = useSshStore((st) => st.vault);
-  const [known, setKnown] = useState<KnownHostInfo[] | null>(null);
-  const [status, setStatus] = useState<SshStorageStatus | null>(null);
-  const reload = () => void window.mc.ssh.knownHosts().then(setKnown).catch(() => setKnown([]));
-  useEffect(() => {
-    reload();
-    void window.mc.ssh.storageStatus().then(setStatus).catch(() => undefined);
-  }, []);
+  const { known, status, readOnly: hostsReadOnly, remove } = useKnownHosts();
   const vaultReadOnly = !!vault?.readOnly || !!status?.vaultReadOnly;
-  const hostsReadOnly = !!status?.knownHostsReadOnly;
   const vaultNote = readOnlyStoreNote('vault', vaultReadOnly, status?.vaultFile);
   const hostsNote = readOnlyStoreNote('knownHosts', hostsReadOnly, status?.knownHostsFile);
-  const remove = (id: string) => void window.mc.ssh.removeKnownHost(id).then((r) => {
-    if (!r.ok) toast(tr('Nie udało się usunąć wpisu'), 'error');
-    reload();
-  });
   return <>
     <SettingsGroup>
       <SettingRow title={tr('Sejf SSH')} hint={vault?.storage === 'unavailable' ? tr('Szyfrowanie systemowe jest niedostępne - klucze i hasła są trzymane tylko do zamknięcia aplikacji') : undefined}>

@@ -47,3 +47,69 @@ export function menuHosts(hosts: readonly SshHost[], max = MENU_HOSTS): { shown:
   const ordered = groupHosts(hosts).flatMap((g) => g.hosts);
   return { shown: ordered.slice(0, max), more: ordered.length > max };
 }
+
+// ── SSH mode (0.9.2): the left side panel shows the SSH sections while the SSH view is in front ──
+
+/** The sections of the SSH view; SFTP is listed in the navigation but is not a section yet. */
+export type SshSection = 'hosts' | 'keys' | 'knownHosts';
+
+export interface SshNavEntry { id: SshSection | 'sftp'; label: 'Hosty' | 'Klucze' | 'Znane hosty' | 'SFTP'; disabled?: true }
+
+/** The navigation of SSH mode, in order. A disabled entry is shown greyed with "wkrótce" and can never be chosen. */
+export const SSH_NAV: readonly SshNavEntry[] = [
+  { id: 'hosts', label: 'Hosty' },
+  { id: 'keys', label: 'Klucze' },
+  { id: 'knownHosts', label: 'Znane hosty' },
+  { id: 'sftp', label: 'SFTP', disabled: true },
+];
+
+export const DEFAULT_SSH_SECTION: SshSection = 'hosts';
+
+/** A stored or unknown value as a section: an enabled entry of the navigation, otherwise Hosty. */
+export function resolveSshSection(wanted: unknown): SshSection {
+  const entry = SSH_NAV.find((e) => e.id === wanted && !e.disabled);
+  return entry ? (entry.id as SshSection) : DEFAULT_SSH_SECTION;
+}
+
+/** A click on a navigation entry: an enabled one becomes the section, a disabled or unknown one changes nothing. */
+export function chooseSshSection(current: SshSection, clicked: string): SshSection {
+  const entry = SSH_NAV.find((e) => e.id === clicked);
+  return entry && !entry.disabled ? (entry.id as SshSection) : current;
+}
+
+/** The section a detail belongs to (a host form to Hosty, a key or a new-key form to Klucze); null keeps the current one. */
+export function sectionForDetail(detail: SshDetail | null): SshSection | null {
+  if (!detail) return null;
+  return detail.kind === 'host' ? 'hosts' : 'keys';
+}
+
+/** What the details pane of a section shows: only a detail of that section (Znane hosty has no pane). */
+export function paneDetail(section: SshSection, detail: SshDetail | null): SshDetail | null {
+  return detail && sectionForDetail(detail) === section ? detail : null;
+}
+
+/** SSH mode: the SSH view is the workspace on screen (Settings in front ends it). */
+export const sshModeActive = (ctx: { viewActive: boolean; settingsActive: boolean }): boolean => ctx.viewActive && !ctx.settingsActive;
+
+export interface GroupTile { key: string; name: string | null; count: number }
+
+/** The "Grupy" row: one tile per group in the view's order (named groups by name, then the hosts without a group). */
+export function groupTiles(hosts: readonly SshHost[]): GroupTile[] {
+  return groupHosts(hosts).map((g) => ({ key: g.name ?? '', name: g.name, count: g.hosts.length }));
+}
+
+/** The row is only worth showing when at least one host has a group. */
+export const showGroupRow = (tiles: readonly GroupTile[]): boolean => tiles.some((t) => t.name !== null);
+
+/** Hosts of the chosen group tile ('' = without a group); null shows every host. */
+export function hostsInGroup(hosts: readonly SshHost[], groupKey: string | null): SshHost[] {
+  return groupKey === null ? [...hosts] : hosts.filter((h) => (h.group ?? '') === groupKey);
+}
+
+/** A group filter whose group no longer has hosts (renamed, emptied) falls back to every host. */
+export function liveGroupFilter(groupKey: string | null, hosts: readonly SshHost[]): string | null {
+  return groupKey !== null && hosts.some((h) => (h.group ?? '') === groupKey) ? groupKey : null;
+}
+
+/** A click on a group tile filters to that group; a click on the chosen one shows every host again. */
+export const toggleGroupFilter = (current: string | null, clicked: string): string | null => (current === clicked ? null : clicked);

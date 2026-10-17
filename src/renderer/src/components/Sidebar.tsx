@@ -2,16 +2,21 @@ import { useRef } from 'react';
 import { useI18n } from '../i18n';
 import { activeProject } from '../../../shared/state';
 import { useGitProbe, useGitProbeSync } from '../git/gitProbe';
-import { panelOpenable, railClick, railFocusTarget, railTileShown, resolvePanelId, visiblePanels } from '../../../shared/sidebarPanels';
-import { SIDEBAR_PANELS } from '../panelRegistry';
+import { panelOpenable, railFocusTarget, railTileAction, railTileShown, resolvePanelId, sidePanelContent, visiblePanels } from '../../../shared/sidebarPanels';
+import { sshModeActive } from '../../../shared/sshView';
+import { SIDEBAR_PANELS, type SidebarPanel } from '../panelRegistry';
+import { leaveSshMode } from '../ssh';
 import { useSshStore } from '../sshStore';
 import { setUi, update, useStore } from '../store';
 import { PanelResizeHandle, type PanelResizeProps } from './PanelResizeHandle';
+import { SshNav } from './ssh/SshNav';
 import { UsagePanel } from './UsagePanel';
 
 /**
  * Left side: a rail of tiles (one per panel) and, next to it, the content of the selected panel with the resize handle.
  * Clicking the open panel's tile folds the content away; the rail stays (the collapsed state).
+ * SSH mode: while the SSH view is in front, the side panel shows the SSH navigation (Hosty, Klucze, Znane hosty, SFTP) instead;
+ * a panel tile, a grid or a file tab ends it.
  */
 export function Sidebar({ resize }: { resize: PanelResizeProps }) {
   const { tr } = useI18n();
@@ -31,11 +36,15 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
   const view = resolvePanelId(panels, wanted, ctx);
   const active = contentPanels.find((panel) => panel.id === view) ?? contentPanels[0];
   const Content = active.component ?? (() => null);
+  const sshMode = sshModeActive({ viewActive: sshActive, settingsActive });
+  const content = sidePanelContent({ collapsed, viewMode: sshMode, panelId: active.id });
 
-  const choose = (id: string) => {
-    const next = railClick({ collapsed, view }, id);
+  const choose = (panel: SidebarPanel) => {
+    const next = railTileAction({ collapsed, view, viewMode: sshMode }, panel);
     if (next.collapsed !== collapsed) update((st) => ({ ...st, sidebarCollapsed: next.collapsed }));
-    setUi({ sidebarView: next.view });
+    if (next.openView) panel.onActivate?.();
+    if (next.leaveView) leaveSshMode();
+    if (!panel.opensView) setUi({ sidebarView: next.view });
   };
   const onKeyDown = (e: React.KeyboardEvent) => {
     const tiles = Array.from(rail.current?.querySelectorAll<HTMLButtonElement>('.rail-tile') ?? []);
@@ -67,20 +76,24 @@ export function Sidebar({ resize }: { resize: PanelResizeProps }) {
                 aria-controls={shown && !panel.opensView ? `sidebar-${panel.id}` : undefined}
                 aria-disabled={reason ? true : undefined}
                 aria-label={label}
-                tabIndex={panel.id === active.id ? 0 : -1}
-                title={reason ? tr(reason) : shown && !panel.opensView ? `${label} · ${tr("Kliknij ponownie, aby zwinąć panel")}` : label}
-                onClick={() => {
-                  if (!panelOpenable(panel, ctx)) return;
-                  if (panel.opensView) { panel.onActivate?.(); return; }
-                  choose(panel.id);
-                }}
+                tabIndex={(sshMode ? !!panel.opensView : panel.id === active.id) ? 0 : -1}
+                title={reason ? tr(reason) : shown && (!panel.opensView || !collapsed) ? `${label} · ${tr("Kliknij ponownie, aby zwinąć panel")}` : label}
+                onClick={() => { if (panelOpenable(panel, ctx)) choose(panel); }}
               ><Icon /></button>
             );
           })}
         </div>
         {collapsed && <div className="rail-foot"><UsagePanel /></div>}
       </div>
-      {!collapsed && (
+      {content?.kind === 'view' && (
+        <div className="side-panel" id="sidebar-ssh">
+          <PanelResizeHandle {...resize} />
+          <div className="side-panel-title">{tr('SSH')}</div>
+          <SshNav />
+          <UsagePanel />
+        </div>
+      )}
+      {content?.kind === 'panel' && (
         <div className="side-panel" id={`sidebar-${active.id}`} role="tabpanel" aria-labelledby={`${active.id}-view`}>
           <PanelResizeHandle {...resize} />
           <div className="side-panel-title">{tr(active.label)}</div>

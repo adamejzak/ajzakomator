@@ -1,0 +1,15 @@
+/* SSH mode navigation (side panel list in the look of the Settings section list; compact: a segmented row in the view). */
+.ssh-nav { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 2px 8px 10px; }
+.ssh-nav-item { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 30px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-2); font-size: 12px; text-align: left; cursor: pointer; }
+.ssh-nav-item svg { flex: none; color: var(--muted); }
+.ssh-nav-item:hover:not(:disabled) { background: #ffffff08; color: var(--text); }
+.ssh-nav-item.on { background: #ffffff0f; color: var(--text); }
+.ssh-nav-item.on svg { color: var(--text); }
+.ssh-nav-item:focus-visible { outline: 2px solid #a8a29e; outline-offset: -2px; }
+.ssh-nav-item:disabled { cursor: default; opacity: .5; }
+.ssh-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ssh-nav-count { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ssh-nav-soon { flex: none; padding: 0 6px; border: 1px solid #ffffff1f; border-radius: 8px; color: var(--muted); font-size: 10px; line-height: 15px; }
+.ssh-nav.compact { flex: none; flex-direction: row; flex-wrap: wrap; align-self: flex-start; max-width: 100%; gap: 2px; padding: 2px; overflow: visible; background: #202020; border-radius: 8px; }
+.ssh-nav.compact .ssh-nav-item { width: auto; min-height: 26px; gap: 6px; padding: 0 10px; }
+.ssh-nav.compact .ssh-nav-label { flex: none; }
