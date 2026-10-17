@@ -116,8 +116,14 @@ export class UnimuxMcpServer {
     for (const controller of this.aborts.get(token) ?? []) controller.abort();
     this.aborts.delete(token);
   }
-  async start(): Promise<void> {
-    if (this.http?.listening) return;
+  /** Starts listening; a call while a start is in progress joins it (one server, never two). */
+  start(): Promise<void> {
+    if (this.http?.listening) return Promise.resolve();
+    this.starting ??= this.listen().finally(() => { this.starting = null; });
+    return this.starting;
+  }
+  private starting: Promise<void> | null = null;
+  private async listen(): Promise<void> {
     const http = createServer((req, res) => { void this.handle(req, res).catch((error: unknown) => {
       // Name and message only: never the request body (tool arguments may carry user text).
       this.log(`MCP request failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`.slice(0, 300));

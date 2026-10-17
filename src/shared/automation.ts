@@ -50,7 +50,8 @@ export interface AutomationState {
   messages: AgentMessage[];
   events: AutomationEvent[];
 }
-export interface McpInfo { running: boolean; url?: string; error?: string; configuredCellIds?: string[]; connectedCellIds?: string[] }
+/** `starting`: the first start of this run has not finished yet (not shown as unavailable). */
+export interface McpInfo { running: boolean; starting?: boolean; url?: string; error?: string; configuredCellIds?: string[]; connectedCellIds?: string[] }
 export type AgentRuntimeStatus = 'starting' | 'working' | 'ready' | 'needs_attention' | 'unknown' | 'exited';
 
 /** Longest bounded wait; below the default 60 s tool timeout of Codex and the HTTP stack. */

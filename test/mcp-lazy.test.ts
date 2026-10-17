@@ -25,4 +25,18 @@ describe('MCP SDK loading', () => {
       await h.server.stop();
     }
   });
+
+  it('a start while another start runs joins it: one server, one port', async () => {
+    const h = await startMcpHarness(undefined, { rateLimit: false });
+    try {
+      await h.server.stop();
+      await Promise.all([h.server.start(), h.server.start(), h.server.start()]);
+      const url = h.server.getInfo().url;
+      expect(h.server.getInfo().running).toBe(true);
+      await h.server.start();
+      expect(h.server.getInfo().url).toBe(url);
+    } finally {
+      await h.server.stop();
+    }
+  });
 });

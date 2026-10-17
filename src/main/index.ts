@@ -94,6 +94,7 @@ import { atomicWriteFileSync } from './atomicWrite';
 import { defaultState } from '../shared/state';
 import { createReloadLimiter, createReportLimiter, describeError, rendererReport, trimNotifications, UNRESPONSIVE_GRACE_MS } from './stability';
 import { createStartupLog, createStartupTimer, isRendererMark } from './startupTiming';
+import { createStartupGate, spawnWaitsFor } from './startupGates';
 
 // Startup timing: milliseconds since the process started, one line per launch in startup.log (startupTiming.ts).
 const startupTimer = createStartupTimer(() => performance.now());
@@ -444,18 +445,19 @@ let mcpError: string | undefined;
  * - `accountsReady`: the recovery of an interrupted swap or "Set as main" and the account migration have finished. Every
  *   accounts:, auth: and usage: channel that can start a swap, an activation, a login, a removal or a reconcile waits for it
  *   (registerAccountIpc), and the usage polls (which reconcile the live login) only start after it.
+ * - `accountsRecovered`: the recovery alone (opened before the migration). Claude cells use the live ~/.claude login, so
+ *   their spawns wait for it (spawnWaitsFor); shells, Codex and SSH cells do not.
  * - `cellServicesReady`: the hook server and the MCP server listen (their ports are known) and files of removed cells were
- *   pruned. Every cell spawn waits for it (spawnRequestUnsafe); the renderer shows the cells meanwhile.
+ *   pruned. Every agent spawn waits for it (a plain shell only with a startup prompt); the renderer shows the cells meanwhile.
+ * The gates always open (the steps catch their errors and open them in `finally`).
  * The single-instance lock and the Windows update hand-off (signalUpdateReady, waitForUpdateWindowGone, runUpdateGate) keep
  * running before startMainApp, unchanged.
  */
-function startupGate(): { promise: Promise<void>; open(): void } {
-  let open!: () => void;
-  const promise = new Promise<void>((resolve) => { open = resolve; });
-  return { promise, open };
-}
-const accountsReady = startupGate();
-const cellServicesReady = startupGate();
+const accountsReady = createStartupGate();
+const accountsRecovered = createStartupGate();
+const cellServicesReady = createStartupGate();
+/** True until the first start of the MCP server finished: the panel shows no "unavailable" while it is only starting. */
+let mcpStarting = true;
 
 /** Localized texts for the detached update window (it cannot load the app's catalog). */
 const updateStrings = (): UpdateStrings => ({
@@ -575,7 +577,7 @@ const automation = new AutomationService(controller, {
   },
 });
 const mcp = new UnimuxMcpServer(automation, { log: (message) => crashLog.warn(message) });
-const mcpInfo = (): McpInfo => ({ ...mcp.getInfo(), error: mcpError });
+const mcpInfo = (): McpInfo => ({ ...mcp.getInfo(), error: mcpError, ...(mcpStarting && !mcp.getInfo().running ? { starting: true } : {}) });
 /** Tells the renderer what changed instead of being polled (the renderer keeps a slow fallback poll). */
 const pushLater = (push: () => void) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -593,6 +595,7 @@ async function startMcp(retries = 2): Promise<void> {
     crashLog.warn(`MCP server did not start: ${mcpError}`);
     if (retries > 0) setTimeout(() => void startMcp(retries - 1), 1000);
   }
+  mcpStarting = false;
   send('mcp:info', mcpInfo());
 }
 ipcMain.handle('mcp:retry', async () => { if (!mcp.getInfo().running) await startMcp(0); return mcpInfo(); });
@@ -925,8 +928,9 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   if (ptyHost.isFatal()) return { ok: false, error: tr('Proces terminali nie działa. Uruchom aplikację ponownie.') };
   // Taken before the first await: a kill while the folder or the CLI is being checked must not be undone by this spawn.
   const killsBefore = killCount.get(req.cellId) ?? 0;
-  // No agent starts before the hook and MCP servers have their ports (the window opens before they listen).
-  await cellServicesReady.promise;
+  // No agent starts before the hook and MCP servers have their ports, nor a Claude cell before the account recovery (the window
+  // opens before both).
+  await Promise.all(spawnWaitsFor({ cellServices: cellServicesReady, accountsRecovered }, { cli: req.profile.cli, startupPrompt: req.mode === 'new' ? req.startupPrompt : undefined }));
   if (!(await pathExists(req.cwd))) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const cli = cliForProfile(req.profile);
   // `force`: the user chose "start anyway" on the install card (the detection may be wrong, e.g. an alias).
@@ -1424,6 +1428,7 @@ async function startMainApp(): Promise<void> {
     startMcp().then(() => startupTimer.mark('mcp-started')),
   ]).finally(() => { startupTimer.mark('cell-services-ready'); cellServicesReady.open(); });
   const accountsDone = recoverAccounts().finally(() => {
+    accountsRecovered.open();
     accountsReady.open();
     usage.start();
     void pushSwapPending();
@@ -1433,6 +1438,15 @@ async function startMainApp(): Promise<void> {
 
 /** Startup account work; account IPC and the usage polls wait for it (`accountsReady`). */
 async function recoverAccounts(): Promise<void> {
+  try { await recoverActivation(); } finally { accountsRecovered.open(); }
+  // A recovery still 'locked' is retried by its own timer too: the polls do not run while the limits panel is off.
+  startActivationRecoveryRetry(retryActivationRecovery);
+  // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
+  try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }
+  startupTimer.mark('accounts-migrated');
+}
+
+async function recoverActivation(): Promise<void> {
   // An interrupted main-account swap is repaired (or reported as pending) before any IPC call can start another:
   // first a 0.9.1 (version 2) journal, otherwise the 0.9.0 recovery decides.
   try {
@@ -1440,11 +1454,6 @@ async function recoverAccounts(): Promise<void> {
     if ((await recoverActivationWithRetry({ ...activateDeps(), locks: { timeoutMs: 3_000 } })) === 'legacy') await recoverInterruptedSwap(swapDeps());
   } catch { /* the journal stays and the next start retries */ }
   startupTimer.mark('accounts-recovered');
-  // A recovery still 'locked' is retried by its own timer too: the polls do not run while the limits panel is off.
-  startActivationRecoveryRetry(retryActivationRecovery);
-  // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
-  try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }
-  startupTimer.mark('accounts-migrated');
 }
 
 app.whenReady().then(async () => {
