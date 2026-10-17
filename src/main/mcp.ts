@@ -1,9 +1,7 @@
 import { randomBytes } from 'crypto';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'http';
 import type { AddressInfo } from 'net';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { McpInfo } from '../shared/automation';
 import { findCell } from '../shared/state';
 import type { AutomationService } from './automation';
@@ -21,6 +19,29 @@ export interface McpServerOptions {
   log?: (message: string) => void;
 }
 const MAX_BODY = 256 * 1024;
+
+/**
+ * The MCP SDK (with its zod/ajv graph, about 300 ms to load) is loaded on the first agent request, not at startup: listening
+ * only needs Node's http, so the port is known at once and the window does not wait for the SDK (0.9.4).
+ */
+let sdkLoad: Promise<McpSdk> | undefined;
+type McpSdk = Awaited<ReturnType<typeof importSdk>>;
+async function importSdk() {
+  const [server, http, types] = await Promise.all([
+    import('@modelcontextprotocol/sdk/server/index.js'),
+    import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
+    import('@modelcontextprotocol/sdk/types.js'),
+  ]);
+  return {
+    Server: server.Server, StreamableHTTPServerTransport: http.StreamableHTTPServerTransport,
+    CallToolRequestSchema: types.CallToolRequestSchema, ListToolsRequestSchema: types.ListToolsRequestSchema, ErrorCode: types.ErrorCode, McpError: types.McpError,
+  };
+}
+/** Loads the SDK once (a failed load is tried again by the next request). */
+export function loadMcpSdk(): Promise<McpSdk> {
+  sdkLoad ??= importSdk().catch((error: unknown) => { sdkLoad = undefined; throw error; });
+  return sdkLoad;
+}
 /** Safety net for a single tool result; the tools already shape and truncate their output. */
 const MAX_RESULT_CHARS = 60000;
 /** A cell counts as connected while its agent listed or called tools this recently. */
@@ -95,8 +116,14 @@ export class UnimuxMcpServer {
     for (const controller of this.aborts.get(token) ?? []) controller.abort();
     this.aborts.delete(token);
   }
-  async start(): Promise<void> {
-    if (this.http?.listening) return;
+  /** Starts listening; a call while a start is in progress joins it (one server, never two). */
+  start(): Promise<void> {
+    if (this.http?.listening) return Promise.resolve();
+    this.starting ??= this.listen().finally(() => { this.starting = null; });
+    return this.starting;
+  }
+  private starting: Promise<void> | null = null;
+  private async listen(): Promise<void> {
     const http = createServer((req, res) => { void this.handle(req, res).catch((error: unknown) => {
       // Name and message only: never the request body (tool arguments may carry user text).
       this.log(`MCP request failed: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`.slice(0, 300));
@@ -149,6 +176,9 @@ export class UnimuxMcpServer {
     const controllers = this.aborts.get(token) ?? new Set<AbortController>();
     controllers.add(abort);
     this.aborts.set(token, controllers);
+    let sdk: McpSdk;
+    try { sdk = await loadMcpSdk(); } catch (error) { this.release(token, abort, controllers); throw error; }
+    const { Server, StreamableHTTPServerTransport, CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } = sdk;
     const found = findCell(this.service.state.get(), actorId);
     const role = this.service.roleOf(actorId);
     const server = new Server({ name: 'unimux', version: '1.1.0' }, {
@@ -179,11 +209,8 @@ export class UnimuxMcpServer {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true, maxRequestBodySize: MAX_BODY });
     this.connections.add(server);
     res.once('close', () => {
-      abort.abort();
-      controllers.delete(abort);
+      this.release(token, abort, controllers);
       this.connections.delete(server);
-      const left = (this.inFlightByToken.get(token) ?? 1) - 1;
-      if (this.tokens.has(token)) this.inFlightByToken.set(token, Math.max(0, left));
       void server.close().catch(() => undefined);
     });
     try {
@@ -194,6 +221,13 @@ export class UnimuxMcpServer {
       await server.close().catch(() => undefined);
       throw error;
     }
+  }
+  /** A request ended: its abort fires and its in-flight slot is given back. */
+  private release(token: string, abort: AbortController, controllers: Set<AbortController>): void {
+    abort.abort();
+    controllers.delete(abort);
+    const left = (this.inFlightByToken.get(token) ?? 1) - 1;
+    if (this.tokens.has(token)) this.inFlightByToken.set(token, Math.max(0, left));
   }
   async stop(): Promise<void> {
     this.tokens.clear();

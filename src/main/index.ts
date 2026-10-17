@@ -94,6 +94,12 @@ import { updateWindowAlive } from './updateRuntime';
 import { atomicWriteFileSync } from './atomicWrite';
 import { defaultState } from '../shared/state';
 import { createReloadLimiter, createReportLimiter, describeError, rendererReport, trimNotifications, UNRESPONSIVE_GRACE_MS } from './stability';
+import { createStartupLog, createStartupTimer, isRendererMark } from './startupTiming';
+import { createStartupGate, spawnWaitsFor } from './startupGates';
+
+// Startup timing: milliseconds since the process started, one line per launch in startup.log (startupTiming.ts).
+const startupTimer = createStartupTimer(() => performance.now());
+startupTimer.mark('modules-loaded');
 
 // ── crash handling ──────────────────────────────────────────────────────────
 // Registered before any other module code runs: a throw below (a locked file, a damaged install) must never leave an invisible
@@ -160,6 +166,7 @@ const DATA_DIR = migrateDataDir({
   log: (message) => console.warn(message),
 }).dataDir;
 crashLogger = createUpdaterLogger(join(DATA_DIR, 'crash.log'), { rotateTo: join(DATA_DIR, 'crash.old.log') });
+const startupLog = createStartupLog(join(DATA_DIR, 'startup.log'), `${new Date().toISOString()} ${app.getVersion()} ${process.platform}`, startupTimer);
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
@@ -210,6 +217,7 @@ function loadStateOrFail(): AppState {
     throw error; // nothing below may run (and no saver may write) in a start that failed
   }
 }
+startupTimer.mark('state-loaded');
 const tr = (key: MessageKey, params?: MessageParams) => translate(state.settings.language ?? detectLanguage([app.getLocale()]), key, params);
 const saver = createSaver(DATA_DIR, { log: crashLog.warn });
 const usageDeps: FetcherDeps = {
@@ -432,6 +440,26 @@ const notifications = new Set<Notification>();
 const verifiedCodex = new Map<string, string>();
 let mcpError: string | undefined;
 
+/**
+ * Startup order (0.9.4): the window is created first and the other startup steps run behind it, in parallel. What must still
+ * come first is enforced by two gates instead of by delaying the window:
+ * - `accountsReady`: the recovery of an interrupted swap or "Set as main" and the account migration have finished. Every
+ *   accounts:, auth: and usage: channel that can start a swap, an activation, a login, a removal or a reconcile waits for it
+ *   (registerAccountIpc), and the usage polls (which reconcile the live login) only start after it.
+ * - `accountsRecovered`: the recovery alone (opened before the migration). Claude cells use the live ~/.claude login, so
+ *   their spawns wait for it (spawnWaitsFor); shells, Codex and SSH cells do not.
+ * - `cellServicesReady`: the hook server and the MCP server listen (their ports are known) and files of removed cells were
+ *   pruned. Every agent spawn waits for it (a plain shell only with a startup prompt); the renderer shows the cells meanwhile.
+ * The gates always open (the steps catch their errors and open them in `finally`).
+ * The single-instance lock and the Windows update hand-off (signalUpdateReady, waitForUpdateWindowGone, runUpdateGate) keep
+ * running before startMainApp, unchanged.
+ */
+const accountsReady = createStartupGate();
+const accountsRecovered = createStartupGate();
+const cellServicesReady = createStartupGate();
+/** True until the first start of the MCP server finished: the panel shows no "unavailable" while it is only starting. */
+let mcpStarting = true;
+
 /** Localized texts for the detached update window (it cannot load the app's catalog). */
 const updateStrings = (): UpdateStrings => ({
   title: tr('Aktualizacja do wersji {version}', { version: getUpdateState().version ?? '' }),
@@ -550,7 +578,7 @@ const automation = new AutomationService(controller, {
   },
 });
 const mcp = new UnimuxMcpServer(automation, { log: (message) => crashLog.warn(message) });
-const mcpInfo = (): McpInfo => ({ ...mcp.getInfo(), error: mcpError });
+const mcpInfo = (): McpInfo => ({ ...mcp.getInfo(), error: mcpError, ...(mcpStarting && !mcp.getInfo().running ? { starting: true } : {}) });
 /** Tells the renderer what changed instead of being polled (the renderer keeps a slow fallback poll). */
 const pushLater = (push: () => void) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -568,6 +596,7 @@ async function startMcp(retries = 2): Promise<void> {
     crashLog.warn(`MCP server did not start: ${mcpError}`);
     if (retries > 0) setTimeout(() => void startMcp(retries - 1), 1000);
   }
+  mcpStarting = false;
   send('mcp:info', mcpInfo());
 }
 ipcMain.handle('mcp:retry', async () => { if (!mcp.getInfo().running) await startMcp(0); return mcpInfo(); });
@@ -602,6 +631,7 @@ function createWindow(): void {
     try { win.setAppDetails({ appId: APP_USER_MODEL_ID, appIconPath: app.isPackaged ? process.execPath : windowIcon(), appIconIndex: 0 }); } catch { /* the window icon still applies */ }
   }
   win.once('ready-to-show', () => {
+    startupTimer.mark('ready-to-show');
     if (devEnv('MC_OFFSCREEN')) win?.showInactive(); else win?.show();
     void signalUpdateReady();
     signalMacUpdateReady();
@@ -634,13 +664,14 @@ function createWindow(): void {
   // Windows ends the session without before-quit: the last changes are written now (the renderer was asked to send its own).
   win.on('query-session-end', () => { send('app:before-quit'); });
   win.on('session-end', () => { saver.flush(); });
-  win.webContents.on('did-finish-load', () => { hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); sendShown(); } });
+  win.webContents.on('did-finish-load', () => { startupTimer.mark('did-finish-load'); hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void accountsReady.promise.then(pushSwapPending); sendShown(); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(join(__dirname, '../renderer/index.html'));
+  startupTimer.mark('window-created');
 }
 
 /** Renderer crashes reloaded without asking (3 within a minute); after that the user decides. */
@@ -898,6 +929,9 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   if (ptyHost.isFatal()) return { ok: false, error: tr('Proces terminali nie działa. Uruchom aplikację ponownie.') };
   // Taken before the first await: a kill while the folder or the CLI is being checked must not be undone by this spawn.
   const killsBefore = killCount.get(req.cellId) ?? 0;
+  // No agent starts before the hook and MCP servers have their ports, nor a Claude cell before the account recovery (the window
+  // opens before both).
+  await Promise.all(spawnWaitsFor({ cellServices: cellServicesReady, accountsRecovered }, { cli: req.profile.cli, startupPrompt: req.mode === 'new' ? req.startupPrompt : undefined }));
   if (!(await pathExists(req.cwd))) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const cli = cliForProfile(req.profile);
   // `force`: the user chose "start anyway" on the install card (the detection may be wrong, e.g. an alias).
@@ -951,6 +985,7 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
   alive.add(req.cellId);
   queuePrompt(req.cellId, initialPrompt?.file ?? null);
   ptyHost.spawn({ id: req.cellId, cwd: req.cwd, cols: req.cols, rows: req.rows, env, shell: state.settings.shell, command });
+  startupTimer.mark('first-spawn');
   return { ok: true };
 }
 ipcMain.on('cell:kill', (_e, id: string) => {
@@ -1090,6 +1125,12 @@ ipcMain.on('app:reportError', (e, kind: unknown, message: unknown, stack: unknow
   const line = rendererReport(kind, message, stack);
   if (line && allowRendererReport(Date.now())) crashLog.error(line);
 });
+/** Startup marks of the renderer (its boot finished, the first terminal output arrived): a fixed list, from the app window only. */
+ipcMain.on('app:startupMark', (e, name: unknown) => {
+  if (!isLive(win) || e.sender !== win!.webContents || !isRendererMark(name) || startupTimer.has(name)) return;
+  startupTimer.mark(name);
+  void startupLog.flush();
+});
 ipcMain.handle('clipboard:read', () => clipboard.readText());
 ipcMain.on('clipboard:write', (_e, text: unknown) => { if (typeof text === 'string') clipboard.writeText(text); });
 /** A copied private key (0.9.3): the clearing waits here, not in the window, so a reload or quit within the minute still clears it. */
@@ -1181,7 +1222,7 @@ registerAccountIpc(ipcMain, {
       send('usage:state', usage.getState());
     }
   },
-}, fromAppWindow);
+}, fromAppWindow, accountsReady.promise);
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
@@ -1354,33 +1395,69 @@ function openInstallWindow(): void {
   })();
 }
 
+let mainAppStarted = false;
+/** The window first, then the rest in parallel behind it (the gates are described at `accountsReady`). */
 async function startMainApp(): Promise<void> {
-  // Before any cell can start: files of removed cells and old startup prompts go.
-  await pruneCellFiles(cellFileDirs, cellIdsOf(state, false)).catch(() => 0);
-  // Without the hook server (loopback blocked by security software) the app still starts: agent states fall back to heuristics.
-  try { await hooks.start(); } catch (error) { crashLog.error(`hook server did not start: ${describeError(error)}`); }
-  await startMcp();
-  ptyHost.start();
-  startSsh();
-  // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another:
-  // first a 0.9.1 (version 2) journal, otherwise the 0.9.0 recovery decides.
+  if (mainAppStarted) return;
+  mainAppStarted = true;
+  startupTimer.mark('main-app-start');
+  createWindow();
   try {
-    // Shorter lock waits here: the window waits for this; a recovery still 'locked' is retried by the polls.
-    if ((await recoverActivationWithRetry({ ...activateDeps(), locks: { timeoutMs: 3_000 } })) === 'legacy') await recoverInterruptedSwap(swapDeps());
-  } catch { /* the journal stays and the next start retries */ }
+    // The Pty Host process boots while the page loads; it is connected to the renderer on did-finish-load.
+    ptyHost.start();
+    startupTimer.mark('pty-host-started');
+    // Its IPC handlers are registered in the same tick as the window: the page cannot call them before it has loaded.
+    startSsh();
+    startupTimer.mark('ssh-started');
+  } catch (error) {
+    // As before the window came first: without terminals or SSH the start failed (with a message), it does not run half.
+    startupFailed(error);
+    return;
+  }
+  void cliDetector.refreshAll(); // async: the window does not wait for it, spawns wait only for their own CLI
+  scheduleUpdateCleanup();
+  const services = Promise.all([
+    // Before any cell can start: files of removed cells and old startup prompts go.
+    pruneCellFiles(cellFileDirs, cellIdsOf(state, false)).catch(() => 0).then(() => startupTimer.mark('cell-files-pruned')),
+    // Without the hook server (loopback blocked by security software) the app still starts: agent states fall back to heuristics.
+    hooks.start().catch((error: unknown) => { crashLog.error(`hook server did not start: ${describeError(error)}`); }).then(() => startupTimer.mark('hooks-started')),
+    startMcp().then(() => startupTimer.mark('mcp-started')),
+  ]).finally(() => { startupTimer.mark('cell-services-ready'); cellServicesReady.open(); });
+  const accountsDone = recoverAccounts().finally(() => {
+    accountsRecovered.open();
+    accountsReady.open();
+    usage.start();
+    void pushSwapPending();
+  });
+  await Promise.all([services, accountsDone]);
+}
+
+/** Startup account work; account IPC and the usage polls wait for it (`accountsReady`). */
+async function recoverAccounts(): Promise<void> {
+  try { await recoverActivation(); } finally { accountsRecovered.open(); }
   // A recovery still 'locked' is retried by its own timer too: the polls do not run while the limits panel is off.
   startActivationRecoveryRetry(retryActivationRecovery);
   // 0.9.0 -> 0.9.1: identities and duplicates of the saved accounts (once; nothing is deleted).
   try { await migrateAccounts(migrationDeps()); } catch { /* retried at the next start */ }
-  createWindow();
-  void cliDetector.refreshAll(); // async: the window does not wait for it, spawns wait only for their own CLI
-  usage.start();
-  scheduleUpdateCleanup();
+  startupTimer.mark('accounts-migrated');
+}
+
+async function recoverActivation(): Promise<void> {
+  // An interrupted main-account swap is repaired (or reported as pending) before any IPC call can start another:
+  // first a 0.9.1 (version 2) journal, otherwise the 0.9.0 recovery decides.
+  try {
+    // Shorter lock waits here: account actions wait for this; a recovery still 'locked' is retried by the polls.
+    if ((await recoverActivationWithRetry({ ...activateDeps(), locks: { timeoutMs: 3_000 } })) === 'legacy') await recoverInterruptedSwap(swapDeps());
+  } catch { /* the journal stays and the next start retries */ }
+  startupTimer.mark('accounts-recovered');
 }
 
 app.whenReady().then(async () => {
+  startupTimer.mark('app-ready');
   applyDockIcon();
   if (superseded) return;
+  // The line is written when the renderer reports in; a start that never gets that far is written after a minute.
+  setTimeout(() => void startupLog.flush(), 60_000).unref();
   // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window. macOS needs the app menu (Cmd+Q, hide)
   // and the Edit menu (Cmd+C / V / X / A / Z in text fields), still without View or Window roles (no Cmd+R, no Cmd+W).
   Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]) : null);
@@ -1392,6 +1469,7 @@ app.whenReady().then(async () => {
   // appear next to it (the prompt of a still newer release comes after it has gone).
   if (process.platform === 'win32' && app.isPackaged) { await signalUpdateReady(); await waitForUpdateWindowGone(4000); }
   if (await runUpdateGate()) return;
+  startupTimer.mark('update-gate-done');
   await startMainApp();
 }).catch(startFailedLate);
 
@@ -1444,3 +1522,4 @@ app.on('window-all-closed', () => { if (!gating) app.quit(); });
 
 // Everything above ran: from here on an uncaught exception is a runtime error, not a failed start.
 moduleLoaded = true;
+startupTimer.mark('module-end');

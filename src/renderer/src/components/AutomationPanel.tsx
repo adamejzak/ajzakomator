@@ -82,8 +82,9 @@ export function AutomationPanel() {
   return <section className="automation-panel" aria-label={tr('Zadania i wiadomości agentów')}>
     <div className="automation-head">
       <strong>{tr('Zespół AI')}</strong>
-      <span className={`mcp-state ${info.running ? 'connected' : ''}`} title={info.error ?? info.url}>{info.running ? tr('Serwer MCP działa') : tr('MCP niedostępne')}</span>
-      {!info.running && <button className="btn small" disabled={busy} onClick={() => { setBusy(true); void window.mc.retryMcp().then((mcpInfo) => setUi({ mcpInfo })).catch(() => {}).finally(() => setBusy(false)); }}>{tr('Spróbuj ponownie')}</button>}
+      {/* Nothing while the server is still starting (the window opens before it listens). */}
+      {!info.starting && <span className={`mcp-state ${info.running ? 'connected' : ''}`} title={info.error ?? info.url}>{info.running ? tr('Serwer MCP działa') : tr('MCP niedostępne')}</span>}
+      {!info.running && !info.starting && <button className="btn small" disabled={busy} onClick={() => { setBusy(true); void window.mc.retryMcp().then((mcpInfo) => setUi({ mcpInfo })).catch(() => {}).finally(() => setBusy(false)); }}>{tr('Spróbuj ponownie')}</button>}
       <span className="grow" />
       {tab === 'tasks' && <button className="btn small" onClick={() => { setComposing((v) => !v); setSelectedTaskId(null); }}>{composing ? tr('Zamknij') : '+ ' + tr('Nowe zadanie')}</button>}
       <button className={`btn small ${state.automation.paused ? 'paused' : ''}`} disabled={busy} onClick={() => void run('set_paused', { paused: !state.automation.paused })}>
