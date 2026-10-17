@@ -50,7 +50,7 @@ export const errorText = (message: string) =>
 export function useI18n() {
   const requested = useStore((st) => st.s.settings.language) ?? systemLanguage();
   // Re-render when a language finished loading (only matters for a language set without loading it first).
-  useSyncExternalStore(subscribeLanguageTables, languageTablesVersion);
+  useSyncExternalStore(subscribeLanguageTables, languageTablesVersion, languageTablesVersion);
   const language = shownLanguage(requested);
   return useMemo(() => ({
     language,
