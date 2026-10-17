@@ -216,17 +216,25 @@ const PARTS = {
         await app.click('.rail-tiles [aria-label="SSH"]');
         await app.until(`!!document.querySelector('.ssh-view') && !!document.querySelector('.workspace-tabs .ssh-tab.active')`, 'SSH view in the main area');
         if (await app.evaluate(`!!document.querySelector('.side-panel .ssh-tile')`)) throw new Error('hosts are still listed in the left panel');
-        // The SSH tile is a pressed toggle, not a second selected tab; behind Settings it is not pressed.
+        // The SSH tile is a pressed toggle, not a second selected tab; in SSH mode no panel tile is selected (the side panel shows
+        // the SSH navigation). Behind Settings the SSH tile is not pressed and the open panel's tile is selected again.
         const railState = `(() => { const t = document.querySelector('.rail-tiles [aria-label="SSH"]'); return [t.getAttribute('aria-pressed'), t.hasAttribute('aria-selected'), document.querySelectorAll('.rail-tiles [aria-selected=true]').length].join('|'); })()`;
-        if (await app.evaluate(railState) !== 'true|false|1') throw new Error(`rail state with the view in front: ${await app.evaluate(railState)}`);
+        if (await app.evaluate(railState) !== 'true|false|0') throw new Error(`rail state with the view in front: ${await app.evaluate(railState)}`);
         await app.click('button[aria-label="Ustawienia"]');
         await app.until(`${railState} === 'false|false|1'`, 'SSH tile not pressed behind Settings');
         await app.click('.workspace-tabs .ssh-tab');
-        await app.until(`${railState} === 'true|false|1'`, 'SSH tile pressed again');
+        await app.until(`${railState} === 'true|false|0'`, 'SSH tile pressed again');
         const heads = await app.evaluate(`[...document.querySelectorAll('.ssh-group-head .grow')].map((e) => e.textContent)`);
         if (JSON.stringify(heads) !== JSON.stringify(['lab', 'Bez grupy'])) throw new Error(`groups: ${heads}`);
         const sections = await app.evaluate(`[...document.querySelectorAll('.ssh-view-heading')].map((e) => e.textContent)`);
-        if (JSON.stringify(sections) !== JSON.stringify(['Hosty', 'Klucze', 'Lokalne powłoki'])) throw new Error(`sections: ${sections}`);
+        if (JSON.stringify(sections) !== JSON.stringify(['Grupy', 'Lokalne powłoki'])) throw new Error(`sections: ${sections}`);
+        // Group tiles: the counts, and a click filters to that group (a second click shows every host again).
+        const groupTiles = await app.evaluate(`[...document.querySelectorAll('.ssh-group-tile')].map((e) => e.textContent).join('|')`);
+        if (groupTiles !== 'Wszystkie4|lab3|Bez grupy1') throw new Error(`group tiles: ${groupTiles}`);
+        await app.click('.ssh-group-tile[data-group="lab"]');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 3 && document.querySelector('.ssh-group-tile[data-group="lab"]').getAttribute('aria-pressed') === 'true'`, 'filtered to the lab group');
+        await app.click('.ssh-group-tile[data-group="lab"]');
+        await app.until(`document.querySelectorAll('.ssh-tile[data-host-id]').length === 4`, 'group filter off');
         await app.screenshot('ssh-view.png');
         // Search narrows the tiles.
         await app.setValue('.ssh-view-head .ssh-search', 'pi');
@@ -256,7 +264,8 @@ const PARTS = {
         await app.press('Escape');
         await app.until(`!document.querySelector('.ssh-tile.selected') && document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`, 'Esc cleared the selection, details kept');
         // "Nowy klucz > mode" always switches an open new-key pane to that mode, also after the mode was changed inside it.
-        const pickKey = async (mode) => { await app.click('.ssh-view-head button', 'Nowy klucz'); await app.click('.menu [role=menuitem]', mode); };
+        // Nowy klucz from Hosty switches to Klucze (the key forms belong there); Klucze has its own Nowy klucz button.
+        const pickKey = async (mode) => { await app.click('.ssh-view-main .ssh-view-actions button', 'Nowy klucz'); await app.click('.menu [role=menuitem]', mode); };
         await pickKey('Wklej klucz');
         await app.until(`!!document.querySelector('.ssh-view-detail .ssh-editor textarea')`, 'paste mode');
         await app.click('.ssh-view-detail .ssh-segmented button', 'Wygeneruj klucz');
@@ -265,11 +274,89 @@ const PARTS = {
         await app.until(`!!document.querySelector('.ssh-view-detail .ssh-editor textarea')`, 'paste mode again from the header');
         await pickKey('Importuj z pliku');
         await app.until(`!!document.querySelector('.ssh-view-detail .ssh-drop')`, 'file mode from the header');
+        if (await app.evaluate(`document.querySelector('.ssh-nav-item.on')?.dataset.section`) !== 'keys') throw new Error('a new key did not switch to Klucze');
+        await app.click('.ssh-nav-item[data-section="hosts"]');
+        await app.until(`!!document.querySelector('.ssh-view-group') && !document.querySelector('.ssh-view-detail .ssh-drop')`, 'back in Hosty, the new-key draft dropped');
         // A group opens as an SSH-only grid named after it; the SSH tab stays open.
         await app.evaluate(`(() => { const group = [...document.querySelectorAll('.ssh-view-group')].find((g) => g.querySelector('.ssh-group-head')?.textContent.includes('lab')); group.querySelector('.ssh-group-open').click(); return true; })()`);
         await app.until(`document.querySelectorAll('.cell .ssh-fingerprint').length === 3`, 'host key prompt in all three cells');
         await app.until(`document.querySelector('.workspace-tabs .grid-tab.active .label')?.textContent === 'lab' && !!document.querySelector('.workspace-tabs .ssh-tab')`, 'tab named after the group, SSH tab kept');
         await app.screenshot('ssh-group-grid.png');
+      } finally { await app.close(); }
+    } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
+  },
+  /** 0.9.2 SSH mode: the side panel shows Hosty, Klucze, Znane hosty and a disabled SFTP while the SSH view is in front; Projects brings the normal panel back. */
+  async sshMode() {
+    const server = await startTestServer(['--no-auth']);
+    const root = scratchRoot('ssh-mode');
+    const shot = (name) => app.screenshot(`092-ssh-mode-${name}.png`);
+    let app;
+    try {
+      const hosts = [testHost(server.port, { label: 'web-1', group: 'lab' }), testHost(server.port, { label: 'web-2', group: 'lab' }), testHost(server.port, { label: 'db', group: 'prod' }), testHost(server.port, { label: 'pi' })];
+      writeState(root, sshState({ projectPath: join(root, 'project'), hosts }));
+      writeKnownHost(root, server);
+      app = await launchApp(root);
+      try {
+        // A roomy window first (the narrow one comes at the end).
+        await app.cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+        const navState = `[...document.querySelectorAll('.side-panel .ssh-nav-item')].map((b) => b.dataset.section + (b.disabled ? ':off' : '') + (b.classList.contains('on') ? ':on' : '')).join('|')`;
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`!!document.querySelector('.ssh-view .ssh-tile[data-host-id]') && !!document.querySelector('.side-panel .ssh-nav')`, 'SSH mode with its navigation in the side panel');
+        if (await app.evaluate(navState) !== 'hosts:on|keys|knownHosts|sftp:off') throw new Error(`side panel entries: ${await app.evaluate(navState)}`);
+        if (!(await app.evaluate(`document.querySelector('.ssh-nav-item[data-section="sftp"]').textContent.includes('wkrótce')`))) throw new Error('SFTP lacks the coming-soon note');
+        if (await app.evaluate(`!!document.querySelector('.side-panel .project-list, #sidebar-projects')`)) throw new Error('the projects panel is still shown in SSH mode');
+        // The disabled SFTP entry cannot be chosen.
+        await app.click('.ssh-nav-item[data-section="sftp"]');
+        await app.until(`${navState} === 'hosts:on|keys|knownHosts|sftp:off'`, 'SFTP not selectable');
+        await app.until(`document.querySelectorAll('.ssh-group-tile').length === 4`, 'group tiles');
+        await shot('hosts');
+        // Klucze: the empty state, then a generated key as a tile with its editor.
+        await app.click('.ssh-nav-item[data-section="keys"]');
+        await app.until(`!!document.querySelector('.ssh-view-main .ssh-empty') && !document.querySelector('.ssh-view-head')`, 'empty Klucze');
+        await shot('keys-empty');
+        const generated = await app.evaluate(`window.mc.ssh.generateKey({ label: 'deploy', type: 'ed25519', savePassphrase: false })`);
+        if (!generated.ok) throw new Error(`key generation failed: ${JSON.stringify(generated)}`);
+        await app.until(`document.querySelectorAll('.ssh-key-tile').length === 1`, 'key tile');
+        await app.click('.ssh-key-tile', 'deploy');
+        await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'deploy' && !!document.querySelector('.ssh-view-detail .ssh-public')`, 'key editor');
+        if (!(await app.evaluate(`document.querySelector('.ssh-key-tile').textContent.includes('SHA256:')`))) throw new Error('the key tile shows no fingerprint');
+        await shot('keys');
+        // A host link in the key editor would switch back to Hosty; Znane hosty lists the trusted test server.
+        await app.click('.ssh-nav-item[data-section="knownHosts"]');
+        await app.until(`document.querySelectorAll('.ssh-known-row').length === 1 && !document.querySelector('.ssh-view-detail')`, 'known hosts list without a details pane');
+        const row = await app.evaluate(`document.querySelector('.ssh-known-row').textContent`);
+        if (!row.includes(server.fingerprint) || !row.includes(String(server.port))) throw new Error(`known host row: ${row}`);
+        await shot('known-hosts');
+        // Keyboard: arrows move through the enabled entries only.
+        await app.evaluate(`document.querySelector('.ssh-nav-item.on').focus()`);
+        await app.cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+        await app.until(`document.querySelector('.ssh-nav-item.on')?.dataset.section === 'hosts' && document.activeElement?.dataset.section === 'hosts'`, 'ArrowDown wraps past the disabled SFTP entry');
+        // Folded side panel: the SSH tile folds it, the view offers the sections itself.
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`!document.querySelector('.side-panel') && !!document.querySelector('.ssh-view-main .ssh-nav.compact')`, 'compact sections in the folded state');
+        await app.click('.ssh-view-main .ssh-nav.compact .ssh-nav-item', 'Klucze');
+        await app.until(`document.querySelectorAll('.ssh-key-tile').length === 1`, 'Klucze from the compact row');
+        await shot('collapsed');
+        await app.click('.rail-tiles [aria-label="SSH"]');
+        await app.until(`!!document.querySelector('.side-panel .ssh-nav') && !document.querySelector('.ssh-nav.compact')`, 'side panel back');
+        await app.click('.ssh-nav-item[data-section="hosts"]');
+        // A narrow window (1100x700) with the side panel open.
+        await app.cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 700, deviceScaleFactor: 1, mobile: false });
+        await sleep(400);
+        await app.click('.ssh-tile[data-host-id]', 'web-1');
+        await app.until(`document.querySelector('.ssh-view-detail h2')?.textContent === 'web-1'`, 'host details in the narrow window');
+        const overflow = await app.evaluate(`(() => { const m = document.querySelector('.ssh-view-main'); return m.scrollWidth > m.clientWidth + 1; })()`);
+        if (overflow) throw new Error('the host column overflows in a narrow window');
+        await shot('narrow');
+        // Leaving SSH mode: the Projects tile brings the normal side panel and the grid back; the SSH tab stays.
+        await app.click('.rail-tiles [aria-label="Projekty"]');
+        await app.until(`!document.querySelector('.ssh-nav') && !!document.querySelector('#sidebar-projects') && getComputedStyle(document.querySelector('.ssh-workspace')).display === 'none' && !!document.querySelector('.workspace-tabs .ssh-tab')`, 'normal side panel back');
+        const rail = await app.evaluate(`[document.querySelector('.rail-tiles [aria-label="SSH"]').getAttribute('aria-pressed'), document.querySelector('.rail-tiles [aria-label="Projekty"]').getAttribute('aria-selected')].join('|')`);
+        if (rail !== 'false|true') throw new Error(`rail after leaving SSH mode: ${rail}`);
+        // The SSH tab brings SSH mode back on the section that was chosen; a grid tab ends it again.
+        await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`document.querySelector('.side-panel .ssh-nav-item.on')?.dataset.section === 'hosts'`, 'SSH mode again from its tab');
+        await shot('back');
       } finally { await app.close(); }
     } finally { server.stop(); rmSync(root, { recursive: true, force: true }); }
   },

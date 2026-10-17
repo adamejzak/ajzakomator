@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_PANEL, gitPanelReason, panelOpenable, railClick, railTileShown, railFocusTarget, resolvePanelId, visiblePanels, type PanelContext, type PanelDef,
+  DEFAULT_PANEL, gitPanelReason, panelOpenable, railClick, railTileAction, railTileShown, railFocusTarget, resolvePanelId, sidePanelContent, visiblePanels, type PanelContext, type PanelDef,
 } from '../src/shared/sidebarPanels';
 import { defaultState, normalizeState } from '../src/shared/state';
 
@@ -118,5 +118,35 @@ describe('railTileShown (W3)', () => {
     expect(railTileShown(view, { ...base, viewActive: true })).toBe(true);
     expect(railTileShown(view, { ...base, viewActive: true, collapsed: true })).toBe(true);
     expect(railTileShown(view, { ...base, viewActive: true, settingsActive: true })).toBe(false);
+  });
+});
+
+describe('SSH mode in the side panel (0.9.2)', () => {
+  const view = { id: 'terminal', opensView: true };
+  const base = { collapsed: false, activeId: 'projects', viewActive: true, settingsActive: false };
+  it('selects no panel tile while the view is in front, and the open panel again behind Settings', () => {
+    expect(railTileShown({ id: 'projects' }, base)).toBe(false);
+    expect(railTileShown(view, base)).toBe(true);
+    expect(railTileShown({ id: 'projects' }, { ...base, settingsActive: true })).toBe(true);
+    expect(railTileShown(view, { ...base, settingsActive: true })).toBe(false);
+  });
+
+  it('shows the view navigation in the side panel in view mode, the panel otherwise, nothing when folded', () => {
+    expect(sidePanelContent({ collapsed: false, viewMode: true, panelId: 'projects' })).toEqual({ kind: 'view' });
+    expect(sidePanelContent({ collapsed: false, viewMode: false, panelId: 'files' })).toEqual({ kind: 'panel', id: 'files' });
+    expect(sidePanelContent({ collapsed: true, viewMode: true, panelId: 'projects' })).toBeNull();
+    expect(sidePanelContent({ collapsed: true, viewMode: false, panelId: 'projects' })).toBeNull();
+  });
+
+  it('enters view mode from the view tile, unfolding the side panel; the tile then folds and unfolds it', () => {
+    expect(railTileAction({ collapsed: true, view: 'files', viewMode: false }, view)).toEqual({ collapsed: false, view: 'files', openView: true, leaveView: false });
+    expect(railTileAction({ collapsed: false, view: 'files', viewMode: true }, view)).toEqual({ collapsed: true, view: 'files', openView: false, leaveView: false });
+    expect(railTileAction({ collapsed: true, view: 'files', viewMode: true }, view)).toEqual({ collapsed: false, view: 'files', openView: false, leaveView: false });
+  });
+
+  it('leaves view mode from a panel tile and shows that panel, also the one that was open before (never folds it)', () => {
+    expect(railTileAction({ collapsed: false, view: 'projects', viewMode: true }, { id: 'projects' })).toEqual({ collapsed: false, view: 'projects', openView: false, leaveView: true });
+    expect(railTileAction({ collapsed: true, view: 'projects', viewMode: true }, { id: 'git' })).toEqual({ collapsed: false, view: 'git', openView: false, leaveView: true });
+    expect(railTileAction({ collapsed: false, view: 'projects', viewMode: false }, { id: 'projects' })).toEqual({ collapsed: true, view: 'projects', openView: false, leaveView: false });
   });
 });

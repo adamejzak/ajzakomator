@@ -25,6 +25,12 @@ describe('useSshStore', () => {
   });
 });
 
+describe('SSH mode section (0.9.2)', () => {
+  it('starts on Hosty for the app session', () => {
+    expect(store.useSshStore.getState().section).toBe('hosts');
+  });
+});
+
 describe('createInitGate (M7)', () => {
   it('holds events that arrive while the snapshot loads and applies them after load, in order', () => {
     const { useSshStore, createInitGate } = store;
