@@ -143,27 +143,18 @@ export function liveGroupFilter(groupKey: string | null, hosts: readonly SshHost
 /** A click on a group tile filters to that group; a click on the chosen one shows every host again. */
 export const toggleGroupFilter = (current: string | null, clicked: string): string | null => (current === clicked ? null : clicked);
 
-/** What of the SSH store decides which item the details pane has on screen. */
-export interface PaneScreen { viewOpen: boolean; viewActive: boolean; section: SshSection; detail: SshDetail | null }
+/** What of the SSH store decides which item the details pane holds. */
+export interface PaneScreen { viewOpen: boolean; section: SshSection; detail: SshDetail | null }
 
 /**
- * 0.9.3: whether a store change takes the item of the details pane away (another tile, another section, the view left or its
- * tab closed). With unsaved edits in the pane the change is asked about first, like Esc, X and a second click.
+ * 0.9.3: whether a store change drops the item of the details pane (another tile, another section, the SSH tab closed). With
+ * unsaved edits in the pane the change is asked about first, like Esc, X and a second click. The view going to the
+ * background (a grid, a file, Settings, connect, open as grid) keeps the pane and its drafts, as in 0.9.2.
  */
 export function paneLeaves(prev: PaneScreen, next: PaneScreen): boolean {
   const before = paneDetail(prev.section, prev.detail);
   if (!before) return false;
-  if ((prev.viewActive && !next.viewActive) || (prev.viewOpen && !next.viewOpen)) return true;
+  if (prev.viewOpen && !next.viewOpen) return true;
   const after = paneDetail(next.section, next.detail);
   return !after || detailKey(after) !== detailKey(before);
-}
-
-/**
- * An action that leaves the view (connect, open as grid): with unsaved pane edits it asks first and does nothing after
- * "Anuluj"; `go` learns whether edits were discarded. True when it ran.
- */
-export async function askBeforeLeaving(dirty: boolean, ask: () => Promise<boolean>, go: (discarded: boolean) => void): Promise<boolean> {
-  if (dirty && !(await ask())) return false;
-  go(dirty);
-  return true;
 }

@@ -45,7 +45,7 @@ export function HostEditor({ paneId, hostId }: { paneId: string; hostId?: string
     }
     if (connect && id) {
       // The new cell asks for the host key and the password in the grid: show the grid (the SSH tab stays open).
-      withoutPaneGuard(showTerminalTabs);
+      showTerminalTabs();
       void openHostInCell(id, 'cell');
     }
   };

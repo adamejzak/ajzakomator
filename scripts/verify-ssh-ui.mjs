@@ -471,18 +471,23 @@ const PARTS = {
         // A clean form switches without a question.
         await app.click('.ssh-tile[data-host-id]', 'web-1');
         await app.until(`${noModal} && ${labelIs('web-1')}`, 'clean form switched silently');
-        // Leaving the view (a grid tab) with unsaved edits asks as well.
+        // The view going to the background (a grid tab) does not ask and keeps the edit, as in 0.9.2.
         const sshShown = `getComputedStyle(document.querySelector('.ssh-workspace')).display !== 'none'`;
         await app.setValue('.ssh-view-detail [data-field=label]', 'web-1 edited');
         await showGrid();
-        await app.until(discardAsked, 'leaving the view asks');
-        await app.click('.modal-foot button', 'Anuluj');
-        await app.until(`${noModal} && ${sshShown} && ${labelIs('web-1 edited')}`, 'Anuluj stays in the view with the edit');
-        await showGrid();
-        await app.until(discardAsked, 'leaving asks again');
-        await app.click('.modal-foot button', 'Odrzuć zmiany');
-        await app.until(`${noModal} && !(${sshShown})`, 'grid in front after discarding');
+        await app.until(`${noModal} && !(${sshShown})`, 'grid in front without a question');
         await app.click('.workspace-tabs .ssh-tab');
+        await app.until(`${noModal} && ${sshShown} && ${labelIs('web-1 edited')}`, 'back in the view with the edit');
+        // Closing the SSH tab drops the item: it asks; "Anuluj" keeps the tab, the item and the edit.
+        await app.click('.workspace-tabs .ssh-tab .x');
+        await app.until(discardAsked, 'closing the SSH tab asks');
+        await app.click('.modal-foot button', 'Anuluj');
+        await app.until(`${noModal} && ${sshShown} && ${labelIs('web-1 edited')} && !!document.querySelector('.workspace-tabs .ssh-tab.active')`, 'Anuluj keeps the SSH tab with the edit');
+        await app.click('.workspace-tabs .ssh-tab .x');
+        await app.until(discardAsked, 'closing asks again');
+        await app.click('.modal-foot button', 'Odrzuć zmiany');
+        await app.until(`${noModal} && !document.querySelector('.workspace-tabs .ssh-tab')`, 'SSH tab closed after discarding');
+        await app.click('.rail-tiles [aria-label="SSH"]');
         await app.until(`${sshShown} && ${fullWidth}`, 'back in the view, the discarded pane closed');
         await app.click('.ssh-tile[data-host-id]', 'web-1');
         await app.until(labelIs('web-1'), 'clean host form again');
