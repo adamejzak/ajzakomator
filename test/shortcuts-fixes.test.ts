@@ -36,6 +36,12 @@ describe('terminal clipboard and control keys stay with the terminal', () => {
     expect(reserved('Ctrl+Shift+V', 'files-tree')).toBeNull();
   });
 
+  it('never lets an action take the macOS app menu keys Cmd+Q, Cmd+H or Option+Cmd+H', () => {
+    for (const scope of ['global', 'cell', 'modal', 'editor', 'files-tree'] as const) {
+      for (const text of ['Meta+Q', 'Meta+H', 'Meta+Alt+H']) expect(reserved(text, scope, 'darwin'), `${scope} ${text}`).not.toBeNull();
+    }
+  });
+
   it('refuses the Shift variants of Ctrl with arrows, Home, End and Enter', () => {
     for (const key of ['Left', 'Right', 'Up', 'Down', 'Home', 'End', 'Enter', 'PageUp', 'Backspace', 'Delete']) {
       expect(reserved(`Ctrl+${key}`), key).not.toBeNull();

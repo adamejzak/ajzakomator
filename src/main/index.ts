@@ -22,7 +22,7 @@ import { replaceInProject, searchProject } from './search';
 import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from './sessions';
-import { createSaver, loadState } from './store';
+import { createSaver, flushUntilSaved, loadState, StateUnreadableError } from './store';
 import { updateHandoverCommitted, blockUpdateVersion, canInstallNow, checkForUpdates, getUpdateState, handOver, initUpdater, isPortableBuild, isUpdateDownloaded, onUpdateTargetChange, previousMacUpdate, recheckUpdate, signalMacUpdateReady, updateHandoffStarted, updateTarget, RELEASES_URL, startupCheck, startupDownload, updatesEnabled } from './updater';
 import { createUpdateUiGuard } from './updateUiGuard';
 import { compareVersions, gateSkipVersion, isActiveFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
@@ -88,7 +88,7 @@ import { migrateDataDir } from './dataDirMigration';
 import { updateWindowAlive } from './updateRuntime';
 import { atomicWriteFileSync } from './atomicWrite';
 import { defaultState } from '../shared/state';
-import { createReloadLimiter, createReportLimiter, describeError, rendererReport, TerminalPids, trimNotifications, UNRESPONSIVE_GRACE_MS } from './stability';
+import { createReloadLimiter, createReportLimiter, describeError, rendererReport, trimNotifications, UNRESPONSIVE_GRACE_MS } from './stability';
 
 // ── crash handling ──────────────────────────────────────────────────────────
 // Registered before any other module code runs: a throw below (a locked file, a damaged install) must never leave an invisible
@@ -109,14 +109,23 @@ let quitting = false;
 let gating = false;
 const allowErrorDialog = createDialogLimiter();
 
+/** Run and debug overrides (MC_DATA_DIR, MC_DEBUG_PORT, MC_OFFSCREEN, MC_HOOK_DEBUG) apply to unpackaged builds only. */
+const devEnv = (name: string): string | undefined => (app.isPackaged ? undefined : process.env[name] || undefined);
+let startFailing = false;
+
 /** The start failed: say so, and end the process instead of keeping the lock with no window. */
 function startupFailed(error: unknown): void {
+  if (startFailing) return;
+  startFailing = true;
   const detail = describeError(error);
   crashLog.error(`startup failed: ${detail}`);
   if (!superseded) {
     let language = detectLanguage([]);
     try { language = detectLanguage([app.getLocale()]); } catch { /* not ready yet */ }
-    try { dialog.showErrorBox('unimux', `${translate(language, 'Nie udało się uruchomić unimux.')}\n\n${detail}`); } catch { /* no dialog possible */ }
+    const text = error instanceof StateUnreadableError
+      ? translate(language, 'Nie można odczytać pliku {path}. Inny program (antywirus, OneDrive, kopia zapasowa) może go blokować. Zamknij go i uruchom unimux ponownie.', { path: error.path })
+      : translate(language, 'Nie udało się uruchomić unimux.');
+    try { dialog.showErrorBox('unimux', `${text}\n\n${detail}`); } catch { /* no dialog possible */ }
   }
   app.exit(1);
 }
@@ -145,7 +154,7 @@ const DATA_DIR = migrateDataDir({
   busy: (legacy) => updateWindowAlive(join(legacy, 'update')),
   log: (message) => console.warn(message),
 }).dataDir;
-crashLogger = createUpdaterLogger(join(DATA_DIR, 'crash.log'));
+crashLogger = createUpdaterLogger(join(DATA_DIR, 'crash.log'), { rotateTo: join(DATA_DIR, 'crash.old.log') });
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
@@ -155,18 +164,18 @@ app.setPath('userData', DATA_DIR);
 const APP_USER_MODEL_ID = app.isPackaged ? 'com.unimux.app' : 'com.unimux.app.dev';
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
-if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
+if (devEnv('MC_DEBUG_PORT')) app.commandLine.appendSwitch('remote-debugging-port', devEnv('MC_DEBUG_PORT')!);
 // Module code keeps running after app.quit(), so every later step checks `superseded` instead of assuming the exit is immediate.
 // The lock is keyed by the userData directory (set above), so a run with MC_DATA_DIR only excludes other runs on the same folder:
 // two instances writing one state.json would overwrite each other.
 superseded = !app.requestSingleInstanceLock();
 // The installer is replacing this build's files right now (the update window is showing it); starting would crash.
-if (!superseded && process.platform === 'win32' && app.isPackaged && !process.env.MC_DATA_DIR && updateInstalling(START_BLOCK_MS)) superseded = true;
+if (!superseded && process.platform === 'win32' && app.isPackaged && updateInstalling(START_BLOCK_MS)) superseded = true;
 if (superseded) app.exit(0);
 
 // Carry over state from the app's earliest name (MultiCoding) into the final data directory (never from a second instance).
 const LEGACY_STATE = join(app.getPath('appData'), 'MultiCoding', 'state.json');
-if (!superseded && !process.env.MC_DATA_DIR && !existsSync(join(DATA_DIR, 'state.json')) && existsSync(LEGACY_STATE)) {
+if (!superseded && !devEnv('MC_DATA_DIR') && !existsSync(join(DATA_DIR, 'state.json')) && existsSync(LEGACY_STATE)) {
   try {
     mkdirSync(DATA_DIR, { recursive: true });
     copyFileSync(LEGACY_STATE, join(DATA_DIR, 'state.json'));
@@ -177,7 +186,16 @@ let win: BrowserWindow | null = null;
 /** SSH sessions: created after app.whenReady() (safeStorage needs it), before the window (startSsh). */
 let ssh: SshCoordinator | null = null;
 // A second instance never reads (nor backs up) the state: it only hands over to the first one and exits.
-let state: AppState = superseded ? defaultState(appPlatform(process.platform)) : loadState(DATA_DIR, appPlatform(process.platform), { log: crashLog.warn });
+// A state.json that stays locked ends the start here (with a message): saving the defaults over it would lose the user's data.
+let state: AppState = superseded ? defaultState(appPlatform(process.platform)) : loadStateOrFail();
+function loadStateOrFail(): AppState {
+  try {
+    return loadState(DATA_DIR, appPlatform(process.platform), { log: crashLog.warn });
+  } catch (error) {
+    startupFailed(error);
+    throw error; // nothing below may run (and no saver may write) in a start that failed
+  }
+}
 const tr = (key: MessageKey, params?: MessageParams) => translate(state.settings.language ?? detectLanguage([app.getLocale()]), key, params);
 const saver = createSaver(DATA_DIR, { log: crashLog.warn });
 const usageDeps: FetcherDeps = {
@@ -390,10 +408,8 @@ const refreshBlocked: RefreshOutcome = { kind: 'transient', detail: { reason: 'b
 const familyRenew = gateFamilyRefresh(accounts, () => cswapRoster, (dir) => (login.holdsProfile(dir) ? Promise.resolve(refreshBlocked) : renewProfile(dir)), refreshBlocked);
 usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, familyRenew, refreshBlocked);
 const hooks = new HookServer();
-if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
+if (devEnv('MC_HOOK_DEBUG') === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();
-/** Pids of the running terminals: whatever a shutdown leaves behind is tree-killed. */
-const terminalPids = new TerminalPids();
 /** Codex session ids handed to cells this run (state may lag behind the renderer). */
 const claimedCodex = new Set<string>();
 /** Live notifications - Windows drops click handlers of garbage-collected ones. */
@@ -499,8 +515,8 @@ const mcp = new UnimuxMcpServer(automation);
 
 function createWindow(): void {
   win = new BrowserWindow({
-    width: process.env.MC_OFFSCREEN ? 1100 : 1600,
-    height: process.env.MC_OFFSCREEN ? 700 : 1000,
+    width: devEnv('MC_OFFSCREEN') ? 1100 : 1600,
+    height: devEnv('MC_OFFSCREEN') ? 700 : 1000,
     minWidth: 800,
     minHeight: 500,
     backgroundColor: '#0d0d0d',
@@ -513,14 +529,14 @@ function createWindow(): void {
     show: false,
     webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true },
     // Off-screen, non-focusable window for automated screenshots (docs).
-    ...(process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
+    ...(devEnv('MC_OFFSCREEN') ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
   });
   // The taskbar button shows our icon (not the Electron one), whatever was cached for this identity before.
   if (process.platform === 'win32') {
     try { win.setAppDetails({ appId: APP_USER_MODEL_ID, appIconPath: app.isPackaged ? process.execPath : windowIcon(), appIconIndex: 0 }); } catch { /* the window icon still applies */ }
   }
   win.once('ready-to-show', () => {
-    if (process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show();
+    if (devEnv('MC_OFFSCREEN')) win?.showInactive(); else win?.show();
     void signalUpdateReady();
     signalMacUpdateReady();
     clearGateFailureIfUpdated();
@@ -549,7 +565,7 @@ function createWindow(): void {
   // Windows ends the session without before-quit: the last changes are written now (the renderer was asked to send its own).
   win.on('query-session-end', () => { send('app:before-quit'); });
   win.on('session-end', () => { saver.flush(); });
-  win.webContents.on('did-finish-load', () => { if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); } });
+  win.webContents.on('did-finish-load', () => { hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -568,10 +584,11 @@ let hungReloadRequested = false;
  * reload adopts them (aliveAtStart) and replays their output, so the window is reloaded instead of staying black.
  */
 function onRendererGone(window: BrowserWindow, reason: string, exitCode: number): void {
-  if (reason === 'clean-exit' || quitting || gating || window !== win || !isLive(window)) return;
-  crashLog.error(`renderer gone (${reason}, exit code ${exitCode})`);
+  // The user's reload covers this one crash only: any later one is counted again.
   const asked = hungReloadRequested;
   hungReloadRequested = false;
+  if (reason === 'clean-exit' || quitting || gating || window !== win || !isLive(window)) return;
+  crashLog.error(`renderer gone (${reason}, exit code ${exitCode})`);
   if (asked || allowRendererReload(Date.now())) { reloadWindow(window); return; }
   const options = {
     type: 'error' as const, title: 'unimux',
@@ -647,10 +664,13 @@ function startSsh(): void {
 
 // ── pty host ────────────────────────────────────────────────────────────────
 
+/** Errors the Pty Host reports, at most 20 a minute (a failing terminal in a loop must not fill the disk). */
+const allowHostLog = createReportLimiter();
 ptyHost.on('message', (m: HostToMain) => {
-  if (m.t === 'log') { if (m.level === 'warn') crashLog.warn(m.message); else crashLog.error(m.message); return; }
-  if (m.t === 'spawned') terminalPids.spawned(m.id, m.pid);
-  else if (m.t === 'exit' || m.t === 'spawnError') terminalPids.ended(m.id);
+  if (m.t === 'log') {
+    if (allowHostLog(Date.now())) { if (m.level === 'warn') crashLog.warn(m.message); else crashLog.error(m.message); }
+    return;
+  }
   if ('id' in m && m.id.startsWith(INSTALL_PTY_PREFIX)) { install.onHostMessage(m); return; } // the install window is not a cell
   if ('id' in m && m.id.startsWith('auth:')) return; // login windows are not cells
   if (ssh?.onHostMessage(m)) return;
@@ -675,7 +695,6 @@ function forgetHostTerminals(code: unknown, stderrTail: unknown): boolean {
   install.failActive();
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
   verifiedCodex.clear();
-  terminalPids.clear();
   ssh?.hostCrashed();
   const resumes = resumesConversation([...alive].map((id) => {
     const found = findCell(state, id);
@@ -1294,12 +1313,12 @@ app.on('before-quit', (e) => {
   send('app:before-quit');
   // Give the renderer a moment to push its final state, then wind down terminals cleanly.
   setTimeout(async () => {
-    // Never throws; a save that still fails is logged by the saver.
+    // Never throws; a save that still fails is logged by the saver and tried again below.
     saver.flush();
     try {
       await ptyHost.shutdown();
-      // Terminals the host could not end in time (it ends them one at a time) are tree-killed, so no agent's dev server stays.
-      for (const pid of terminalPids.takeSurvivors()) killProcessTree(pid);
+      // A save that hit a lock gets a few more seconds (well inside the hard limit) instead of being lost.
+      if (saver.hasPending() && !(await flushUntilSaved(saver, 3000))) crashLog.error('the last state changes could not be saved');
       await mcp.stop();
       hooks.stop();
     } catch (err) {

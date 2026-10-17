@@ -30,9 +30,13 @@ const fail = (code: string) => () => { throw Object.assign(new Error(`${code}: o
 describe('data directory migration', () => {
   it('uses MC_DATA_DIR as is and touches nothing', () => {
     put(join(oldDir, 'state.json'), 'old');
-    expect(run({ env: { MC_DATA_DIR: join(appData, 'custom') } })).toEqual({ dataDir: join(appData, 'custom'), action: 'override' });
+    expect(run({ packaged: false, env: { MC_DATA_DIR: join(appData, 'custom') } })).toEqual({ dataDir: join(appData, 'custom'), action: 'override' });
     expect(isLink(oldDir)).toBe(false);
     expect(existsSync(newDir)).toBe(false);
+  });
+
+  it('ignores MC_DATA_DIR in the installed app', () => {
+    expect(run({ env: { MC_DATA_DIR: join(appData, 'custom') } }).dataDir).not.toBe(join(appData, 'custom'));
   });
 
   it('never moves the old directory from a run outside the installed app', () => {

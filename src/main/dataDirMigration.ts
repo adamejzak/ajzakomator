@@ -80,7 +80,8 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
 
 /** Decides the data directory for this run and moves the old one when it is safe to. */
 export function migrateDataDir(o: MigrationOptions): MigrationResult {
-  if (o.env.MC_DATA_DIR) return { dataDir: o.env.MC_DATA_DIR, action: 'override' };
+  // A test or development override: never honoured by the installed app.
+  if (!o.packaged && o.env.MC_DATA_DIR) return { dataDir: o.env.MC_DATA_DIR, action: 'override' };
   const fs = o.fs ?? nodeMigrationFs(o.platform);
   const log = o.log ?? (() => {});
   const now = o.now ?? Date.now;

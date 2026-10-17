@@ -43,7 +43,9 @@ async function boot(): Promise<void> {
     await bootSteps();
   } catch (error) {
     reportError('boot', error);
-    if (!useStore.getState().ready) booted = false;
+    // Before the state arrived the window is blank: the user may try again. Afterwards the app runs; the error is only logged.
+    if (useStore.getState().ready) return;
+    booted = false;
     throw error;
   }
 }
@@ -77,18 +79,24 @@ function listenEarly(): void {
   window.mc.on('cli:changed', applyCliStatus);
 }
 
+/** One step of the start after the state arrived: a failure is reported and the start goes on (the listeners after it still register). */
+function bootStep(step: () => void): void {
+  try { step(); } catch (error) { reportError('boot', error); }
+}
+
 async function bootRest(mcpInfo: Awaited<ReturnType<typeof window.mc.getMcpInfo>>): Promise<void> {
   // Session states and open prompts of SSH cells (a reload finds them in main, R7).
-  await initSsh().catch(() => undefined);
+  await initSsh().catch((error) => reportError('boot', error));
   setUi({ mcpInfo });
   const state = getS();
 
   const missing: Record<string, true> = {};
   await Promise.all(state.projects.map(async (p) => {
-    if (!(await window.mc.pathExists(p.path))) missing[p.id] = true;
+    // A project folder that cannot be checked counts as present (the cell reports a missing folder when it starts).
+    if (!(await window.mc.pathExists(p.path).catch((error) => { reportError('boot', error); return true; }))) missing[p.id] = true;
   }));
   setUi({ missingPaths: missing, focusedCellId: activeTab(activeProject(state))?.cells[0]?.id ?? null });
-  refreshSessionTitles(activeProject(state)?.path);
+  bootStep(() => refreshSessionTitles(activeProject(state)?.path));
   let lastProject = state.activeProjectId;
   useStore.subscribe((st) => {
     if (st.s.activeProjectId === lastProject) return;
@@ -161,9 +169,9 @@ async function bootRest(mcpInfo: Awaited<ReturnType<typeof window.mc.getMcpInfo>
   });
   // Restore background cells with unfinished assigned work, without changing the user's selection.
   for (const task of state.automation.tasks) {
-    if (!['completed', 'cancelled'].includes(task.status)) ensureStarted(task.cellId);
+    if (!['completed', 'cancelled'].includes(task.status)) bootStep(() => ensureStarted(task.cellId));
   }
-  initBackgroundLoader();
+  bootStep(initBackgroundLoader);
 }
 
 /**

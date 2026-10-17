@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BAK_REFRESH_MS, createSaver, loadState, retryDelayMs, writeStateNow } from '../src/main/store';
+import { BAK_REFRESH_MS, createSaver, flushUntilSaved, loadState, retryDelayMs, StateUnreadableError, writeStateNow } from '../src/main/store';
 import { addProject, defaultState } from '../src/shared/state';
 import type { AppState } from '../src/shared/types';
 
@@ -104,5 +104,52 @@ describe('createSaver', () => {
     saver.save(withProject('third'));
     saver.flush();
     expect(baks).toEqual(['second']);
+  });
+});
+
+describe('a locked state.json', () => {
+  const locked = () => { throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); };
+
+  it('is read again for a few seconds, then the start fails without touching it', () => {
+    writeStateNow(dir, withProject('mine'));
+    writeFileSync(join(dir, 'state.json.bak'), 'older');
+    const before = readFileSync(join(dir, 'state.json'), 'utf8');
+    const waits: number[] = [];
+    expect(() => loadState(dir, 'win32', { readFile: locked, sleep: (ms) => waits.push(ms), lockedWaitMs: 4000 })).toThrow(StateUnreadableError);
+    expect(waits.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(4000);
+    expect(readFileSync(join(dir, 'state.json'), 'utf8')).toBe(before);
+    expect(readFileSync(join(dir, 'state.json.bak'), 'utf8')).toBe('older');
+    // A copy is kept when the file can be copied at all.
+    const kept = readdirSync(dir).filter((f) => f.startsWith('state.json.bak-'));
+    expect(kept.map((f) => readFileSync(join(dir, f), 'utf8'))).toEqual([before]);
+  });
+
+  it('loads normally when the lock goes away during the wait', () => {
+    writeStateNow(dir, withProject('mine'));
+    let tries = 0;
+    const flaky = (path: string) => { if (tries++ < 3) locked(); return readFileSync(path, 'utf8'); };
+    expect(loadState(dir, 'win32', { readFile: flaky, sleep: () => {} }).projects[0].name).toBe('mine');
+  });
+
+  it('removes temp files of writes that never finished, but not the files of this process', () => {
+    writeStateNow(dir, withProject('mine'));
+    for (const name of ['state.json.tmp', 'state.json.99999.abc1.tmp', 'state.json.bak.99999.x.tmp', `state.json.${process.pid}.zz.tmp`, 'other.json.99999.a.tmp']) writeFileSync(join(dir, name), 'x');
+    loadState(dir);
+    expect(readdirSync(dir).filter((f) => f.endsWith('.tmp')).sort()).toEqual(['other.json.99999.a.tmp', `state.json.${process.pid}.zz.tmp`]);
+  });
+});
+
+describe('flushUntilSaved', () => {
+  it('tries a failed last save again until it works or the time is up', async () => {
+    let pending = true;
+    let attempts = 0;
+    const saver = { flush: () => { attempts++; if (attempts >= 3) pending = false; return !pending; }, hasPending: () => pending };
+    let clock = 0;
+    expect(await flushUntilSaved(saver, 3000, 250, async (ms) => { clock += ms; }, () => clock)).toBe(true);
+    expect(attempts).toBe(3);
+    const stuck = { flush: () => false, hasPending: () => true };
+    clock = 0;
+    expect(await flushUntilSaved(stuck, 3000, 250, async (ms) => { clock += ms; }, () => clock)).toBe(false);
+    expect(clock).toBeGreaterThanOrEqual(3000);
   });
 });
