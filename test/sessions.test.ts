@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { describe, expect, it } from 'vitest';
-import { claudeCacheStats, claudeProjectDirName, clearClaudeCache, findRecentCodexSession, listClaudeSessions, listClaudeSessionsAsync, listCodexSessions } from '../src/main/sessions';
+import { afterEach, describe, expect, it } from 'vitest';
+import { claudeCacheStats, claudeProjectDirName, clearClaudeCache, clearCodexCache, codexCacheStats, findRecentCodexSession, listClaudeSessions, listClaudeSessionsAsync, listCodexSessionsAsync, listSessionsAsync } from '../src/main/sessions';
 
 const PROJECT = 'D:\\Projekty\\bot-discord';
 const jsonl = (rows: unknown[]) => rows.map((r) => (typeof r === 'string' ? r : JSON.stringify(r))).join('\n') + '\n';
@@ -87,16 +87,93 @@ describe('sessions', () => {
     expect(await listClaudeSessionsAsync(home, PROJECT)).toEqual(sync);
   });
 
-  it('lists codex sessions for the project only, skipping injected context', () => {
-    const list = listCodexSessions(fakeHome(), PROJECT.toLowerCase() + '\\');
+  it('lists codex sessions for the project only, skipping injected context', async () => {
+    const list = await listCodexSessionsAsync(fakeHome(), PROJECT.toLowerCase() + '\\');
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ cli: 'codex', id: 'c1', title: 'dodaj testy' });
   });
 
-  it('finds a recently written codex session not bound elsewhere', () => {
+  it('finds a recently written codex session not bound elsewhere', async () => {
     const home = fakeHome();
-    expect(findRecentCodexSession(home, PROJECT, 60000, new Set())).toBe('c1');
-    expect(findRecentCodexSession(home, PROJECT, 60000, new Set(['c1']))).toBeNull();
-    expect(findRecentCodexSession(home, 'D:\Nowhere', 60000, new Set())).toBeNull();
+    expect(await findRecentCodexSession(home, PROJECT, 60000, new Set())).toBe('c1');
+    expect(await findRecentCodexSession(home, PROJECT, 60000, new Set(['c1']))).toBeNull();
+    expect(await findRecentCodexSession(home, 'D:\Nowhere', 60000, new Set())).toBeNull();
+  });
+});
+
+describe('incremental session reading', () => {
+  const homes: string[] = [];
+  const home = () => { const h = mkdtempSync(join(tmpdir(), 'mc-inc-')); homes.push(h); return h; };
+  afterEach(() => { for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true }); });
+
+  it('keeps the head of a growing Claude transcript and re-reads only its tail', async () => {
+    clearClaudeCache();
+    const h = home();
+    const cdir = join(h, '.claude', 'projects', claudeProjectDirName(PROJECT));
+    mkdirSync(cdir, { recursive: true });
+    const file = join(cdir, 'big.jsonl');
+    const filler = (n: number) => Array.from({ length: n }, (_, i) => ({ type: 'assistant', sessionId: 'big', message: { content: 'x'.repeat(900) + i } }));
+    writeFileSync(file, jsonl([
+      { type: 'user', message: { content: 'pierwszy prompt' }, sessionId: 'big', cwd: PROJECT, timestamp: '2026-10-03T10:00:00Z' },
+      { type: 'ai-title', aiTitle: 'Tytul z glowy', sessionId: 'big' },
+      ...filler(400), // well over the 256 KB head
+    ]));
+    const first = await listClaudeSessionsAsync(h, PROJECT);
+    expect(first[0]).toMatchObject({ id: 'big', title: 'Tytul z glowy', cwd: PROJECT, startedAt: Date.parse('2026-10-03T10:00:00Z') });
+    expect(claudeCacheStats()).toMatchObject({ parses: 1, tailReads: 0 });
+
+    appendFileSync(file, jsonl([...filler(5), { type: 'ai-title', aiTitle: 'Nowy tytul', sessionId: 'big' }]));
+    const later = new Date(Date.now() + 5000);
+    utimesSync(file, later, later);
+    expect((await listClaudeSessionsAsync(h, PROJECT))[0]).toMatchObject({ id: 'big', title: 'Nowy tytul', cwd: PROJECT });
+    expect(claudeCacheStats()).toMatchObject({ parses: 1, tailReads: 1 });
+
+    appendFileSync(file, jsonl([{ type: 'custom-title', customTitle: 'Moja nazwa', sessionId: 'big' }]));
+    const latest = new Date(Date.now() + 10000);
+    utimesSync(file, latest, latest);
+    expect(listClaudeSessions(h, PROJECT)[0].title).toBe('Moja nazwa'); // the sync reader shares the cache
+    expect(claudeCacheStats()).toMatchObject({ parses: 1, tailReads: 2 });
+
+    // A cold read gives the same answer as the incremental one.
+    const warm = await listClaudeSessionsAsync(h, PROJECT);
+    clearClaudeCache();
+    expect(await listClaudeSessionsAsync(h, PROJECT)).toEqual(warm);
+
+    // A rewritten (shorter) file is parsed in full again.
+    writeFileSync(file, jsonl([{ type: 'user', message: { content: 'od nowa' }, sessionId: 'big', cwd: PROJECT }]));
+    expect((await listClaudeSessionsAsync(h, PROJECT))[0].title).toBe('od nowa');
+    expect(claudeCacheStats().parses).toBe(2);
+  });
+
+  it('walks Codex day folders newest first, stops early and lists an unchanged folder only once', async () => {
+    clearCodexCache();
+    const h = home();
+    const meta = (id: string) => JSON.stringify({ type: 'session_meta', payload: { id, cwd: PROJECT, timestamp: '2026-10-06T10:00:00Z' } });
+    const user = (text: string) => JSON.stringify({ type: 'event_msg', payload: { type: 'user_message', message: text } });
+    const write = (day: string, count: number, prefix: string) => {
+      const dir = join(h, '.codex', 'sessions', ...day.split('/'));
+      mkdirSync(dir, { recursive: true });
+      for (let i = 0; i < count; i++) {
+        const id = `${prefix}${String(i).padStart(2, '0')}`;
+        writeFileSync(join(dir, `rollout-${day.replace(/\//g, '-')}T10-00-${String(i).padStart(2, '0')}-${id}.jsonl`), `${meta(id)}\n${user(`zadanie ${id}`)}\n`);
+      }
+    };
+    write('2025/12/31', 2, 'old');
+    write('2026/09/30', 3, 'sep');
+    write('2026/10/02', 3, 'oct');
+    const list = await listCodexSessionsAsync(h, PROJECT);
+    expect(list.map((s) => s.id).sort()).toEqual(['oct00', 'oct01', 'oct02', 'old00', 'old01', 'sep00', 'sep01', 'sep02']);
+    const reads = codexCacheStats().dirReads;
+    expect(reads).toBe(1 + 2 + 3 + 3); // sessions, two years, three months, three days
+
+    // Within the shared window every worktree path reuses the same index (no folder is listed again).
+    await listSessionsAsync(h, join(PROJECT, 'wt'));
+    expect(codexCacheStats().dirReads).toBe(reads);
+
+    // The bind lookup needs only the 80 newest files: once the newest day has them, older folders are never listed.
+    clearCodexCache();
+    write('2026/10/02', 80, 'new');
+    expect(await findRecentCodexSession(h, PROJECT, 60000, new Set())).toMatch(/^new|^oct/);
+    expect(codexCacheStats().dirReads).toBe(4); // sessions, 2026, 10, 02
   });
 });

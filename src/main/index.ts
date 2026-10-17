@@ -614,14 +614,15 @@ function boundCodexIds(): Set<string> {
  * Codex picks its own session id. The renderer calls this right after a Codex cell finished a
  * turn: its rollout file was just written, so the freshest unclaimed one in that cwd is the cell's.
  */
-ipcMain.handle('codex:bind', (_e, cellId: string, cwd: string) => {
+ipcMain.handle('codex:bind', async (_e, cellId: string, cwd: string) => {
   const peers = state.projects.flatMap((p) => p.tabs.flatMap((t) => t.cells
     .filter((c) => alive.has(c.id) && getProfile(state, c.profileId).cli === 'codex' && (c.worktree?.path ?? p.path) === cwd)));
   // Shared-directory simultaneous starts are ambiguous. Never guess a message recipient.
   if (peers.length !== 1 || peers[0].id !== cellId) return null;
   if (codexHooked.has(cellId)) return null; // its notify hook binds the exact thread; a timestamp guess must never overwrite it
-  const id = findRecentCodexSession(homedir(), cwd, 20_000, boundCodexIds());
-  if (!id) return null;
+  const id = await findRecentCodexSession(homedir(), cwd, 20_000, boundCodexIds());
+  // Re-checked after the file reads: the cell may have been closed, hooked or the id claimed meanwhile.
+  if (!id || !alive.has(cellId) || codexHooked.has(cellId) || boundCodexIds().has(id)) return null;
   claimedCodex.add(id);
   send('cell:session', cellId, { cli: 'codex', id, confirmed: false });
   return id;
