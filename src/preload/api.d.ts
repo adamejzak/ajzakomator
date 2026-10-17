@@ -98,6 +98,8 @@ export interface McApi {
   openInEditor(path: string): void;
   clipboardRead(): Promise<string>;
   clipboardWrite(text: string): void;
+  /** A copied private key: main clears the clipboard after a minute (or on quit) if it still holds this text. False when refused. */
+  clipboardWriteSecret(text: string): Promise<boolean>;
   windowsBuild: number;
   getUpdate(): Promise<UpdateState & { currentVersion: string }>;
   checkUpdates(): Promise<void>;

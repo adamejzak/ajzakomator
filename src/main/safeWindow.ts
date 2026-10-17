@@ -15,6 +15,17 @@ export function isLive<T extends { isDestroyed(): boolean; webContents: { isDest
   try { return !win.isDestroyed() && !win.webContents.isDestroyed(); } catch { return false; }
 }
 
+/**
+ * The IPC sender check (R9) of ssh:*, accounts:*, auth:*, usage:refresh and the secret clipboard: only the app window's own
+ * webContents (its main frame), and only while it is alive. Another window (a login or update window, a foreign frame) is refused.
+ */
+export function isFromWindow(win: { isDestroyed(): boolean; webContents: { isDestroyed(): boolean; mainFrame?: unknown } } | null | undefined, event: { sender: unknown; senderFrame?: unknown }): boolean {
+  if (!isLive(win) || event.sender !== win.webContents) return false;
+  // Electron passes the calling frame: a subframe of the app window (none today) is refused too.
+  const main = win.webContents.mainFrame;
+  return main === undefined || !('senderFrame' in event) || event.senderFrame === main;
+}
+
 /** Sends to a window only if it is still alive; true when the message was handed over. Never throws. */
 export function safeSend(win: WindowLike | null | undefined, channel: string, ...args: unknown[]): boolean {
   if (!isLive(win)) return false;

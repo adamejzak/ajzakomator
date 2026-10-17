@@ -27,7 +27,7 @@ import { updateHandoverCommitted, blockUpdateVersion, canInstallNow, checkForUpd
 import { createUpdateUiGuard } from './updateUiGuard';
 import { compareVersions, gateSkipVersion, isActiveFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
 import { createGateWindow, type GateTexts } from './gateWindow';
-import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
+import { createDialogLimiter, decideUncaught, handoffWatchdogAction, isFromWindow, isLive, safeSend, shouldRelaunchAfterQuit, SHUTDOWN_HARD_LIMIT_MS, withLiveWindow } from './safeWindow';
 import { createUpdaterLogger } from './updaterLog';
 import { START_BLOCK_MS, abortUpdateWindow, scheduleUpdateCleanup, signalUpdateReady, updateInstalling, waitForUpdateWindowGone } from './updateSplash';
 import { createChangelog } from './changelog';
@@ -37,6 +37,8 @@ import { createTokenFetch } from './accounts/tokenTransport';
 import { handleMakeMain } from './accounts/makeMain';
 import { AccountsStore } from './accounts/store';
 import { dismissAccountNotice, gateFamilyRefresh, gateProfileRefresh, handleAdoptCopy, handleRemoveAccount, loginBlock } from './accounts/guards';
+import { registerAccountIpc } from './accountsIpc';
+import { createSecretClipboard } from '../shared/sshClipboard';
 import { clearPendingSwap, hasPendingSwap, isSwapRunning, isSwapUnresolved, recoverInterruptedSwap, swapPaths, type SwapDeps } from './accounts/swap';
 import {
   activateAccount, activationJournalPending, checkActivationTarget, clearPendingActivation, isActivationRecoveryPending, recoverActivationWithRetry,
@@ -121,6 +123,8 @@ if (!superseded && process.platform === 'win32' && app.isPackaged && !process.en
 if (superseded) app.exit(0);
 
 let win: BrowserWindow | null = null;
+/** The sender check of every IPC channel that changes accounts, logins, usage, SSH data or the secret clipboard (R9). */
+const fromAppWindow = (event: { sender: unknown; senderFrame?: unknown }): boolean => isFromWindow(win, event);
 /** SSH sessions: created after app.whenReady() (safeStorage needs it), before the window (startSsh). */
 let ssh: SshCoordinator | null = null;
 let state: AppState = loadState(DATA_DIR, appPlatform(process.platform));
@@ -521,7 +525,7 @@ function startSsh(): void {
     readKeyFile: readKeyFileFromDisk,
     writeKeyFile: async (path, text) => writePrivateFile(path, text),
     hostname: () => hostname(),
-  }), (event) => isLive(win) && event.sender === win!.webContents);
+  }), fromAppWindow);
 }
 
 // ── pty host ────────────────────────────────────────────────────────────────
@@ -820,6 +824,28 @@ ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) =>
 });
 ipcMain.handle('clipboard:read', () => clipboard.readText());
 ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text));
+/** A copied private key (0.9.3): the clearing waits here, not in the window, so a reload or quit within the minute still clears it. */
+const secretClipboard = createSecretClipboard({
+  read: () => clipboard.readText(),
+  write: (text) => clipboard.writeText(text),
+  digest: (text) => createHash('sha256').update(text).digest('hex'),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+});
+/** Clears a still waiting copied key now; resolves within `ms` whatever the clipboard does. */
+const flushSecretClipboard = (ms = 400): Promise<void> =>
+  Promise.race([secretClipboard.flush().catch(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, ms))]);
+ipcMain.handle('clipboard:writeSecret', async (e, text: unknown) => {
+  if (!fromAppWindow(e) || typeof text !== 'string' || !text) return false;
+  await secretClipboard.copy(text);
+  return true;
+});
+// A quit that skips the wind-down below (an update taking over) still clears a waiting key before the process ends.
+app.on('will-quit', (e) => {
+  if (!secretClipboard.pending()) return;
+  e.preventDefault();
+  void flushSecretClipboard().then(() => app.exit(0));
+});
 ipcMain.on('shell:openExternal', (_e, address: string) => {
   try { const url = new URL(address); if (['http:', 'https:'].includes(url.protocol)) void shell.openExternal(url.href); } catch { /* invalid address */ }
 });
@@ -834,56 +860,59 @@ const changelog = createChangelog({
   },
 });
 ipcMain.handle('changelog:get', (_e, force: boolean) => changelog.get(force));
-ipcMain.handle('usage:get', () => usage.getState());
-ipcMain.handle('usage:refresh', () => usage.refresh(true));
-ipcMain.handle('auth:start', (_e, request: unknown) => {
-  if (typeof request !== 'object' || request === null || Array.isArray(request)) return { ok: false, error: 'invalid request' };
-  return loginBlock(guardDeps, request).then((block) => (block ? { ok: false as const, error: block } : login.start(request as LoginRequest)));
-});
-ipcMain.on('auth:cancel', (_e, id: unknown) => { if (typeof id === 'string') login.cancel(id); });
-ipcMain.handle('accounts:remove', (_e, id: unknown) => handleRemoveAccount({
-  ...guardDeps,
-  isLive: (accountId) => accounts.live()?.recordId === accountId || custodyOf(accounts.get(accountId) ?? {}) === 'live',
-  cancelLogin: (accountId) => login.cancelFor(accountId),
-  remove: (accountId) => accounts.remove(accountId),
-  onRemoved: () => { void usage.refresh(true, true); },
-}, id));
-ipcMain.handle('accounts:makeMain', async (_e, id: unknown) => {
-  const result = await handleMakeMain({
+// Accounts, login and usage (0.9.3): everything that changes something only answers the app window (accountsIpc.ts).
+registerAccountIpc(ipcMain, {
+  getUsage: () => usage.getState(),
+  refreshUsage: () => usage.refresh(true),
+  startLogin: (request) => {
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) return { ok: false, error: 'invalid request' };
+    return loginBlock(guardDeps, request).then((block) => (block ? { ok: false as const, error: block } : login.start(request as LoginRequest)));
+  },
+  cancelLogin: (id) => { if (typeof id === 'string') login.cancel(id); },
+  removeAccount: (id) => handleRemoveAccount({
+    ...guardDeps,
+    isLive: (accountId) => accounts.live()?.recordId === accountId || custodyOf(accounts.get(accountId) ?? {}) === 'live',
+    cancelLogin: (accountId) => login.cancelFor(accountId),
+    remove: (accountId) => accounts.remove(accountId),
+    onRemoved: () => { void usage.refresh(true, true); },
+  }, id),
+  makeMain: async (id) => {
+    const result = await handleMakeMain({
+      loginActive: () => login.isActive(),
+      validate: (accountId) => checkActivationTarget(activateDeps(), accountId),
+      swap: (accountId) => activateAccount(activateDeps(), accountId),
+      onSwapped: () => { if (typeof id === 'string') void usage.refresh(true, true, `claude:${id}`); },
+    }, id);
+    void pushSwapPending();
+    return result;
+  },
+  /** "Renew this copy in unimux": the user confirmed that a saved copy cswap also lists is the app's own login. */
+  adoptCopy: (id) => handleAdoptCopy({
+    ...guardDeps,
     loginActive: () => login.isActive(),
-    validate: (accountId) => checkActivationTarget(activateDeps(), accountId),
-    swap: (accountId) => activateAccount(activateDeps(), accountId),
-    onSwapped: () => { if (typeof id === 'string') void usage.refresh(true, true, `claude:${id}`); },
-  }, id);
-  void pushSwapPending();
-  return result;
-});
-/** "Renew this copy in unimux": the user confirmed that a saved copy cswap also lists is the app's own login. */
-ipcMain.handle('accounts:adoptCopy', (e, id: unknown) => handleAdoptCopy({
-  ...guardDeps,
-  loginActive: () => login.isActive(),
-  get: (accountId) => accounts.get(accountId),
-  live: () => accounts.live(),
-  setFamily: (accountId, family) => accounts.setFamily(accountId, family),
-  onAdopted: (accountId) => { void usage.refresh(true, true, `claude:${accountId}`); },
-}, isLive(win) && e.sender === win!.webContents, id));
-ipcMain.handle('accounts:swapPending', () => hasPendingSwap(swapDeps()).catch(() => true));
-/** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
-ipcMain.handle('accounts:clearSwapPending', async () => {
-  // A recovery still waiting for Claude Code's locks can repair the state itself: its backups are not deleted meanwhile
-  // (the panel says so and that the app retries).
-  if (isActivationRecoveryPending()) return { ok: false, error: 'locked' as const };
-  const cleared = await clearPendingActivation(activateDeps(), () => clearPendingSwap(swapDeps()));
-  void pushSwapPending();
-  return { ok: cleared };
-});
-ipcMain.handle('accounts:dismissNotice', (_e, id: unknown) => {
-  try {
-    dismissAccountNotice(accounts, id);
-  } finally {
-    send('usage:state', usage.getState());
-  }
-});
+    get: (accountId) => accounts.get(accountId),
+    live: () => accounts.live(),
+    setFamily: (accountId, family) => accounts.setFamily(accountId, family),
+    onAdopted: (accountId) => { void usage.refresh(true, true, `claude:${accountId}`); },
+  }, true, id), // the sender was checked by registerAccountIpc
+  swapPending: () => hasPendingSwap(swapDeps()).catch(() => true),
+  /** The user confirmed that the emergency copy of an unresolved swap may be deleted for good. */
+  clearSwapPending: async () => {
+    // A recovery still waiting for Claude Code's locks can repair the state itself: its backups are not deleted meanwhile
+    // (the panel says so and that the app retries).
+    if (isActivationRecoveryPending()) return { ok: false, error: 'locked' as const };
+    const cleared = await clearPendingActivation(activateDeps(), () => clearPendingSwap(swapDeps()));
+    void pushSwapPending();
+    return { ok: cleared };
+  },
+  dismissNotice: (id) => {
+    try {
+      dismissAccountNotice(accounts, id);
+    } finally {
+      send('usage:state', usage.getState());
+    }
+  },
+}, fromAppWindow);
 usage.onChange((snapshot) => send('usage:state', snapshot));
 ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
@@ -1102,11 +1131,15 @@ process.on('uncaughtException', (error) => {
 /** Ends the process; a launch that was swallowed during the wind-down is repeated, unless an update took over. */
 function exitNow(): void {
   if (shouldRelaunchAfterQuit(relaunchRequested, updateHandoffStarted())) { try { app.relaunch(); } catch { /* nothing else to do */ } }
-  app.exit(0);
+  // A key copied during the wind-down is cleared too (before-quit already cleared the earlier one).
+  if (secretClipboard.pending()) void flushSecretClipboard().then(() => app.exit(0));
+  else app.exit(0);
 }
 
 app.on('before-quit', (e) => {
   clearTimeout(handoffWatchdog);
+  // A copied private key does not outlive the app in the clipboard, however the quit goes on (the wind-down below waits).
+  void flushSecretClipboard();
   // The installer took over before anything was started, so there is nothing to wind down.
   if (quitting || gating || superseded) return;
   e.preventDefault();
