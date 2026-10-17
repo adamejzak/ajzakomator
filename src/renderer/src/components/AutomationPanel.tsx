@@ -57,6 +57,13 @@ export function AutomationPanel() {
     finally { setBusy(false); }
   };
   const copy = (text: string) => { window.mc.clipboardWrite(text); toast(tr('Skopiowano. Wklej do wybranego agenta.')); };
+  /** Removes finished items: the given ones, or every closed task / read message of the project. */
+  const remove = (kind: 'task' | 'message', ids?: string[]) => {
+    if (!project) return;
+    void run('remove_items', { projectId: project.id, kind, ...(ids ? { ids } : {}) }).then((ok) => { if (ok && kind === 'task' && ids) setSelectedTaskId(null); });
+  };
+  const finishedTasks = tasks.filter((task) => ['completed', 'cancelled'].includes(task.status)).length;
+  const readMessages = messages.filter((message) => message.readAt).length;
   const delivery = (value: string) => tr(value === 'native' ? 'Przekazano do sesji' : value === 'startup' ? 'Prompt startowy' : 'W skrzynce agenta');
 
   return <section className="automation-panel" aria-label={tr('Zadania i wiadomości agentów')}>
@@ -115,6 +122,10 @@ export function AutomationPanel() {
         {tab === 'tasks' && <>
           {selectedTaskId && <button className="btn small task-back" onClick={() => setSelectedTaskId(null)}>← {tr('Wróć do zadań')}</button>}
           {!tasks.length && <p className="automation-empty">{tr('Brak zadań. Przydziel pierwsze zadanie agentowi.')}</p>}
+          {!selectedTaskId && finishedTasks > 0 && <div className="row wrap">
+            <span className="muted grow">{tr('Zakończone zadania i przeczytane wiadomości starsze niż 7 dni są usuwane automatycznie.')}</span>
+            <button className="btn small" disabled={busy} onClick={() => remove('task')}>{tr('Usuń zakończone')} ({finishedTasks})</button>
+          </div>}
           <div className={selectedTaskId ? 'task-detail-list' : 'task-card-grid'}>
           {[...tasks].reverse().filter((task) => !selectedTaskId || task.id === selectedTaskId).map((task) => <article className={`automation-card task-${task.status} ${selectedTaskId ? 'task-detail' : 'task-summary'}`} key={task.id}>
             {!selectedTaskId ? <button className="task-open" onClick={() => { setSelectedTaskId(task.id); setComposing(false); }}>
@@ -140,6 +151,7 @@ export function AutomationPanel() {
                 {task.delivery === 'pending' && <button className="btn small" disabled={busy || state.automation.paused} onClick={() => void run('deliver_task', { taskId: task.id })}>{tr('Ponów dostarczenie')}</button>}
                 <button className="btn small" disabled={busy} onClick={() => void run('update_task', { taskId: task.id, status: 'cancelled' })}>{tr('Anuluj zadanie')}</button>
               </>}
+              {['completed', 'cancelled'].includes(task.status) && <button className="btn small" disabled={busy} onClick={() => remove('task', [task.id])}>{tr('Usuń')}</button>}
             </div>
           </>}
           </article>)}
@@ -147,6 +159,10 @@ export function AutomationPanel() {
         </>}
         {tab === 'messages' && <>
           {!messages.length && <p className="automation-empty">{tr('Brak wiadomości')}</p>}
+          {readMessages > 0 && <div className="row wrap">
+            <span className="muted grow">{tr('Zakończone zadania i przeczytane wiadomości starsze niż 7 dni są usuwane automatycznie.')}</span>
+            <button className="btn small" disabled={busy} onClick={() => remove('message')}>{tr('Usuń przeczytane')} ({readMessages})</button>
+          </div>}
           {[...messages].reverse().map((message) => <article className="automation-card" key={message.id}>
             <div className="row"><strong>{label(message.fromCellId)} → {label(message.toCellId)}</strong><span className="grow" /><span className="muted">{message.readAt ? tr('Przeczytane') : delivery(message.delivery)}</span></div>
             <p className="automation-text">{message.text}</p>
@@ -155,6 +171,7 @@ export function AutomationPanel() {
               <button className="btn small" onClick={() => copy(`[Unimux message ${message.id}]\n${message.text}\nUse read_inbox with acknowledge:true to mark it read.`)}>{tr('Kopiuj prompt')}</button>
               {message.delivery === 'pending' && !message.readAt && <button className="btn small" disabled={busy || state.automation.paused} onClick={() => void run('deliver_message', { messageId: message.id })}>{tr('Ponów dostarczenie')}</button>}
               {!message.readAt && <button className="btn small" disabled={busy} onClick={() => void run('acknowledge_message', { messageId: message.id })}>{tr('Oznacz jako przeczytane')}</button>}
+              {message.readAt && <button className="btn small" disabled={busy} onClick={() => remove('message', [message.id])}>{tr('Usuń')}</button>}
             </div>
           </article>)}
         </>}

@@ -10,6 +10,8 @@ export const DEFAULT_PROFILES: Profile[] = [
 
 /** Profiles shipped by earlier versions, folded into their base profile. */
 export const RETIRED_PROFILES: Record<string, string> = { 'claude-opus': 'claude', 'codex-high': 'codex' };
+/** How long Codex waits for one unimux MCP tool call (its default is 60 s). */
+export const MCP_TOOL_TIMEOUT_SEC = 180;
 
 /** PowerShell single-quoted literal. */
 export const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
@@ -67,6 +69,8 @@ export function buildCliCommand(profile: Profile, opts: LaunchOptions): string |
         // cmd does not interpret TOML single quotes; these generated values contain no spaces/apostrophes.
         parts.push('-c', opts.shell === 'cmd' ? `mcp_servers.unimux.${key}='${value}'` : shellQuote(setting, opts.shell));
       }
+      // Codex gives a tool 60 s by default; create_grid with worktrees and close_grid can take longer (a number: no quoting).
+      parts.push('-c', `mcp_servers.unimux.tool_timeout_sec=${MCP_TOOL_TIMEOUT_SEC}`);
     }
   } else {
     return null;

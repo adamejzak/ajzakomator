@@ -1,4 +1,4 @@
-import { automationSchemas, taskPrompt, type AgentMessage, type AgentRole, type AgentRuntimeStatus, type AgentTask, type AutomationOperation } from '../shared/automation';
+import { automationSchemas, isClosedTask, projectCount, pruneAutomation, PROJECT_ITEM_LIMIT, taskPrompt, type AgentMessage, type AgentRole, type AgentRuntimeStatus, type AgentTask, type AutomationOperation, type AutomationState } from '../shared/automation';
 import { CELL_COLORS, closeTab, addTab, findCell, getProfile, setActiveTab, uid, updateCell, upsertPreset, upsertSnippet } from '../shared/state';
 import { layoutForCount, layoutFromRows } from '../shared/layout';
 import type { AppState, Cell, Tab, Worktree } from '../shared/types';
@@ -19,10 +19,16 @@ export interface AutomationDependencies {
 }
 const READS = new Set<AutomationOperation>(['get_context', 'read_inbox', 'list_agents', 'list_library', 'get_snippet', 'get_tasks', 'get_messages', 'wait_for']);
 const CLOSED = new Set(['completed', 'cancelled']);
-/** Fast enough to feel instant, cheap because the state object is only inspected when its identity changed. */
-const WAIT_POLL_MS = 200;
-const UI_ONLY = new Set<AutomationOperation>(['set_paused', 'set_role', 'mark_pasted']);
-const DELIVERY_LIMIT = 500;
+/** wait_for wakes on every state change; this safety tick only covers a change it could have missed. */
+const WAIT_POLL_MS = 1000;
+const UI_ONLY = new Set<AutomationOperation>(['set_paused', 'set_role', 'mark_pasted', 'remove_items']);
+const taskLimit = `Task limit reached (${PROJECT_ITEM_LIMIT} open tasks in this project). Complete or cancel some first.`;
+const messageLimit = `Message limit reached (${PROJECT_ITEM_LIMIT} unread messages in this project). Read some first.`;
+
+/** How long an identical create_grid / add_agents / close_grid call of the same agent returns the first call's answer. */
+export const IDEMPOTENT_MS = 5 * 60_000;
+const CANCELLED = 'The request ended (the MCP client disconnected or timed out) before the grid was created; nothing was kept. Retry if it is still wanted.';
+interface IdempotentEntry { at: number; controller: AbortController; callers: number; running: boolean; result: Promise<unknown> }
 
 /** Runtime statuses of the cells; `onChange` hears every real change (the Automation panel is told instead of polling). */
 export class StatusMap extends Map<string, AgentRuntimeStatus> {
@@ -55,6 +61,7 @@ export class AutomationService {
     return ids;
   }
   private delivering = new Set<string>();
+  private recent = new Map<string, IdempotentEntry>();
   constructor(readonly state: StateController, private readonly deps: AutomationDependencies) {}
 
   private actor(cellId: string) {
@@ -97,7 +104,7 @@ export class AutomationService {
       this.actor(actorId);
       if (UI_ONLY.has(operation)) throw new Error('This operation is controlled by the user.');
     }
-    if (this.state.get().automation.paused && !READS.has(operation) && !['set_paused', 'set_role', 'update_task', 'acknowledge_message'].includes(operation) && !(operation === 'create_grid' && !actorId)) {
+    if (this.state.get().automation.paused && !READS.has(operation) && !['set_paused', 'set_role', 'update_task', 'acknowledge_message', 'remove_items'].includes(operation) && !(operation === 'create_grid' && !actorId)) {
       throw new Error('Automation is paused by the user.');
     }
     switch (operation) {
@@ -114,7 +121,7 @@ export class AutomationService {
         const { project } = this.actor(actorId);
         const snapshot = this.state.get();
         const own = snapshot.automation.tasks.filter((t) => t.projectId === project.id && t.cellId === actorId && (!a.openOnly || !CLOSED.has(t.status)));
-        const tasks = own.map((t) => ({ ...t, blockedBy: this.blockedBy(t), ready: t.status === 'queued' && this.blockedBy(t).length === 0 })).slice(a.offset, a.offset + a.limit);
+        const tasks = own.slice(a.offset, a.offset + a.limit).map((t) => this.listed(t));
         const unread = snapshot.automation.messages.filter((m) => m.projectId === project.id && m.toCellId === actorId && !m.readAt);
         const messages = unread.slice(a.offset, a.offset + a.limit);
         // A message longer than ackMaxChars was only shown clipped by the caller: it stays unread until fetched in full.
@@ -162,8 +169,15 @@ export class AutomationService {
         if (!snippet || (snippet.projectId && snippet.projectId !== found.project.id)) throw new Error('Snippet not found in this project.');
         return this.execute('create_task', { cellId, title: snippet.name, prompt: snippet.text }, actorId);
       }
-      case 'close_grid': return this.closeGrid(automationSchemas.close_grid.parse(input), actorId);
-      case 'add_agents': return this.createGrid({ ...automationSchemas.add_agents.parse(input), name: '' }, actorId);
+      case 'close_grid': {
+        const a = automationSchemas.close_grid.parse(input);
+        // Not cancelled by a disconnect: stopped agents are archived either way; a retry gets the first answer.
+        return this.idempotent(operation, a, actorId, undefined, () => this.closeGrid(a, actorId));
+      }
+      case 'add_agents': {
+        const a = automationSchemas.add_agents.parse(input);
+        return this.idempotent(operation, a, actorId, signal, (combined) => this.createGrid({ ...a, name: '' }, actorId, combined));
+      }
       case 'update_grid': {
         this.coordinator(actorId);
         const a = automationSchemas.update_grid.parse(input);
@@ -173,7 +187,10 @@ export class AutomationService {
         return { gridId: tab.id, ...patch };
       }
       case 'update_agent': return this.updateAgent(automationSchemas.update_agent.parse(input), actorId);
-      case 'create_grid': return this.createGrid(automationSchemas.create_grid.parse(input), actorId);
+      case 'create_grid': {
+        const a = automationSchemas.create_grid.parse(input);
+        return this.idempotent(operation, a, actorId, signal, (combined) => this.createGrid(a, actorId, combined));
+      }
       case 'save_snippet': {
         const a = automationSchemas.save_snippet.parse(input);
         const project = this.project(a.projectId, actorId);
@@ -203,10 +220,13 @@ export class AutomationService {
           const dependency = this.state.get().automation.tasks.find((t) => t.id === dependencyId);
           if (!dependency || dependency.projectId !== found.project.id) throw new Error('Task dependencies must exist in this project.');
         }
-        if (this.state.get().automation.tasks.length >= DELIVERY_LIMIT) throw new Error('Task limit reached (500).');
         const task: AgentTask = { ...a, ...(a.dependsOn ? { dependsOn: [...new Set(a.dependsOn)] } : {}), id: uid(), projectId: found.project.id, fromCellId: actorId,
           status: 'queued', delivery: 'pending', createdAt: Date.now(), updatedAt: Date.now() };
-        this.state.change((s) => this.log({ ...s, automation: { ...s.automation, tasks: [...s.automation.tasks, task] } }, found.project.id, 'task_created', task.title, actorId));
+        this.state.change((s) => {
+          const automation = this.makeRoom(s, { tasks: { [found.project.id]: 1 } });
+          if (projectCount(automation.tasks, found.project.id) >= PROJECT_ITEM_LIMIT) throw new Error(taskLimit);
+          return this.log({ ...s, automation: { ...automation, tasks: [...automation.tasks, task] } }, found.project.id, 'task_created', task.title, actorId);
+        });
         await this.deliver('task', task.id, actorId);
         return this.state.get().automation.tasks.find((t) => t.id === task.id);
       }
@@ -215,7 +235,7 @@ export class AutomationService {
         const project = this.project(a.projectId, actorId);
         return this.state.get().automation.tasks.filter((t) => t.projectId === project.id && (!a.cellId || t.cellId === a.cellId) &&
           (!a.ids || a.ids.includes(t.id)) && (!a.status || t.status === a.status) && (!actorId || this.role(actorId) === 'coordinator' || t.cellId === actorId))
-          .map((t) => ({ ...t, blockedBy: this.blockedBy(t), ready: t.status === 'queued' && this.blockedBy(t).length === 0 }))
+          .map((t) => this.listed(t))
           .filter((t) => !a.readyOnly || t.ready).slice(a.offset, a.offset + a.limit);
       }
       case 'update_task': {
@@ -236,9 +256,12 @@ export class AutomationService {
       case 'send_message': {
         const a = automationSchemas.send_message.parse(input);
         const found = this.target(a.toCellId, actorId);
-        if (this.state.get().automation.messages.length >= DELIVERY_LIMIT) throw new Error('Message limit reached (500).');
         const message: AgentMessage = { ...a, id: uid(), projectId: found.project.id, fromCellId: actorId, delivery: 'pending', createdAt: Date.now() };
-        this.state.change((s) => this.log({ ...s, automation: { ...s.automation, messages: [...s.automation.messages, message] } }, found.project.id, 'message', message.text.slice(0, 140), actorId));
+        this.state.change((s) => {
+          const automation = this.makeRoom(s, { messages: { [found.project.id]: 1 } });
+          if (projectCount(automation.messages, found.project.id) >= PROJECT_ITEM_LIMIT) throw new Error(messageLimit);
+          return this.log({ ...s, automation: { ...automation, messages: [...automation.messages, message] } }, found.project.id, 'message', message.text.slice(0, 140), actorId);
+        });
         await this.deliver('message', message.id, actorId);
         return this.state.get().automation.messages.find((m) => m.id === message.id);
       }
@@ -272,6 +295,22 @@ export class AutomationService {
       }
       case 'deliver_task': return this.deliver('task', automationSchemas.deliver_task.parse(input).taskId, actorId);
       case 'deliver_message': return this.deliver('message', automationSchemas.deliver_message.parse(input).messageId, actorId);
+      case 'remove_items': {
+        const a = automationSchemas.remove_items.parse(input);
+        const project = this.project(a.projectId, actorId);
+        const ids = a.ids ? new Set(a.ids) : undefined;
+        let removed = 0;
+        this.state.change((s) => {
+          // A closed task an open task still depends on stays (its result is what unblocks the other one).
+          const needed = new Set(s.automation.tasks.filter((t) => !isClosedTask(t)).flatMap((t) => t.dependsOn ?? []));
+          const gone = (item: { id: string; projectId: string }, finished: boolean) => item.projectId === project.id && finished && (!ids || ids.has(item.id)) && !needed.has(item.id);
+          const tasks = a.kind === 'task' ? s.automation.tasks.filter((t) => !gone(t, isClosedTask(t))) : s.automation.tasks;
+          const messages = a.kind === 'message' ? s.automation.messages.filter((m) => !gone(m, m.readAt !== undefined)) : s.automation.messages;
+          removed = s.automation.tasks.length - tasks.length + s.automation.messages.length - messages.length;
+          return removed ? { ...s, automation: { ...s.automation, tasks, messages } } : s;
+        });
+        return { removed };
+      }
       case 'mark_pasted': {
         const a = automationSchemas.mark_pasted.parse(input);
         this.state.change((s) => ({ ...s, automation: { ...s.automation,
@@ -281,6 +320,44 @@ export class AutomationService {
         return { pasted: true };
       }
     }
+  }
+
+  /** Retention runs on every insert: finished items make room, and items of removed projects go (see pruneAutomation). */
+  private makeRoom(s: AppState, room: Parameters<typeof pruneAutomation>[3]): AutomationState {
+    return pruneAutomation(s.automation, new Set(s.projects.map((p) => p.id)), Date.now(), room);
+  }
+
+  /**
+   * The same team call (same agent, operation and arguments) within IDEMPOTENT_MS returns the first call's answer: a client that
+   * timed out and retries must not start a second team. A running call is shared; it is cancelled only when every caller left.
+   */
+  private idempotent<T>(operation: string, args: unknown, actorId: string | undefined, signal: AbortSignal | undefined, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const now = Date.now();
+    for (const [key, entry] of this.recent) if (now - entry.at > IDEMPOTENT_MS) this.recent.delete(key);
+    const key = actorId ? `${actorId}\0${operation}\0${JSON.stringify(args)}` : undefined;
+    let entry = key ? this.recent.get(key) : undefined;
+    if (!entry || (entry.running && entry.controller.signal.aborted)) {
+      const controller = new AbortController();
+      const created: IdempotentEntry = { at: now, controller, callers: 0, running: true, result: Promise.resolve() };
+      created.result = work(controller.signal).finally(() => { created.running = false; });
+      if (key) {
+        this.recent.set(key, created);
+        created.result.catch(() => { if (this.recent.get(key) === created) this.recent.delete(key); });
+      }
+      entry = created;
+    }
+    const current = entry;
+    if (current.running) {
+      current.callers++;
+      const leave = () => { if (--current.callers === 0 && current.running) current.controller.abort(); };
+      if (!signal) current.callers++; // a caller without a signal never leaves
+      else if (signal.aborted) leave();
+      else {
+        signal.addEventListener('abort', leave, { once: true });
+        void current.result.finally(() => signal.removeEventListener('abort', leave)).catch(() => undefined);
+      }
+    }
+    return current.result as Promise<T>;
   }
 
   private grid(gridId: string, actorId?: string) {
@@ -355,7 +432,7 @@ export class AutomationService {
     if (rows && rows.reduce((a, b) => a + b, 0) !== count) throw new Error('Row sizes must match the number of cells.');
     return rows ? layoutFromRows(rows) : layoutForCount(count);
   }
-  private async createGrid(a: ReturnType<typeof automationSchemas.create_grid.parse> & { gridId?: string }, actorId?: string) {
+  private async createGrid(a: ReturnType<typeof automationSchemas.create_grid.parse> & { gridId?: string }, actorId?: string, signal?: AbortSignal) {
     this.coordinator(actorId);
     const existing = a.gridId ? this.grid(a.gridId, actorId) : undefined;
     const project = existing?.project ?? this.project(a.projectId, actorId);
@@ -389,7 +466,8 @@ export class AutomationService {
     }
     if (covered.size !== layout.cols * layout.rows) throw new Error('Grid areas must cover the full layout.');
     if (actorId && project.tabs.reduce((n, t) => n + t.cells.length, 0) + cells.length > 100) throw new Error('Agent-created grids are limited to 100 project cells.');
-    if (this.state.get().automation.tasks.length + cells.filter((c) => c.prompt && c.role).length > DELIVERY_LIMIT) throw new Error('Task limit reached (500).');
+    const newTasks = cells.filter((c) => c.prompt && c.role).length;
+    if (newTasks && projectCount(this.makeRoom(this.state.get(), { tasks: { [project.id]: newTasks } }).tasks, project.id) + newTasks > PROJECT_ITEM_LIMIT) throw new Error(taskLimit);
     const created: Worktree[] = [];
     try {
       const specs: Parameters<typeof addTab>[2]['cells'] = [];
@@ -397,12 +475,14 @@ export class AutomationService {
         const cell = cells[i];
         const worktree = cell.worktree ? await this.deps.createWorktree(project.path, `${a.name || existing?.tab.name}-${uid().slice(0, 8)}-${i + 1}`) : undefined;
         if (worktree) created.push(worktree);
+        if (signal?.aborted) throw new Error(CANCELLED);
         specs.push({ profileId: cell.profileId, role: cell.role, name: cell.name, color: cell.color ?? (actorId ? CELL_COLORS[((existing?.tab.cells.length ?? 0) + i) % CELL_COLORS.length] : undefined), model: cell.model, worktree });
       }
       let gridId = '';
       const cellIds: string[] = [];
       const taskIds = new Map<number, string>();
       const taskByCell: Record<string, string> = {};
+      if (signal?.aborted) throw new Error(CANCELLED);
       this.state.change((s) => {
         // Recheck permissions and project after asynchronous git operations.
         this.coordinator(actorId);
@@ -411,7 +491,10 @@ export class AutomationService {
         if (s.automation.paused && actorId) throw new Error('Automation is paused by the user.');
         if (latest.path !== project.path) throw new Error('Project folder changed while creating worktrees.');
         if (actorId && latest.tabs.reduce((n, t) => n + t.cells.length, 0) + cells.length > 100) throw new Error('Project cell limit reached.');
-        if (s.automation.tasks.length + cells.filter((c) => c.prompt && c.role).length > DELIVERY_LIMIT) throw new Error('Task limit reached (500).');
+        if (newTasks) {
+          s = { ...s, automation: this.makeRoom(s, { tasks: { [project.id]: newTasks } }) };
+          if (projectCount(s.automation.tasks, project.id) + newTasks > PROJECT_ITEM_LIMIT) throw new Error(taskLimit);
+        }
         let next: AppState;
         let grid: Tab;
         if (existing) {
@@ -504,18 +587,31 @@ export class AutomationService {
       }
       const left = deadline - Date.now();
       if (signal?.aborted || left <= 0) return { event: 'timeout' };
+      // Woken by the next state change (every task and message change goes through the controller), the abort or the deadline.
       await new Promise<void>((resolve) => {
-        const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
+        const done = () => { clearTimeout(timer); off(); signal?.removeEventListener('abort', done); resolve(); };
+        const off = this.state.subscribe(done);
         const timer = setTimeout(done, Math.min(WAIT_POLL_MS, left));
         signal?.addEventListener('abort', done, { once: true });
       });
     }
   }
+  /** Tasks by id, built once per tasks array (a listing asked a linear search per dependency of every task). */
+  private taskIndex: { tasks: AgentTask[]; byId: Map<string, AgentTask> } | null = null;
   private blockedBy(task: AgentTask): string[] {
-    return (task.dependsOn ?? []).filter((id) => {
-      const prerequisite = this.state.get().automation.tasks.find((t) => t.id === id && t.projectId === task.projectId);
-      return !prerequisite || prerequisite.status !== 'completed';
+    if (!task.dependsOn?.length) return [];
+    const tasks = this.state.get().automation.tasks;
+    if (this.taskIndex?.tasks !== tasks) this.taskIndex = { tasks, byId: new Map(tasks.map((t) => [t.id, t])) };
+    const byId = this.taskIndex.byId;
+    return task.dependsOn.filter((id) => {
+      const prerequisite = byId.get(id);
+      return !prerequisite || prerequisite.projectId !== task.projectId || prerequisite.status !== 'completed';
     });
+  }
+  /** A task as listed: with what still blocks it and whether it can be claimed. */
+  private listed(task: AgentTask) {
+    const blockedBy = this.blockedBy(task);
+    return { ...task, blockedBy, ready: task.status === 'queued' && blockedBy.length === 0 };
   }
   private async deliver(kind: 'task' | 'message', id: string, actorId?: string) {
     const item = kind === 'task' ? this.state.get().automation.tasks.find((t) => t.id === id) : this.state.get().automation.messages.find((m) => m.id === id);

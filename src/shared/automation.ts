@@ -56,6 +56,7 @@ export type AgentRuntimeStatus = 'starting' | 'working' | 'ready' | 'needs_atten
 /** Longest bounded wait; below the default 60 s tool timeout of Codex and the HTTP stack. */
 export const WAIT_MAX_SECONDS = 45;
 const id = z.string().min(1).max(128);
+const PROJECT_ITEM_LIMIT_SCHEMA = 500;
 const name = z.string().trim().min(1).max(140);
 const text = z.string().trim().min(1).max(32000);
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
@@ -118,11 +119,63 @@ export const automationSchemas = {
   deliver_message: z.object({ messageId: id }).strict(),
   wait_for: z.object({ taskIds: z.array(id).min(1).max(50).optional(), all: z.boolean().default(false), timeoutSec: z.number().int().min(1).max(WAIT_MAX_SECONDS).default(30) }).strict(),
   mark_pasted: z.object({ kind: z.enum(['task', 'message']), id }).strict(),
+  /** The user removes finished items (closed tasks, read messages) of a project: the listed ones, or all of them. */
+  remove_items: z.object({ projectId: id, kind: z.enum(['task', 'message']), ids: z.array(id).min(1).max(PROJECT_ITEM_LIMIT_SCHEMA).optional() }).strict(),
 } as const;
 export type AutomationOperation = keyof typeof automationSchemas;
 export type AutomationInput<K extends AutomationOperation> = z.input<(typeof automationSchemas)[K]>;
 
 export const defaultAutomation = (): AutomationState => ({ paused: false, tasks: [], messages: [], events: [] });
+
+/** Tasks and messages kept per project; finished ones make room for new ones (see pruneAutomation). */
+export const PROJECT_ITEM_LIMIT = PROJECT_ITEM_LIMIT_SCHEMA;
+/** Finished tasks and read messages older than this are dropped. */
+export const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const CLOSED_STATUSES = new Set<TaskStatus>(['completed', 'cancelled']);
+export const isClosedTask = (task: AgentTask): boolean => CLOSED_STATUSES.has(task.status);
+
+/**
+ * Retention of the inboxes. Items of projects that no longer exist go; per project, closed tasks (completed / cancelled) and
+ * read messages older than RETENTION_MS go, and beyond PROJECT_ITEM_LIMIT the oldest finished ones go first (`room` keeps that
+ * many places free for items about to be added). Open tasks, unread messages and closed tasks that an open task still depends on
+ * always stay. Returns the same object when nothing was dropped.
+ */
+export function pruneAutomation(automation: AutomationState, projectIds: ReadonlySet<string>, now: number, room: { tasks?: Record<string, number>; messages?: Record<string, number> } = {}): AutomationState {
+  const needed = new Set<string>();
+  for (const task of automation.tasks) if (!isClosedTask(task)) for (const id of task.dependsOn ?? []) needed.add(id);
+  const keep = <T extends { id: string; projectId: string }>(items: T[], finished: (item: T) => boolean, finishedAt: (item: T) => number, free: Record<string, number> = {}): T[] => {
+    const byProject = new Map<string, T[]>();
+    for (const item of items) {
+      if (!projectIds.has(item.projectId)) continue;
+      const list = byProject.get(item.projectId) ?? [];
+      list.push(item);
+      byProject.set(item.projectId, list);
+    }
+    const dropped = new Set<T>();
+    for (const [projectId, list] of byProject) {
+      const removable = list.filter((item) => finished(item) && !needed.has(item.id));
+      for (const item of removable) if (now - finishedAt(item) > RETENTION_MS) dropped.add(item);
+      let over = list.length - dropped.size - (PROJECT_ITEM_LIMIT - (free[projectId] ?? 0));
+      if (over > 0) {
+        for (const item of [...removable].sort((a, b) => finishedAt(a) - finishedAt(b))) {
+          if (over <= 0) break;
+          if (dropped.has(item)) continue;
+          dropped.add(item);
+          over--;
+        }
+      }
+    }
+    const kept = items.filter((item) => projectIds.has(item.projectId) && !dropped.has(item));
+    return kept.length === items.length ? items : kept;
+  };
+  const tasks = keep(automation.tasks, isClosedTask, (t) => t.updatedAt, room.tasks);
+  const messages = keep(automation.messages, (m) => m.readAt !== undefined, (m) => m.readAt ?? m.createdAt, room.messages);
+  const events = automation.events.some((e) => !projectIds.has(e.projectId)) ? automation.events.filter((e) => projectIds.has(e.projectId)) : automation.events;
+  return tasks === automation.tasks && messages === automation.messages && events === automation.events ? automation : { ...automation, tasks, messages, events };
+}
+
+/** How many tasks or messages a project holds. */
+export const projectCount = (items: ReadonlyArray<{ projectId: string }>, projectId: string): number => items.reduce((n, item) => n + (item.projectId === projectId ? 1 : 0), 0);
 export const taskPrompt = (task: AgentTask): string =>
   `[Unimux task ${task.id}] ${task.title}\n\n${task.prompt}\n\n` +
   'Unimux MCP: update_task in_progress before working; finish with completed (result: summary, files, tests, branch/commit) or blocked (blockedReason). ' +

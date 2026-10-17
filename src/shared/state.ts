@@ -5,7 +5,7 @@ import { isLanguage } from './languages';
 import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
 import { normalizePanelWidth, PANEL_LIMITS } from './panels';
 import { normalizePathMode } from './pathDrop';
-import { defaultAutomation } from './automation';
+import { defaultAutomation, pruneAutomation } from './automation';
 import { USAGE_INTERVALS_MINUTES } from './usage';
 import { defaultAlerts, LEGACY_ALERT_KEYS, readAlerts } from './alerts';
 import { DEFAULT_UPDATE_MODE, normalizeUpdateMode } from './updateMode';
@@ -100,7 +100,9 @@ export function removeProject(s: AppState, id: string): AppState {
   const projects = s.projects.filter((p) => p.id !== id);
   const activeProjectId =
     s.activeProjectId === id ? (projects[Math.min(idx, projects.length - 1)]?.id ?? null) : s.activeProjectId;
-  return { ...s, projects, activeProjectId };
+  // The project's tasks, messages and activity go with it (they no longer count anywhere and nothing can show them).
+  const automation = pruneAutomation(s.automation, new Set(projects.map((p) => p.id)), Date.now());
+  return { ...s, projects, activeProjectId, automation };
 }
 
 export type DropEdge = 'before' | 'after';
@@ -397,6 +399,8 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
     })),
   } as AppState;
   for (const key of LEGACY_ALERT_KEYS) delete (normalized.settings as unknown as Record<string, unknown>)[key];
+  // Retention of the MCP inboxes (also drops what removed projects left behind before 0.9.3).
+  normalized.automation = pruneAutomation(normalized.automation, new Set(normalized.projects.map((p) => p.id)), Date.now());
   return normalized;
 }
 

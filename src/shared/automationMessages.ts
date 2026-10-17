@@ -55,4 +55,7 @@ export const automationMessages = {
   'Przeczytane': ['Read', 'Gelesen', 'Leído', 'Lu', 'Lido'],
   'Oznacz jako przeczytane': ['Mark as read', 'Als gelesen markieren', 'Marcar como leído', 'Marquer comme lu', 'Marcar como lido'],
   'Brak aktywności': ['No activity', 'Keine Aktivität', 'Sin actividad', 'Aucune activité', 'Sem atividade'],
+  'Usuń zakończone': ['Remove finished', 'Erledigte entfernen', 'Quitar terminadas', 'Retirer les terminées', 'Remover concluídas'],
+  'Usuń przeczytane': ['Remove read', 'Gelesene entfernen', 'Quitar leídos', 'Retirer les lus', 'Remover lidas'],
+  'Zakończone zadania i przeczytane wiadomości starsze niż 7 dni są usuwane automatycznie.': ['Finished tasks and read messages older than 7 days are removed automatically.', 'Erledigte Aufgaben und gelesene Nachrichten, die älter als 7 Tage sind, werden automatisch entfernt.', 'Las tareas terminadas y los mensajes leídos de más de 7 días se quitan automáticamente.', 'Les tâches terminées et les messages lus de plus de 7 jours sont retirés automatiquement.', 'As tarefas concluídas e as mensagens lidas com mais de 7 dias são removidas automaticamente.'],
 } as const;
