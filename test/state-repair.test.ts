@@ -62,3 +62,17 @@ describe('layout repair on load', () => {
     expect(repairTab({ cells: [cell('a')] })).toBeNull();
   });
 });
+
+describe('active ids after the repair', () => {
+  it('falls back to the first tab and project left when the active ones were dropped', () => {
+    const d = defaultState();
+    const raw = {
+      ...d,
+      activeProjectId: 'gone',
+      projects: [{ id: 'p1', name: 'P', path: '/p', tabs: [{ broken: true }], archive: [], activeTabId: 'missing' }],
+    };
+    const s = normalizeState(raw)!;
+    expect(s.activeProjectId).toBe('p1');
+    expect(s.projects[0].activeTabId).toBeNull();
+  });
+});

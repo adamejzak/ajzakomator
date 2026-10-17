@@ -437,6 +437,12 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
     })),
   } as AppState;
   for (const key of LEGACY_ALERT_KEYS) delete (normalized.settings as unknown as Record<string, unknown>)[key];
+  // An active project or tab dropped by the repair falls back to the first one left, so the window does not open on an empty grid.
+  normalized.projects = normalized.projects.map((p) =>
+    p.activeTabId && !p.tabs.some((t) => t.id === p.activeTabId) ? { ...p, activeTabId: p.tabs[0]?.id ?? null } : p);
+  if (normalized.activeProjectId && !normalized.projects.some((p) => p.id === normalized.activeProjectId)) {
+    normalized.activeProjectId = normalized.projects[0]?.id ?? null;
+  }
   // Retention of the MCP inboxes (also drops what removed projects left behind before 0.9.3).
   normalized.automation = pruneAutomation(normalized.automation, new Set(normalized.projects.map((p) => p.id)), Date.now());
   return normalized;
