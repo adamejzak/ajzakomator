@@ -1,4 +1,5 @@
 // Owns every pseudo-terminal. Independent of Electron so it can be integration-tested in Node.
+import { spawn as spawnProcess } from 'child_process';
 import { existsSync } from 'fs';
 import { delimiter, join } from 'path';
 import * as pty from 'node-pty';
@@ -18,6 +19,18 @@ interface Entry {
   /** Coalescing, replay tail, back-pressure and the exit drain of this terminal's output. */
   out: OutputChannel;
   exited: Promise<void>;
+}
+
+/**
+ * Ends a terminal's process tree (the shell and whatever it started). Only ever called for a terminal whose exit node-pty has
+ * not reported yet: node-pty still holds its process, so the pid cannot belong to another program.
+ */
+export function killTerminalTree(pid: number): void {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try {
+    if (process.platform === 'win32') spawnProcess('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).on('error', () => undefined);
+    else process.kill(-pid, 'SIGKILL'); // the pty shell leads its own session and process group
+  } catch { /* already gone */ }
 }
 
 /** Full path of `exe` in the PATH of `env` (the cell's PATH, which may be newer than this process's own); null when absent. */
@@ -53,7 +66,10 @@ export class PtyManager implements TerminalBackend {
   /** Back-pressure from the renderer (acks) is only active while a renderer is connected. */
   private flowControl = false;
 
-  constructor(private sink: PtySink) {}
+  /** Terminals whose exit node-pty has not reported yet (also killed ones that no longer are in `entries`). */
+  private running = new Set<Entry>();
+
+  constructor(private sink: PtySink, private readonly treeKill: (pid: number) => void = killTerminalTree) {}
 
   setSink(sink: PtySink): void {
     this.sink = sink;
@@ -78,6 +94,8 @@ export class PtyManager implements TerminalBackend {
     const out = new OutputChannel(req.id, () => this.sink, { pause: () => proc.pause(), resume: () => proc.resume() }, () => this.flowControl);
     const entry: Entry = { proc, out, exited: new Promise((r) => (resolveExit = r)) };
     this.entries.set(req.id, entry);
+    this.running.add(entry);
+    void entry.exited.then(() => this.running.delete(entry));
 
     let pendingCommand = req.command;
     proc.onData((data) => {
@@ -161,9 +179,14 @@ export class PtyManager implements TerminalBackend {
     return turn;
   }
 
-  /** Kills every terminal and waits (bounded) for their exits; they end one after another (see `ending`). */
+  /**
+   * Kills every terminal and waits (bounded) for their exits; they end one after another (see `ending`). Terminals still
+   * running when the time is up (the serial kills never reached them, or they ignored it) have their process tree ended, so
+   * no dev server an agent started outlives the app.
+   */
   async killAll(timeoutMs = 3000): Promise<void> {
     const kills = [...this.entries.keys()].map((id) => this.kill(id));
     await Promise.race([Promise.all(kills), new Promise((r) => setTimeout(r, timeoutMs))]);
+    for (const entry of this.running) this.treeKill(entry.proc.pid);
   }
 }

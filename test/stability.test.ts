@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createReloadLimiter, createReportLimiter, describeError, rendererReport, TerminalPids, trimNotifications } from '../src/main/stability';
+import { createReloadLimiter, createReportLimiter, describeError, rendererReport, trimNotifications } from '../src/main/stability';
 
 describe('renderer reload limit', () => {
   it('reloads a crashed renderer 3 times a minute, then leaves it to the user', () => {
@@ -40,17 +40,5 @@ describe('live notifications', () => {
     expect(trimNotifications(set, 3)).toEqual([1, 2]);
     expect([...set]).toEqual([3, 4, 5]);
     expect(trimNotifications(set, 3)).toEqual([]);
-  });
-});
-
-describe('terminal pids', () => {
-  it('returns the terminals a shutdown left behind, once', () => {
-    const pids = new TerminalPids();
-    pids.spawned('a', 100);
-    pids.spawned('b', 200);
-    pids.spawned('ssh', 0); // SSH sessions have no local process
-    pids.ended('a');
-    expect(pids.takeSurvivors()).toEqual([200]);
-    expect(pids.takeSurvivors()).toEqual([]);
   });
 });

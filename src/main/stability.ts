@@ -51,13 +51,3 @@ export function trimNotifications<T>(set: Set<T>, limit = NOTIFICATION_LIMIT): T
   }
   return dropped;
 }
-
-/** Pids of the terminals the Pty Host started and did not report as ended: tree-killed after a shutdown that left some behind. */
-export class TerminalPids {
-  private pids = new Map<string, number>();
-  spawned(id: string, pid: number): void { if (Number.isInteger(pid) && pid > 0) this.pids.set(id, pid); else this.pids.delete(id); }
-  ended(id: string): void { this.pids.delete(id); }
-  clear(): void { this.pids.clear(); }
-  /** The pids still unaccounted for; the list is emptied (each is killed once at most). */
-  takeSurvivors(): number[] { const pids = [...new Set(this.pids.values())]; this.pids.clear(); return pids; }
-}
