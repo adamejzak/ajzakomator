@@ -380,13 +380,16 @@ describe('ssh IPC handlers', () => {
       expect(await h.updateKey({ id: key.id, certificate: fakeCertificate(key.publicKey) })).toMatchObject({ ok: true });
       const current = await h.revealPrivateKey({ id: key.id });
       if (!current.ok) throw new Error('reveal');
-      expect(await h.replacePrivateKey({ id: key.id, privateKey: current.privateKey, savePassphrase: false })).toMatchObject({ ok: true, key: { certificate: expect.any(String) } });
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: current.privateKey, savePassphrase: false })).toMatchObject({ ok: true, certificateRemoved: false, key: { certificate: expect.any(String) } });
       const next = readableKeyPair('ed25519');
       const spy = vi.spyOn(deps.vault, 'replaceKey').mockImplementationOnce(() => { throw new Error('EACCES D:\\private\\vault.json'); });
       expect(await h.replacePrivateKey({ id: key.id, privateKey: next.private, savePassphrase: false })).toEqual({ ok: false, error: 'failed' });
       spy.mockRestore();
       const r = await h.replacePrivateKey({ id: key.id, privateKey: next.private, savePassphrase: false });
+      expect(r).toMatchObject({ ok: true, publicKeyChanged: true, certificateRemoved: true });
       expect(r.ok && r.key.certificate).toBeUndefined();
+      // Without a stored certificate nothing is reported as removed.
+      expect(await h.replacePrivateKey({ id: key.id, privateKey: readableKeyPair('ed25519').private, savePassphrase: false })).toMatchObject({ ok: true, publicKeyChanged: true, certificateRemoved: false });
     });
 
     it('is registered behind the sender check like every ssh channel', async () => {

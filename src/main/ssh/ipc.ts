@@ -181,7 +181,7 @@ export function createSshHandlers(deps: SshIpcDeps) {
         type: meta.type, bits: meta.bits, fingerprint: meta.fingerprint, publicKey: meta.publicKey, comment: meta.comment, encrypted,
         privateKey: p.data.privateKey, passphrase: encrypted ? p.data.passphrase : undefined, savePassphrase: p.data.savePassphrase,
       }));
-      return r.ok ? changed({ ok: true, key: r.key, publicKeyChanged: r.publicKeyChanged }) : { ok: false, error: r.error };
+      return r.ok ? changed({ ok: true, key: r.key, publicKeyChanged: r.publicKeyChanged, certificateRemoved: r.certificateRemoved }) : { ok: false, error: r.error };
     },
     async setPassword(raw: unknown): Promise<{ ok: true; ephemeral: boolean } | { ok: false; error: 'notFound' | 'invalid' | 'readOnly' | 'failed' }> {
       const p = S.setPassword.safeParse(raw);

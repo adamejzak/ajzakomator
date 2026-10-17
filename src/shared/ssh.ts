@@ -108,7 +108,7 @@ export interface UpdateKeyRequest { id: string; label?: string; certificate?: st
 /** "Zastąp klucz prywatny": new private key text for a stored key (its id, label and hosts stay). */
 export interface ReplaceKeyRequest { id: string; privateKey: string; passphrase?: string; savePassphrase: boolean }
 export type ReplaceKeyError = KeyError | 'needsPassphrase' | 'duplicate';
-export type ReplaceKeyResult = { ok: true; key: SshKeyInfo; publicKeyChanged: boolean } | { ok: false; error: ReplaceKeyError };
+export type ReplaceKeyResult = { ok: true; key: SshKeyInfo; publicKeyChanged: boolean; certificateRemoved: boolean } | { ok: false; error: ReplaceKeyError };
 /** "Pokaż klucz prywatny": the stored text (still encrypted when it has a passphrase). The only IPC answer that carries private key text. */
 export type RevealKeyResult = { ok: true; privateKey: string } | { ok: false; error: 'notFound' | 'locked' };
 export interface SshConnectCellRequest { cellId: string; hostId: string; cols: number; rows: number }
@@ -263,6 +263,22 @@ export function hostToDraft(h?: SshHost): SshHostDraft {
     group: h?.group ?? '', tags: h?.tags ?? [], keyId: h?.keyId, startupCommand: h?.startupCommand ?? '', color: h?.color,
   };
 }
+
+/**
+ * The host form would change the saved host on Zapisz (compared as it would be saved, so a label left empty or a port without
+ * leading zeros is not a change), a new host form has anything in it, or a tag or password is typed but not added.
+ */
+export function hostFormDirty(host: SshHost | undefined, draft: SshHostDraft, typed: { tag: string; password: string }): boolean {
+  if (typed.tag.trim() || typed.password) return true;
+  const key = (d: SshHostDraft) => JSON.stringify([d.label.trim(), d.address.trim(), d.port.trim(), d.username.trim(), d.group.trim(), d.tags, d.keyId ?? '', d.startupCommand, d.color ?? '']);
+  if (!host) return key(draft) !== key(hostToDraft(undefined));
+  const v = validateHostDraft(draft);
+  if (!v.ok) return key(draft) !== key(hostToDraft(host));
+  return key(hostToDraft({ id: host.id, createdAt: host.createdAt, updatedAt: host.updatedAt, ...v.value })) !== key(hostToDraft(host));
+}
+
+/** Anything typed into a form field, or an import draft waiting to be stored, counts as unsaved. */
+export const formDirty = (fields: ReadonlyArray<string | null | undefined | false>): boolean => fields.some((f) => typeof f === 'string' && f.trim().length > 0);
 
 // ── endpoints, search, groups ────────────────────────────────────────────────
 
@@ -592,6 +608,12 @@ export const readOnlyStoreNote = (store: 'vault' | 'knownHosts', readOnly: boole
   !readOnly || !file ? null : store === 'vault'
     ? 'Sejf SSH jest tylko do odczytu: plik {file} jest nieczytelny, ma nieprawidłowy format, zawiera uszkodzony wpis albo pochodzi z nowszej wersji aplikacji. Nie można dodawać ani zmieniać kluczy i haseł, a plik pozostaje nietknięty. Napraw lub usuń ten plik i uruchom aplikację ponownie.'
     : 'Lista znanych hostów jest tylko do odczytu: plik {file} jest nieczytelny, ma nieprawidłowy format albo pochodzi z nowszej wersji aplikacji. Nie można usuwać wpisów, a klucz hosta zaakceptowany z opcją „Zaufaj i zapisz” albo zmieniony klucz przyjęty przyciskiem „Zastąp zapisany klucz” obowiązuje tylko dla tego jednego połączenia. Napraw lub usuń ten plik i uruchom aplikację ponownie.';
+
+/**
+ * Whether Remove is withheld in a known hosts list: while the store status loads, yes (it may turn out read-only); if the status
+ * call failed, no (main still refuses a change of a read-only store, and the list must not stay locked for the whole session).
+ */
+export const knownHostsLocked = (status: SshStorageStatus | null, failed: boolean): boolean => (status ? status.knownHostsReadOnly : !failed);
 
 /** Description of Settings > SSH > Known hosts: with the file path ({file}) once known, a generic text before that. */
 export const knownHostsDescription = (file: string | undefined): MessageKey =>

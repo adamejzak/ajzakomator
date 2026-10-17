@@ -39,6 +39,8 @@ export const sshModeMessages = {
     'A transferência de ficheiros por SFTP chega numa versão posterior.',
   ],
   // 0.9.2 polish: the details pane, bulk send, the private key of a stored key.
+  'Odrzucić niezapisane zmiany?': ['Discard unsaved changes?', 'Nicht gespeicherte Änderungen verwerfen?', '¿Descartar los cambios sin guardar?', 'Abandonner les modifications non enregistrées ?', 'Descartar as alterações não guardadas?'],
+  'Odrzuć zmiany': ['Discard changes', 'Änderungen verwerfen', 'Descartar cambios', 'Abandonner les modifications', 'Descartar alterações'],
   'Zamknij szczegóły': ['Close details', 'Details schließen', 'Cerrar detalles', 'Fermer les détails', 'Fechar detalhes'],
   'Wysyłanie masowe': ['Bulk send', 'Massenversand', 'Envío masivo', 'Envoi groupé', 'Envio em massa'],
   'Wysyłanie masowe ({count})': ['Bulk send ({count})', 'Massenversand ({count})', 'Envío masivo ({count})', 'Envoi groupé ({count})', 'Envio em massa ({count})'],
@@ -69,7 +71,13 @@ export const sshModeMessages = {
     'La clé est protégée par une phrase secrète, le texte affiché est donc chiffré.',
     'A chave está protegida por uma frase-passe, por isso o texto mostrado está cifrado.',
   ],
-  'Klucz zniknie z ekranu po 2 minutach.': ['The key disappears from the screen after 2 minutes.', 'Der Schlüssel verschwindet nach 2 Minuten vom Bildschirm.', 'La clave desaparece de la pantalla al cabo de 2 minutos.', 'La clé disparaît de l’écran au bout de 2 minutes.', 'A chave desaparece do ecrã ao fim de 2 minutos.'],
+  'Klucz zniknie z ekranu po 2 minutach, a skopiowany klucz zniknie ze schowka po minucie.': [
+    'The key disappears from the screen after 2 minutes, and a copied key is cleared from the clipboard after a minute.',
+    'Der Schlüssel verschwindet nach 2 Minuten vom Bildschirm, ein kopierter Schlüssel nach einer Minute aus der Zwischenablage.',
+    'La clave desaparece de la pantalla al cabo de 2 minutos, y la clave copiada se borra del portapapeles al cabo de un minuto.',
+    'La clé disparaît de l’écran au bout de 2 minutes, et une clé copiée est effacée du presse-papiers au bout d’une minute.',
+    'A chave desaparece do ecrã ao fim de 2 minutos, e uma chave copiada é apagada da área de transferência ao fim de um minuto.',
+  ],
   'Zastąp klucz prywatny': ['Replace private key', 'Privaten Schlüssel ersetzen', 'Reemplazar clave privada', 'Remplacer la clé privée', 'Substituir chave privada'],
   'Nowy klucz prywatny': ['New private key', 'Neuer privater Schlüssel', 'Nueva clave privada', 'Nouvelle clé privée', 'Nova chave privada'],
   'Hasło klucza (jeśli jest zaszyfrowany)': ['Key passphrase (if it is encrypted)', 'Passphrase des Schlüssels (falls verschlüsselt)', 'Frase de contraseña (si está cifrada)', 'Phrase secrète de la clé (si elle est chiffrée)', 'Frase-passe da chave (se estiver cifrada)'],
@@ -95,6 +103,13 @@ export const sshModeMessages = {
     'Clave privada reemplazada. La clave pública es distinta: añádela a authorized_keys en los servidores que usan esta clave.',
     'Clé privée remplacée. La clé publique est différente : ajoutez-la à authorized_keys sur les serveurs qui utilisent cette clé.',
     'Chave privada substituída. A chave pública é diferente: adicione-a a authorized_keys nos servidores que usam esta chave.',
+  ],
+  'Zapisany certyfikat usunięto, bo należał do poprzedniego klucza.': [
+    'The stored certificate was removed because it belonged to the previous key.',
+    'Das gespeicherte Zertifikat wurde entfernt, weil es zum vorherigen Schlüssel gehörte.',
+    'Se eliminó el certificado guardado porque pertenecía a la clave anterior.',
+    'Le certificat enregistré a été supprimé, car il appartenait à la clé précédente.',
+    'O certificado guardado foi removido porque pertencia à chave anterior.',
   ],
   'Ten klucz jest zaszyfrowany - wklej go ponownie razem z hasłem': [
     'This key is encrypted - paste it again together with its passphrase',

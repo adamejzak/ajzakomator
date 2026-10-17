@@ -3,7 +3,7 @@
 // host or key only while one is chosen; with nothing chosen the tiles use the whole width. Opened by the SSH rail tile, the
 // palette, "Edytuj host" and "Wszystkie hosty…" (Add and cell menus). It stays mounted while its tab is open; the pane is
 // "active" only while the view is on screen (D4: typed secrets go).
-import { useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { activeProject, activeTab, duplicateSshHost, updateSshHost } from '../../../../shared/state';
 import { existingSelection, filterHosts, groupHosts, parseFoldedGroups, toggleSelection, userAtEndpoint, type SshHost } from '../../../../shared/ssh';
 import {
@@ -13,7 +13,7 @@ import {
 import type { MessageKey } from '../../../../shared/i18n';
 import { showTerminalTabs } from '../../files';
 import { useI18n } from '../../i18n';
-import { askText, getS, setUi, update, useStore } from '../../store';
+import { askChoice, askText, getS, setUi, update, useStore } from '../../store';
 import { useSshStore } from '../../sshStore';
 import { confirmRemoveSshHost, openHostInCell, openHostsAsGrid, showSshDetail } from '../../ssh';
 import { openMenu, openMenuAt, type MenuItem } from '../ContextMenu';
@@ -22,7 +22,7 @@ import { HostEditor } from './HostEditor';
 import { KeyEditor } from './KeyEditor';
 import { KnownHostsView } from './KnownHostsView';
 import { NewKeyEditor } from './NewKeyEditor';
-import { PaneActive } from './paneVisibility';
+import { PaneActive, PaneDirty } from './paneVisibility';
 import { SshNav } from './SshNav';
 import './ssh.css';
 
@@ -52,9 +52,18 @@ export function SshView() {
 
   /** Connecting shows the grid: host key and password prompts appear in the cell. */
   const connect = (hostId: string, target: 'cell' | 'tab') => { showTerminalTabs(); void openHostInCell(hostId, target); };
-  /** The pane closes (X, Esc in the pane): the tiles get the whole width back and the focus goes to the tile that was shown. */
-  const closePane = () => {
+  /** Unsaved changes reported by the pane's editors (useReportDirty). */
+  const dirty = useRef(new Map<string, boolean>());
+  const reportDirty = useCallback((id: string, value: boolean) => { if (value) dirty.current.set(id, true); else dirty.current.delete(id); }, []);
+  /**
+   * The pane closes (X, Esc in the pane, a second click on its tile): the tiles get the whole width back and the focus goes to
+   * the tile that was shown. Unsaved changes are never dropped silently: the user is asked first.
+   */
+  const closePane = async () => {
     const shown = detail;
+    if (dirty.current.size && await askChoice(tr('Odrzucić niezapisane zmiany?'), '', [{ label: tr('Odrzuć zmiany'), value: 'yes', danger: true }]) !== 'yes') return;
+    // Another item may have been chosen while the question was open.
+    if (useSshStore.getState().detail !== storedDetail) return;
     showSshDetail(null);
     if (!shown || shown.kind === 'newKey') return;
     const selector = shown.kind === 'host' ? (shown.hostId ? `.ssh-tile[data-host-id="${shown.hostId}"]` : null) : `.ssh-tile[data-key-id="${shown.keyId}"]`;
@@ -64,7 +73,7 @@ export function SshView() {
     if (e.key !== 'Escape' || e.defaultPrevented || !paneEscape(true, detail)) return;
     e.preventDefault();
     e.stopPropagation();
-    closePane();
+    void closePane();
   };
   /** Esc clears the multi-selection; with nothing selected it is left to the rest of the app. */
   const onKeyDown = (e: KeyboardEvent) => {
@@ -81,17 +90,19 @@ export function SshView() {
         {collapsed && <SshNav compact />}
         {vault?.storage === 'unavailable' && <div className="ssh-banner-warn">{tr('Szyfrowanie systemowe jest niedostępne - klucze i hasła są trzymane tylko do zamknięcia aplikacji')}</div>}
         <div id="ssh-section" role="tabpanel" className="ssh-view-body" aria-label={tr(section === 'hosts' ? 'Hosty' : section === 'keys' ? 'Klucze' : 'Znane hosty')}>
-          {section === 'hosts' && <HostsSection detail={detail} onConnect={connect} />}
-          {section === 'keys' && <KeysSection detail={detail} />}
+          {section === 'hosts' && <HostsSection detail={detail} onConnect={connect} onClosePane={closePane} />}
+          {section === 'keys' && <KeysSection detail={detail} onClosePane={closePane} />}
           {section === 'knownHosts' && <KnownHostsView />}
         </div>
       </div>
       {detail && (
         <aside className="ssh-view-detail" aria-label={tr('Szczegóły')} onKeyDown={onPaneKeyDown}>
-          <button type="button" className="btn ghost icon ssh-detail-close" aria-label={tr('Zamknij szczegóły')} title={tr('Zamknij szczegóły')} onClick={closePane}><IX /></button>
-          <PaneActive.Provider value={viewActive && !settingsActive}>
-            <DetailPane key={detailKey(detail)} detail={detail} onConnect={connect} />
-          </PaneActive.Provider>
+          <button type="button" className="btn ghost icon ssh-detail-close" aria-label={tr('Zamknij szczegóły')} title={tr('Zamknij szczegóły')} onClick={() => void closePane()}><IX /></button>
+          <PaneDirty.Provider value={reportDirty}>
+            <PaneActive.Provider value={viewActive && !settingsActive}>
+              <DetailPane key={detailKey(detail)} detail={detail} onConnect={connect} />
+            </PaneActive.Provider>
+          </PaneDirty.Provider>
         </aside>
       )}
     </div>
@@ -110,7 +121,7 @@ function EmptyState({ icon, title, text, children }: { icon: ReactNode; title: s
   );
 }
 
-function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConnect: (hostId: string, target: 'cell' | 'tab') => void }) {
+function HostsSection({ detail, onConnect, onClosePane }: { detail: SshDetail | null; onConnect: (hostId: string, target: 'cell' | 'tab') => void; onClosePane: () => Promise<void> }) {
   const { tr } = useI18n();
   const hosts = useStore((st) => st.s.sshHosts);
   const projects = useStore((st) => st.s.projects);
@@ -167,7 +178,8 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
     // The second click of a double-click (connect) must not close the pane the first click opened.
     if (e.detail > 1) return;
     useSshStore.setState({ selectedHosts: [] });
-    showSshDetail(clickedDetail(detail, { kind: 'host', hostId: h.id }));
+    const next = clickedDetail(detail, { kind: 'host', hostId: h.id });
+    if (next) showSshDetail(next); else void onClosePane();
   };
   const hostMenu = (e: MouseEvent, h: SshHost) => {
     e.preventDefault();
@@ -276,7 +288,7 @@ function HostsSection({ detail, onConnect }: { detail: SshDetail | null; onConne
   );
 }
 
-function KeysSection({ detail }: { detail: SshDetail | null }) {
+function KeysSection({ detail, onClosePane }: { detail: SshDetail | null; onClosePane: () => Promise<void> }) {
   const { tr } = useI18n();
   const vault = useSshStore((st) => st.vault);
   const keys = vault?.keys ?? [];
@@ -301,7 +313,11 @@ function KeysSection({ detail }: { detail: SshDetail | null }) {
               const current = detail?.kind === 'key' && detail.keyId === k.id;
               return (
                 <button key={k.id} className={`ssh-tile ssh-key-tile${current ? ' current' : ''}`} data-key-id={k.id} aria-current={current ? 'true' : undefined}
-                  onClick={(e) => { if (e.detail <= 1) showSshDetail(clickedDetail(detail, { kind: 'key', keyId: k.id })); }} title={k.fingerprint}>
+                  onClick={(e) => {
+                    if (e.detail > 1) return;
+                    const next = clickedDetail(detail, { kind: 'key', keyId: k.id });
+                    if (next) showSshDetail(next); else void onClosePane();
+                  }} title={k.fingerprint}>
                   <span className="ssh-tile-name">{k.label}{k.locked ? ' !' : ''}</span>
                   <span className="ssh-tile-detail"><span className="ssh-key-type">{shortType(k.type)}</span>{k.fingerprint}</span>
                 </button>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  storageLabel, readOnlyStoreNote, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, connectingNotice, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
+  storageLabel, readOnlyStoreNote, knownHostsLocked, knownHostsDescription, READ_ONLY_VAULT_HINT, addressProblem, applySshSnapshot, connectingNotice, draftErrorKey, hostsUsingKey, labelFieldValue, newKeyProblem, broadcastTargets, enterSubmitsPrompt, isSshCell, promptNeedsToast, restoredPromptToasts, sshCellVisible, sshHeaderName, filterHosts, groupHosts, hostEndpoint, knownHostId, normalizeSshHosts, normalizeTags, parseFoldedGroups, sshGridName, toggleSelection,
   broadcastProblem, broadcastRowState, broadcastSend, ptyHostRestartToast, pushHistory, resumesConversation, sshCellsOfTab, cellSourcePatch, cellSourceValue, currentBroadcastResult, connectingBanner, existingSelection, parseCellSource, sanitizeServerText, sshCellStart, sshErrorText, sshNotice, sshModeReset, sshPhaseLabel, sshSpecName, sshSessionEnded, stampBroadcastResults, startupInput, startupProblem, userAtEndpoint, validateHostDraft,
   type SshHost, type SshSessionState,
 } from '../src/shared/ssh';
@@ -296,6 +296,16 @@ describe('settings helpers', () => {
     expect(storageLabel('dpapi')).toBe('Szyfrowanie: Windows (DPAPI)');
     expect(storageLabel('keychain')).toBe('Szyfrowanie: pęk kluczy macOS');
     expect(storageLabel('unavailable')).toBe('Szyfrowanie: niedostępne');
+  });
+
+  it('locks Remove of known hosts while the status loads, never for good after a failed status call (0.9.2)', () => {
+    const status = (knownHostsReadOnly: boolean) => ({ vaultFile: 'v.json', vaultReadOnly: false, knownHostsFile: 'k.json', knownHostsReadOnly });
+    expect(knownHostsLocked(null, false)).toBe(true);
+    expect(knownHostsLocked(null, true)).toBe(false);
+    expect(knownHostsLocked(status(true), false)).toBe(true);
+    expect(knownHostsLocked(status(false), false)).toBe(false);
+    // Failed status: no path, so no read-only note either.
+    expect(readOnlyStoreNote('knownHosts', knownHostsLocked(null, true), undefined)).toBeNull();
   });
 
   it('explains a read-only store only when it is one, and names what the user can do', () => {

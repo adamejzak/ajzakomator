@@ -47,6 +47,8 @@ export class SshVault {
   private newer = false;
   /** D7: passphrases typed into a prompt with "remember until the app quits". Never written. */
   private rememberedPassphrases = new Map<string, string>();
+  /** Bumped when a key's material is replaced: a passphrase typed for the old material is never remembered for the new one. */
+  private generations = new Map<string, number>();
   /** Saved passphrases already checked against their key this run (preflight M2: the bcrypt check is not repeated per connect).
    *  Only a SHA-256 of the passphrase is kept, never a second plaintext copy. */
   private verifiedPassphrases = new Map<string, string>();
@@ -185,7 +187,7 @@ export class SshVault {
    * fingerprint, type and comment follow the new key; a certificate of another public key is dropped. A remembered or
    * verified passphrase of the old key is forgotten.
    */
-  replaceKey(id: string, k: Omit<NewKey, 'label' | 'certificate' | 'source'>): { ok: true; key: SshKeyInfo; publicKeyChanged: boolean } | { ok: false; error: 'notFound' | 'readOnly' | 'duplicate' | 'failed' } {
+  replaceKey(id: string, k: Omit<NewKey, 'label' | 'certificate' | 'source'>): { ok: true; key: SshKeyInfo; publicKeyChanged: boolean; certificateRemoved: boolean } | { ok: false; error: 'notFound' | 'readOnly' | 'duplicate' | 'failed' } {
     if (this.newer) return { ok: false, error: 'readOnly' };
     const r = this.keys.find((x) => x.meta.id === id);
     if (!r) return { ok: false, error: 'notFound' };
@@ -204,9 +206,10 @@ export class SshVault {
     const next = this.keys.map((x) => (x === r ? updated : x));
     this.write(next, this.passwords);
     this.keys = next;
+    this.generations.set(id, this.generation(id) + 1);
     this.rememberedPassphrases.delete(id);
     this.verifiedPassphrases.delete(id);
-    return { ok: true, key: this.infoOf(updated), publicKeyChanged };
+    return { ok: true, key: this.infoOf(updated), publicKeyChanged, certificateRemoved: !!certificate && publicKeyChanged };
   }
 
   removeKey(id: string): boolean {
@@ -220,7 +223,14 @@ export class SshVault {
     return true;
   }
 
-  remember(keyId: string, passphrase: string): void { this.rememberedPassphrases.set(keyId, passphrase); }
+  /** The material generation of a key (0 until it is replaced). */
+  generation(keyId: string): number { return this.generations.get(keyId) ?? 0; }
+  /** Remembers a typed passphrase; with `generation`, only if the key was not replaced since the passphrase was checked against it. */
+  remember(keyId: string, passphrase: string, generation?: number): boolean {
+    if (generation !== undefined && generation !== this.generation(keyId)) return false;
+    this.rememberedPassphrases.set(keyId, passphrase);
+    return true;
+  }
   remembered(keyId: string): string | undefined { return this.rememberedPassphrases.get(keyId); }
   forgetRemembered(): void { this.rememberedPassphrases.clear(); this.verifiedPassphrases.clear(); }
   markVerified(keyId: string, passphrase: string): void { this.verifiedPassphrases.set(keyId, digest(passphrase)); }

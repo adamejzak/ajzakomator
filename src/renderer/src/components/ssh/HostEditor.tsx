@@ -1,7 +1,7 @@
 // Host details (spec 10.2). A new host is stored on "Zapisz" only; the password is write-only (D6).
 import { useMemo, useState } from 'react';
-import { useClearWhenHidden } from './paneVisibility';
-import { hostToDraft, READ_ONLY_VAULT_HINT, validateHostDraft, type HostDraftField, type SshHostDraft } from '../../../../shared/ssh';
+import { useClearWhenHidden, useReportDirty } from './paneVisibility';
+import { hostFormDirty, hostToDraft, READ_ONLY_VAULT_HINT, validateHostDraft, type HostDraftField, type SshHostDraft } from '../../../../shared/ssh';
 import { addSshHost, uid, updateSshHost } from '../../../../shared/state';
 import type { MessageKey } from '../../../../shared/i18n';
 import { showTerminalTabs } from '../../files';
@@ -23,6 +23,7 @@ export function HostEditor({ paneId, hostId }: { paneId: string; hostId?: string
   const [tag, setTag] = useState('');
   const [password, setPassword] = useState('');
   useClearWhenHidden(() => setPassword(''));
+  useReportDirty(hostFormDirty(host, draft, { tag, password }));
   const set = (patch: Partial<SshHostDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const saved = host ? vault?.savedPasswords.includes(host.id) : false;
   const locked = host ? vault?.lockedPasswords.includes(host.id) : false;

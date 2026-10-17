@@ -98,6 +98,8 @@ export class SshCoordinator {
         } else passphrase = this.deps.vault.remembered(host.keyId);
       }
       if (info?.encrypted && passphrase === undefined) {
+        // The key may be replaced while the prompt is open: a passphrase checked against this material is remembered only for it.
+        const generation = this.deps.vault.generation(host.keyId);
         for (let attempt = 0; attempt < MAX_PASSPHRASE_TRIES && passphrase === undefined; attempt++) {
           const answer = await this.ask(req.cellId, `pp:${host.keyId}`, { kind: 'passphrase', keyId: host.keyId, keyLabel: info.label, retry: attempt > 0 });
           if (!current()) return { ok: false, error: 'cancelled' };
@@ -108,7 +110,7 @@ export class SshCoordinator {
           const key = privateKey;
           if (this.onceFor(answer, () => checkPassphrase(key, typed))) {
             passphrase = typed;
-            if (answer.remember) this.deps.vault.remember(host.keyId, typed);
+            if (answer.remember) this.deps.vault.remember(host.keyId, typed, generation);
           }
         }
         if (passphrase === undefined) return fail('passphrase');

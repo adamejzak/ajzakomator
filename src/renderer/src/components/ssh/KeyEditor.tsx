@@ -3,8 +3,9 @@
 // is dropped on "Ukryj klucz", when the pane goes hidden or closes, on another key and after 2 minutes. "Zastąp klucz prywatny"
 // sends a pasted key to main, which parses and stores it; the form is cleared on submit.
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { PaneActive, useClearWhenHidden } from './paneVisibility';
-import { draftErrorKey, READ_ONLY_VAULT_HINT, hostsUsingKey, labelFieldValue, replaceKeyErrorKey, type KeyError, type SshKeyInfo } from '../../../../shared/ssh';
+import { PaneActive, useClearWhenHidden, useReportDirty } from './paneVisibility';
+import { secretClipboard } from './secretClipboard';
+import { draftErrorKey, formDirty, READ_ONLY_VAULT_HINT, hostsUsingKey, labelFieldValue, replaceKeyErrorKey, type KeyError, type SshKeyInfo } from '../../../../shared/ssh';
 import type { MessageKey } from '../../../../shared/i18n';
 import { useI18n } from '../../i18n';
 import { askChoice, toast, useStore } from '../../store';
@@ -31,6 +32,7 @@ export function KeyEditor({ keyId }: { keyId: string }) {
   const [certificate, setCertificate] = useState('');
   const [passphrase, setPassphrase] = useState('');
   useClearWhenHidden(() => setPassphrase(''));
+  useReportDirty(label.trim() !== storedLabel || formDirty([certificate, passphrase]));
   const [error, setError] = useState<string | null>(null);
   if (!key) return <div className="ssh-editor"><p className="ssh-card-hint">{tr('Klucz przypisany do hosta nie istnieje')}</p></div>;
 
@@ -120,6 +122,8 @@ function PrivateKeySection({ keyInfo, readOnly, onExport }: { keyInfo: SshKeyInf
   const active = useContext(PaneActive);
   const activeRef = useRef(active);
   activeRef.current = active;
+  const keyIdRef = useRef(keyInfo.id);
+  keyIdRef.current = keyInfo.id;
   const [revealed, setRevealed] = useState<string | null>(null);
   const shownText = useRef<HTMLTextAreaElement>(null);
   const [replacing, setReplacing] = useState(false);
@@ -130,6 +134,7 @@ function PrivateKeySection({ keyInfo, readOnly, onExport }: { keyInfo: SshKeyInf
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; warn: boolean } | null>(null);
   useClearWhenHidden(() => { setRevealed(null); setText(''); setPassphrase(''); });
+  useReportDirty(formDirty([text, passphrase]));
   // Another key in the same editor (the pane is keyed by key, this is a second guard) never shows the previous key's text.
   useEffect(() => () => { setRevealed(null); setText(''); setPassphrase(''); }, [keyInfo.id]);
   useEffect(() => {
@@ -145,13 +150,14 @@ function PrivateKeySection({ keyInfo, readOnly, onExport }: { keyInfo: SshKeyInf
     const choice = await askChoice(tr('Pokazać klucz prywatny?'), tr('Klucz prywatny pojawi się na ekranie. Każdy, kto go zobaczy albo skopiuje, może się nim logować na serwery, które mu ufają.'),
       [{ label: tr('Pokaż'), value: 'yes', primary: true }]);
     if (choice !== 'yes') return;
-    const r = await window.mc.ssh.revealPrivateKey(keyInfo.id);
-    // The pane went to the background while main answered: the text is not shown there.
-    if (!activeRef.current) return;
+    const asked = keyInfo.id;
+    const r = await window.mc.ssh.revealPrivateKey(asked);
+    // The pane went to the background or shows another key since: the text is not shown there.
+    if (!activeRef.current || keyIdRef.current !== asked) return;
     if (r.ok) { setError(null); setRevealed(r.privateKey); }
     else setError(tr(r.error === 'locked' ? 'Nie można odczytać klucza na tym komputerze' : 'Klucz przypisany do hosta nie istnieje'));
   };
-  const copy = () => { if (revealed !== null) { window.mc.clipboardWrite(revealed); toast(tr('Skopiowano klucz prywatny')); } };
+  const copy = () => { if (revealed !== null) void secretClipboard.copy(revealed).then(() => toast(tr('Skopiowano klucz prywatny'))); };
   const cancelReplace = () => { setReplacing(false); setText(''); setPassphrase(''); setSavePassphrase(false); };
   const replace = async () => {
     if (!text.trim() || busy) return;
@@ -169,9 +175,10 @@ function PrivateKeySection({ keyInfo, readOnly, onExport }: { keyInfo: SshKeyInf
     setRevealed(null);
     setReplacing(false);
     setSavePassphrase(false);
-    setNotice(r.publicKeyChanged
-      ? { text: tr('Zastąpiono klucz prywatny. Klucz publiczny jest inny: dodaj go do authorized_keys na serwerach, które używają tego klucza.'), warn: true }
-      : { text: tr('Zastąpiono klucz prywatny. Klucz publiczny się nie zmienił.'), warn: false });
+    const replaced = r.publicKeyChanged
+      ? tr('Zastąpiono klucz prywatny. Klucz publiczny jest inny: dodaj go do authorized_keys na serwerach, które używają tego klucza.')
+      : tr('Zastąpiono klucz prywatny. Klucz publiczny się nie zmienił.');
+    setNotice({ text: r.certificateRemoved ? `${replaced} ${tr('Zapisany certyfikat usunięto, bo należał do poprzedniego klucza.')}` : replaced, warn: r.publicKeyChanged });
   };
 
   return (
@@ -187,7 +194,7 @@ function PrivateKeySection({ keyInfo, readOnly, onExport }: { keyInfo: SshKeyInf
           <>
             <textarea ref={shownText} className="input mono ssh-private-text" readOnly rows={8} wrap="off" spellCheck={false} autoComplete="off" value={revealed} aria-label={tr('Klucz prywatny')} />
             {keyInfo.encrypted && <span className="ssh-card-hint">{tr('Klucz jest chroniony hasłem, więc pokazany tekst jest zaszyfrowany.')}</span>}
-            <span className="ssh-card-hint">{tr('Klucz zniknie z ekranu po 2 minutach.')}</span>
+            <span className="ssh-card-hint">{tr('Klucz zniknie z ekranu po 2 minutach, a skopiowany klucz zniknie ze schowka po minucie.')}</span>
             <div className="ssh-row">
               <button type="button" className="btn" onClick={copy}>{tr('Kopiuj')}</button>
               <button type="button" className="btn ssh-hide" onClick={() => setRevealed(null)}>{tr('Ukryj klucz')}</button>

@@ -2,13 +2,13 @@
 // the pasted private text is cleared right after it was sent and when the paste mode is left, passphrases on submit.
 // The editor stays mounted while the SSH view is open; a draft that was never stored is discarded when the pane shows something else or the view closes.
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { DEFAULT_KEY_BITS, draftErrorKey, KEY_SIZES, READ_ONLY_VAULT_HINT, newKeyProblem, type DraftResult, type SshKeyType } from '../../../../shared/ssh';
+import { DEFAULT_KEY_BITS, draftErrorKey, formDirty, KEY_SIZES, READ_ONLY_VAULT_HINT, newKeyProblem, type DraftResult, type SshKeyType } from '../../../../shared/ssh';
 import { useI18n } from '../../i18n';
 import { toast } from '../../store';
 import { showSshDetail } from '../../ssh';
 import { useSshStore } from '../../sshStore';
 import { Select } from '../Select';
-import { useClearWhenHidden } from './paneVisibility';
+import { useClearWhenHidden, useReportDirty } from './paneVisibility';
 
 type Mode = 'generate' | 'file' | 'paste';
 type Draft = Extract<DraftResult, { ok: true }>;
@@ -34,6 +34,7 @@ export function NewKeyEditor({ initialMode }: { initialMode?: Mode }) {
   const [dragOver, setDragOver] = useState(false);
   // D4: a hidden pane keeps the label, comment and draft, never a typed passphrase or a pasted private key.
   useClearWhenHidden(() => { setPassphrase(''); setRepeat(''); setPrivateText(''); });
+  useReportDirty(formDirty([label, comment, passphrase, repeat, privateText, publicText, certText, draft?.draftId]));
   const draftRef = useRef<string | null>(null);
   draftRef.current = draft?.draftId ?? null;
   // Unmount = the pane shows another item or the view closed (after a stored key draftRef is already null): drop the draft in main.

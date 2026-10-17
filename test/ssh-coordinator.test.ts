@@ -239,6 +239,23 @@ describe('SshCoordinator', () => {
     expect(f.vault.info().savedPasswords).toEqual([]);
   });
 
+  it('never remembers a passphrase checked against key material that was replaced while the prompt was open (0.9.2)', async () => {
+    const f = setup({ encryptedKey: true });
+    const pending = connect(f, f.cells.a);
+    await tick();
+    const prompt = f.open(f.cells.a);
+    expect(prompt?.kind).toBe('passphrase');
+    const next = readableKeyPair('ed25519', { passphrase: 'other', cipher: 'aes256-ctr', rounds: 16 });
+    const parsed = parsePrivateKey(next.private, 'other');
+    if (!parsed.ok) throw new Error('fixture');
+    expect(f.vault.replaceKey(f.keyId!, { ...parsed.meta, encrypted: true, privateKey: next.private, passphrase: 'other', savePassphrase: false }).ok).toBe(true);
+    expect(f.coordinator.answer({ cellId: f.cells.a, promptId: prompt!.id, values: ['right'], remember: true })).toEqual({ ok: true });
+    expect(await pending).toEqual({ ok: true });
+    expect(f.vault.remembered(f.keyId!)).toBeUndefined();
+    expect(f.vault.remember(f.keyId!, 'x', f.vault.generation(f.keyId!) - 1)).toBe(false);
+    expect(f.vault.remember(f.keyId!, 'other', f.vault.generation(f.keyId!))).toBe(true);
+  });
+
   it('trusts a remembered passphrase without checking it again (M2)', async () => {
     const f = setup({ encryptedKey: true });
     f.vault.remember(f.keyId!, 'remembered-value');

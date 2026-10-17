@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SshHost, SshSessionState } from '../src/shared/ssh';
-import { filterHosts } from '../src/shared/ssh';
+import { filterHosts, formDirty, hostFormDirty, hostToDraft } from '../src/shared/ssh';
 import {
   chooseSshSection, clickedDetail, DEFAULT_SSH_SECTION, detailKey, detailPaneOpen, groupTiles, hostsInGroup, hostTileState, liveDetail, liveGroupFilter, menuHosts,
   newKeyDetail, paneDetail, paneEscape, sectionChange, sectionForDetail, showGroupHeadings, showGroupRow, SSH_NAV, sshModeActive, toggleGroupFilter, visibleSelection,
@@ -174,5 +174,36 @@ describe('search and the multi-selection (0.9.2 polish)', () => {
     expect(visibleSelection(['a', 'b'], filterHosts(hosts, 'zzz'))).toEqual([]);
     expect(visibleSelection(['a', 'c'], filterHosts(hosts, ''))).toEqual(['a', 'c']);
     expect(visibleSelection([], hosts)).toEqual([]);
+  });
+});
+
+describe('unsaved changes in the pane (0.9.2 final)', () => {
+  const saved: SshHost = { ...host('h1', 'web', 'lab'), tags: ['prod'], startupCommand: 'ls' };
+  it('counts a host form as unsaved only when it differs from the saved host or something is typed', () => {
+    expect(hostFormDirty(saved, hostToDraft(saved), { tag: '', password: '' })).toBe(false);
+    expect(hostFormDirty(saved, { ...hostToDraft(saved), label: 'web ' }, { tag: '', password: '' })).toBe(false);
+    expect(hostFormDirty(saved, { ...hostToDraft(saved), address: 'other.example' }, { tag: '', password: '' })).toBe(true);
+    expect(hostFormDirty(saved, { ...hostToDraft(saved), tags: [] }, { tag: '', password: '' })).toBe(true);
+    expect(hostFormDirty(saved, { ...hostToDraft(saved), color: '#ff0000' }, { tag: '', password: '' })).toBe(true);
+    expect(hostFormDirty(saved, hostToDraft(saved), { tag: 'x', password: '' })).toBe(true);
+    expect(hostFormDirty(saved, hostToDraft(saved), { tag: '', password: 'typed' })).toBe(true);
+    // "Nowy host": clean until something is typed.
+    expect(hostFormDirty(undefined, hostToDraft(undefined), { tag: '', password: '' })).toBe(false);
+    expect(hostFormDirty(undefined, { ...hostToDraft(undefined), address: 'a' }, { tag: '', password: '' })).toBe(true);
+  });
+
+  it('counts a key form as unsaved when any field holds text or an import draft waits', () => {
+    expect(formDirty(['', '  ', undefined, null, false])).toBe(false);
+    expect(formDirty(['', 'label'])).toBe(true);
+    expect(formDirty(['', 'draft-id'])).toBe(true);
+  });
+});
+
+describe('host form after Zapisz (0.9.2 final)', () => {
+  it('is clean when the form equals what was saved, also with an empty label or a padded port', () => {
+    const saved: SshHost = { ...host('h1', 'web.example'), label: 'web.example', address: 'web.example' };
+    expect(hostFormDirty(saved, { ...hostToDraft(saved), label: '' }, { tag: '', password: '' })).toBe(false);
+    expect(hostFormDirty(saved, { ...hostToDraft(saved), port: '022' }, { tag: '', password: '' })).toBe(false);
+    expect(hostFormDirty(saved, { ...hostToDraft(saved), port: 'x' }, { tag: '', password: '' })).toBe(true);
   });
 });
