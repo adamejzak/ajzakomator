@@ -45,6 +45,39 @@ export function flattenTree(listing: (path: string) => ProjectDirectory | undefi
   return rows;
 }
 
+function sameRow(a: TreeRow, b: TreeRow): boolean {
+  if (a.type === 'entry' && b.type === 'entry') {
+    return a.entry.path === b.entry.path && a.entry.name === b.entry.name && a.entry.kind === b.entry.kind && a.depth === b.depth
+      && a.parent === b.parent && a.open === b.open && a.end === b.end && a.pos === b.pos && a.size === b.size;
+  }
+  if (a.type === 'message' && b.type === 'message') {
+    return a.key === b.key && a.depth === b.depth && a.parent === b.parent && a.error === b.error;
+  }
+  return false;
+}
+
+/**
+ * Reuses the row objects of the previous flattening whose content did not change (also when a reload produced new
+ * listing objects), so a new listing or a toggled folder does not make every visible row look new.
+ */
+export function stabilizeRows(previous: readonly TreeRow[] | null, next: TreeRow[]): TreeRow[] {
+  if (!previous?.length) return next;
+  const old = new Map<string, TreeRow>();
+  for (const row of previous) old.set(row.key, row);
+  let reused = 0;
+  const rows = next.map((row) => {
+    const before = old.get(row.key);
+    if (before && sameRow(before, row)) { reused++; return before; }
+    return row;
+  });
+  return reused === previous.length && rows.length === previous.length ? previous as TreeRow[] : rows;
+}
+
+/** Left padding of a pinned row: a small fixed step per pinned level, so a narrow panel still shows the names. */
+export function stickyIndent(position: number): number {
+  return INDENT.base + Math.max(0, position) * 6;
+}
+
 /** Expanded folders whose listing is shown: every ancestor is expanded too (plus the root ''). */
 export function shownFolders(expanded: Iterable<string>): string[] {
   const set = new Set(expanded);

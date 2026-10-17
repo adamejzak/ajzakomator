@@ -6,6 +6,8 @@ import { shownFolders } from '../../shared/treeRows';
 import { rememberKinds } from './explorer';
 
 const BATCH = 250;
+/** A closed folder's listing is kept this long (reopening it shows it at once while it reloads), then dropped. */
+const KEEP_CLOSED_MS = 60_000;
 const FAILED: ProjectDirectory = { ok: false, error: 'Nie udało się wczytać folderu.' };
 
 export interface TreeListings {
@@ -29,6 +31,22 @@ export function useTreeListings(projectId: string, expanded: readonly string[] |
   const [version, setVersion] = useState(0);
   const [pending, setPending] = useState(0);
   const counter = useRef(0);
+  /** When each cached folder stopped being shown. */
+  const hiddenSince = useRef(new Map<string, number>());
+  const shownNow = useRef(new Set<string>(['']));
+  const evict = useCallback((all: boolean) => {
+    const now = Date.now();
+    for (const path of [...cache.current.keys()]) {
+      if (shownNow.current.has(path)) { hiddenSince.current.delete(path); continue; }
+      const since = hiddenSince.current.get(path);
+      if (since === undefined && !all) { hiddenSince.current.set(path, now); continue; }
+      if (all || now - (since ?? now) >= KEEP_CLOSED_MS) {
+        cache.current.delete(path);
+        tokens.current.delete(path);
+        hiddenSince.current.delete(path);
+      }
+    }
+  }, []);
 
   const load = useCallback((paths: string[]) => {
     for (let i = 0; i < paths.length; i += BATCH) {
@@ -52,16 +70,23 @@ export function useTreeListings(projectId: string, expanded: readonly string[] |
   }, [projectId]);
 
   useEffect(() => {
-    if (seenRefresh.current !== refresh) { seenRefresh.current = refresh; fresh.current.clear(); }
     const shown = shownFolders(expanded ?? []);
     const shownSet = new Set(shown);
+    shownNow.current = shownSet;
+    // A refresh drops the listings of closed folders right away (they would be stale); otherwise they expire.
+    if (seenRefresh.current !== refresh) { seenRefresh.current = refresh; fresh.current.clear(); evict(true); }
+    else evict(false);
     for (const path of fresh.current) if (!shownSet.has(path)) fresh.current.delete(path);
     const need = shown.filter((path) => !fresh.current.has(path));
     for (const path of need) fresh.current.add(path);
     if (need.length) load(need);
-  }, [expanded, refresh, load]);
+  }, [expanded, refresh, load, evict]);
 
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    alive.current = true;
+    const timer = window.setInterval(() => evict(false), KEEP_CLOSED_MS / 2);
+    return () => { alive.current = false; window.clearInterval(timer); };
+  }, [evict]);
 
   const retry = useCallback((path: string) => {
     cache.current.delete(path);

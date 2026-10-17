@@ -41,10 +41,15 @@ const errorText = (message: string) => {
 };
 const platform = () => window.mc.platform;
 
+/** The shown tree scrolls its selected row into view and focuses it (the list is virtual: the row may not exist yet). */
+let focusSelectedRow: (() => boolean) | null = null;
+export function registerTreeFocus(fn: (() => boolean) | null): void { focusSelectedRow = fn; }
+
 /** After a dialog closed focus is lost: bring it back to the tree (only when nothing else took it) so shortcuts keep working. */
 function refocusTree(): void {
   window.setTimeout(() => {
     if (document.activeElement && document.activeElement !== document.body) return;
+    if (focusSelectedRow?.()) return;
     document.querySelector<HTMLElement>('.explorer-tree .tree-rows .file-entry.selected')?.focus({ preventScroll: true });
   }, 120);
 }

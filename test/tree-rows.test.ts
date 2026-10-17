@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectDirectory, ProjectFileEntry } from '../src/shared/types';
 import {
-  flattenTree, indentFor, indentGuides, INDENT, scrollToShow, scrollTopForPinned, shownFolders, stickyRows, visibleRange, type TreeRow,
+  flattenTree, indentFor, indentGuides, INDENT, scrollToShow, scrollTopForPinned, shownFolders, stabilizeRows, stickyIndent, stickyRows, visibleRange, type TreeRow,
 } from '../src/shared/treeRows';
 
 const dir = (path: string): ProjectFileEntry => ({ name: path.split('/').pop()!, path, kind: 'directory' });
@@ -58,6 +58,31 @@ describe('flattenTree', () => {
     const rows = flattenTree((p) => big[p], open);
     expect(rows.length).toBeGreaterThan(50000);
     expect(performance.now() - start).toBeLessThan(500);
+  });
+});
+
+describe('stabilizeRows', () => {
+  it('keeps the row objects whose content did not change, so their memoized views do not re-render', () => {
+    const before = stabilizeRows(null, flattenTree(get, new Set(['a'])));
+    // b opens: the rows above it keep their objects; b itself and the rows after it (moved down) are new
+    const after = stabilizeRows(before, flattenTree(get, new Set(['a', 'b'])));
+    const byKey = new Map(before.map((r) => [r.key, r]));
+    const same = after.filter((r) => byKey.get(r.key) === r).map((r) => r.key);
+    expect(same).toEqual(['a', 'a/x', 'a/1.ts', 'a/2.ts']);
+    expect(paths(after)).toEqual(['a', 'a/x', 'a/1.ts', 'a/2.ts', 'b', '<empty:b>', 'z.txt']);
+  });
+
+  it('returns the same list when nothing changed, also after a reload with new listing objects', () => {
+    const before = stabilizeRows(null, flattenTree(get, new Set(['a'])));
+    const reloaded = (path: string) => { const l = listings[path]; return l?.ok ? { ...l, entries: l.entries.map((e) => ({ ...e })) } : l; };
+    expect(stabilizeRows(before, flattenTree(reloaded, new Set(['a'])))).toBe(before);
+  });
+
+  it('keeps the unchanged rows when a listing arrives (a loading row becomes entries)', () => {
+    const loading = stabilizeRows(null, flattenTree((p) => p === 'a/x' ? undefined : listings[p], new Set(['a', 'a/x'])));
+    const loaded = stabilizeRows(loading, flattenTree(get, new Set(['a', 'a/x'])));
+    const kept = loaded.filter((r) => loading.includes(r)).map((r) => r.key);
+    expect(kept).toEqual(['a', 'a/x', 'a/1.ts', 'a/2.ts', 'b', 'z.txt']);
   });
 });
 
@@ -158,6 +183,12 @@ describe('indentation', () => {
     expect(indentFor(100)).toBe(max);
     expect(max).toBeLessThanOrEqual(100);
     expect(indentFor(-3)).toBe(INDENT.base);
+  });
+
+  it('pinned rows use a small fixed indent per stack position', () => {
+    expect(stickyIndent(0)).toBe(INDENT.base);
+    expect(stickyIndent(4)).toBeLessThan(indentFor(4));
+    expect(stickyIndent(4) - stickyIndent(3)).toBe(6);
   });
 
   it('draws one guide per parent level, under its chevron, never more than the distinct positions', () => {

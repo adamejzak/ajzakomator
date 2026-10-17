@@ -53,7 +53,7 @@ export async function listProjectDirectory(root: string, path = '', rootReal?: P
 
 const LIST_CONCURRENCY = 24;
 /** At most this many folders per batch request of the tree. */
-export const BATCH_LIMIT = 5000;
+export const BATCH_LIMIT = 500;
 
 /** `fn` over `items` with at most `limit` running at once; results in the order of `items`. */
 async function mapLimited<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

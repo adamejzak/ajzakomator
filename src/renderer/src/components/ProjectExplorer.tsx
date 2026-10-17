@@ -17,11 +17,11 @@ import { buildPathPayload, PATH_MIME } from '../../../shared/pathDrop';
 import { addTreePathsToFocusedCell, focusedCellId } from '../pathDrop';
 import {
   bumpRefresh, cancelBusy, copyToClipboard, createEntry, duplicateEntries, kindOf, pasteInto, renameEntry,
-  selectPaths, selectedPaths, setExpanded, targetDirectory, toggleFolder, transferEntries, trashEntries, undoLast, useExplorer,
+  registerTreeFocus, selectPaths, selectedPaths, setExpanded, targetDirectory, toggleFolder, transferEntries, trashEntries, undoLast, useExplorer,
 } from '../explorer';
 import { useTreeListings } from '../treeListings';
 import {
-  flattenTree, indentFor, indentGuides, scrollToShow, scrollTopForPinned, stickyRows, visibleRange, type TreeRow,
+  flattenTree, indentFor, indentGuides, scrollToShow, scrollTopForPinned, stabilizeRows, stickyIndent, stickyRows, visibleRange, type TreeRow,
 } from '../../../shared/treeRows';
 
 export const fullProjectPath = (root: string, relative: string) =>
@@ -35,8 +35,6 @@ const STICKY_MAX = 5;
 const OVERSCAN = 12;
 /** What is being dragged inside the tree (dataTransfer content is not readable while dragging over). */
 let dragging: { projectId: string; paths: string[] } | null = null;
-
-type EntryRow = Extract<TreeRow, { type: 'entry' }>;
 
 /** Everything a row does goes through this object (kept in a ref, so rows only re-render when their own look changes). */
 interface RowActions {
@@ -59,7 +57,7 @@ function Guides({ depth }: { depth: number }) {
   return <span className="tree-guides" aria-hidden>{indentGuides(depth).map((x) => <span key={x} style={{ left: x }} />)}</span>;
 }
 
-function RenameRow({ entry, depth, top, projectId, actions }: { entry: ProjectFileEntry; depth: number; top: number; projectId: string; actions: React.MutableRefObject<RowActions> }) {
+function RenameRow({ entry, depth, pos, size, top, projectId, actions }: { entry: ProjectFileEntry; depth: number; pos: number; size: number; top: number; projectId: string; actions: React.MutableRefObject<RowActions> }) {
   const { tr } = useI18n();
   const input = useRef<HTMLInputElement>(null);
   const finished = useRef(false);
@@ -86,7 +84,7 @@ function RenameRow({ entry, depth, top, projectId, actions }: { entry: ProjectFi
     else { finished.current = false; input.current?.focus(); }
   };
   return (
-    <div className="file-entry editing" style={{ top, height: TREE_ROW_HEIGHT, paddingLeft: indentFor(depth) }} role="treeitem" aria-selected aria-level={depth + 1}>
+    <div className="file-entry editing" style={{ top, height: TREE_ROW_HEIGHT, paddingLeft: indentFor(depth) }} role="treeitem" aria-selected aria-level={depth + 1} aria-posinset={pos} aria-setsize={size}>
       <Guides depth={depth} />
       {folder && <span className="tree-chevron"><IChevron /></span>}
       {folder ? <span className="explorer-folder-icon"><IFolder /></span> : <FileIcon name={entry.name} />}
@@ -107,8 +105,13 @@ function RenameRow({ entry, depth, top, projectId, actions }: { entry: ProjectFi
   );
 }
 
+/** Only primitives and stable objects: a re-flattened tree re-renders just the rows whose look changed. */
 interface RowProps {
-  row: EntryRow;
+  entry: ProjectFileEntry;
+  depth: number;
+  open: boolean;
+  pos: number;
+  size: number;
   index: number;
   top: number;
   selected: boolean;
@@ -123,25 +126,25 @@ interface RowProps {
   actions: React.MutableRefObject<RowActions>;
 }
 
-const TreeEntryRow = memo(function TreeEntryRow({ row, index, top, selected, cut, dropTarget, letter, letterClass, letterTitle, dot, sticky, actions }: RowProps) {
-  const { entry, depth, open } = row;
+const TreeEntryRow = memo(function TreeEntryRow({ entry, depth, open, pos, size, index, top, selected, cut, dropTarget, letter, letterClass, letterTitle, dot, sticky, actions }: RowProps) {
   const folder = entry.kind === 'directory';
   const pinned = sticky !== undefined;
+  // Pinned copies are mouse shortcuts only: hidden from assistive technology (the real row is in the tree).
   return (
     <button
       className={`file-entry ${folder ? 'folder' : ''} ${selected ? 'selected' : ''} ${cut ? 'cut' : ''} ${dropTarget ? 'drop-target' : ''}`}
-      role="treeitem"
-      aria-expanded={folder ? open : undefined}
-      aria-selected={selected}
-      aria-level={depth + 1}
-      aria-posinset={row.pos}
-      aria-setsize={row.size}
+      role={pinned ? undefined : 'treeitem'}
+      aria-expanded={folder && !pinned ? open : undefined}
+      aria-selected={pinned ? undefined : selected}
+      aria-level={pinned ? undefined : depth + 1}
+      aria-posinset={pinned ? undefined : pos}
+      aria-setsize={pinned ? undefined : size}
       tabIndex={pinned ? -1 : undefined}
       data-path={entry.path}
       data-kind={entry.kind}
       data-index={index}
       title={entry.kind === 'symlink' ? `${entry.path} · link` : entry.path}
-      style={{ top, height: TREE_ROW_HEIGHT, paddingLeft: indentFor(depth) }}
+      style={{ top, height: TREE_ROW_HEIGHT, paddingLeft: pinned ? stickyIndent(sticky) : indentFor(depth) }}
       draggable
       onClick={(e) => pinned ? actions.current.stickyClick(e, index) : actions.current.click(e, entry)}
       onDoubleClick={(e) => { e.preventDefault(); if (!pinned) actions.current.startRename(entry.path); }}
@@ -159,7 +162,7 @@ const TreeEntryRow = memo(function TreeEntryRow({ row, index, top, selected, cut
         }
       }}
     >
-      <Guides depth={depth} />
+      {!pinned && <Guides depth={depth} />}
       {folder && <span className={`tree-chevron ${open ? 'open' : ''}`}><IChevron /></span>}
       {folder ? <span className={`explorer-folder-icon ${open ? 'open' : ''}`}><IFolder /></span> : <FileIcon name={entry.name} />}
       <span className="file-name">{entry.name}</span>
@@ -214,7 +217,8 @@ export function ProjectExplorer({ project }: { project: Project }) {
   const selected = useMemo(() => new Set(selection?.paths ?? []), [selection]);
   const cut = useMemo(() => new Set(clipboard && clipboard.mode === 'cut' && clipboard.projectId === project.id ? clipboard.paths : []), [clipboard, project.id]);
   const listings = useTreeListings(project.id, expandedPaths, refresh);
-  const rows = useMemo(() => flattenTree(listings.get, expanded), [listings.version, listings.get, expanded]);
+  const lastRows = useRef<TreeRow[] | null>(null);
+  const rows = useMemo(() => (lastRows.current = stabilizeRows(lastRows.current, flattenTree(listings.get, expanded))), [listings.version, listings.get, expanded]);
   const index = useMemo(() => {
     const map = new Map<string, number>();
     rows.forEach((row, i) => { if (row.type === 'entry') map.set(row.entry.path, i); });
@@ -279,9 +283,41 @@ export function ProjectExplorer({ project }: { project: Project }) {
     if (el) { pendingFocus.current = null; el.focus({ preventScroll: true }); }
   });
 
+  // The rows changed (listings arrived, folders opened or closed): the first visible row stays where it is on screen.
+  const anchorRows = useRef<TreeRow[] | null>(null);
+  useLayoutEffect(() => {
+    const before = anchorRows.current;
+    anchorRows.current = rows;
+    const el = treeRef.current;
+    if (!before || before === rows || !el || el.scrollTop <= 0) return;
+    const was = Math.floor(el.scrollTop / TREE_ROW_HEIGHT);
+    const anchor = before[was];
+    const now = anchor?.type === 'entry' ? index.get(anchor.entry.path) : undefined;
+    if (now === undefined || now === was) return;
+    scrollTo(now * TREE_ROW_HEIGHT + (el.scrollTop - was * TREE_ROW_HEIGHT));
+  }, [rows]);
+
+  // After a dialog: the selected row is scrolled into view and focused (see refocusTree in explorer.ts).
+  const showSelected = useRef<() => boolean>(() => false);
+  showSelected.current = () => {
+    const path = selection?.paths[0];
+    if (!path || !index.has(path)) return false;
+    showRow(path, true);
+    return true;
+  };
+  useEffect(() => {
+    const fn = () => showSelected.current();
+    registerTreeFocus(fn);
+    return () => registerTreeFocus(null);
+  }, []);
+
   // "Locate in Files": the folders are expanded already; wait for their listings, then scroll the item into view.
   useEffect(() => {
-    if (reveal && reveal.projectId === project.id) revealing.current = { path: reveal.path, until: Date.now() + 5000 };
+    if (!reveal || reveal.projectId !== project.id) return;
+    const target = { path: reveal.path, until: Date.now() + 5000 };
+    revealing.current = target;
+    const timer = window.setTimeout(() => { if (revealing.current === target) revealing.current = null; }, 5000);
+    return () => window.clearTimeout(timer);
   }, [reveal?.nonce, project.id]);
   useEffect(() => {
     const target = revealing.current;
@@ -503,11 +539,11 @@ export function ProjectExplorer({ project }: { project: Project }) {
     const row = rows[i];
     if (row.type !== 'entry') return <TreeMessageRow key={row.key} row={row} top={top} actions={actionsRef} />;
     const path = row.entry.path;
-    if (position === undefined && renaming === path) return <RenameRow key={`rename:${path}`} entry={row.entry} depth={row.depth} top={top} projectId={project.id} actions={actionsRef} />;
+    if (position === undefined && renaming === path) return <RenameRow key={`rename:${path}`} entry={row.entry} depth={row.depth} pos={row.pos} size={row.size} top={top} projectId={project.id} actions={actionsRef} />;
     const mark = badgeFor(badges, path, row.entry.kind === 'directory');
     return (
       <TreeEntryRow
-        key={path} row={row} index={i} top={top} actions={actionsRef} sticky={position}
+        key={path} entry={row.entry} depth={row.depth} open={row.open} pos={row.pos} size={row.size} index={i} top={top} actions={actionsRef} sticky={position}
         selected={selected.has(path)} cut={cut.has(path)} dropTarget={dropTarget === path}
         letter={mark.letter?.letter} letterClass={mark.letter?.cls} letterTitle={mark.letter ? tr(mark.letter.title) : undefined} dot={mark.dot}
       />
@@ -545,7 +581,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
         onDrop={(e) => actions.drop(e, '')}
       >
         {sticky.rows.length > 0 && (
-          <div className="tree-sticky" role="group" aria-label={tr('Foldery nadrzędne')}>
+          <div className="tree-sticky" aria-hidden>
             <div className="tree-sticky-rows" style={{ height: sticky.rows.length * TREE_ROW_HEIGHT + sticky.offset }}>
               {sticky.rows.map((i, position) => entryRow(i, position * TREE_ROW_HEIGHT + (position === sticky.rows.length - 1 ? sticky.offset : 0), position))}
             </div>

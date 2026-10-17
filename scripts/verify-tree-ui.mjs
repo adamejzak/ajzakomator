@@ -162,6 +162,17 @@ try {
     assert.equal(layout.overflowX, false, 'no horizontal scrollbar');
     assert.ok(layout.maxLeft < layout.width * 0.6, 'deep names keep most of the width');
     await shot('deep-sticky');
+    // A folder appears above the viewport and Refresh lists it: the rows on screen stay where they are.
+    const firstRow = `(() => { const t = document.querySelector('.explorer-tree'); const i = Math.floor(t.scrollTop / ${rowHeight}) + 5; return { top: t.scrollTop, path: document.querySelector('.tree-rows .file-entry[data-index="' + i + '"]')?.dataset.path }; })()`;
+    const beforeRefresh = await evaluate(firstRow);
+    mkdirSync(join(projectPath, 'module-0-a', 'aaa-new-folder'));
+    await app.click(`.explorer-heading-actions .btn[title="Odśwież pliki"]`);
+    await until(`Number(document.querySelector('.explorer-tree').dataset.rows) === ${total + 2}`, 'refreshed listing with the new folder');
+    await sleep(300);
+    const afterRefresh = await evaluate(firstRow);
+    console.log('anchoring', beforeRefresh, afterRefresh);
+    assert.equal(afterRefresh.path, beforeRefresh.path, 'the first visible row stays in place');
+    assert.equal(afterRefresh.top, beforeRefresh.top + rowHeight, 'scrolled by the inserted row');
     // A click on a pinned row brings that folder to the top.
     const pinned = results.sticky[1];
     await app.click(`.tree-sticky .file-entry[data-path=${JSON.stringify(pinned)}]`);
@@ -173,7 +184,7 @@ try {
     await shot('sticky-click');
     // Open the deep file in the editor (for "Show in Files panel" later).
     const deepFile = deepest + '/file-05-of-level-14.js';
-    await evaluate(`document.querySelector('.explorer-tree').scrollTop = ${(target - 5) * rowHeight}`);
+    await evaluate(`document.querySelector('.explorer-tree').scrollTop = ${(target + 1 - 5) * rowHeight}`);
     await sleep(300);
     await app.click(`.tree-rows .file-entry[data-path=${JSON.stringify(deepFile)}]`);
     await until(`!!document.querySelector('.tab.file-tab[title=${JSON.stringify(deepFile)}]')`, 'deep file opened');
