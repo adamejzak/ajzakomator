@@ -50,9 +50,8 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await until(() => evaluate('document.querySelectorAll(".snippet").length === 3'), 'snippet search cleared');
   await click('.brand-trigger');
   await until(() => evaluate('document.querySelector(".brand").classList.contains("fx")'), 'brand effect');
-  await evaluate('document.querySelector(".brand-trigger").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 20 }))');
-  await until(() => evaluate('!!document.querySelector(".menu")'), 'brand menu');
-  await click('.menu-item', 'Check for updates');
+  // Since 0.8.0 the update check is the version button in the status bar (the brand has no menu any more).
+  await click('.statusbar .sb-version');
   await until(() => evaluate('!!document.querySelector(".sb-muted")'), 'visible dev update status');
   const handle = await evaluate('(() => { const r = document.querySelector(".panel-resize.edge-sidebar").getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+120}; })()');
   assert.ok(await evaluate(`document.elementFromPoint(${handle.x}, ${handle.y})?.classList.contains('panel-resize')`), 'resize hit target');
@@ -105,7 +104,8 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   const grids = initialCards.filter(id => id.startsWith('grid:'));
   await dragCard(fileCard, grids[0], false);
   assert.ok((await visualCards()).indexOf(fileCard) < (await visualCards()).indexOf(grids[0]), 'file can move before a grid');
-  await dragCard('settings', grids.at(-1), true);
+  // Behind the last card (the git capture leaves a diff tab open beside the source file, so a file may follow the grids).
+  await dragCard('settings', (await visualCards()).filter(id => id !== 'settings').at(-1), true);
   assert.equal((await visualCards()).at(-1), 'settings', 'settings can move behind grids and files');
   await dragCard(grids[0], fileCard, false);
   const movedCards = await visualCards();
@@ -125,12 +125,12 @@ export async function verifyWorkspaceUI({ cdp, evaluate, click, key, until, proj
   await key('Escape', 'Escape');
   assert.ok(await evaluate('(() => { const page = document.querySelector(".settings-page").getBoundingClientRect(); const nav = document.querySelector(".settings-nav").getBoundingClientRect(); const content = document.querySelector(".settings-content").getBoundingClientRect(); return nav.left - page.left >= 24 && nav.top - page.top >= 36 && content.left - nav.right >= 24 && page.right - content.right >= 24 && getComputedStyle(document.querySelector(".settings-card")).borderTopWidth === "0px"; })()'), 'settings have outer margins, top space and a borderless card');
   const sectionLabels = await evaluate('[...document.querySelectorAll(".settings-nav button")].map(button => button.textContent.trim())');
-  assert.equal(sectionLabels.length, 7);
+  assert.equal(sectionLabels.length, 8); // SSH joined the sections in 0.9.0
   for (const label of sectionLabels) {
     await click('.settings-nav button', label);
     await until(() => evaluate(`document.querySelector('.settings-content h2')?.textContent === ${JSON.stringify(label)}`), `settings section ${label}`);
     assert.equal(await evaluate('document.querySelectorAll(".settings-nav button[role=tab][aria-selected=true]").length'), 1);
-    assert.ok(await evaluate('!!document.querySelector(".settings-content input, .settings-content .styled-select")'), 'settings section provides controls');
+    assert.ok(await evaluate('!!document.querySelector(".settings-content input, .settings-content .styled-select, .settings-content button")'), 'settings section provides controls');
     if (label === 'Notifications and sounds') {
       assert.ok(await evaluate('document.querySelectorAll(".alert-event-row input[role=switch]").length === 3 && [...document.querySelectorAll(".alert-event-row")].every(row => row.querySelector(".styled-select") && row.querySelector(".alert-test"))'), 'event rows keep the notification switch, the sound select and the test button');
       assert.ok(await evaluate('[...document.querySelectorAll(".settings-card input[role=switch]")].every(input => { const r = input.getBoundingClientRect(); return r.width === 28 && r.height === 16; })'), 'switch tracks retain their dimensions');

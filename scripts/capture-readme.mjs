@@ -221,10 +221,11 @@ try {
   await until(() => evaluate(`document.querySelector('.sb-version')?.textContent.includes(${JSON.stringify(`v${version}`)})`), `status bar shows v${version}`);
   console.log(`Capturing with version ${version}`);
   if (await evaluate('document.title !== "unimux" || document.querySelector(".bn-base")?.textContent !== "unimux"')) throw new Error('Expected Unimux branding');
-  // Observe real PTY output and use its existing MessagePort to enter demo commands.
-  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `window.__readmeOutput = {}; window.addEventListener('message', e => { if (e.data === 'mc:pty-port' && e.ports[0]) { window.__readmePort = e.ports[0]; e.ports[0].addEventListener('message', e => { if (e.data.t === 'data' || e.data.t === 'replay') window.__readmeOutput[e.data.id] = (window.__readmeOutput[e.data.id] || '') + e.data.data; }); } });` });
+  // Observe real PTY output (single messages and, since 0.9.3, batches of several terminals) and use its existing MessagePort to enter demo commands.
+  await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `window.__readmeOutput = {}; window.addEventListener('message', e => { if (e.data === 'mc:pty-port' && e.ports[0]) { window.__readmePort = e.ports[0]; const add = (id, data) => { window.__readmeOutput[id] = (window.__readmeOutput[id] || '') + data; }; e.ports[0].addEventListener('message', e => { if (e.data.t === 'data' || e.data.t === 'replay') add(e.data.id, e.data.data); else if (e.data.t === 'dataBatch') for (const [id, data] of e.data.items) add(id, data); }); } });` });
   await cdp('Page.reload');
-  await until(() => evaluate('!!window.__readmePort'), 'PTY port');
+  // An evaluation sent while the reload is still navigating fails with "Inspected target navigated or closed": retried.
+  await until(() => evaluate('!!window.__readmePort').catch(() => false), 'PTY port');
   await until(async () => (await evaluate('window.mc.aliveCells()')).length === 4, 'running shells');
   const commands = ['node --test --test-reporter=spec', 'node inspect.mjs', 'node --check src/catalog.mjs && node --check test/catalog.test.mjs && echo JavaScript syntax checks passed.', 'node review.mjs'];
   for (let i = 0; i < cells.length; i++) {
@@ -241,7 +242,8 @@ try {
   await until(() => evaluate('!!document.querySelector(".file-editor textarea, .monaco-editor, .cm-editor")'), 'integrated editor');
   await screenshot('editor');
   await evaluate(`(() => { const tab = [...document.querySelectorAll('.workspace-tabs .tab')].find(el => el.textContent.includes('Development')); if (!tab) throw new Error('Missing Development workspace tab'); tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })); })()`);
-  await click('#projects-view');
+  // Clicking the tile of the panel already shown folds it (0.9.2): only open the project list when it is not shown.
+  if (!(await evaluate('!!document.querySelector(".project")'))) await click('#projects-view');
   await evaluate(`(() => { const row = [...document.querySelectorAll('.project')].find(el => el.textContent.includes('Atlas storefront')); if (!row) throw new Error('Missing Atlas project'); const rect = row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: rect.left + 30, clientY: rect.top + 10 })); })()`);
   await until(() => evaluate('!!document.querySelector(".menu")'), 'project menu');
   await click('.menu-item', 'Edit project (name, icon)…');
@@ -291,10 +293,14 @@ try {
   await evaluate(`document.querySelector('.workspace-tabs .ssh-tab .x')?.click()`);
   // Back to the Development grid and the project list for the optional checks.
   await evaluate(`(() => { const tab = [...document.querySelectorAll('.workspace-tabs .tab')].find(el => el.textContent.includes('Development')); if (!tab) throw new Error('Missing Development workspace tab'); tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })); })()`);
-  await click('#projects-view');
+  if (!(await evaluate('!!document.querySelector(".project")'))) await click('#projects-view');
   if (process.argv.includes('--verify')) {
     await key('Escape', 'Escape');
     await until(() => evaluate('!document.querySelector(".palette")'), 'close palette before checks');
+    // The checks open the source file and expect it to be the only file tab: the diff tab left by the git capture goes first.
+    const diffTab = `[...document.querySelectorAll('.workspace-tabs .file-tab')].find(tab => tab.dataset.workspaceId?.includes('"diff"'))`;
+    await evaluate(`${diffTab}?.querySelector('.x')?.click()`);
+    await until(() => evaluate(`!${diffTab}`), 'diff tab closed before checks');
     await verifyWorkspaceUI({ cdp, evaluate, click, key, until, project, cells, screenshot });
   }
   if (exceptions.length) throw new Error(`Renderer exceptions: ${exceptions.join('; ')}`);
