@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { execFile, spawn, spawnSync } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, safeStorage, shell, type OpenDialogOptions } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir, hostname } from 'os';
@@ -22,7 +22,7 @@ import { replaceInProject, searchProject } from './search';
 import type { ReplaceRequest, SearchOptions } from '../shared/search';
 import { PtyHostClient } from './ptyHostClient';
 import { claudeProjectDirName, findRecentCodexSession, listSessionsAsync } from './sessions';
-import { createSaver, loadState } from './store';
+import { createSaver, flushUntilSaved, loadState, StateUnreadableError } from './store';
 import { updateHandoverCommitted, blockUpdateVersion, canInstallNow, checkForUpdates, getUpdateState, handOver, initUpdater, isPortableBuild, isUpdateDownloaded, onUpdateTargetChange, previousMacUpdate, recheckUpdate, signalMacUpdateReady, updateHandoffStarted, updateTarget, RELEASES_URL, startupCheck, startupDownload, updatesEnabled } from './updater';
 import { createUpdateUiGuard } from './updateUiGuard';
 import { compareVersions, gateSkipVersion, isActiveFailure, parseFailure, runInstallWindow, runStartupGate, shouldGateOnStartup } from './startupGate';
@@ -88,6 +88,62 @@ import { loadEventSound } from './alertSound';
 import { notificationOptions } from './notifyOptions';
 import { migrateDataDir } from './dataDirMigration';
 import { updateWindowAlive } from './updateRuntime';
+import { atomicWriteFileSync } from './atomicWrite';
+import { defaultState } from '../shared/state';
+import { createReloadLimiter, createReportLimiter, describeError, rendererReport, trimNotifications, UNRESPONSIVE_GRACE_MS } from './stability';
+
+// ── crash handling ──────────────────────────────────────────────────────────
+// Registered before any other module code runs: a throw below (a locked file, a damaged install) must never leave an invisible
+// process behind that holds the single-instance lock, and nothing that fails later may vanish without a trace in a packaged build.
+
+/** crash.log in the data directory, once it is known (a small rolling file, like updater.log). */
+let crashLogger: ReturnType<typeof createUpdaterLogger> | null = null;
+/** Logging must never throw out of a crash or shutdown handler. */
+const crashLog = {
+  error: (message: string) => { try { if (crashLogger) crashLogger.error(message); else console.error(message); } catch { /* nothing else to do */ } },
+  warn: (message: string) => { try { if (crashLogger) crashLogger.warn(message); else console.warn(message); } catch { /* nothing else to do */ } },
+};
+/** Set by the last line of this module: an exception before it is a failed start, not a runtime error. */
+let moduleLoaded = false;
+let superseded = false;
+let quitting = false;
+/** True while the startup update check owns the screen: closing its window must not quit the app. */
+let gating = false;
+const allowErrorDialog = createDialogLimiter();
+
+/** Run and debug overrides (MC_DATA_DIR, MC_DEBUG_PORT, MC_OFFSCREEN, MC_HOOK_DEBUG) apply to unpackaged builds only. */
+const devEnv = (name: string): string | undefined => (app.isPackaged ? undefined : process.env[name] || undefined);
+let startFailing = false;
+
+/** The start failed: say so, and end the process instead of keeping the lock with no window. */
+function startupFailed(error: unknown): void {
+  if (startFailing) return;
+  startFailing = true;
+  const detail = describeError(error);
+  crashLog.error(`startup failed: ${detail}`);
+  if (!superseded) {
+    let language = detectLanguage([]);
+    try { language = detectLanguage([app.getLocale()]); } catch { /* not ready yet */ }
+    const text = error instanceof StateUnreadableError
+      ? translate(language, 'Nie można odczytać pliku {path}. Inny program (antywirus, OneDrive, kopia zapasowa) może go blokować. Zamknij go i uruchom unimux ponownie.', { path: error.path })
+      : translate(language, 'Nie udało się uruchomić unimux.');
+    try { dialog.showErrorBox('unimux', `${text}\n\n${detail}`); } catch { /* no dialog possible */ }
+  }
+  app.exit(1);
+}
+
+// Registering a handler replaces Electron's blocking native error dialog; a dialog open during shutdown
+// would keep the process alive while the installer waits for it to exit.
+process.on('uncaughtException', (error) => {
+  if (!moduleLoaded) { startupFailed(error); return; }
+  const detail = describeError(error);
+  const decision = decideUncaught(error, quitting || gating ? 'quiet' : 'running');
+  crashLog.error(`uncaught exception (${decision}): ${detail}`);
+  if (decision !== 'show' || !allowErrorDialog(Date.now())) return;
+  void dialog.showMessageBox({ type: 'error', title: 'unimux', message: tr('Wystąpił nieoczekiwany błąd w głównym procesie'), detail }).catch(() => {});
+});
+// A forgotten promise (a background refresh, a fire-and-forget step) is logged only: no dialog for something nobody waits for.
+process.on('unhandledRejection', (reason) => crashLog.error(`unhandled rejection: ${describeError(reason)}`));
 
 // Moves %APPDATA%\ajzakomator (macOS: ~/Library/Application Support/ajzakomator) to `unimux` once, leaving a link behind, before
 // anything else touches the data directory. While the previous version's update window still supervises an install the old
@@ -100,12 +156,7 @@ const DATA_DIR = migrateDataDir({
   busy: (legacy) => updateWindowAlive(join(legacy, 'update')),
   log: (message) => console.warn(message),
 }).dataDir;
-// Carry over state from the app's earliest name (MultiCoding) into the final data directory.
-const LEGACY_STATE = join(app.getPath('appData'), 'MultiCoding', 'state.json');
-if (!process.env.MC_DATA_DIR && !existsSync(join(DATA_DIR, 'state.json')) && existsSync(LEGACY_STATE)) {
-  mkdirSync(DATA_DIR, { recursive: true });
-  copyFileSync(LEGACY_STATE, join(DATA_DIR, 'state.json'));
-}
+crashLogger = createUpdaterLogger(join(DATA_DIR, 'crash.log'), { rotateTo: join(DATA_DIR, 'crash.old.log') });
 const HOOKS_DIR = join(DATA_DIR, 'hooks');
 const PROMPTS_DIR = join(DATA_DIR, 'prompts');
 const MCP_DIR = join(DATA_DIR, 'mcp');
@@ -115,21 +166,42 @@ app.setPath('userData', DATA_DIR);
 const APP_USER_MODEL_ID = app.isPackaged ? 'com.unimux.app' : 'com.unimux.app.dev';
 if (process.platform === 'win32') app.setAppUserModelId(APP_USER_MODEL_ID);
 
-if (process.env.MC_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', process.env.MC_DEBUG_PORT);
+if (devEnv('MC_DEBUG_PORT')) app.commandLine.appendSwitch('remote-debugging-port', devEnv('MC_DEBUG_PORT')!);
 // Module code keeps running after app.quit(), so every later step checks `superseded` instead of assuming the exit is immediate.
-let superseded = !process.env.MC_DATA_DIR && !app.requestSingleInstanceLock();
+// The lock is keyed by the userData directory (set above), so a run with MC_DATA_DIR only excludes other runs on the same folder:
+// two instances writing one state.json would overwrite each other.
+superseded = !app.requestSingleInstanceLock();
 // The installer is replacing this build's files right now (the update window is showing it); starting would crash.
-if (!superseded && process.platform === 'win32' && app.isPackaged && !process.env.MC_DATA_DIR && updateInstalling(START_BLOCK_MS)) superseded = true;
+if (!superseded && process.platform === 'win32' && app.isPackaged && updateInstalling(START_BLOCK_MS)) superseded = true;
 if (superseded) app.exit(0);
+
+// Carry over state from the app's earliest name (MultiCoding) into the final data directory (never from a second instance).
+const LEGACY_STATE = join(app.getPath('appData'), 'MultiCoding', 'state.json');
+if (!superseded && !devEnv('MC_DATA_DIR') && !existsSync(join(DATA_DIR, 'state.json')) && existsSync(LEGACY_STATE)) {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    copyFileSync(LEGACY_STATE, join(DATA_DIR, 'state.json'));
+  } catch (error) { crashLog.warn(`legacy state not copied: ${describeError(error)}`); }
+}
 
 let win: BrowserWindow | null = null;
 /** The sender check of every IPC channel that changes accounts, logins, usage, SSH data or the secret clipboard (R9). */
 const fromAppWindow = (event: { sender: unknown; senderFrame?: unknown }): boolean => isFromWindow(win, event);
 /** SSH sessions: created after app.whenReady() (safeStorage needs it), before the window (startSsh). */
 let ssh: SshCoordinator | null = null;
-let state: AppState = loadState(DATA_DIR, appPlatform(process.platform));
+// A second instance never reads (nor backs up) the state: it only hands over to the first one and exits.
+// A state.json that stays locked ends the start here (with a message): saving the defaults over it would lose the user's data.
+let state: AppState = superseded ? defaultState(appPlatform(process.platform)) : loadStateOrFail();
+function loadStateOrFail(): AppState {
+  try {
+    return loadState(DATA_DIR, appPlatform(process.platform), { log: crashLog.warn });
+  } catch (error) {
+    startupFailed(error);
+    throw error; // nothing below may run (and no saver may write) in a start that failed
+  }
+}
 const tr = (key: MessageKey, params?: MessageParams) => translate(state.settings.language ?? detectLanguage([app.getLocale()]), key, params);
-const saver = createSaver(DATA_DIR);
+const saver = createSaver(DATA_DIR, { log: crashLog.warn });
 const usageDeps: FetcherDeps = {
   credentials: systemCredentialSource(),
   // net.fetch follows the system proxy settings, like the rest of Chromium. Redirects are refused so a bearer token never follows one.
@@ -340,7 +412,7 @@ const refreshBlocked: RefreshOutcome = { kind: 'transient', detail: { reason: 'b
 const familyRenew = gateFamilyRefresh(accounts, () => cswapRoster, (dir) => (login.holdsProfile(dir) ? Promise.resolve(refreshBlocked) : renewProfile(dir)), refreshBlocked);
 usageDeps.refreshClaude = gateProfileRefresh<RefreshOutcome>(guardDeps, familyRenew, refreshBlocked);
 const hooks = new HookServer();
-if (process.env.MC_HOOK_DEBUG === '1') hooks.debugDir = DATA_DIR;
+if (devEnv('MC_HOOK_DEBUG') === '1') hooks.debugDir = DATA_DIR;
 const alive = new Set<string>();
 /** Codex session ids handed to cells this run (state may lag behind the renderer). */
 const claimedCodex = new Set<string>();
@@ -447,8 +519,8 @@ const mcp = new UnimuxMcpServer(automation);
 
 function createWindow(): void {
   win = new BrowserWindow({
-    width: process.env.MC_OFFSCREEN ? 1100 : 1600,
-    height: process.env.MC_OFFSCREEN ? 700 : 1000,
+    width: devEnv('MC_OFFSCREEN') ? 1100 : 1600,
+    height: devEnv('MC_OFFSCREEN') ? 700 : 1000,
     minWidth: 800,
     minHeight: 500,
     backgroundColor: '#0d0d0d',
@@ -461,14 +533,14 @@ function createWindow(): void {
     show: false,
     webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true },
     // Off-screen, non-focusable window for automated screenshots (docs).
-    ...(process.env.MC_OFFSCREEN ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
+    ...(devEnv('MC_OFFSCREEN') ? { x: -6000, y: 0, skipTaskbar: true, focusable: false } : {}),
   });
   // The taskbar button shows our icon (not the Electron one), whatever was cached for this identity before.
   if (process.platform === 'win32') {
     try { win.setAppDetails({ appId: APP_USER_MODEL_ID, appIconPath: app.isPackaged ? process.execPath : windowIcon(), appIconIndex: 0 }); } catch { /* the window icon still applies */ }
   }
   win.once('ready-to-show', () => {
-    if (process.env.MC_OFFSCREEN) win?.showInactive(); else win?.show();
+    if (devEnv('MC_OFFSCREEN')) win?.showInactive(); else win?.show();
     void signalUpdateReady();
     signalMacUpdateReady();
     clearGateFailureIfUpdated();
@@ -483,14 +555,80 @@ function createWindow(): void {
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
   // The install window lives in the renderer: a reload or crash must not leave an invisible install running.
   win.webContents.on('did-start-loading', () => install.dispose());
-  win.webContents.on('render-process-gone', () => install.dispose());
-  win.webContents.on('did-finish-load', () => { if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); } });
+  win.webContents.on('render-process-gone', (_e, details) => {
+    install.dispose();
+    onRendererGone(created, details.reason, details.exitCode);
+  });
+  // A renderer stuck in a loop: after a grace period the user may reload it (the terminals keep running in the Pty Host).
+  let hung: ReturnType<typeof setTimeout> | undefined;
+  win.on('unresponsive', () => {
+    if (hung || quitting) return;
+    hung = setTimeout(() => { hung = undefined; askAboutHungRenderer(created); }, UNRESPONSIVE_GRACE_MS);
+  });
+  win.on('responsive', () => { clearTimeout(hung); hung = undefined; });
+  // Windows ends the session without before-quit: the last changes are written now (the renderer was asked to send its own).
+  win.on('query-session-end', () => { send('app:before-quit'); });
+  win.on('session-end', () => { saver.flush(); });
+  win.webContents.on('did-finish-load', () => { hungReloadRequested = false; if (isLive(win)) { ptyHost.connectRenderer(win.webContents); void pushSwapPending(); } });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(join(__dirname, '../renderer/index.html'));
+}
+
+/** Renderer crashes reloaded without asking (3 within a minute); after that the user decides. */
+const allowRendererReload = createReloadLimiter();
+/** The user chose to reload a hung renderer: the crash that ends it is reloaded without counting or asking. */
+let hungReloadRequested = false;
+
+/**
+ * The renderer died (out of memory in a busy grid, a GPU or renderer crash): the terminals live on in the Pty Host and a
+ * reload adopts them (aliveAtStart) and replays their output, so the window is reloaded instead of staying black.
+ */
+function onRendererGone(window: BrowserWindow, reason: string, exitCode: number): void {
+  // The user's reload covers this one crash only: any later one is counted again.
+  const asked = hungReloadRequested;
+  hungReloadRequested = false;
+  if (reason === 'clean-exit' || quitting || gating || window !== win || !isLive(window)) return;
+  crashLog.error(`renderer gone (${reason}, exit code ${exitCode})`);
+  if (asked || allowRendererReload(Date.now())) { reloadWindow(window); return; }
+  const options = {
+    type: 'error' as const, title: 'unimux',
+    message: tr('Okno aplikacji kilka razy przestało działać.'),
+    detail: tr('Terminale działają dalej. Możesz wczytać okno ponownie albo zamknąć aplikację.'),
+    buttons: [tr('Wczytaj ponownie'), tr('Zamknij aplikację')],
+    defaultId: 0, cancelId: 0, noLink: true,
+  };
+  void dialog.showMessageBox(window, options).then(({ response }) => {
+    if (quitting || !isLive(window)) return;
+    if (response === 1) app.quit(); else reloadWindow(window);
+  }).catch(() => {});
+}
+
+function reloadWindow(window: BrowserWindow): void {
+  try { window.webContents.reload(); } catch (error) { crashLog.error(`reload failed: ${describeError(error)}`); }
+}
+
+/** The renderer has not answered for a while: waiting is the default, reloading ends whatever blocks it. */
+function askAboutHungRenderer(window: BrowserWindow): void {
+  if (quitting || gating || window !== win || !isLive(window)) return;
+  crashLog.warn('renderer unresponsive');
+  const options = {
+    type: 'warning' as const, title: 'unimux',
+    message: tr('Okno aplikacji nie odpowiada.'),
+    detail: tr('Terminale działają dalej. Możesz poczekać albo wczytać okno ponownie.'),
+    buttons: [tr('Czekaj'), tr('Wczytaj ponownie')],
+    defaultId: 0, cancelId: 0, noLink: true,
+  };
+  void dialog.showMessageBox(window, options).then(({ response }) => {
+    if (response !== 1 || quitting || !isLive(window)) return;
+    crashLog.warn('hung renderer reloaded by the user');
+    // A renderer stuck in a loop does not navigate: it is ended first, and render-process-gone reloads it.
+    hungReloadRequested = true;
+    try { window.webContents.forcefullyCrashRenderer(); } catch { hungReloadRequested = false; reloadWindow(window); }
+  }).catch(() => {});
 }
 
 function startSsh(): void {
@@ -530,7 +668,13 @@ function startSsh(): void {
 
 // ── pty host ────────────────────────────────────────────────────────────────
 
+/** Errors the Pty Host reports, at most 20 a minute (a failing terminal in a loop must not fill the disk). */
+const allowHostLog = createReportLimiter();
 ptyHost.on('message', (m: HostToMain) => {
+  if (m.t === 'log') {
+    if (allowHostLog(Date.now())) { if (m.level === 'warn') crashLog.warn(m.message); else crashLog.error(m.message); }
+    return;
+  }
   if ('id' in m && m.id.startsWith(INSTALL_PTY_PREFIX)) { install.onHostMessage(m); return; } // the install window is not a cell
   if ('id' in m && m.id.startsWith('auth:')) return; // login windows are not cells
   if (ssh?.onHostMessage(m)) return;
@@ -547,7 +691,10 @@ ptyHost.on('message', (m: HostToMain) => {
     send('cell:spawnError', m.id, m.message);
   }
 });
-ptyHost.on('crashed', () => {
+/** Everything that ran in the Pty Host is gone: logins, the install window, MCP tokens, SSH sessions. Returns what the toast promises. */
+function forgetHostTerminals(code: unknown, stderrTail: unknown): boolean {
+  const tail = typeof stderrTail === 'string' && stderrTail.trim() ? `\n${stderrTail.trim()}` : '';
+  crashLog.error(`pty host exited (code ${String(code)})${tail}`);
   login.failActive('spawn');
   install.failActive();
   for (const id of alive) { mcp.revokeCell(id); automation.statuses.set(id, 'exited'); }
@@ -558,11 +705,31 @@ ptyHost.on('crashed', () => {
     return found ? { ssh: !!found.cell.ssh, cli: getProfile(state, found.cell.profileId).cli } : undefined;
   }));
   alive.clear();
-  send('ptyhost:crashed', resumes);
+  return resumes;
+}
+// The renderer starts its visible cells again at once; PtyHostClient keeps those spawns until the new host is up.
+ptyHost.on('crashed', (code: unknown, stderrTail: unknown) => {
+  send('ptyhost:crashed', forgetHostTerminals(code, stderrTail));
 });
-ptyHost.on('fatal', () => {
-  alive.clear();
-  dialog.showErrorBox('unimux', tr('Proces terminali wielokrotnie się wysypał. Uruchom aplikację ponownie.'));
+// Too many crashes in a row: nothing restarts by itself. The cells show why they do not start; the user may try once more.
+ptyHost.on('fatal', (code: unknown, stderrTail: unknown) => {
+  const resumes = forgetHostTerminals(code, stderrTail);
+  send('ptyhost:fatal');
+  if (quitting) return;
+  // Not the blocking error box: main keeps serving IPC, hooks and MCP while the question is open.
+  const options = {
+    type: 'error' as const, title: 'unimux',
+    message: tr('Proces terminali wielokrotnie się wysypał.'),
+    detail: tr('Terminale nie działają. Możesz spróbować uruchomić je ponownie albo zamknąć aplikację.'),
+    buttons: [tr('Uruchom terminale ponownie'), tr('Zamknij aplikację')],
+    defaultId: 0, cancelId: 0, noLink: true,
+  };
+  void (isLive(win) ? dialog.showMessageBox(win!, options) : dialog.showMessageBox(options)).then(({ response }) => {
+    if (quitting) return;
+    if (response === 1) { app.quit(); return; }
+    ptyHost.restartAfterFatal();
+    send('ptyhost:crashed', resumes);
+  }).catch(() => {});
 });
 
 hooks.on('hook', (cellId: string, event: string, info?: unknown) => {
@@ -646,6 +813,20 @@ ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input:
 ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => spawnRequest(req));
 type SpawnResult = { ok: true } | { ok: false; error: string; cliMissing?: CliId; cliStatus?: CliStatus };
 async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
+  // A file write that fails (an antivirus lock on the hooks file, a full disk) answers with an error the cell shows, never a
+  // rejected call that leaves the cell blank with an MCP token issued.
+  try {
+    return await spawnRequestUnsafe(req);
+  } catch (error) {
+    crashLog.warn(`spawn of a cell failed: ${describeError(error)}`);
+    mcp.revokeCell(req.cellId);
+    alive.delete(req.cellId);
+    automation.statuses.set(req.cellId, 'exited');
+    return { ok: false, error: tr('Nie udało się uruchomić terminala: {error}', { error: error instanceof Error ? error.message : String(error) }) };
+  }
+}
+async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
+  if (ptyHost.isFatal()) return { ok: false, error: tr('Proces terminali nie działa. Uruchom aplikację ponownie.') };
   if (!existsSync(req.cwd)) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const killsBefore = killCount.get(req.cellId) ?? 0;
   const cli = cliForProfile(req.profile);
@@ -809,9 +990,12 @@ ipcMain.handle('git:createWorktree', (_e, p: string, name: string) => createWork
 ipcMain.handle('git:removeWorktree', (_e, p: string, wt: Worktree, del: boolean) => removeWorktree(p, wt, del));
 
 ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) => {
+  if (!n || typeof n !== 'object' || typeof n.title !== 'string' || typeof n.body !== 'string' || (n.cellId !== undefined && typeof n.cellId !== 'string')) return;
   if (!Notification.isSupported()) return;
   const notification = new Notification(notificationOptions(n));
   notifications.add(notification);
+  // Toasts parked in the Action Center never close by themselves: only the newest ones keep their click handler.
+  trimNotifications(notifications);
   const forget = () => notifications.delete(notification);
   notification.on('close', forget);
   notification.on('failed', forget);
@@ -826,8 +1010,15 @@ ipcMain.on('notify', (_e, n: { title: string; body: string; cellId: string }) =>
   });
   notification.show();
 });
+/** Errors of the renderer (error boundaries, window.onerror, unhandled rejections) for crash.log; packaged builds keep no console. */
+const allowRendererReport = createReportLimiter();
+ipcMain.on('app:reportError', (e, kind: unknown, message: unknown, stack: unknown) => {
+  if (!isLive(win) || e.sender !== win!.webContents) return;
+  const line = rendererReport(kind, message, stack);
+  if (line && allowRendererReport(Date.now())) crashLog.error(line);
+});
 ipcMain.handle('clipboard:read', () => clipboard.readText());
-ipcMain.on('clipboard:write', (_e, text: string) => clipboard.writeText(text));
+ipcMain.on('clipboard:write', (_e, text: unknown) => { if (typeof text === 'string') clipboard.writeText(text); });
 /** A copied private key (0.9.3): the clearing waits here, not in the window, so a reload or quit within the minute still clears it. */
 const secretClipboard = createSecretClipboard({
   read: () => clipboard.readText(),
@@ -853,8 +1044,9 @@ app.on('will-quit', (e) => {
 ipcMain.on('shell:openExternal', (_e, address: string) => {
   try { const url = new URL(address); if (['http:', 'https:'].includes(url.protocol)) void shell.openExternal(url.href); } catch { /* invalid address */ }
 });
-ipcMain.on('shell:openPath', (_e, p: string) => shell.openPath(p));
-ipcMain.on('shell:revealPath', (_e, p: string) => shell.showItemInFolder(p));
+const isPathArg = (p: unknown): p is string => typeof p === 'string' && p.length > 0 && !p.includes('\0');
+ipcMain.on('shell:openPath', (_e, p: unknown) => { if (isPathArg(p)) void shell.openPath(p).catch(() => undefined); });
+ipcMain.on('shell:revealPath', (_e, p: unknown) => { if (isPathArg(p)) shell.showItemInFolder(p); });
 const changelog = createChangelog({
   cacheFile: join(DATA_DIR, 'changelog.json'),
   fetchJson: async (url) => {
@@ -922,9 +1114,24 @@ ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
 ipcMain.on('update:install', () => openInstallWindow());
 ipcMain.on('update:open', () => shell.openExternal(RELEASES_URL));
-ipcMain.on('shell:openInEditor', (_e, p: string) => {
+/** `cursor` / `code` found on PATH, looked up without blocking main (a slow PATH on network drives) and kept for a few minutes. */
+let editorLookup: { at: number; found: Promise<string | undefined> } | undefined;
+const EDITOR_LOOKUP_MS = 5 * 60_000;
+function findEditor(): Promise<string | undefined> {
+  if (editorLookup && Date.now() - editorLookup.at < EDITOR_LOOKUP_MS) return editorLookup.found;
+  const onPath = (cmd: string) => new Promise<boolean>((resolve) => {
+    execFile(process.platform === 'win32' ? 'where' : '/usr/bin/which', [cmd], { windowsHide: true, timeout: 5000 }, (error) => resolve(!error));
+  });
+  const found = (async () => { for (const cmd of ['cursor', 'code']) if (await onPath(cmd)) return cmd; return undefined; })();
+  editorLookup = { at: Date.now(), found };
+  return found;
+}
+ipcMain.on('shell:openInEditor', (_e, p: unknown) => {
+  if (!isPathArg(p)) return;
+  void findEditor().then((editor) => openInEditor(p, editor)).catch((error) => crashLog.warn(`open in editor failed: ${describeError(error)}`));
+});
+function openInEditor(p: string, editor: string | undefined): void {
   // `cursor` / `code` are .cmd launchers → need a shell; they get our clean env.
-  const editor = ['cursor', 'code'].find((cmd) => spawnSync(process.platform === 'win32' ? 'where' : '/usr/bin/which', [cmd], { windowsHide: true }).status === 0);
   if (!editor && process.platform === 'darwin') {
     const application = ['Cursor', 'Visual Studio Code'].find((name) =>
       existsSync(join('/Applications', `${name}.app`)) || existsSync(join(homedir(), 'Applications', `${name}.app`)));
@@ -934,8 +1141,8 @@ ipcMain.on('shell:openInEditor', (_e, p: string) => {
     }
   }
   if (!editor) return void shell.openPath(p);
-  spawn(editor, process.platform === 'win32' ? [`"${p}"`] : [p], { shell: process.platform === 'win32', detached: true, stdio: 'ignore', windowsHide: true, env: cleanEnv(process.env) }).unref();
-});
+  spawn(editor, process.platform === 'win32' ? [`"${p}"`] : [p], { shell: process.platform === 'win32', detached: true, stdio: 'ignore', windowsHide: true, env: cleanEnv(process.env) }).on('error', () => undefined).unref();
+}
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
 
@@ -952,8 +1159,6 @@ app.on('second-instance', () => {
   if (!focused && quitting) relaunchRequested = true;
 });
 
-/** True while the startup update check owns the screen: closing its window must not quit the app. */
-let gating = false;
 const GATE_FILE = join(DATA_DIR, 'update-gate.json');
 const readGateFailure = () => { try { return parseFailure(JSON.parse(readFileSync(GATE_FILE, 'utf8'))); } catch { return undefined; } };
 
@@ -962,7 +1167,7 @@ const HANDOFF_QUIT_WATCHDOG_MS = 15 * 1000;
 let handoffWatchdog: ReturnType<typeof setTimeout> | undefined;
 
 const MAC_GATE_DOWNLOAD_TOTAL_MS = 10 * 60 * 1000;
-const writeGateRecord = (version: string) => { try { writeFileSync(GATE_FILE, JSON.stringify({ version, at: Date.now() })); } catch { /* best effort */ } };
+const writeGateRecord = (version: string) => { try { atomicWriteFileSync(GATE_FILE, JSON.stringify({ version, at: Date.now() })); } catch { /* best effort */ } };
 const recordUpdateFailure = (version: string) => { writeGateRecord(version); blockUpdateVersion(version); };
 
 /** The record of an attempt or failure ends once the version it targeted (or a newer one) is actually running. */
@@ -1030,7 +1235,7 @@ async function runUpdateGate(): Promise<boolean> {
       void abortUpdateWindow();
       gating = false;
       updateUi.release('startup-gate');
-      void startMainApp().catch((error) => console.error('startup failed', error));
+      void startMainApp().catch(startFailedLate);
     };
     handoffWatchdog = setTimeout(watch, HANDOFF_QUIT_WATCHDOG_MS);
     return true;
@@ -1077,7 +1282,8 @@ function openInstallWindow(): void {
 }
 
 async function startMainApp(): Promise<void> {
-  await hooks.start();
+  // Without the hook server (loopback blocked by security software) the app still starts: agent states fall back to heuristics.
+  try { await hooks.start(); } catch (error) { crashLog.error(`hook server did not start: ${describeError(error)}`); }
   try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
   ptyHost.start();
   startSsh();
@@ -1100,8 +1306,9 @@ async function startMainApp(): Promise<void> {
 app.whenReady().then(async () => {
   applyDockIcon();
   if (superseded) return;
-  // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window.
-  Menu.setApplicationMenu(null);
+  // No default menu: its Ctrl+W / Ctrl+R accelerators would close or reload the window. macOS needs the app menu (Cmd+Q, hide)
+  // and the Edit menu (Cmd+C / V / X / A / Z in text fields), still without View or Window roles (no Cmd+R, no Cmd+W).
+  Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]) : null);
   initUpdater((s) => send('update:state', s), { strings: updateStrings });
   // macOS: an update whose swap did not happen counts as a failure of that version (the cooldown applies).
   const previous = await previousMacUpdate();
@@ -1111,26 +1318,13 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32' && app.isPackaged) { await signalUpdateReady(); await waitForUpdateWindowGone(4000); }
   if (await runUpdateGate()) return;
   await startMainApp();
-}).catch((error) => console.error('startup failed', error));
+}).catch(startFailedLate);
 
-let quitting = false;
-
-const updaterLog = createUpdaterLogger(join(DATA_DIR, 'updater.log'));
-/** Logging must never throw out of a crash or shutdown handler. */
-const crashLog = {
-  error: (message: string) => { try { updaterLog.error(message); } catch { /* nothing else to do */ } },
-  warn: (message: string) => { try { updaterLog.warn(message); } catch { /* nothing else to do */ } },
-};
-const allowErrorDialog = createDialogLimiter();
-// Registering a handler replaces Electron's blocking native error dialog; a dialog open during shutdown
-// would keep the process alive while the installer waits for it to exit.
-process.on('uncaughtException', (error) => {
-  const detail = error instanceof Error ? error.stack ?? error.message : String(error);
-  const decision = decideUncaught(error, quitting || gating ? 'quiet' : 'running');
-  crashLog.error(`uncaught exception (${decision}): ${detail}`);
-  if (decision !== 'show' || !allowErrorDialog(Date.now())) return;
-  void dialog.showMessageBox({ type: 'error', title: 'unimux', message: tr('Wystąpił nieoczekiwany błąd w głównym procesie'), detail }).catch(() => {});
-});
+/** A start that failed after the module loaded: with no window yet the process would hold the lock unseen, so it ends. */
+function startFailedLate(error: unknown): void {
+  if (win || quitting) { crashLog.error(`startup step failed: ${describeError(error)}`); return; }
+  startupFailed(error);
+}
 
 /** Ends the process; a launch that was swallowed during the wind-down is repeated, unless an update took over. */
 function exitNow(): void {
@@ -1156,13 +1350,12 @@ app.on('before-quit', (e) => {
   send('app:before-quit');
   // Give the renderer a moment to push its final state, then wind down terminals cleanly.
   setTimeout(async () => {
-    try {
-      saver.flush();
-    } catch (err) {
-      console.error('state save failed', err);
-    }
+    // Never throws; a save that still fails is logged by the saver and tried again below.
+    saver.flush();
     try {
       await ptyHost.shutdown();
+      // A save that hit a lock gets a few more seconds (well inside the hard limit) instead of being lost.
+      if (saver.hasPending() && !(await flushUntilSaved(saver, 3000))) crashLog.error('the last state changes could not be saved');
       await mcp.stop();
       hooks.stop();
     } catch (err) {
@@ -1173,3 +1366,6 @@ app.on('before-quit', (e) => {
   }, 150);
 });
 app.on('window-all-closed', () => { if (!gating) app.quit(); });
+
+// Everything above ran: from here on an uncaught exception is a runtime error, not a failed start.
+moduleLoaded = true;

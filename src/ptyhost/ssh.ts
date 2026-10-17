@@ -234,6 +234,9 @@ export class SshManager implements TerminalBackend {
       stream.stderr.on('data', (chunk: Buffer) => this.output(s, stderr.write(chunk)));
       stream.on('exit', (code: number | null) => { s.exited = true; if (typeof code === 'number') s.exitCode = code; });
       stream.on('close', () => { this.output(s, stdout.end() + stderr.end()); try { s.client.end(); } catch { /* gone */ } });
+      // A reset mid-write surfaces as a stream error: it ends this session, never the Pty Host (and every other terminal).
+      stream.on('error', (error: unknown) => this.fail(s, mapSshError(error, s.override)));
+      stream.stderr.on('error', (error: unknown) => this.fail(s, mapSshError(error, s.override)));
       if (s.startup.text) s.startup.max = setTimeout(() => this.typeStartup(s), this.timers.startupMaxMs);
     });
   }

@@ -189,11 +189,17 @@ export async function spawnCell(cellId: string, mode: 'new' | 'resume'): Promise
     return { cellErrors: rest };
   });
   const { cols, rows } = terminals.size(cellId);
-  const r = await window.mc.spawnCell({
-    cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId, ...(forcedCells.has(cellId) ? { force: true } : {}),
-    sessionConfirmed: mode === 'resume' && cell.session?.confirmed === true,
-    startupPrompt: mode === 'new' && profile.cli !== 'shell' ? cell.startupPrompt : undefined,
-  });
+  let r: Awaited<ReturnType<typeof window.mc.spawnCell>>;
+  try {
+    r = await window.mc.spawnCell({
+      cellId, cwd: cell.worktree?.path ?? project.path, cols, rows, profile, mode, sessionId, ...(forcedCells.has(cellId) ? { force: true } : {}),
+      sessionConfirmed: mode === 'resume' && cell.session?.confirmed === true,
+      startupPrompt: mode === 'new' && profile.cli !== 'shell' ? cell.startupPrompt : undefined,
+    });
+  } catch (error) {
+    // The call itself failed (main threw): the cell says so instead of staying blank.
+    r = { ok: false, error: tr('Nie udało się uruchomić terminala: {error}', { error: error instanceof Error ? error.message : String(error) }) };
+  }
   // The startup prompt is a one-shot: later restarts must not send it again.
   if (r.ok && cell.startupPrompt && mode === 'new') update((s) => updateCell(s, cellId, { startupPrompt: undefined }));
   if (!r.ok && r.cliMissing) {

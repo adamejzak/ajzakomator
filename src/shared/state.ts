@@ -1,5 +1,5 @@
 // Pure state transitions. Every function returns a new AppState and never mutates its input.
-import { growLayout, removeArea, type GridLayout } from './layout';
+import { growLayout, layoutForCount, MAX_CELLS, removeArea, type GridLayout } from './layout';
 import { DEFAULT_PROFILES, RETIRED_PROFILES } from './profiles';
 import { isLanguage } from './languages';
 import { defaultShell, shellsForPlatform, type AppPlatform } from './platform';
@@ -13,7 +13,7 @@ import { DEFAULT_BACKGROUND_LOAD, normalizeBackgroundLoad } from './backgroundLo
 import { normalizeShortcutOverrides } from './shortcuts';
 import { normalizeSshHosts, type SshCellRef, type SshHost } from './ssh';
 import type {
-  AppState, Cell, Preset, PresetCell, Profile, Project, Settings, Snippet, Tab, Worktree,
+  AppState, ArchivedTab, Cell, Preset, PresetCell, Profile, Project, Settings, Snippet, Tab, Worktree,
 } from './types';
 
 export const ARCHIVE_LIMIT = 50;
@@ -338,6 +338,43 @@ export const getProfile = (s: AppState, id: string): Profile =>
 export const activeProject = (s: AppState): Project | null => s.projects.find((p) => p.id === s.activeProjectId) ?? null;
 export const activeTab = (p: Project | null): Tab | null => p?.tabs.find((t) => t.id === p.activeTabId) ?? null;
 
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const isNumbers = (v: unknown): boolean => Array.isArray(v) && v.every((n) => typeof n === 'number' && Number.isFinite(n));
+const isNumberRows = (v: unknown): boolean => Array.isArray(v) && v.every((row) => row === null || isNumbers(row));
+
+/** A saved layout the grid can draw for `count` cells: one area per cell inside the grid, size fields of the right type. */
+export function isUsableLayout(layout: unknown, count: number): layout is GridLayout {
+  if (!isRecord(layout)) return false;
+  const { cols, rows, areas } = layout;
+  if (!Number.isInteger(cols) || !Number.isInteger(rows) || (cols as number) < 1 || (rows as number) < 1) return false;
+  // Row-based layouts use the LCM of their row counts as tracks (60 for 5, 4, 3); either axis in cols mode.
+  if ((cols as number) > 60 || (rows as number) > 60) return false;
+  if (!Array.isArray(areas) || areas.length !== count) return false;
+  const inside = areas.every((a) => isRecord(a)
+    && [a.col, a.row, a.colSpan, a.rowSpan].every((n) => Number.isInteger(n))
+    && (a.col as number) >= 0 && (a.row as number) >= 0 && (a.colSpan as number) >= 1 && (a.rowSpan as number) >= 1
+    && (a.col as number) + (a.colSpan as number) <= (cols as number) && (a.row as number) + (a.rowSpan as number) <= (rows as number));
+  if (!inside) return false;
+  if (layout.mode !== undefined && layout.mode !== 'cols') return false;
+  for (const field of ['rowCounts', 'rowSizes', 'colSizes'] as const) if (layout[field] !== undefined && !isNumbers(layout[field])) return false;
+  for (const field of ['rowColSizes', 'colRowSizes'] as const) if (layout[field] !== undefined && !isNumberRows(layout[field])) return false;
+  return true;
+}
+
+/**
+ * One saved tab, repaired so the grid can draw it: cells without an id or profile are dropped (at most MAX_CELLS stay) and a
+ * layout that does not fit the cells is rebuilt. A tab left with no cell is dropped (null). Damage in one tab never loses the rest.
+ */
+export function repairTab<T extends Tab>(raw: unknown): T | null {
+  if (!isRecord(raw) || typeof raw.id !== 'string') return null;
+  const cells = (Array.isArray(raw.cells) ? raw.cells : [])
+    .filter((c): c is Cell => isRecord(c) && typeof c.id === 'string' && typeof c.profileId === 'string')
+    .slice(0, MAX_CELLS);
+  if (!cells.length) return null;
+  const layout = isUsableLayout(raw.layout, cells.length) ? raw.layout : layoutForCount(cells.length);
+  return { ...raw, name: typeof raw.name === 'string' ? raw.name : '', cells, layout } as unknown as T;
+}
+
 /** Basic shape check for data loaded from disk; fills in fields added in later versions. */
 export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): AppState | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -390,10 +427,11 @@ export function normalizeState(raw: unknown, platform: AppPlatform = 'win32'): A
       // The retired notifications / waitingSound* keys only seed the alerts when none are saved yet; they are never written again.
       alerts: readAlerts(r.settings as Record<string, unknown> | undefined),
     },
-    projects: r.projects.map((p) => ({
+    // A damaged project (no id or path) or tab is dropped or repaired on its own instead of rejecting the whole file.
+    projects: (r.projects as unknown[]).filter((p): p is Project => isRecord(p) && typeof p.id === 'string' && typeof p.path === 'string').map((p) => ({
       ...p,
-      tabs: (p.tabs ?? []).map((t) => ({ ...t, cells: cleanCells(t.cells) })),
-      archive: (p.archive ?? []).map((t) => ({ ...t, cells: cleanCells(t.cells) })),
+      tabs: (Array.isArray(p.tabs) ? p.tabs : []).map((t) => repairTab<Tab>(t)).filter((t): t is Tab => t !== null).map((t) => ({ ...t, cells: cleanCells(t.cells) })),
+      archive: (Array.isArray(p.archive) ? p.archive : []).map((t) => repairTab<ArchivedTab>(t)).filter((t): t is ArchivedTab => t !== null).map((t) => ({ ...t, cells: cleanCells(t.cells) })),
     })),
   } as AppState;
   for (const key of LEGACY_ALERT_KEYS) delete (normalized.settings as unknown as Record<string, unknown>)[key];

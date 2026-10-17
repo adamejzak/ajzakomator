@@ -10,6 +10,15 @@ const parentPort = process.parentPort;
 let rendererPort: MessagePortMain | null = null;
 
 const toMain = (m: HostToMain) => parentPort.postMessage(m);
+
+/** Message and stack of an error, cut to a size the crash log can take (never the payload of a message: SSH secrets). */
+const describeError = (error: unknown): string =>
+  (error instanceof Error ? error.stack ?? error.message : String(error)).slice(0, 4000);
+const logToMain = (level: 'error' | 'warn', message: string) => { try { toMain({ t: 'log', level, message }); } catch { /* main is gone */ } };
+// One failing terminal (a stream error nobody listened to, a bug in a backend) must not end the host and every other terminal
+// with it: the error is reported to main's crash log and the host keeps running.
+process.on('uncaughtException', (error) => logToMain('error', `pty host uncaught exception: ${describeError(error)}`));
+process.on('unhandledRejection', (reason) => logToMain('error', `pty host unhandled rejection: ${describeError(reason)}`));
 const toRenderer = (m: HostToRenderer): boolean => {
   if (!rendererPort) return false;
   rendererPort.postMessage(m);
@@ -65,7 +74,11 @@ function attachRenderer(port: MessagePortMain): void {
   for (const h of router.histories()) toRenderer({ t: 'replay', id: h.id, data: h.data });
 }
 
-parentPort.on('message', async (e) => {
+parentPort.on('message', (e) => {
+  void handleMain(e).catch((error) => logToMain('error', `pty host message failed: ${describeError(error)}`));
+});
+
+async function handleMain(e: { data: unknown; ports: MessagePortMain[] }): Promise<void> {
   const m = e.data as MainToHost | { t: 'port' };
   switch (m.t) {
     case 'port':
@@ -103,4 +116,4 @@ parentPort.on('message', async (e) => {
       toMain({ t: 'killedAll' });
       break;
   }
-});
+}

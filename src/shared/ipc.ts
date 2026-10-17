@@ -53,6 +53,8 @@ export type HostToMain =
   | { t: 'interrupt'; id: string }
   | { t: 'killed'; id: string }
   | { t: 'killedAll' }
+  /** An error inside the Pty Host for main's crash log: message and stack only, never a message payload (SSH secrets). */
+  | { t: 'log'; level: 'error' | 'warn'; message: string }
   | { t: 'sshStatus'; id: string; phase: SshPhase; error?: SshErrorCode; exitCode?: number; banner?: string }
   /** `key` is the base64 raw public key blob the server presented. */
   | { t: 'sshHostKey'; id: string; promptId: string; key: string }

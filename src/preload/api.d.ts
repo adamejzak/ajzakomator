@@ -102,6 +102,8 @@ export interface McApi {
   clipboardWrite(text: string): void;
   /** A copied private key: main clears the clipboard after a minute (or on quit) if it still holds this text. False when refused. */
   clipboardWriteSecret(text: string): Promise<boolean>;
+  /** An error of the renderer for main's crash.log (rate-limited and cut there). `kind`: lowercase letters and dashes. */
+  reportError(kind: string, message: string, stack?: string): void;
   windowsBuild: number;
   getUpdate(): Promise<UpdateState & { currentVersion: string }>;
   checkUpdates(): Promise<void>;
@@ -133,6 +135,8 @@ export interface McApi {
   on(channel: 'cell:spawnError', cb: (cellId: string, message: string) => void): () => void;
   on(channel: 'focus-cell', cb: (cellId: string) => void): () => void;
   on(channel: 'ptyhost:crashed', cb: (resumesConversation: boolean) => void): () => void;
+  /** The Pty Host crashed too often and is not restarted until the user asks for it (cells show why they do not start). */
+  on(channel: 'ptyhost:fatal', cb: () => void): () => void;
   on(channel: 'ssh:session', cb: (state: SshSessionState) => void): () => void;
   on(channel: 'ssh:prompt', cb: (cellId: string, prompt: SshPrompt | null) => void): () => void;
   on(channel: 'ssh:vault:changed', cb: (info: SshVaultInfo) => void): () => void;

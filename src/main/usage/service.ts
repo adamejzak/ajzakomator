@@ -1,5 +1,6 @@
 // src/main/usage/service.ts
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync } from 'fs';
+import { atomicWriteFileSync } from '../atomicWrite';
 import { dirname } from 'path';
 import type { AccountNotice } from '../../shared/accounts';
 import { heldByOf, type AccountRef, type ProviderUsage, type UsageState } from '../../shared/usage';
@@ -440,7 +441,7 @@ export class UsageService {
       const entries = keys.flatMap((key) => { const usage = this.providers.get(key); return usage?.windows.length ? [{ key, usage }] : []; });
       const backoff = Object.fromEntries(keys.flatMap((key) => { const hold = this.backoff.get(key); return hold && hold.until > this.now() ? [[key, hold]] : []; }));
       const reads = Object.fromEntries(keys.flatMap((key) => { const at = this.lastRead.get(key); return at !== undefined ? [[key, at]] : []; }));
-      writeFileSync(this.options.cacheFile, JSON.stringify({ version: CACHE_VERSION, entries, backoff, reads }));
+      atomicWriteFileSync(this.options.cacheFile, JSON.stringify({ version: CACHE_VERSION, entries, backoff, reads }));
     } catch { /* the cache is optional */ }
   }
 }

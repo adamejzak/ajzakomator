@@ -1,5 +1,6 @@
 // Small, private files of main: the ssh/ directory is 0700 and its files 0600 on POSIX (on Windows the per-user %APPDATA% ACL applies).
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync } from 'fs';
+import { atomicWriteFileSync } from '../atomicWrite';
 
 const posix = process.platform !== 'win32';
 
@@ -8,17 +9,10 @@ export function ensurePrivateDir(dir: string): void {
   if (posix) { try { chmodSync(dir, 0o700); } catch { /* best effort */ } }
 }
 
-/** Atomic write: a temp file next to the target, then rename. */
+/** Atomic write (see atomicWrite.ts): a unique temp file next to the target, flushed, then renamed (retried on Windows locks). */
 export function writePrivateFile(file: string, text: string): void {
-  const temp = `${file}.${process.pid}.tmp`;
-  try {
-    writeFileSync(temp, text, { encoding: 'utf8', mode: 0o600 });
-    renameSync(temp, file);
-    if (posix) chmodSync(file, 0o600);
-  } catch (error) {
-    rmSync(temp, { force: true });
-    throw error;
-  }
+  atomicWriteFileSync(file, text, { mode: 0o600 });
+  if (posix) chmodSync(file, 0o600);
 }
 
 /**
