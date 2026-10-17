@@ -8,7 +8,8 @@ import { rm, stat } from 'fs/promises';
 import type { SpawnCellRequest } from '../preload/api';
 import { cleanEnv } from '../shared/env';
 import type { HostToMain } from '../shared/ipc';
-import { buildLaunchCommand } from '../shared/profiles';
+import { buildLaunchCommand, type LaunchOptions } from '../shared/profiles';
+import { prepareCellMcp, removeClaudeMcpConfig } from './mcpCellConfig';
 import type { AppState, Worktree } from '../shared/types';
 import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
@@ -929,17 +930,15 @@ async function spawnRequestUnsafe(req: SpawnCellRequest): Promise<SpawnResult> {
     initialPrompt = { file, text: req.startupPrompt };
   }
   const env: Record<string, string> = baseEnv;
-  let mcpConfig: { url: string; tokenEnv: string; claudeConfigPath: string } | undefined;
+  let mcpConfig: LaunchOptions['mcp'];
+  // The token reaches Claude through its per-cell --mcp-config file only (not the environment every tool process inherits);
+  // Codex can only read it from a variable (see mcpCellConfig.ts).
   if (req.profile.cli !== 'shell' && findCell(state, req.cellId)?.cell.role && mcp.getInfo().running) {
-    env.UNIMUX_MCP_TOKEN = mcp.issueToken(req.cellId);
-    const url = mcp.getInfo().url!;
-    mkdirSync(MCP_DIR, { recursive: true });
-    const claudeConfigPath = join(MCP_DIR, `${req.cellId}.json`);
-    writeFileSync(claudeConfigPath, JSON.stringify({ mcpServers: { unimux: {
-      type: 'http', url, headers: { Authorization: 'Bearer ${UNIMUX_MCP_TOKEN}' },
-    } } }), 'utf8');
-    mcpConfig = { url, tokenEnv: 'UNIMUX_MCP_TOKEN', claudeConfigPath };
-  } else mcp.revokeCell(req.cellId);
+    mcpConfig = prepareCellMcp(req.profile.cli, { dir: MCP_DIR, cellId: req.cellId, url: mcp.getInfo().url!, token: mcp.issueToken(req.cellId), env });
+  } else {
+    mcp.revokeCell(req.cellId);
+    removeClaudeMcpConfig(MCP_DIR, req.cellId);
+  }
   // Codex reports every finished turn (and its conversation id) to the local hook server through a per-process `notify`.
   let codexNotifyUrl: string | undefined;
   if (req.profile.cli === 'codex') {

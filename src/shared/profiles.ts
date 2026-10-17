@@ -31,8 +31,11 @@ export interface LaunchOptions {
   shell?: ShellKind;
   /** Per-process hook URL of a Codex cell (see codexHooks.ts); without it Codex only gets plain terminal notifications. */
   codexNotifyUrl?: string;
-  /** App-owned, per-cell MCP configuration; never changes the user's global config. */
-  mcp?: { url: string; tokenEnv: string; claudeConfigPath: string };
+  /**
+   * App-owned, per-cell MCP configuration; never changes the user's global config. Claude reads the server and its token from
+   * `claudeConfigPath` (a literal header, see main/mcpCellConfig.ts); Codex reads the token from the `tokenEnv` variable.
+   */
+  mcp?: { url: string; tokenEnv?: string; claudeConfigPath?: string };
   /**
    * First prompt for a new conversation. PowerShell and POSIX shells read it from `file`
    * (keeping newlines and quotes intact); cmd gets the text inline on one line.
@@ -55,7 +58,7 @@ export function buildCliCommand(profile: Profile, opts: LaunchOptions): string |
     parts.push('claude');
     if (opts.sessionId) parts.push(opts.mode === 'resume' ? '--resume' : '--session-id', opts.sessionId);
     if (opts.claudeSettingsPath) parts.push('--settings', shellQuote(opts.claudeSettingsPath, opts.shell));
-    if (opts.mcp) parts.push('--mcp-config', shellQuote(opts.mcp.claudeConfigPath, opts.shell));
+    if (opts.mcp?.claudeConfigPath) parts.push('--mcp-config', shellQuote(opts.mcp.claudeConfigPath, opts.shell));
   } else if (profile.cli === 'codex') {
     parts.push('codex');
     if (opts.mode === 'resume' && opts.sessionId) parts.push('resume', opts.sessionId);
@@ -63,7 +66,7 @@ export function buildCliCommand(profile: Profile, opts: LaunchOptions): string |
       // Single-quoted TOML inside; cmd has no single-quote strings, so it gets double quotes around the whole override.
       for (const override of codexHookOverrides(opts.codexNotifyUrl)) parts.push('-c', opts.shell === 'cmd' ? `"${override}"` : shellQuote(override, opts.shell));
     } else parts.push('-c', 'tui.notifications=true');
-    if (opts.mcp) {
+    if (opts.mcp?.tokenEnv) {
       for (const [key, value] of [['url', opts.mcp.url], ['bearer_token_env_var', opts.mcp.tokenEnv]]) {
         const setting = `mcp_servers.unimux.${key}=${JSON.stringify(value)}`;
         // cmd does not interpret TOML single quotes; these generated values contain no spaces/apostrophes.

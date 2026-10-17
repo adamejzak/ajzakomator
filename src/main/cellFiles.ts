@@ -1,5 +1,5 @@
 // Per-cell files in the data folder: the Claude hook settings (hooks/claude-<cell>.json, they carry the hook token), the MCP
-// config (mcp/<cell>.json) and the startup prompt (prompts/<cell>.txt, the whole first task in plain text).
+// config (mcp/<cell>.json, Claude cells only, it carries the cell's MCP token) and the startup prompt (prompts/<cell>.txt, the whole first task in plain text).
 import { readdir, rm } from 'fs/promises';
 import { join } from 'path';
 
