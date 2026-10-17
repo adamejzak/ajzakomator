@@ -39,7 +39,11 @@ export interface CliDetectorDeps {
 export const FOUND_TTL_MS = 10 * 60_000;
 export const MISSING_TTL_MS = 30_000;
 export const EXEC_TIMEOUT_MS = 5000;
-const REGISTRY_TTL_MS = 5000;
+/**
+ * The registry PATH changes only when something is installed: it is re-read after a minute, on a window focus (the user may
+ * come back from an installer), on "check again" and after an install; a failed read is retried on the next spawn.
+ */
+export const REGISTRY_TTL_MS = 60_000;
 const NODE_VERSIONS_TRIED = 8;
 const WINDOWS_PROBE_TIMEOUT_MS = 8000;
 
@@ -249,8 +253,15 @@ export class CliDetector {
     const current = this.registry;
     if (current && this.deps.now() - current.at <= REGISTRY_TTL_MS) return current.promise;
     const promise = read().then((raw) => (raw ? registryPathEntries(raw, this.deps.env()) : null)).catch(() => null);
-    this.registry = { at: this.deps.now(), promise };
+    const entry = { at: this.deps.now(), promise };
+    this.registry = entry;
+    void promise.then((entries) => { if (entries === null && this.registry === entry) this.registry = undefined; });
     return promise;
+  }
+
+  /** The next spawn reads the registry PATH again (window focus: the user may come back from an installer). */
+  invalidateRegistry(): void {
+    this.registry = undefined;
   }
 
   private shellProbe(env: Record<string, string | undefined>): Promise<ProbeResult> {

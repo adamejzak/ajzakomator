@@ -1,6 +1,6 @@
 // src/main/accounts/store.ts
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import {
   identityFields, isAccountId, type AccountCustody, type AccountIdentity, type AccountNotice, type AccountNoticeKind,
@@ -79,10 +79,31 @@ export class AccountsStore {
    * then empty and writable. Unreadable (locked, a directory), of the wrong shape or of a newer version: read-only, so the
    * records in it are never lost (the same rule as the SSH vault).
    */
+  /**
+   * The last successfully parsed file and the stat stamp it was read at: the usage polls ask several times per second, and
+   * one stat is much cheaper than reading and parsing the file. Callers get a copy (they may edit it). Own writes drop it.
+   */
+  private cached?: { stamp: string; file: StoreFile };
+
   private read(): StoreFile {
+    let stamp: string | undefined;
+    try {
+      const info = statSync(this.file);
+      if (info.isFile()) stamp = `${info.mtimeMs}:${info.ctimeMs}:${info.size}:${info.ino}`;
+    } catch { /* missing: read() reports it */ }
+    if (stamp && this.cached?.stamp === stamp) return structuredClone(this.cached.file);
+    const parsed = { ok: false };
+    const file = this.readFile(parsed);
+    this.cached = stamp && parsed.ok ? { stamp, file: structuredClone(file) } : undefined;
+    return file;
+  }
+
+  private readFile(parsedOk: { ok: boolean }): StoreFile {
     const empty = (readOnly: boolean): StoreFile => ({ version: 1, claude: [], notices: [], readOnly });
     const result = readJsonFile(this.file);
     if (!result.ok) return empty(!result.missing && existsSync(this.file));
+    // From here the answer depends on the file's content only, so it may be reused while the file is unchanged.
+    parsedOk.ok = true;
     const parsed = result.value;
     if (!isRecord(parsed) || !Array.isArray(parsed.claude)) return empty(true);
     if (parsed.version !== undefined && !(typeof parsed.version === 'number' && Number.isInteger(parsed.version) && parsed.version >= 1)) return empty(true);
@@ -199,6 +220,7 @@ export class AccountsStore {
   }
 
   private write(file: StoreFile): void {
+    this.cached = undefined;
     mkdirSync(this.root, { recursive: true });
     const temp = `${this.file}.${process.pid}.tmp`;
     const body = { version: file.version, claude: file.claude, ...(file.live ? { live: file.live } : {}), ...(file.notices.length ? { notices: file.notices } : {}) };

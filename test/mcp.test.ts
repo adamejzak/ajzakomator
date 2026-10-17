@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request } from 'http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { UnimuxMcpServer } from '../src/main/mcp';
+import { capResult, UnimuxMcpServer } from '../src/main/mcp';
 import { AutomationService } from '../src/main/automation';
 import { StateController } from '../src/main/stateController';
 import { addProject, addTab, defaultState } from '../src/shared/state';
@@ -103,7 +103,12 @@ describe('MCP connection indicators', () => {
     expect(f.server.getInfo().connectedCellIds).toEqual([]);
     const client = new Client({ name: 'status-test', version: '1' });
     try {
+      await fetch(f.url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } }); // 405: not a working client
+      expect(f.server.getInfo().connectedCellIds).toEqual([]);
       await client.connect(new StreamableHTTPClientTransport(new URL(f.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+      // Only a tool list (or call) that succeeded counts: the client really works.
+      expect(f.server.getInfo().connectedCellIds).toEqual([]);
+      await client.listTools();
       expect(f.server.getInfo().connectedCellIds).toEqual([f.worker.id]);
       const copy = f.server.getInfo();
       copy.connectedCellIds!.length = 0;
@@ -116,5 +121,15 @@ describe('MCP connection indicators', () => {
       await f.server.stop();
       expect(f.server.getInfo()).toMatchObject({ running: false, configuredCellIds: [], connectedCellIds: [] });
     } finally { await client.close(); }
+  });
+
+  it('cuts an oversized result into valid JSON with a hint', () => {
+    const text = JSON.stringify({ items: Array.from({ length: 5000 }, (_, i) => ({ i, text: `"quoted" \\ ${'x'.repeat(20)}` })) });
+    const cut = capResult(text, 60000);
+    expect(cut.length).toBeLessThanOrEqual(60000);
+    const parsed = JSON.parse(cut);
+    expect(parsed).toMatchObject({ truncated: true });
+    expect(text.startsWith(parsed.partial)).toBe(true);
+    expect(capResult('{"a":1}', 60000)).toBe('{"a":1}');
   });
 });

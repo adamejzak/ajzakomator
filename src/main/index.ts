@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { execFile, spawn, spawnSync } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, safeStorage, shell, type OpenDialogOptions } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { homedir, hostname } from 'os';
@@ -14,6 +14,8 @@ import { appPlatform } from '../shared/platform';
 import { detectLanguage } from '../shared/languages';
 import { translate, type MessageKey, type MessageParams } from '../shared/i18n';
 import { HookServer } from './hooks';
+import { createEditorFinder } from './editor';
+import { pathExists } from './fsProbe';
 import { applyDockIcon, windowIcon } from './appIcon';
 import { LARGE_VIEW_BYTES, listProjectDirectories, listProjectDirectory, readProjectFile, writeProjectFile } from './files';
 import { registerFileOpsIpc } from './filesIpc';
@@ -385,9 +387,29 @@ const install = new InstallManager({
   commandOverride: app.isPackaged ? undefined : () => process.env.MC_INSTALL_COMMAND_OVERRIDE || undefined,
 });
 
+/** Ids of the cells of every project's grids (and, unless `tabsOnly`, its archive), optionally filtered. */
+function cellIdsOf(s: AppState, tabsOnly: boolean, keep: (cell: AppState['projects'][number]['tabs'][number]['cells'][number]) => boolean = () => true): Set<string> {
+  const ids = new Set<string>();
+  for (const project of s.projects) for (const tab of tabsOnly ? project.tabs : [...project.tabs, ...project.archive]) {
+    for (const cell of tab.cells) if (keep(cell)) ids.add(cell.id);
+  }
+  return ids;
+}
+/** A cell left the state for good (archive emptied, project removed): its per-cell bookkeeping goes too. */
+function forgetCell(id: string): void {
+  // killCount stays: a spawn still waiting for its CLI lookup compares against it (a few bytes per removed cell).
+  codexHooked.delete(id);
+  verifiedCodex.delete(id);
+  hooks.forget(id);
+  if (!alive.has(id)) automation.forgetCell(id);
+}
 const controller = new StateController(state, (snapshot) => {
-  for (const project of state.projects) for (const tab of project.tabs) for (const cell of tab.cells) {
-    if (cell.role && !findCell(snapshot.state, cell.id)?.cell.role) mcp.revokeCell(cell.id);
+  if (snapshot.state.projects !== state.projects) {
+    // One pass over each state (a lookup per cell was quadratic in the number of cells).
+    const roles = cellIdsOf(snapshot.state, true, (cell) => !!cell.role);
+    for (const id of cellIdsOf(state, true, (cell) => !!cell.role)) if (!roles.has(id)) mcp.revokeCell(id);
+    const kept = cellIdsOf(snapshot.state, false);
+    for (const id of cellIdsOf(state, false)) if (!kept.has(id)) forgetCell(id);
   }
   const previous = state;
   state = snapshot.state;
@@ -417,7 +439,8 @@ const automation = new AutomationService(controller, {
     const session = found.cell.session;
     if (!session || session.cli !== profile.cli || !session.confirmed) return { restarted: false, reason: 'Choose a compatible conversation from History before restarting through MCP.' };
     const cwd = found.cell.worktree?.path ?? found.project.path;
-    if (!existsSync(cwd)) return { restarted: false, reason: 'Project folder does not exist.' };
+    if (!(await pathExists(cwd))) return { restarted: false, reason: 'Project folder does not exist.' };
+    if (!alive.has(cellId)) return { restarted: false, reason: 'Agent is not running.' };
     mcp.revokeCell(cellId);
     verifiedCodex.delete(cellId);
     alive.delete(cellId);
@@ -439,7 +462,28 @@ const automation = new AutomationService(controller, {
     });
   },
 });
-const mcp = new UnimuxMcpServer(automation);
+const mcp = new UnimuxMcpServer(automation, { log: (message) => crashLog.warn(message) });
+const mcpInfo = (): McpInfo => ({ ...mcp.getInfo(), error: mcpError });
+/** Tells the renderer what changed instead of being polled (the renderer keeps a slow fallback poll). */
+const pushLater = (push: () => void) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return () => { timer ??= setTimeout(() => { timer = undefined; push(); }, 250); };
+};
+mcp.onChange(pushLater(() => send('mcp:info', mcpInfo())));
+automation.statuses.onChange = pushLater(() => send('automation:statuses', Object.fromEntries(automation.statuses)));
+/** Starts the MCP server; a failed listen (security software, a busy port range) is retried twice in the background. */
+async function startMcp(retries = 2): Promise<void> {
+  try {
+    await mcp.start();
+    mcpError = undefined;
+  } catch (error) {
+    mcpError = error instanceof Error ? error.message : String(error);
+    crashLog.warn(`MCP server did not start: ${mcpError}`);
+    if (retries > 0) setTimeout(() => void startMcp(retries - 1), 1000);
+  }
+  send('mcp:info', mcpInfo());
+}
+ipcMain.handle('mcp:retry', async () => { if (!mcp.getInfo().running) await startMcp(0); return mcpInfo(); });
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -476,6 +520,7 @@ function createWindow(): void {
   win.on('hide', () => usage.setActive(false));
   win.on('restore', () => usage.setActive(true));
   win.on('show', () => usage.setActive(true));
+  win.on('focus', () => cliDetector.invalidateRegistry());
   if (!app.isPackaged) win.webContents.on('console-message', (e) => e.level !== 'debug' && console.log('[renderer]', e.level, e.message));
   // The install window lives in the renderer: a reload or crash must not leave an invisible install running.
   win.webContents.on('did-start-loading', () => install.dispose());
@@ -634,7 +679,7 @@ ipcMain.handle('state:load', () => state);
 ipcMain.handle('state:snapshot', () => controller.snapshot());
 // The answer is an acknowledgement; the new state reaches the renderer once, as the patch `state:changed` carries.
 ipcMain.handle('state:edit', (_e, edit: StateEdit) => { const { revision, editId } = controller.apply(edit); return { revision, editId }; });
-ipcMain.handle('mcp:info', (): McpInfo => ({ ...mcp.getInfo(), error: mcpError }));
+ipcMain.handle('mcp:info', (): McpInfo => mcpInfo());
 ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input: unknown) => {
   if (!Object.hasOwn(automationSchemas, operation)) throw new Error('Unknown operation.');
   return automation.execute(operation, input);
@@ -643,8 +688,9 @@ ipcMain.handle('automation:execute', (_e, operation: AutomationOperation, input:
 ipcMain.handle('cell:spawn', (_e, req: SpawnCellRequest) => spawnRequest(req));
 type SpawnResult = { ok: true } | { ok: false; error: string; cliMissing?: CliId; cliStatus?: CliStatus };
 async function spawnRequest(req: SpawnCellRequest): Promise<SpawnResult> {
-  if (!existsSync(req.cwd)) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
+  // Taken before the first await: a kill while the folder or the CLI is being checked must not be undone by this spawn.
   const killsBefore = killCount.get(req.cellId) ?? 0;
+  if (!(await pathExists(req.cwd))) return { ok: false, error: tr('Folder nie istnieje: {path}', { path: req.cwd }) };
   const cli = cliForProfile(req.profile);
   // `force`: the user chose "start anyway" on the install card (the detection may be wrong, e.g. an alias).
   if (cli && req.force !== true) {
@@ -757,7 +803,7 @@ ipcMain.handle('sound:pick', async () => {
 // The path is never taken from the renderer: only the saved setting of that event (set from the dialog result) is read.
 ipcMain.handle('sound:load', (_e, event?: unknown, knownKey?: unknown) => loadEventSound(state.settings.alerts, event, knownKey));
 ipcMain.on('sound:beep', () => shell.beep());
-ipcMain.handle('fs:exists',(_e, p: string) => existsSync(p));
+ipcMain.handle('fs:exists', (_e, p: string) => pathExists(p));
 /** Files dropped from the system file manager: whether each absolute path is a folder, a file or gone. */
 ipcMain.handle('fs:pathKinds', async (_e, paths: unknown): Promise<Array<'dir' | 'file' | null>> => {
   if (!Array.isArray(paths) || paths.length > 200) return [];
@@ -897,9 +943,10 @@ ipcMain.handle('update:check', () => checkForUpdates());
 ipcMain.handle('update:get', () => ({ ...getUpdateState(), currentVersion: app.getVersion() }));
 ipcMain.on('update:install', () => openInstallWindow());
 ipcMain.on('update:open', () => shell.openExternal(RELEASES_URL));
-ipcMain.on('shell:openInEditor', (_e, p: string) => {
+const editors = createEditorFinder();
+ipcMain.on('shell:openInEditor', async (_e, p: string) => {
   // `cursor` / `code` are .cmd launchers → need a shell; they get our clean env.
-  const editor = ['cursor', 'code'].find((cmd) => spawnSync(process.platform === 'win32' ? 'where' : '/usr/bin/which', [cmd], { windowsHide: true }).status === 0);
+  const editor = await editors.find();
   if (!editor && process.platform === 'darwin') {
     const application = ['Cursor', 'Visual Studio Code'].find((name) =>
       existsSync(join('/Applications', `${name}.app`)) || existsSync(join(homedir(), 'Applications', `${name}.app`)));
@@ -909,7 +956,9 @@ ipcMain.on('shell:openInEditor', (_e, p: string) => {
     }
   }
   if (!editor) return void shell.openPath(p);
-  spawn(editor, process.platform === 'win32' ? [`"${p}"`] : [p], { shell: process.platform === 'win32', detached: true, stdio: 'ignore', windowsHide: true, env: cleanEnv(process.env) }).unref();
+  const child = spawn(editor, process.platform === 'win32' ? [`"${p}"`] : [p], { shell: process.platform === 'win32', detached: true, stdio: 'ignore', windowsHide: true, env: cleanEnv(process.env) });
+  child.once('error', () => editors.forget());
+  child.unref();
 });
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
@@ -1052,8 +1101,9 @@ function openInstallWindow(): void {
 }
 
 async function startMainApp(): Promise<void> {
-  await hooks.start();
-  try { await mcp.start(); } catch (error) { mcpError = error instanceof Error ? error.message : String(error); }
+  // Without the hook server cells still run, only without exact status reports.
+  try { await hooks.start(); } catch (error) { crashLog.warn(`hook server did not start: ${error instanceof Error ? error.message : String(error)}`); }
+  await startMcp();
   ptyHost.start();
   startSsh();
   // An interrupted main-account swap is repaired (or reported as pending) before any window or IPC call can start another:

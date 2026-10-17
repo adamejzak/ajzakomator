@@ -9,7 +9,7 @@
 // nothing (log, show, branches, commit and staged diffs, worktree list) work without trust.
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
 import { realpath as fsRealpath } from 'fs';
 import { promisify } from 'util';
@@ -23,6 +23,7 @@ import {
   type GitPushTarget, type GitResult, type GitStatus, type GitTrustInfo, type GitWorktree,
 } from '../shared/git';
 import { canonicalPath, isInsidePath, relativeInside, samePath } from './gitPaths';
+import { pathExists } from './fsProbe';
 import { attributeDrivers, configuredAttributeDrivers, dangerousConfigKeys, parseConfigList, type ConfigEntry } from '../shared/gitTrust';
 
 export interface GitOptions {
@@ -288,7 +289,7 @@ export class Git {
   private async root(dir: string): Promise<string> {
     const cached = this.roots.get(dir);
     if (cached && Date.now() - cached.at < 5000) return cached.root;
-    if (!existsSync(dir)) throw new GitFailure('gone', 'Folder już nie istnieje.');
+    if (!(await pathExists(dir))) throw new GitFailure('gone', 'Folder już nie istnieje.');
     let out: RunOutput;
     try { out = await this.run(dir, ['rev-parse', '--show-toplevel'], { timeoutMs: this.readTimeout, read: true }); }
     catch (error) {

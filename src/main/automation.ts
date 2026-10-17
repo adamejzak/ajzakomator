@@ -24,11 +24,29 @@ const WAIT_POLL_MS = 200;
 const UI_ONLY = new Set<AutomationOperation>(['set_paused', 'set_role', 'mark_pasted']);
 const DELIVERY_LIMIT = 500;
 
+/** Runtime statuses of the cells; `onChange` hears every real change (the Automation panel is told instead of polling). */
+export class StatusMap extends Map<string, AgentRuntimeStatus> {
+  onChange?: () => void;
+  override set(key: string, value: AgentRuntimeStatus): this {
+    const changed = super.get(key) !== value;
+    super.set(key, value);
+    if (changed) this.onChange?.();
+    return this;
+  }
+  override delete(key: string): boolean {
+    const deleted = super.delete(key);
+    if (deleted) this.onChange?.();
+    return deleted;
+  }
+}
+
 export class AutomationService {
-  readonly statuses = new Map<string, AgentRuntimeStatus>();
+  readonly statuses = new StatusMap();
   private pendingRestart = new Set<string>();
   /** Call on a confirmed runtime spawn so a user-initiated restart clears deferred launch settings. */
   runtimeStarted(cellId: string): void { this.pendingRestart.delete(cellId); this.seenInbox.delete(cellId); }
+  /** The cell left the state for good. */
+  forgetCell(cellId: string): void { this.pendingRestart.delete(cellId); this.seenInbox.delete(cellId); this.statuses.delete(cellId); }
   /** Inbox items (unread message ids, startable task ids) an agent has already been shown; wait_for reports only new ones. */
   private seenInbox = new Map<string, Set<string>>();
   private seen(cellId: string): Set<string> {

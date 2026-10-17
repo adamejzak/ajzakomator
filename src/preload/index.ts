@@ -12,6 +12,7 @@ const api: McApi = {
   loadSnapshot: () => ipcRenderer.invoke('state:snapshot'),
   applyStateEdit: (edit) => ipcRenderer.invoke('state:edit', edit),
   getMcpInfo: () => ipcRenderer.invoke('mcp:info'),
+  retryMcp: () => ipcRenderer.invoke('mcp:retry'),
   automation: (operation, input) => ipcRenderer.invoke('automation:execute', operation, input),
   spawnCell: (req) => ipcRenderer.invoke('cell:spawn', req),
   cliStatus: () => ipcRenderer.invoke('cli:status'),

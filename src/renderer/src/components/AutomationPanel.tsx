@@ -44,8 +44,10 @@ export function AutomationPanel() {
       } catch { /* The project may have been removed while the request was pending. */ }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
-    return () => { disposed = true; clearInterval(timer); };
+    // Main pushes every status change; the slow poll is only a fallback.
+    const off = window.mc.on('automation:statuses', (statuses) => { if (!disposed) setRuntime(statuses); });
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => { disposed = true; off(); clearInterval(timer); };
   }, [project?.id]);
 
   const run = async <K extends AutomationOperation,>(operation: K, args: AutomationInput<K>): Promise<boolean> => {
@@ -61,6 +63,7 @@ export function AutomationPanel() {
     <div className="automation-head">
       <strong>{tr('Zespół AI')}</strong>
       <span className={`mcp-state ${info.running ? 'connected' : ''}`} title={info.error ?? info.url}>{info.running ? tr('Serwer MCP działa') : tr('MCP niedostępne')}</span>
+      {!info.running && <button className="btn small" disabled={busy} onClick={() => { setBusy(true); void window.mc.retryMcp().then((mcpInfo) => setUi({ mcpInfo })).catch(() => {}).finally(() => setBusy(false)); }}>{tr('Spróbuj ponownie')}</button>}
       <span className="grow" />
       {tab === 'tasks' && <button className="btn small" onClick={() => { setComposing((v) => !v); setSelectedTaskId(null); }}>{composing ? tr('Zamknij') : '+ ' + tr('Nowe zadanie')}</button>}
       <button className={`btn small ${state.automation.paused ? 'paused' : ''}`} disabled={busy} onClick={() => void run('set_paused', { paused: !state.automation.paused })}>
