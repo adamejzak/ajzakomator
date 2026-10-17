@@ -469,9 +469,21 @@ describe('stage, unstage and commit', () => {
     const rid = id();
     data(await git.stage(dir, { requestId: rid, paths: ['r.txt'] }));
     expect(await git.stage(dir, { requestId: rid, paths: ['r.txt'] })).toMatchObject({ ok: false, code: 'invalid' });
-    const [a, b] = await Promise.all([git.stage(dir, { requestId: id(), paths: ['r.txt'] }), git.stage(dir, { requestId: id(), paths: ['r.txt'] })]);
-    expect([a.ok, b.ok].sort()).toEqual([false, true]);
-    expect([a, b].find((r) => !r.ok)).toMatchObject({ code: 'busy' });
+    // A second writer must be refused while the first holds the repository lock. Racing two real calls is timing-dependent (on a
+    // slow machine the first can finish before the second checks the lock, and both rightly succeed one after the other), so the
+    // lock key the first writer takes is captured and held while the second one runs.
+    const busy = (git as unknown as { busy: Set<string> }).busy;
+    const first = git.stage(dir, { requestId: id(), paths: ['r.txt'] });
+    for (let i = 0; i < 2000 && busy.size === 0; i++) await new Promise((r) => setTimeout(r, 1));
+    const [key] = [...busy];
+    expect(key).toBeTruthy();
+    expect((await first).ok).toBe(true);
+    expect(busy.size).toBe(0);
+    busy.add(key);
+    try {
+      expect(await git.stage(dir, { requestId: id(), paths: ['r.txt'] })).toMatchObject({ ok: false, code: 'busy' });
+    } finally { busy.delete(key); }
+    expect((await git.stage(dir, { requestId: id(), paths: ['r.txt'] })).ok).toBe(true);
   });
 });
 
