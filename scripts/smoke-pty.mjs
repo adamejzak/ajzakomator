@@ -39,6 +39,23 @@ const script = `
   const splash = fs.readFileSync(path.join(appRoot, 'resources/update-splash/index.html'), 'utf8');
   assert.match(splash, /class="logo" src="icon.png"/);
   process.stdout.write('Packaged branding assets OK\\n');
+  // Every package out/main requires must resolve inside the package (the file lists drop type declarations, the MCP SDK's
+  // ESM copy and zod's ESM files): the pure ones are loaded too, so their own requires are checked as well.
+  const { builtinModules, createRequire } = require('node:module');
+  const mainDir = path.join(appRoot, 'out', 'main');
+  const mainFiles = [...fs.readdirSync(mainDir), ...fs.readdirSync(path.join(mainDir, 'chunks')).map((f) => 'chunks/' + f)].filter((f) => f.endsWith('.js'));
+  const mainSource = mainFiles.map((f) => fs.readFileSync(path.join(mainDir, f), 'utf8')).join('\\n');
+  const external = [...new Set([...mainSource.matchAll(/require\\("([^".][^"]*)"\\)/g)].map((m) => m[1]))]
+    .filter((id) => id !== 'electron' && !id.startsWith('node:') && !builtinModules.includes(id.split('/')[0]));
+  const appRequire = createRequire(path.join(mainDir, 'index.js'));
+  for (const id of ['@modelcontextprotocol/sdk/server/index.js', 'zod', 'ssh2', 'node-pty']) assert.ok(external.includes(id), id + ' is required by out/main');
+  for (const id of external) {
+    appRequire.resolve(id);
+    // electron-updater needs a running Electron app, node-pty is started below.
+    if (id !== 'electron-updater' && id !== 'node-pty') appRequire(id);
+  }
+  for (const id of ['zod/v3', 'zod/v4']) appRequire(id);
+  process.stdout.write('Packaged main dependencies OK (' + external.join(', ') + ')\\n');
   const pty = require(${JSON.stringify(modulePath)});
   const windows = process.platform === 'win32';
   const env = { ...process.env };
