@@ -10,10 +10,11 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request replaces its older run. Pushes to main, tags and manual runs are never cancelled
-# (the release script waits for the run on the tag and "Publish release" uses its artifacts).
+# A new push to a pull request replaces its older run. Every other run gets a group of its own (GitHub would
+# otherwise cancel a pending run of the same group even without cancel-in-progress): pushes to main, tags and
+# manual runs are never cancelled (the release script waits for the run on the tag, "Publish release" uses its artifacts).
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.ref) || format('ci-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
