@@ -66,6 +66,6 @@ asset filenames. Their repository links point to the renamed repository.
 The changelog parser and download badge support both product names.
 New release notes and packages use `unimux`.
 
-New MCP launches use the `unimux` namespace and `UNIMUX_MCP_TOKEN`. Environment
+New MCP launches use the `unimux` namespace and, for Codex cells, `UNIMUX_MCP_TOKEN` (Claude cells get the token in their per-cell MCP config file since 0.9.4). Environment
 cleanup also removes the old `AJZ_MCP_TOKEN` from parent sessions. Restart or
 resume an existing agent from the app to apply the new MCP launch configuration.

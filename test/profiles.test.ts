@@ -63,6 +63,10 @@ describe('buildCliCommand', () => {
     expect(buildCliCommand(P.codex, { mode: 'new' })).not.toContain('tool_timeout_sec');
     expect(buildCliCommand(P.claude, { mode: 'new', shell: 'bash', mcp })).toContain("'C:/User'\"'\"'s files/mcp.json'");
   });
+  it('configures MCP only through the part each CLI reads: the config file for Claude, the token variable for Codex', () => {
+    expect(buildCliCommand(P.claude, { mode: 'new', mcp: { url: 'http://127.0.0.1:1/mcp', tokenEnv: 'UNIMUX_MCP_TOKEN' } })).not.toContain('--mcp-config');
+    expect(buildCliCommand(P.codex, { mode: 'new', mcp: { url: 'http://127.0.0.1:1/mcp', claudeConfigPath: 'C:/m.json' } })).not.toContain('mcp_servers');
+  });
 
   it('psQuote escapes single quotes and keeps Polish characters', () => {
     expect(psQuote("D:\\Moje Projekty\\źródło's")).toBe("'D:\\Moje Projekty\\źródło''s'");

@@ -17,9 +17,10 @@ const data = join(root, 'data'), agents = join(root, 'fake-agents'), tokens = jo
 for (const dir of [data, agents, tokens]) mkdirSync(dir);
 for (const name of ['claude', 'codex']) {
   const path = join(agents, process.platform === 'win32' ? `${name}.cmd` : name);
+  // The fake agent records what its environment says about the MCP token (Claude cells must not have one there).
   writeFileSync(path, process.platform === 'win32'
-    ? `@echo off\r\n> "${tokens}\\%MC_CELL_ID%.token" echo %UNIMUX_MCP_TOKEN%\r\necho unimux-smoke-agent-ready\r\n`
-    : '#!/bin/sh\nprintf "%s" "$UNIMUX_MCP_TOKEN" > "$UNIMUX_SMOKE_TOKENS/$MC_CELL_ID.token"\nprintf "unimux-smoke-agent-ready\\n"\n');
+    ? `@echo off\r\n> "${tokens}\\%MC_CELL_ID%.env" echo.%UNIMUX_MCP_TOKEN%\r\necho unimux-smoke-agent-ready\r\n`
+    : '#!/bin/sh\nprintf "%s" "$UNIMUX_MCP_TOKEN" > "$UNIMUX_SMOKE_TOKENS/$MC_CELL_ID.env"\nprintf "unimux-smoke-agent-ready\\n"\n');
   if (process.platform !== 'win32') chmodSync(path, 0o755);
 }
 writeFileSync(join(data, 'state.json'), JSON.stringify({
@@ -72,8 +73,19 @@ async function evaluate(expression) {
 }
 async function snapshot() { return evaluate('window.mc.loadSnapshot()'); }
 async function mcpClient(cellId) {
-  await until(() => existsSync(join(tokens, `${cellId}.token`)), 'fake agent token');
-  const token = readFileSync(join(tokens, `${cellId}.token`), 'utf8').trim();
+  await until(() => existsSync(join(tokens, `${cellId}.env`)), 'fake agent start');
+  const fromEnv = readFileSync(join(tokens, `${cellId}.env`), 'utf8').trim();
+  const configFile = join(data, 'mcp', `${cellId}.json`);
+  let token;
+  if (existsSync(configFile)) {
+    // Claude cells get the token only as a literal header in their per-cell --mcp-config file, never in the environment.
+    token = /^Bearer ([0-9a-f]{64})$/.exec(JSON.parse(readFileSync(configFile, 'utf8')).mcpServers.unimux.headers.Authorization)?.[1];
+    assert.ok(token, 'the MCP config carries the cell token');
+    assert.equal(fromEnv, '', 'no MCP token in a Claude agent environment');
+  } else {
+    // Codex can read the token only from its variable (bearer_token_env_var).
+    token = fromEnv;
+  }
   assert.match(token, /^[0-9a-f]{64}$/);
   const { url } = await evaluate('window.mc.getMcpInfo()');
   const client = new Client({ name: 'electron-smoke', version: '1' });
