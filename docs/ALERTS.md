@@ -28,6 +28,10 @@ Rules:
 - **Mute alerts of this cell** in the cell menu silences one cell (its status is still shown).
 - The saved alert settings take precedence over the notification and sound settings of earlier versions, which are only read when no alert settings exist yet.
 
+## How Claude Code reports a turn
+
+Claude cells get per-cell hooks through `--settings` (your own `settings.json` is never touched): prompt, Stop, StopFailure, Notification and SessionStart post to the app's local hook server with `curl`, and the tool hooks (PreToolUse, PostToolUse, SubagentStop) only say "still working" and run in the background (`async`), so no tool call waits for them. Every hook request bypasses a configured HTTP proxy (`--noproxy '*'`), the same as the Codex hook, so a corporate proxy cannot swallow the status.
+
 ## How Codex reports a turn
 
 Codex cells are launched with a per-process `notify` hook (never written to your `config.toml`): when a turn completes, Codex calls `curl` against the app's local hook server. That gives an exact end of turn and the exact conversation id, so several Codex cells in one folder each resume their own conversation after a restart. It replaces a `notify` program you may have configured, for these cells only. If the hook never reports (an old Codex), the cell falls back to the activity heuristic.

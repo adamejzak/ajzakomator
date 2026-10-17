@@ -16,7 +16,7 @@ You can mix roles in one grid and save them in presets. Ordinary shell profiles 
 
 Change a role later in **AI → Agents** or the cell's context menu. The app offers to apply it and restart the agent in the same action, resuming the saved conversation when a session is known. If no session is saved yet, it explains that a new conversation will start. You can also apply the role later and restart when ready. Choosing **No MCP** revokes tool access when the role is applied; restarting also removes the configuration from the client.
 
-The Agents panel distinguishes **Restart required**, **MCP configured · waiting for agent** and **MCP connected**. A running local MCP server alone does not mean the selected agent has loaded its configuration or called a tool.
+The Agents panel distinguishes **Restart required**, **MCP configured · waiting for agent** and **MCP connected**. A running local MCP server alone does not mean the selected agent has loaded its configuration or called a tool: **MCP connected** appears only once the agent's client listed or called the tools, and goes away after 10 minutes without such a request. When the MCP server cannot start (security software, for example), the app retries twice and the panel offers **Try again**.
 
 ## Work with a team
 
@@ -25,6 +25,8 @@ The **AI** button opens agents, tasks, messages and activity. Tasks move through
 Tasks and messages always enter a durable MCP inbox. Agents use `read_inbox` to retrieve their open tasks and unread messages together (`closed: true` adds closed tasks); `acknowledge: true` also marks the returned messages as read. A message longer than 8000 characters is returned clipped with a marker and stays unread; fetch it whole with `full: true` (which acknowledges it). When idle, agents call `wait_for` instead of polling: it blocks up to `timeoutSec` (max 45 s) and returns at once when an unread message or a startable task arrives that the agent has not been shown yet (items already returned by `read_inbox` or an earlier `wait_for` do not wake it again, so `read_inbox` followed by `wait_for` cannot spin; a blocked task counts as new once its prerequisites complete; a restart of the cell forgets what was shown). With `taskIds`, a coordinator waits until any (`all: true`: every) listed task is completed, blocked or cancelled, so it does not loop on `get_tasks`; a worker may only list its own tasks. Inbox delivery does not guarantee that a running model will wake up or begin work. Verified running Codex sessions can also receive content through `codex queue`, if their CLI supports it. Verification requires explicitly selecting a session from history; transcript timestamp matching alone is insufficient.
 
 For Claude and unverified Codex sessions, use **Copy prompt** and paste into the terminal. A delivery failure does not delete the task; delivery can be retried. Cancelling a task changes its record but does not interrupt the model.
+
+Each project holds up to 500 tasks and 500 messages. Finished tasks (completed or cancelled) and read messages older than 7 days are removed automatically, and when a project is full the oldest of them make room first. Open tasks, unread messages and completed tasks that an open task depends on always stay. Removing a project also removes its tasks, messages and activity. The **Tasks** and **Messages** tabs can remove one finished item or all of them (**Remove finished**, **Remove read**).
 
 A startup prompt on a cell with a role becomes a tracked task with reporting instructions. Without a role, it stays ordinary prompt text. Agent-created grids run in the background without switching your active tab. Creating agents can consume model usage; the MCP instructions require an explicit user request to delegate work.
 
@@ -85,11 +87,11 @@ Every MCP-enabled agent pays for the tool definitions and instructions in every 
 
 Agents are scoped to their own project. Workers see their own tasks and inbox; coordinators see project tasks. Agents can read global snippets, but write snippets in their project. Only the user changes roles or pauses automation.
 
-The Streamable HTTP server listens on `127.0.0.1` on a random port. Each cell receives its own environment token, invalidated when the cell ends, restarts or loses its role; revoking a token also aborts that token's requests in flight (a waiting `wait_for` ends with "Agent connection has expired."). Foreign Host and Origin headers are rejected (DNS-rebinding protection). Requests are limited per token by a monotonic-clock token bucket (burst 120, 60 per second, then 429 with Retry-After) and by simultaneous requests (8 per token, 256 in total, also 429; rejected requests do not spend rate budget). Bodies are limited to 256 KB. Tokens are not placed in process arguments or persisted app state.
+The Streamable HTTP server listens on `127.0.0.1` on a random port. Each cell receives its own environment token, invalidated when the cell ends, restarts or loses its role; revoking a token also aborts that token's requests in flight (a waiting `wait_for` ends with "Agent connection has expired."). Foreign Host and Origin headers are rejected (DNS-rebinding protection). Requests are limited per token by a monotonic-clock token bucket (burst 120, 60 per second, then 429 with Retry-After) and by simultaneous requests (8 per token, 256 in total, also 429; rejected requests do not spend rate budget). Bodies are limited to 256 KB. Tokens are not placed in process arguments or persisted app state. Inboxes hold 500 tasks and 500 messages per project (with automatic removal of finished ones, see above). A result longer than 60,000 characters comes back as valid JSON `{truncated, hint, partial}`. The same `create_grid`, `add_agents` or `close_grid` call by the same agent within 5 minutes returns the first answer instead of creating a second team; a `create_grid` whose client disconnects while worktrees are being created removes those worktrees and keeps nothing.
 
 ## Claude Code and Codex
 
-Claude gets `--mcp-config` with a per-cell file (`type: http`, header `Authorization: Bearer ${UNIMUX_MCP_TOKEN}`); Codex gets `-c mcp_servers.unimux.url=...` and `bearer_token_env_var="UNIMUX_MCP_TOKEN"`. Both connect to the local server and see the same tools. The schemas are flat (no `$ref`, `anyOf` or `null` types) because Codex passes them to the model unchanged.
+Claude gets `--mcp-config` with a per-cell file (`type: http`, header `Authorization: Bearer ${UNIMUX_MCP_TOKEN}`); Codex gets `-c mcp_servers.unimux.url=...`, `bearer_token_env_var="UNIMUX_MCP_TOKEN"` and `tool_timeout_sec=180` (the default 60 s is too short for a `create_grid` with many worktrees). Both connect to the local server and see the same tools. The schemas are flat (no `$ref`, `anyOf` or `null` types) because Codex passes them to the model unchanged.
 
 Only Codex honours the tool hints, and it asks the user before a call unless the tool is `readOnlyHint`, or both `destructiveHint` and `openWorldHint` are false (Claude Code asks according to its own permission rules). The hints are:
 
@@ -114,8 +116,6 @@ Intended changes for clients that called the old tools by name:
 - `read_inbox` with `acknowledge: true` leaves clipped long messages unread.
 - A worker can no longer change its own profile, model or restart; `wait_for` is limited to a worker's own tasks.
 - Unlisted names (`list_library`, `get_snippet`, `save_snippet`, `apply_snippet`, `add_agents`, `get_messages`, `acknowledge_message`, `deliver_task`, `deliver_message`, and coordinator tools called by workers) keep their previous inputs and outputs.
-
-You can check the connection without a model: `node scripts/mcp-serve.mjs` starts the server with fake dependencies, then `claude mcp add --transport http ...` / `codex mcp add --url ... --bearer-token-env-var ...` with a temporary `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, and `claude mcp list`, show the connection state.
 
 ## Verify the integration
 
