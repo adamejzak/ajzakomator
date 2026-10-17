@@ -8,6 +8,9 @@ import { adoptCopyRefusal, gateFamilyRefresh, handleAdoptCopy, type AdoptCopyDep
 import { renewRule } from '../src/main/accounts/refs';
 import { AccountsStore } from '../src/main/accounts/store';
 import { adoptCopyOffered, heldByOf, type ProviderUsage } from '../src/shared/usage';
+import { cswapNoteText } from '../src/shared/usageMessages';
+import { translate } from '../src/shared/i18n';
+import { LANGUAGES } from '../src/shared/languages';
 
 const LIVE = { email: 'main@x.com', accountUuid: 'u-main', organizationUuid: 'o-main' };
 const COPY = { email: 'copy@x.com', accountUuid: 'u-copy', organizationUuid: 'o-copy' };
@@ -132,5 +135,20 @@ describe('adoptCopyOffered', () => {
     expect(adoptCopyOffered({ ...card, active: true })).toBe(false);
     expect(adoptCopyOffered({ ...card, managed: false })).toBe(false);
     expect(adoptCopyOffered({ ...card, provider: 'codex' })).toBe(false);
+  });
+});
+
+describe('cswapNoteText', () => {
+  it('names the action in every held-by-cswap state but an expired sign-in, in every language', () => {
+    for (const status of ['ok', 'error', 'dormant', 'elsewhere'] as const) {
+      const key = cswapNoteText(status);
+      expect(key, status).toBeDefined();
+      for (const { code } of LANGUAGES) expect(translate(code, key!), `${code} ${status}`).toContain(translate(code, 'Odświeżaj tę kopię w unimuxie'));
+    }
+    // An access token that ran out: the text says so and does not promise that Make main account works.
+    expect(cswapNoteText('elsewhere')).toContain('wygasł');
+    expect(cswapNoteText('elsewhere')).not.toContain('Ustawienie jako główne');
+    expect(cswapNoteText('ok')).toContain('Ustawienie jako główne');
+    expect(cswapNoteText('expired')).toBeUndefined();
   });
 });

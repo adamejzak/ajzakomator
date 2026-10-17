@@ -174,7 +174,9 @@ try {
   const card = `[...document.querySelectorAll('.usage-card')].find((c) => c.textContent.includes('kept@example.com'))`;
   const label = 'Odświeżaj tę kopię w unimuxie';
   try {
-    // Held by cswap: the card offers the action next to "Sign in again", and no renewal happens on its own.
+    // Held by cswap with an access token that already ran out: the note names the action, which is the primary button next
+    // to "Sign in again", and no renewal happens on its own.
+    await app.until(`!!${card} && ${card}.textContent.includes('token dostępu tej kopii wygasł') && ${card}.textContent.includes('wybierz „${label}”') && ${card}.querySelector('.usage-empty-buttons button.primary')?.textContent === '${label}'`, 'expired held card names the action');
     await app.until(`!!${card} && [...${card}.querySelectorAll('button')].some((b) => b.textContent === '${label}') && [...${card}.querySelectorAll('button')].some((b) => b.textContent === 'Zaloguj ponownie')`, 'adopt action on the held card');
     // The notices are hidden and the card is scrolled into view for the screenshots.
     for (let i = 0; i < 5 && await app.evaluate(`document.querySelectorAll('.usage-notices .usage-warning').length`); i++) {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { updateSettings } from '../../../shared/state';
 import type { AccountNotice, LoginTarget } from '../../../shared/accounts';
 import { adoptCopyOffered, claudeLoginActions, diagnosticLabel, effectivePercent, formatDuration, makeMainOffered, shortAccountName, shortDuration, summaryAccounts, usageBand, usageDiagnostics, usageErrorKind, usageSummary, worstPercent, type ProviderUsage, type SetAsideAccount, type UsageProvider, type UsageWindow } from '../../../shared/usage';
-import { noticeText, setAsideText, usageErrorKey } from '../../../shared/usageMessages';
+import { cswapNoteText, noticeText, setAsideText, usageErrorKey } from '../../../shared/usageMessages';
 import { useI18n } from '../i18n';
 import { swapErrorKey, swapErrorText } from '../../../shared/swapMessages';
 import { askChoice, setUi, toast, update, useStore } from '../store';
@@ -15,11 +15,8 @@ import { RefreshIcon, useHoldBusy } from './Spinner';
 const DORMANT_NOTE = 'Token dostępu wygasł - Claude Code odświeży go przy najbliższym użyciu. Uruchom sesję Claude (albo wyślij wiadomość), a limity wrócą.';
 const HELD_NOTE = {
   live: 'To konto jest teraz zalogowane w Claude Code - jego limity pokazuje karta oznaczona jako główna.',
-  cswap: 'To konto zarządza też cswap. Aplikacja nie odnawia jego logowania, żeby nie unieważnić kopii cswap - limity wrócą, gdy będzie aktywne w Claude Code albo po ponownym zalogowaniu tutaj.',
   'switched-out': 'To konto zostało przełączone poza aplikacją (cswap lub /login). Kopia logowania w aplikacji może być nieaktualna, więc nie jest odnawiana. Przełącz je tam, gdzie jest aktywne, albo zaloguj się tu ponownie.',
 } as const;
-/** A saved card whose tokens cswap may hold too (every 0.9.0 card cswap lists): never renewed here; swapped in only while fresh. */
-const CSWAP_HINT = 'cswap też trzyma kopię tego logowania, więc aplikacja jej nie odnawia. Jeśli logowano się do tego konta w unimuxie, wybierz „Odświeżaj tę kopię w unimuxie”. Ustawienie jako główne działa, dopóki kopia jest świeża; potem przełącz konto w cswap albo zaloguj się do niego tu ponownie.';
 const ADOPT_LABEL = 'Odświeżaj tę kopię w unimuxie';
 const ADOPT_BODY = 'Od teraz unimux będzie sam odnawiał tę kopię logowania.\n\nTo bezpieczne, jeśli logowano się do tego konta w unimuxie. Jeśli kopia pochodzi z „Ustaw jako główne” w starszej wersji, cswap może stracić swój token dla tego konta - wtedy wystarczy raz zalogować się do niego ponownie w cswap.\n\n„Zaloguj ponownie” pozostaje dostępne dla logowań, które naprawdę wygasły.';
 const ADOPT_FAILED = 'Nie udało się zmienić sposobu odnawiania tej kopii.';
@@ -117,6 +114,8 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
       toast(tr(ADOPT_FAILED), 'error');
     }
   };
+  // Every held-by-cswap state but an expired sign-in names the action (fresh, stale numbers, access token run out).
+  const cswapNote = usage.heldBy === 'cswap' ? cswapNoteText(usage.status) : undefined;
   const adoptButton = canAdopt ? <button className="btn small primary" disabled={busy} onClick={() => void adoptCopy()}>{tr(ADOPT_LABEL)}</button> : null;
 
   const copyDiagnostics = () => {
@@ -155,7 +154,8 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
       <>
         {usage.windows.map((window) => <WindowRow key={window.id} window={window} now={now} language={language} />)}
         {usage.windows.length > 0 && <p className="usage-note">{tr('dane sprzed {age}', { age })}</p>}
-        <p className="usage-note">{tr(HELD_NOTE[usage.heldBy ?? 'switched-out'])}</p>
+        {usage.heldBy !== 'cswap' && <p className="usage-note">{tr(HELD_NOTE[usage.heldBy ?? 'switched-out'])}</p>}
+        {cswapNote && <p className="usage-note">{tr(cswapNote)}</p>}
         {usage.heldBy !== 'live' && (
           <div className="usage-empty-buttons">
             {adoptButton}
@@ -224,9 +224,9 @@ function AccountCard({ usage, now, language, showMain, savedIndex, swapping, onM
         )}
       </div>
       {body}
-      {usage.heldBy === 'cswap' && usage.status !== 'elsewhere' && !expired && (
+      {cswapNote && usage.status !== 'elsewhere' && (
         <>
-          <p className="usage-note">{tr(CSWAP_HINT)}</p>
+          <p className="usage-note">{tr(cswapNote)}</p>
           {adoptButton && <div className="usage-empty-buttons">{adoptButton}</div>}
         </>
       )}
