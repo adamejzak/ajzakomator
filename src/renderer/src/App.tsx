@@ -110,7 +110,11 @@ async function bootRest(mcpInfo: Awaited<ReturnType<typeof window.mc.getMcpInfo>
   });
 
   // A conversation renamed inside the CLI (/rename) shows its new title in the cell header: look again now and then while the window is in use.
-  window.setInterval(() => { if (document.hasFocus()) refreshSessionTitles(activeProject(useStore.getState().s)?.path); }, 20000);
+  // Titles show only on cells bound to a conversation: a project without any skips the periodic read.
+  window.setInterval(() => {
+    const project = activeProject(useStore.getState().s);
+    if (document.hasFocus() && project?.tabs.some((t) => t.cells.some((c) => c.session))) refreshSessionTitles(project.path);
+  }, 20000);
   window.addEventListener('focus', () => refreshSessionTitles(activeProject(useStore.getState().s)?.path, 800));
 
   // Coming back to the app (after installing a CLI in another window) is the moment to look again, but only if a cell waits for it.
